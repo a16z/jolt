@@ -83,6 +83,25 @@ pub struct JoltInstructionRow {
 }
 
 impl JoltInstructionRow {
+    /// The row fields its decoded flags depend on.
+    ///
+    /// [`jolt_instruction!`](crate::jolt_instruction) derives every
+    /// instruction's circuit and instruction flags from its kind plus the
+    /// virtual-sequence state, `is_compressed`, and `is_first_in_sequence`, and
+    /// the kind alone fixes its instruction type. Rows with equal classes
+    /// therefore decode to the same flags, whatever their address and operands.
+    pub fn flag_class(&self) -> u32 {
+        let sequence = match self.virtual_sequence_remaining {
+            None => 0,
+            Some(0) => 1,
+            Some(_) => 2,
+        };
+        (u32::from(self.instruction_kind.tag().0) << 4)
+            | (sequence << 2)
+            | (u32::from(self.is_compressed) << 1)
+            | u32::from(self.is_first_in_sequence)
+    }
+
     /// Logical operands belonging to the field register file, including an
     /// accumulator's implicit read and bridge destinations encoded in `rs2`.
     pub fn field_operands(&self) -> NormalizedOperands {

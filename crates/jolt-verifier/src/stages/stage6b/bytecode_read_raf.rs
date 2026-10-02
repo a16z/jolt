@@ -208,46 +208,34 @@ fn fold_stage_values<F: JoltField>(
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
     let bytecode_rows = fold.bytecode;
-    let row_values = bytecode::read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: bytecode_rows,
-        register_read_write_point: fold.register_read_write_point,
-        register_val_evaluation_point: fold.register_val_evaluation_point,
-        stage1_gammas: fold.stage_gammas[0],
-        stage2_gammas: fold.stage_gammas[1],
-        stage3_gammas: fold.stage_gammas[2],
-        stage4_gammas: fold.stage_gammas[3],
-        stage5_gammas: fold.stage_gammas[4],
-    });
-    // One dot product per stage (a column of the row table against the
-    // address eq table), so a field-inline guest folds each stage in its
-    // register file.
-    let mut columns: [Vec<F>; NUM_BYTECODE_VAL_STAGES] =
-        std::array::from_fn(|_| Vec::with_capacity(expected_domain));
-    for row in row_values {
-        for (column, value) in columns.iter_mut().zip(row) {
-            column.push(value);
-        }
-    }
-    let stage_values = columns.map(|column| F::dot_product(&column, &address_eq_evals));
+    let stage_values = bytecode::read_raf_folded_stage_values(
+        BytecodeReadRafStageValueInputs {
+            bytecode: bytecode_rows,
+            register_read_write_point: fold.register_read_write_point,
+            register_val_evaluation_point: fold.register_val_evaluation_point,
+            stage1_gammas: fold.stage_gammas[0],
+            stage2_gammas: fold.stage_gammas[1],
+            stage3_gammas: fold.stage_gammas[2],
+            stage4_gammas: fold.stage_gammas[3],
+            stage5_gammas: fold.stage_gammas[4],
+        },
+        &address_eq_evals,
+    );
     #[cfg(feature = "field-inline")]
     let field_registers = {
         use jolt_claims::protocols::field_inline::geometry::bytecode::{
-            read_raf_stage_values, FieldInlineBytecodeReadRafStageValueInputs,
+            read_raf_folded_stage_values, FieldInlineBytecodeReadRafStageValueInputs,
         };
-        let rows = read_raf_stage_values(FieldInlineBytecodeReadRafStageValueInputs {
-            bytecode: bytecode_rows,
-            field_register_read_write_point: &field_inline.read_write_address,
-            field_register_val_evaluation_point: &field_inline.val_evaluation_address,
-            stage4_gammas: &field_inline.gammas.stage4,
-            stage5_gammas: &field_inline.gammas.stage5,
-        });
-        let mut values = [F::zero(); 5];
-        for (row, eq_address) in rows.into_iter().zip(address_eq_evals) {
-            for (value, row_value) in values.iter_mut().zip(row) {
-                *value += row_value * eq_address;
-            }
-        }
-        values
+        read_raf_folded_stage_values(
+            FieldInlineBytecodeReadRafStageValueInputs {
+                bytecode: bytecode_rows,
+                field_register_read_write_point: &field_inline.read_write_address,
+                field_register_val_evaluation_point: &field_inline.val_evaluation_address,
+                stage4_gammas: &field_inline.gammas.stage4,
+                stage5_gammas: &field_inline.gammas.stage5,
+            },
+            &address_eq_evals,
+        )
     };
     Ok(FoldedStageValues {
         ordinary: stage_values,

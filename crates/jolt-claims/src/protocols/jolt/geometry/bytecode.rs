@@ -537,31 +537,23 @@ where
         });
     }
 
-    let register_eq = read_raf_register_eq_evals(
-        inputs.register_read_write_point,
-        inputs.register_val_evaluation_point,
-    );
-    let weighted_read_write = register_eq.weighted_read_write(inputs.stage4_gammas);
     let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
-
+    let folded = read_raf_folded_stage_values(
+        BytecodeReadRafStageValueInputs {
+            bytecode: inputs.bytecode,
+            register_read_write_point: inputs.register_read_write_point,
+            register_val_evaluation_point: inputs.register_val_evaluation_point,
+            stage1_gammas: inputs.stage1_gammas,
+            stage2_gammas: inputs.stage2_gammas,
+            stage3_gammas: inputs.stage3_gammas,
+            stage4_gammas: inputs.stage4_gammas,
+            stage5_gammas: inputs.stage5_gammas,
+        },
+        &address_eq_evals,
+    );
     // The base monolith publics carry the five gamma'd stages only; the
-    // lattice sixth (store) row value never flows through this path, so the
-    // zip below is deliberately driven by the five-slot accumulator.
-    let mut stage_values = [F::zero(); 5];
-    for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
-        let row_values = read_raf_row_values::<F>(
-            instruction,
-            &weighted_read_write,
-            &register_eq.val_evaluation,
-            inputs.stage1_gammas,
-            inputs.stage2_gammas,
-            inputs.stage3_gammas,
-            inputs.stage5_gammas,
-        );
-        for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
-            *stage_value += row_value * eq_address;
-        }
-    }
+    // lattice sixth (store) staged value never flows through this path.
+    let mut stage_values: [F; 5] = std::array::from_fn(|stage| folded[stage]);
 
     let stage_cycle_eqs = inputs
         .stage_cycle_points
@@ -588,6 +580,112 @@ where
     })
 }
 
+/// Indices into [`BYTECODE_STAGE_GAMMA_COUNTS`] of the stages whose gamma
+/// terms [`read_raf_flag_terms`] reports.
+const STAGE1: usize = 0;
+const STAGE2: usize = 1;
+const STAGE3: usize = 2;
+const STAGE5: usize = 4;
+
+/// Decode one row's flags, report each gamma they select as `(stage, index)`,
+/// and return its store flag.
+///
+/// With `γ_s` the stage-`s` gamma powers and each sum over the indices
+/// reported for that stage, a row's stage values are
+/// - stage 1: `address + γ_1[1]·imm + Σ γ_1[k]`,
+/// - stage 2: `Σ γ_2[k]`,
+/// - stage 3: `imm + γ_3[1]·address + Σ γ_3[k]`,
+/// - stage 4: the stage-4-weighted read-write register eq at `rd`, `rs1`, `rs2`,
+/// - stage 5: `eq_val(rd) + Σ γ_5[k]`,
+///
+/// plus (lattice) the store flag. Everything this reports depends only on the
+/// row's [`JoltInstructionRow::flag_class`].
+fn read_raf_flag_terms(
+    instruction: &JoltInstructionRow,
+    mut gamma: impl FnMut(usize, usize),
+) -> bool {
+    let decoded = JoltInstruction::try_from(*instruction)
+        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+    let circuit_flags = decoded.circuit_flags();
+    let instruction_flags = decoded.instruction_flags();
+
+    for (index, flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
+        if circuit_flags[flag] {
+            gamma(STAGE1, index + 2);
+        }
+    }
+    for (selected, index) in [
+        (circuit_flags[CircuitFlags::Jump], 0),
+        (instruction_flags[InstructionFlags::Branch], 1),
+        (circuit_flags[CircuitFlags::WriteLookupOutputToRD], 2),
+        (circuit_flags[CircuitFlags::VirtualInstruction], 3),
+    ] {
+        if selected {
+            gamma(STAGE2, index);
+        }
+    }
+    for (selected, index) in [
+        (
+            instruction_flags[InstructionFlags::LeftOperandIsRs1Value],
+            2,
+        ),
+        (instruction_flags[InstructionFlags::LeftOperandIsPC], 3),
+        (
+            instruction_flags[InstructionFlags::RightOperandIsRs2Value],
+            4,
+        ),
+        (instruction_flags[InstructionFlags::RightOperandIsImm], 5),
+        (instruction_flags[InstructionFlags::IsNoop], 6),
+        (circuit_flags[CircuitFlags::VirtualInstruction], 7),
+        (circuit_flags[CircuitFlags::IsFirstInSequence], 8),
+    ] {
+        if selected {
+            gamma(STAGE3, index);
+        }
+    }
+    if !circuit_flags.is_interleaved_operands() {
+        gamma(STAGE5, 1);
+    }
+    if let Some(table) = InstructionLookupTable::<XLEN>::lookup_table(&decoded) {
+        gamma(STAGE5, 2 + table.index());
+    }
+    circuit_flags[CircuitFlags::Store]
+}
+
+/// Dense indices for the distinct [`JoltInstructionRow::flag_class`]es of a
+/// bytecode table, in first-seen order (open addressing over the class key).
+struct FlagClasses {
+    slots: Vec<u32>,
+    keys: Vec<u32>,
+}
+
+impl FlagClasses {
+    fn with_rows(rows: usize) -> Self {
+        Self {
+            slots: vec![u32::MAX; (2 * rows).next_power_of_two().max(16)],
+            keys: Vec::new(),
+        }
+    }
+
+    /// The index of `key`'s class, and whether this call created it.
+    fn index(&mut self, key: u32) -> (usize, bool) {
+        let mask = self.slots.len() - 1;
+        let mut slot = (key.wrapping_mul(0x9e37_79b9) as usize) & mask;
+        loop {
+            match self.slots[slot] {
+                u32::MAX => {
+                    let class = self.keys.len();
+                    self.keys.push(key);
+                    self.slots[slot] = class as u32;
+                    return (class, true);
+                }
+                class if self.keys[class as usize] == key => return (class as usize, false),
+                _ => slot = (slot + 1) & mask,
+            }
+        }
+    }
+}
+
 fn read_raf_row_values<F>(
     instruction: &JoltInstructionRow,
     register_read_write_eq: &[Vec<F>; 3],
@@ -600,72 +698,32 @@ fn read_raf_row_values<F>(
 where
     F: JoltField,
 {
-    let decoded = JoltInstruction::try_from(*instruction)
-        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
-    let circuit_flags = decoded.circuit_flags();
-    let instruction_flags = decoded.instruction_flags();
-
-    let mut stage1 = F::from_u64(instruction.address as u64);
-    stage1 += stage1_gammas[1].mul_i128(instruction.operands.imm);
-    for (index, flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
-        if circuit_flags[flag] {
-            stage1 += stage1_gammas[index + 2];
-        }
-    }
-
-    let mut stage2 = F::zero();
-    if circuit_flags[CircuitFlags::Jump] {
-        stage2 += stage2_gammas[0];
-    }
-    if instruction_flags[InstructionFlags::Branch] {
-        stage2 += stage2_gammas[1];
-    }
-    if circuit_flags[CircuitFlags::WriteLookupOutputToRD] {
-        stage2 += stage2_gammas[2];
-    }
-    if circuit_flags[CircuitFlags::VirtualInstruction] {
-        stage2 += stage2_gammas[3];
-    }
-
-    let mut stage3 = F::from_i128(instruction.operands.imm);
-    stage3 += stage3_gammas[1].mul_u64(instruction.address as u64);
-    if instruction_flags[InstructionFlags::LeftOperandIsRs1Value] {
-        stage3 += stage3_gammas[2];
-    }
-    if instruction_flags[InstructionFlags::LeftOperandIsPC] {
-        stage3 += stage3_gammas[3];
-    }
-    if instruction_flags[InstructionFlags::RightOperandIsRs2Value] {
-        stage3 += stage3_gammas[4];
-    }
-    if instruction_flags[InstructionFlags::RightOperandIsImm] {
-        stage3 += stage3_gammas[5];
-    }
-    if instruction_flags[InstructionFlags::IsNoop] {
-        stage3 += stage3_gammas[6];
-    }
-    if circuit_flags[CircuitFlags::VirtualInstruction] {
-        stage3 += stage3_gammas[7];
-    }
-    if circuit_flags[CircuitFlags::IsFirstInSequence] {
-        stage3 += stage3_gammas[8];
-    }
-
+    let gammas: [&[F]; 5] = [
+        stage1_gammas,
+        stage2_gammas,
+        stage3_gammas,
+        &[],
+        stage5_gammas,
+    ];
+    let mut sums = [F::zero(); 5];
+    let is_store = read_raf_flag_terms(instruction, |stage, index| {
+        sums[stage] += gammas[stage][index];
+    });
+    let address = instruction.address as u64;
+    let imm = instruction.operands.imm;
     let operands = instruction.integer_operands();
+
+    let stage1 = F::from_u64(address) + stage1_gammas[1].mul_i128(imm) + sums[STAGE1];
+    let stage2 = sums[STAGE2];
+    let stage3 = F::from_i128(imm) + stage3_gammas[1].mul_u64(address) + sums[STAGE3];
     let stage4 = register_eq(operands.rd, &register_read_write_eq[0])
         + register_eq(operands.rs1, &register_read_write_eq[1])
         + register_eq(operands.rs2, &register_read_write_eq[2]);
-
-    let mut stage5 = register_eq(operands.rd, register_val_evaluation_eq);
-    if !circuit_flags.is_interleaved_operands() {
-        stage5 += stage5_gammas[1];
-    }
-    if let Some(table) = InstructionLookupTable::<XLEN>::lookup_table(&decoded) {
-        stage5 += stage5_gammas[2 + table.index()];
-    }
+    let stage5 = register_eq(operands.rd, register_val_evaluation_eq) + sums[STAGE5];
 
     #[cfg(not(feature = "akita"))]
     {
+        let _ = is_store;
         [stage1, stage2, stage3, stage4, stage5]
     }
     // The lattice sixth stage: the store circuit flag as a raw staged value
@@ -673,7 +731,96 @@ where
     // `eq(r_address)` like the five gamma'd stages by the read-raf consumers.
     #[cfg(feature = "akita")]
     {
-        let store = F::from_u64(u64::from(circuit_flags[CircuitFlags::Store]));
+        let store = F::from_u64(u64::from(is_store));
+        [stage1, stage2, stage3, stage4, stage5, store]
+    }
+}
+
+/// `Σ_r address_eq[r] · stage_values(r)` over the bytecode rows, folded
+/// column-first: each row adds its eq weight into one bucket per selected
+/// gamma and per register operand, and the buckets meet the gammas once. This
+/// equals summing [`read_raf_stage_values`] weighted by `address_eq`, with
+/// additions per row instead of one field multiplication per stage.
+pub fn read_raf_folded_stage_values<F>(
+    inputs: BytecodeReadRafStageValueInputs<'_, F>,
+    address_eq: &[F],
+) -> [F; NUM_BYTECODE_VAL_STAGES]
+where
+    F: JoltField,
+{
+    let register_eq = read_raf_register_eq_evals(
+        inputs.register_read_write_point,
+        inputs.register_val_evaluation_point,
+    );
+    let registers = register_eq.read_write.len();
+    let mut gamma_buckets: [Vec<F>; 5] =
+        std::array::from_fn(|stage| vec![F::zero(); BYTECODE_STAGE_GAMMA_COUNTS[stage]]);
+    let mut register_buckets: [Vec<F>; 3] = std::array::from_fn(|_| vec![F::zero(); registers]);
+    let mut store = F::zero();
+    let rows = inputs.bytecode.len().min(address_eq.len());
+    let mut addresses = Vec::with_capacity(rows);
+    let mut imms = Vec::with_capacity(rows);
+    let mut classes = FlagClasses::with_rows(rows);
+    let mut class_weights: Vec<F> = Vec::new();
+    let mut class_rows: Vec<&JoltInstructionRow> = Vec::new();
+    for (instruction, &eq) in inputs.bytecode.iter().zip(address_eq) {
+        let (class, created) = classes.index(instruction.flag_class());
+        if created {
+            class_weights.push(F::zero());
+            class_rows.push(instruction);
+        }
+        class_weights[class] += eq;
+        let operands = instruction.integer_operands();
+        for (bucket, register) in
+            register_buckets
+                .iter_mut()
+                .zip([operands.rd, operands.rs1, operands.rs2])
+        {
+            if let Some(slot) = register.and_then(|register| bucket.get_mut(register as usize)) {
+                *slot += eq;
+            }
+        }
+        addresses.push(F::from_u64(instruction.address as u64));
+        imms.push(F::from_i128(instruction.operands.imm));
+    }
+    for (instruction, &weight) in class_rows.iter().zip(&class_weights) {
+        if read_raf_flag_terms(instruction, |stage, index| {
+            gamma_buckets[stage][index] += weight;
+        }) {
+            store += weight;
+        }
+    }
+    let eq = &address_eq[..rows];
+    let address = F::dot_product(&addresses, eq);
+    let imm = F::dot_product(&imms, eq);
+    let gammas: [&[F]; 5] = [
+        inputs.stage1_gammas,
+        inputs.stage2_gammas,
+        inputs.stage3_gammas,
+        &[],
+        inputs.stage5_gammas,
+    ];
+    let gamma_sum = |stage: usize| F::dot_product(gammas[stage], &gamma_buckets[stage]);
+    let weighted_read_write = register_eq.weighted_read_write(inputs.stage4_gammas);
+
+    let stage1 = address + inputs.stage1_gammas[1] * imm + gamma_sum(STAGE1);
+    let stage2 = gamma_sum(STAGE2);
+    let stage3 = imm + inputs.stage3_gammas[1] * address + gamma_sum(STAGE3);
+    let stage4 = weighted_read_write
+        .iter()
+        .zip(&register_buckets)
+        .map(|(weights, bucket)| F::dot_product(weights, bucket))
+        .fold(F::zero(), |sum, term| sum + term);
+    let stage5 =
+        F::dot_product(&register_eq.val_evaluation, &register_buckets[0]) + gamma_sum(STAGE5);
+
+    #[cfg(not(feature = "akita"))]
+    {
+        let _ = store;
+        [stage1, stage2, stage3, stage4, stage5]
+    }
+    #[cfg(feature = "akita")]
+    {
         [stage1, stage2, stage3, stage4, stage5, store]
     }
 }
