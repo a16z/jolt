@@ -60,7 +60,7 @@ use rayon::prelude::*;
 
 use super::support::{
     accumulate_product_grid, collect_par_map, for_each_index_mut, map_indices, map_reduce_chunks,
-    scan_chunk_size, GruenRoundMessage, RoundProgress,
+    product_grid_scratch_len, scan_chunk_size, GruenRoundMessage, RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -1084,6 +1084,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             lanes: Vec<F::Accumulator>,
             evals: Vec<F>,
             steps: Vec<F>,
+            grid: Vec<F>,
         }
 
         let block_lanes = cycle.gruen.par_fold_out_in(
@@ -1091,6 +1092,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 lanes: vec![F::Accumulator::default(); factors],
                 evals: vec![F::zero(); factors],
                 steps: vec![F::zero(); factors],
+                grid: vec![F::zero(); product_grid_scratch_len(factors)],
             },
             |scratch, row, _x_in, e_in| {
                 match &cycle.tables {
@@ -1132,7 +1134,12 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         }
                     }
                 }
-                accumulate_product_grid(&mut scratch.evals, &scratch.steps, &mut scratch.lanes);
+                accumulate_product_grid(
+                    &scratch.evals,
+                    &scratch.steps,
+                    &mut scratch.lanes,
+                    &mut scratch.grid,
+                );
             },
             |_x_out, e_out, scratch| {
                 let mut out = vec![F::Accumulator::default(); factors];

@@ -22,7 +22,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 use std::sync::Arc;
 
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
@@ -35,7 +35,10 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
-use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
+use super::support::{
+    accumulate_product_grid, pin_derived_term, product_grid_scratch_len, GruenRoundMessage,
+    RoundProgress,
+};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -142,26 +145,111 @@ struct RamRaVirtualizationKernel<F: JoltField> {
 }
 
 impl<F: JoltField> RamRaVirtualizationKernel<F> {
-    /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
-    /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
+    /// `s(t) = ℓ(t) · q(t)` with `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`,
+    /// evaluated on the grid `[1, …, N−1, ∞]` through
+    /// [`accumulate_product_grid`]: `e_in` rides in the first factor, so the
+    /// products accumulate unreduced across each inner block, and
+    /// [`GruenRoundMessage::checked_toom`] recovers `q(0)` from the running
+    /// claim, evaluating it directly only when the linear factor vanishes
+    /// at zero.
     fn message(
         &self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        // The relation degree: one eq factor plus the committed-RA product.
+        let num_committed = self.folded_ra.num_polys();
+        if num_committed < 2 {
+            return self.message_few_factors(round, previous_claim);
+        }
+        let folded_ra = &self.folded_ra;
+
+        struct Scratch<F: JoltField> {
+            lanes: Vec<F::Accumulator>,
+            pairs: Vec<(F, F)>,
+            evals: Vec<F>,
+            steps: Vec<F>,
+            grid: Vec<F>,
+        }
+
+        let block_lanes = self.gruen.par_fold_out_in(
+            || Scratch {
+                lanes: vec![F::Accumulator::default(); num_committed],
+                pairs: vec![(F::zero(), F::zero()); num_committed],
+                evals: vec![F::zero(); num_committed],
+                steps: vec![F::zero(); num_committed],
+                grid: vec![F::zero(); product_grid_scratch_len(num_committed)],
+            },
+            |scratch, row, _x_in, e_in| {
+                folded_ra.lo_hi_all(row, &mut scratch.pairs);
+                for ((&(lo, hi), eval), step) in scratch
+                    .pairs
+                    .iter()
+                    .zip(scratch.evals.iter_mut())
+                    .zip(scratch.steps.iter_mut())
+                {
+                    *eval = hi;
+                    *step = hi - lo;
+                }
+                scratch.evals[0] *= e_in;
+                scratch.steps[0] *= e_in;
+                accumulate_product_grid(
+                    &scratch.evals,
+                    &scratch.steps,
+                    &mut scratch.lanes,
+                    &mut scratch.grid,
+                );
+            },
+            |_x_out, e_out, scratch| {
+                let mut out = vec![F::Accumulator::default(); num_committed];
+                for (out, lane) in out.iter_mut().zip(scratch.lanes) {
+                    out.fmadd(e_out, lane.reduce());
+                }
+                out
+            },
+            |mut a, b| {
+                for (a, b) in a.iter_mut().zip(b) {
+                    a.merge(b);
+                }
+                a
+            },
+        );
+
+        let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        self.gruen
+            .checked_toom(&q_evals, previous_claim, round, || {
+                self.gruen.par_fold_out_in(
+                    || {
+                        (
+                            vec![(F::zero(), F::zero()); num_committed],
+                            F::Accumulator::default(),
+                        )
+                    },
+                    |(pairs, sum), row, _, weight| {
+                        folded_ra.lo_hi_all(row, pairs);
+                        let value = pairs
+                            .iter()
+                            .fold(F::one(), |product, pair| product * pair.0);
+                        sum.fmadd(weight, value);
+                    },
+                    |_, weight, (_, sum)| weight * sum.reduce(),
+                    |a, b| a + b,
+                )
+            })
+    }
+
+    /// Fewer than two committed chunks: the grid needs `q(1)` among its
+    /// samples, so sample the summand explicitly at `t = 0, …, N + 1`.
+    fn message_few_factors(
+        &self,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 
         let mut q_evals = self.gruen.par_fold_out_in(
-            || {
-                (
-                    vec![F::zero(); points],
-                    vec![F::zero(); num_committed],
-                    vec![F::zero(); num_committed],
-                )
-            },
-            |(acc, evals, steps), row, _x_in, e_in| {
+            || vec![F::zero(); points],
+            |acc, row, _x_in, e_in| {
                 // With no committed RA polynomials, the product is one.
                 if num_committed == 0 {
                     for value in acc.iter_mut() {
@@ -169,23 +257,15 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                     }
                     return;
                 }
-                for position in 0..num_committed {
-                    let (lo, hi) = self.folded_ra.lo_hi(position, row);
-                    evals[position] = lo;
-                    steps[position] = hi - lo;
-                }
+                let (lo, hi) = self.folded_ra.lo_hi(0, row);
+                let step = hi - lo;
+                let mut eval = lo;
                 for value in acc.iter_mut() {
-                    let mut product = evals[0];
-                    for eval in &evals[1..] {
-                        product *= *eval;
-                    }
-                    *value += e_in * product;
-                    for (eval, step) in evals.iter_mut().zip(steps.iter()) {
-                        *eval += *step;
-                    }
+                    *value += e_in * eval;
+                    eval += step;
                 }
             },
-            |_x_out, e_out, (mut acc, _, _)| {
+            |_x_out, e_out, mut acc| {
                 for value in &mut acc {
                     *value *= e_out;
                 }
