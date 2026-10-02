@@ -430,12 +430,9 @@ fn clear_round_verifier_with_label_absorbs_label() {
     <LabeledRoundPoly<'_, F> as RoundMessage>::append_to_transcript(&labeled, &mut t1);
     let c1: F = t1.challenge();
 
-    // Absorb manually (should match)
+    // One batched message under the label (layout pinned in jolt-transcript).
     let mut t2 = Blake2bTranscript::new(b"sumcheck-test");
-    t2.append(&LabelWithCount(label, 2));
-    for coeff in poly.coefficients() {
-        coeff.append_to_transcript(&mut t2);
-    }
+    t2.append_scalars(label, poly.coefficients());
     let c2: F = t2.challenge();
 
     assert_eq!(c1, c2, "labeled absorption must match manual absorption");
@@ -471,14 +468,13 @@ fn clear_round_verifier_compressed_matches_manual_absorption() {
     <CompressedLabeledRoundPoly<'_, F> as RoundMessage>::append_to_transcript(&compressed, &mut t1);
     let ch1: F = t1.challenge();
 
-    // Manual absorb matching the compressed wire format: label_with_count(d), c0, c2..cd.
+    // One message matching the compressed wire format: c0, c2..cd.
     let mut t2 = Blake2bTranscript::new(b"sumcheck-test");
     let coeffs = poly.coefficients();
-    t2.append(&LabelWithCount(label, (coeffs.len() - 1) as u64));
-    coeffs[0].append_to_transcript(&mut t2);
-    for c in coeffs.iter().skip(2) {
-        c.append_to_transcript(&mut t2);
-    }
+    let transmitted: Vec<F> = std::iter::once(coeffs[0])
+        .chain(coeffs.iter().skip(2).copied())
+        .collect();
+    t2.append_scalars(label, &transmitted);
     let ch2: F = t2.challenge();
 
     assert_eq!(
@@ -1193,7 +1189,7 @@ fn sumcheck_statement_new_rejects_degree_zero() {
 #[test]
 fn clear_recorder_roundtrip_matches_compressed_verifier() {
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
-    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+    use crate::{append_opening_claims, append_sumcheck_claim};
 
     let num_vars = 3;
     let evals: Vec<F> = (0..1u64 << num_vars)
@@ -1234,7 +1230,7 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
         .proof
         .verify_compressed_boolean(num_vars, 1, claimed_sum, &mut verifier_transcript)
         .unwrap();
-    verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &reduction.value);
+    append_opening_claims(&mut verifier_transcript, &[reduction.value]);
 
     assert_eq!(reduction.value, final_eval);
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
@@ -1468,7 +1464,7 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     use crate::batch::{BatchMember, BatchPrelude};
     use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
-    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+    use crate::{append_opening_claims, append_sumcheck_claim};
     use jolt_field::Ring;
 
     let sum_long = F::from_u64(1234);
@@ -1536,9 +1532,7 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
         .proof
         .verify_compressed_boolean(3, 1, claimed_sum, &mut verifier_transcript)
         .unwrap();
-    for value in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
-    }
+    append_opening_claims(&mut verifier_transcript, &proved.member_claims);
 
     assert_eq!(reduction.value, proved.final_claim);
     assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
@@ -1555,7 +1549,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
     use crate::batch::{BatchMember, BatchPrelude};
     use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
-    use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+    use crate::{append_opening_claims, append_sumcheck_claim};
     use jolt_field::{Field, Ring};
 
     let sum_long = F::from_u64(1234);
@@ -1620,9 +1614,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
         .proof
         .verify_compressed_boolean(3, 1, claimed_sum, &mut verifier_transcript)
         .unwrap();
-    for value in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
-    }
+    append_opening_claims(&mut verifier_transcript, &proved.member_claims);
 
     assert_eq!(reduction.value, proved.final_claim);
     assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());

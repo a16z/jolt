@@ -13,10 +13,10 @@
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::CompressedPoly;
 use jolt_sumcheck::{
-    BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, SumcheckClaim, SumcheckVerifier,
+    append_round_coefficients, BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, SumcheckClaim, SumcheckVerifier,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -66,14 +66,11 @@ fuzz_target!(|data: &[u8]| {
     let mut running_sum = claimed_sum;
     let mut challenges: Vec<Fr> = Vec::with_capacity(num_vars);
     for round in &wire_rounds {
-        let stored = round.coeffs_except_linear_term();
-        transcript.append(&LabelWithCount(
+        append_round_coefficients(
+            &mut transcript,
             SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-            stored.len() as u64,
-        ));
-        for coefficient in stored {
-            coefficient.append_to_transcript(&mut transcript);
-        }
+            round.coeffs_except_linear_term(),
+        );
         let r: Fr = transcript.challenge();
         let full = round.decompress(running_sum);
         running_sum = full.evaluate(r);

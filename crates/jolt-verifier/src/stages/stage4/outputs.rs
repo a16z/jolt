@@ -105,12 +105,10 @@ impl<F: JoltField> Stage4OutputClaims<F> {
         values
     }
 
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label, matching the prover's commitment order.
+    /// Append every produced opening to the transcript in canonical order as one
+    /// opening-claim message, matching the prover's commitment order.
     pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
+        jolt_sumcheck::append_opening_claims(transcript, &self.opening_values());
     }
 }
 

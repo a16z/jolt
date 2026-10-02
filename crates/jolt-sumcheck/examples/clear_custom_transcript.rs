@@ -1,9 +1,9 @@
 use jolt_field::{Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof, ClearSumcheckRecorder,
-    ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
-    SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
+    append_opening_claims, prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof,
+    ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
+    SumcheckProof, SumcheckRecorder, SumcheckVerifier, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
@@ -117,9 +117,7 @@ fn main() -> Result<(), SumcheckError<F>> {
         SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         &mut verifier_transcript,
     )?;
-    for opening_claim in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, opening_claim);
-    }
+    append_opening_claims(&mut verifier_transcript, &proved.member_claims);
 
     assert_eq!(reduced.point.as_slice(), &[F::from_u64(7)]);
     assert_eq!(proved.member_claims, vec![F::from_u64(17)]);

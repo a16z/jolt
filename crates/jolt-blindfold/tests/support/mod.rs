@@ -16,9 +16,9 @@ use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::{CompressedPoly, EqPolynomial};
 use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
-    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
-    CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage, SumcheckDomainSpec,
-    SumcheckR1csLayout, SumcheckStatement, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    append_round_coefficients, CommittedOutputClaims, CommittedRound, CommittedRoundWitness,
+    CommittedSumcheckConsistency, CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage,
+    SumcheckDomainSpec, SumcheckR1csLayout, SumcheckStatement, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, Transcript};
 use rand_core::RngCore;
@@ -197,13 +197,20 @@ pub fn assert_empirical_distribution(projection: &StatisticalProjection) {
     assert_runs_around_median(projection);
 }
 
+/// Four standard deviations of the sample correlation of `n` independent
+/// pairs, about `1/sqrt(n)` each: a fixed 0.25 bound is under 3 sigma at 128
+/// samples and fails for ordinary seeds.
+fn correlation_bound(n: usize) -> f64 {
+    4.0 / (n as f64).sqrt()
+}
+
 pub fn assert_empirical_pairwise_independence(
     lhs: &StatisticalProjection,
     rhs: &StatisticalProjection,
 ) {
     let correlation = pearson_correlation(&lhs.values, &rhs.values);
     assert!(
-        correlation.abs() < 0.25,
+        correlation.abs() < correlation_bound(lhs.values.len()),
         "{} and {} have suspicious pairwise correlation: {correlation}",
         lhs.label,
         rhs.label
@@ -267,9 +274,10 @@ fn assert_lag_one_correlation(projection: &StatisticalProjection) {
         &projection.values[..projection.values.len() - 1],
         &projection.values[1..],
     );
+    let bound = correlation_bound(projection.values.len() - 1);
     assert!(
-        correlation.abs() < 0.25,
-        "{} has suspicious lag-one correlation: {correlation}",
+        correlation.abs() < bound,
+        "{} has suspicious lag-one correlation: {correlation} (bound {bound})",
         projection.label
     );
 }
@@ -1738,7 +1746,7 @@ fn prove_slow_sumcheck(
         let mut compressed = Vec::with_capacity(degree);
         compressed.push(coefficients[0]);
         compressed.extend_from_slice(&coefficients[2..]);
-        transcript.append_values(label, &compressed);
+        append_round_coefficients(transcript, label, &compressed);
         let challenge = transcript.challenge();
         running_sum = eval_poly(&coefficients, challenge);
         prefix.push(challenge);

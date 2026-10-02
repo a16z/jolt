@@ -68,9 +68,10 @@
 //!
 //! Polynomial and clear sumcheck arithmetic is generic over
 //! [`Field`](jolt_field::Field). Stock clear transcript adapters additionally
-//! require [`AppendToTranscript`](jolt_transcript::AppendToTranscript) where
-//! field values are absorbed. Optimized Jolt kernels and commitment backends
-//! retain their stronger capability bounds at their own integration points.
+//! require [`CanonicalBytes`] where field values are absorbed, each labeled
+//! vector as one transcript message. Optimized Jolt kernels and commitment
+//! backends retain their stronger capability bounds at their own integration
+//! points.
 //!
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -88,6 +89,9 @@
     clippy::host_endian_bytes,
     clippy::wildcard_enum_match_arm
 )]
+
+use jolt_field::CanonicalBytes;
+use jolt_transcript::{AppendToTranscript, Transcript};
 
 pub mod batch;
 pub mod claim;
@@ -116,11 +120,35 @@ pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
 /// Transcript label used when a produced opening claim is absorbed in the clear.
 pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
 
+/// Absorbs produced opening claims in their canonical order as one message
+/// under [`OPENING_CLAIM_TRANSCRIPT_LABEL`]. The single home of the clear
+/// opening-claim absorption shared by the prover and verifier; an empty claim
+/// list absorbs nothing.
+pub fn append_opening_claims<F, T>(transcript: &mut T, values: &[F])
+where
+    F: CanonicalBytes,
+    T: Transcript,
+{
+    if !values.is_empty() {
+        transcript.append_scalars(OPENING_CLAIM_TRANSCRIPT_LABEL, values);
+    }
+}
+
+/// Absorbs one round polynomial's transmitted coefficients as one message
+/// under `label`. Shared by the round-message encoders and the clear verifier.
+pub fn append_round_coefficients<F, T>(transcript: &mut T, label: &'static [u8], coefficients: &[F])
+where
+    F: CanonicalBytes,
+    T: Transcript,
+{
+    transcript.append_scalars(label, coefficients);
+}
+
 /// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
 pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
 where
-    A: jolt_transcript::AppendToTranscript,
-    T: jolt_transcript::Transcript,
+    A: AppendToTranscript,
+    T: Transcript,
 {
     transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
 }
