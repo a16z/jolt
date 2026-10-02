@@ -14,7 +14,7 @@ use std::sync::{Arc, OnceLock};
 use jolt_akita::{no_selected_row, TraceOneHotRows};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_packing_plan, committed_program_packing_plan, PrefixPackedObjectPlan,
+    advice_packing_plan, PrecommittedPackingPlan, PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
@@ -412,24 +412,16 @@ pub struct DirectProgramObjects<PCS: CommitmentScheme> {
 pub fn commit_direct_program<PCS>(
     setup_context: &PCS::SetupContext,
     program: &JoltProgramPreprocessing,
-    bytecode_chunk_count: usize,
+    plan: &PrecommittedPackingPlan,
     trace_order: TracePolynomialOrder,
 ) -> Result<DirectProgramObjects<PCS>, ProverError<PCS::Field>>
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
-    let bytecode_len = program.bytecode.bytecode.len();
     let image_words = program_image_words_padded(program);
-    let plan = committed_program_packing_plan(
-        bytecode_len,
-        bytecode_chunk_count,
-        program.ram.bytecode_words.len(),
-        trace_order,
-    )
-    .map_err(commit_failed)?;
     let mut chunk_coeffs = jolt_kernels::committed_program::build_committed_bytecode_chunk_coeffs(
         &program.bytecode.bytecode,
-        bytecode_chunk_count,
+        plan.bytecode_chunks().len(),
         trace_order,
     )
     .map_err(commit_failed)?

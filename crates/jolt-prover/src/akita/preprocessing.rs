@@ -6,7 +6,7 @@ use jolt_akita::{
 };
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
-use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
+use jolt_claims::protocols::jolt::lattice::{advice_packing_plan, committed_program_packing_plan};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
@@ -100,6 +100,25 @@ pub(crate) fn grouped_setup_params(
                 reason: error.to_string(),
             }
         })?;
+    let catalog = schedule_artifacts
+        .one_hot_catalog(one_hot_k)
+        .map_err(|error| PreprocessingError::InvalidConfiguration {
+            reason: error.to_string(),
+        })?;
+    let admitted = catalog.rows().any(|row| {
+        let profiles = row.profiles();
+        profiles.precommitteds.is_empty()
+            && profiles.final_group.group.num_vars() == shape.num_vars
+            && profiles.final_group.group.num_polynomials() == shape.num_polys
+    });
+    if !admitted {
+        return Err(PreprocessingError::InvalidConfiguration {
+            reason: format!(
+                "Akita K={one_hot_k} catalog has no canonical trace schedule for {} variables and {} polynomials",
+                shape.num_vars, shape.num_polys,
+            ),
+        });
+    }
     let untrusted_physical_vars = untrusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Untrusted))
         .transpose()?;
@@ -174,20 +193,36 @@ pub fn preprocess_committed_with_advice(
                 reason: "entry address is absent from bytecode preprocessing".to_owned(),
             })?;
     let trace_order = config.trace_polynomial_order;
-    let direct_program = commit_direct_program::<AkitaScheme>(
-        schedule_artifacts,
-        &program,
+    let direct_plan = committed_program_packing_plan(
+        program.bytecode.bytecode.len(),
         bytecode_chunk_count,
+        program.ram.bytecode_words.len(),
         trace_order,
     )
     .map_err(|error| PreprocessingError::InvalidCommittedProgram {
         reason: error.to_string(),
     })?;
-    let direct_program_physical_vars: Vec<usize> = direct_program
-        .objects
-        .iter()
-        .map(|object| object.plan.packing().packed_num_vars())
+    let direct_program_physical_vars: Vec<usize> = direct_plan
+        .objects()
+        .map(|object| object.packing().packed_num_vars())
         .collect();
+    let (pcs_setup, verifier_setup) = grouped_setup(
+        schedule_artifacts,
+        &program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        &direct_program_physical_vars,
+    )?;
+    let direct_program = commit_direct_program::<AkitaScheme>(
+        schedule_artifacts,
+        &program,
+        &direct_plan,
+        trace_order,
+    )
+    .map_err(|error| PreprocessingError::InvalidCommittedProgram {
+        reason: error.to_string(),
+    })?;
     let committed_program = CommittedProgramPreprocessing {
         meta: metadata,
         memory_layout: program.memory_layout.clone(),
@@ -200,14 +235,6 @@ pub fn preprocess_committed_with_advice(
         bytecode_chunk_count,
         trace_order,
     };
-    let (pcs_setup, verifier_setup) = grouped_setup(
-        schedule_artifacts,
-        &program,
-        config,
-        untrusted_advice,
-        trusted_advice,
-        &direct_program_physical_vars,
-    )?;
     let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Committed(committed_program),
         verifier_setup,
@@ -276,4 +303,42 @@ fn validate_trace_order(config: &ProverConfig) -> Result<(), PreprocessingError>
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert preprocessing metadata admission"
+)]
+mod tests {
+    use super::*;
+    use crate::config::{one_hot_config, read_write_config};
+    use common::jolt_device::MemoryLayout;
+    use jolt_riscv::RV64IMAC_JOLT;
+
+    #[test]
+    fn trace_schedule_admission_rejects_2_to_32_before_setup() {
+        let program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1usize << 32,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let config = ProverConfig {
+            trace_length: 1usize << 32,
+            ram_K: 1 << 12,
+            rw_config: read_write_config(32, 12),
+            one_hot_config: one_hot_config(32),
+            trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+        };
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        assert!(matches!(
+            grouped_setup_params(&artifacts, &program, &config, false, false, &[]),
+            Err(PreprocessingError::InvalidConfiguration { reason })
+                if reason.contains("no canonical trace schedule"),
+        ));
+    }
 }

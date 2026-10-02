@@ -33,6 +33,8 @@
 //! O(T + K) storage, but with a larger peak constant than cycle-first.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use super::ram_trace::SharedRamAddresses;
+use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
@@ -407,6 +409,24 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
 }
 
 impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
+    fn preflight(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        dimensions: ReadWriteDimensions,
+    ) -> Result<(), KernelError<F>> {
+        if dimensions.log_t() > 32 || dimensions.log_k() > 32 {
+            return Err(KernelError::Unsupported {
+                reason: "optimized RAM read-write checking packs cycle and address indices as u32",
+            });
+        }
+        let _ = ReadWriteOrder::new::<F>(dimensions)?;
+        // Stage 2 consumes this same column; moving its extraction forward
+        // admits actual addresses without another trace walk or address copy.
+        let _ = SharedRamAddresses::shared(session, witness, dimensions.log_t())?;
+        Ok(())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,

@@ -354,12 +354,68 @@ pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k:
 }
 
 #[cfg(test)]
-#[expect(clippy::panic, reason = "test module")]
+#[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_field::Fr;
     use jolt_witness::testing::with_sample_backend;
 
     use super::*;
+
+    #[test]
+    fn address_encoding_reserves_only_the_no_access_sentinel() {
+        assert_eq!(encode_address::<Fr>(None).unwrap(), NO_ACCESS);
+        assert_eq!(encode_address::<Fr>(Some(0)).unwrap(), 0);
+        assert_eq!(
+            encode_address::<Fr>(Some(u64::from(u32::MAX) - 1)).unwrap(),
+            u32::MAX - 1,
+        );
+        for address in [u64::from(u32::MAX), u64::from(u32::MAX) + 1] {
+            assert!(matches!(
+                encode_address::<Fr>(Some(address)),
+                Err(KernelError::Unsupported { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn preflight_reuses_the_stage_two_address_column() {
+        use crate::optimized::OptimizedBackend;
+        use crate::{PrepareKernel, ReferenceBackend};
+        use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
+        use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
+
+        with_sample_backend(|witness| {
+            let mut session = ProofSession::default();
+            <ReferenceBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
+                &ReferenceBackend,
+                &mut session,
+                witness,
+                ReadWriteDimensions::new(2, 3, 2, 3),
+            )
+            .unwrap();
+            assert!(session.state::<SharedRamAddresses>().is_none());
+            assert!(matches!(
+                <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
+                    &OptimizedBackend,
+                    &mut session,
+                    witness,
+                    ReadWriteDimensions::new(2, 3, 1, 1),
+                ),
+                Err(KernelError::Unsupported { .. })
+            ));
+            assert!(session.state::<SharedRamAddresses>().is_none());
+            <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
+                &OptimizedBackend,
+                &mut session,
+                witness,
+                ReadWriteDimensions::new(2, 3, 2, 3),
+            )
+            .unwrap();
+            let admitted = SharedRamAddresses::shared::<Fr>(&mut session, witness, 2).unwrap();
+            let stage_two = RamAccessColumns::collect_full::<Fr>(&mut session, witness, 2).unwrap();
+            assert!(Arc::ptr_eq(&admitted, &stage_two.addresses));
+        });
+    }
 
     #[test]
     fn rejects_session_carry_from_another_cycle_domain() {

@@ -30,6 +30,19 @@ setup-offloaded schedule, including every production K=256 trace (K=256 starts
 at `2^25`). This is an offline catalog policy: proving and verification simply
 resolve the exact admitted row and never choose a mode dynamically.
 
+The K=256 catalog ends at physical arity 44: a `2^31`-cycle trace plus
+13 packing variables. This is a schedule boundary, not a resource guarantee.
+The bytecode/RAM columns must fit the fixed trace selector capacity, and every
+auxiliary object must admit a grouped row under the pinned planner policy.
+The optimized instruction kernel rejects traces of `2^32` cycles or more.
+Maximum-size coverage checks catalog and setup metadata without allocating a
+`2^31`-row witness; end-to-end tests exercise smaller instances.
+
+Catalog identity is transcript-bound. Extending a catalog changes that identity
+even when every previously provisioned row is preserved. Existing proofs keep
+their matching serialized verifier preprocessing; newly generated preprocessing
+is a distinct setup and is not interchangeable with the old one.
+
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:
 

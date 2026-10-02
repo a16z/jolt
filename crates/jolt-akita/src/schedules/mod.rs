@@ -33,7 +33,7 @@ pub mod emit {
     /// K=16 adds six selector variables to column arity `4 + log_T`.
     pub const K16_NUM_VARS: (usize, usize) = (12, 34);
     /// K=256 adds five selector variables to column arity `8 + log_T`.
-    pub const K256_NUM_VARS: (usize, usize) = (12, 43);
+    pub const K256_NUM_VARS: (usize, usize) = (12, 44);
     /// Dense advice, committed-program, and field-register increment objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
 
