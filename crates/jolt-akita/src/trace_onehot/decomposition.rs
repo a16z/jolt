@@ -409,24 +409,10 @@ fn add_rotated_dense_chunked_contributions<const D: usize>(
     dst: &mut [[i32; D]],
     rotated: &[[i16; D]],
     contributions: &[(usize, usize)],
-    chunk: impl Fn(usize) -> usize + Copy,
+    chunk: usize,
     table_index: impl Fn(usize, usize) -> usize + Copy,
 ) {
-    if dst.len() == 1 {
-        add_rotated_dense_contributions(&mut dst[0], rotated, contributions, table_index);
-        return;
-    }
-    let mut remaining = contributions;
-    while let Some(&(column, _)) = remaining.first() {
-        let chunk_index = chunk(column);
-        let run_len = remaining
-            .iter()
-            .take_while(|&&(column, _)| chunk(column) == chunk_index)
-            .count();
-        let (run, tail) = remaining.split_at(run_len);
-        add_rotated_dense_contributions(&mut dst[chunk_index], rotated, run, table_index);
-        remaining = tail;
-    }
+    add_rotated_dense_contributions(&mut dst[chunk], rotated, contributions, table_index);
 }
 
 #[inline(always)]
@@ -693,7 +679,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                     &mut compressed[dst_start..][..num_chunks],
                                     local_rotations,
                                     contributions,
-                                    |_| chunk,
+                                    chunk,
                                     |column, coefficient| column * D + coefficient,
                                 );
                             },
@@ -711,7 +697,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                         &mut compressed[dst_start..][..num_chunks],
                                         rotated,
                                         contributions,
-                                        |_| chunk,
+                                        chunk,
                                         |column, coefficient| {
                                             ((trace_block * source.rows.num_columns() + column) * D)
                                                 + coefficient
