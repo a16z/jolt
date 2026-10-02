@@ -97,6 +97,7 @@ members = [
   "examples/muldiv/guest",
   "examples/field-ops",
   "examples/field-ops/guest",
+  "examples/field-limbs/guest",
   "examples/overflow",
   "examples/overflow/guest",
   "examples/memory-ops",

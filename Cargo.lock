@@ -2534,6 +2534,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "field-limbs-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "field-ops"
 version = "0.1.0"
 dependencies = [
