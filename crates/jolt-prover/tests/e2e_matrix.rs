@@ -2,8 +2,8 @@
 //!
 //! Every case checks native expected output, proves with the optimized backend,
 //! and verifies through the public verifier API. Field-inline builds select the
-//! active field-ops and inactive muldiv cases; ordinary builds select the general
-//! guest table. Specialized suites retain tampering, reference-backend parity,
+//! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
+//! builds select the general guest table. Specialized suites retain tampering, reference-backend parity,
 //! committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]

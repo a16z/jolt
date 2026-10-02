@@ -464,6 +464,10 @@ jobs:
       # examples; the ci-bench sweep excludes this one).
       - name: Run the field-ops example
         run: cargo run --profile ci -p field-ops --features field-inline
+      # Pins the example's static field-inline row budget, including the
+      # SDK limb conversions' modulus binding.
+      - name: Run the field-ops example tests
+        run: cargo nextest run --cargo-profile ci -p field-ops --features field-inline --cargo-quiet
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
@@ -907,6 +911,10 @@ jobs:
       # The packed chain's two-limb field value encoding on the tracer side.
       - name: Run tracer tests with field-inline,fp128-field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
+      # The guest platform crate the tracer shares with guests, including the
+      # field-inline modulus table and canonicality predicate.
+      - name: Run jolt-platform tests
+        run: cargo nextest run --cargo-profile ci -p jolt-platform --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests
