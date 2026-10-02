@@ -10,7 +10,9 @@ use crate::protocols::jolt::geometry::spartan::{
 use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, SpartanOuterPublic,
 };
-use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use std::collections::BTreeSet;
+
+use crate::{derived, opening, referenced_openings, InputClaims, OutputClaims, SymbolicSumcheck};
 
 /// Consumed Spartan outer remainder input: the uni-skip's reduced opening. The
 /// relation reads only this value (its output point comes from its own sumcheck
@@ -204,6 +206,14 @@ impl SymbolicSumcheck for OuterRemainder {
         let (az, bz) = self.output_factor_expressions();
         derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
     }
+
+    /// The openings of `az` and `bz`, without expanding their product: each
+    /// expanded term is a distinct weight-indexed monomial with coefficient
+    /// one, so no term cancels and the product references exactly these.
+    fn expected_output_openings<F: Ring>(&self) -> BTreeSet<JoltOpeningId> {
+        let (az, bz) = self.output_factor_expressions::<F>();
+        referenced_openings([az, bz])
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +222,15 @@ mod tests {
     use crate::protocols::jolt::JoltVirtualPolynomial;
     use jolt_field::{Fr, Ring};
     use jolt_riscv::CIRCUIT_FLAGS;
+
+    #[test]
+    fn expected_output_openings_match_expanded_output() {
+        let relation = OuterRemainder::new(SpartanOuterDimensions::rv64(3));
+        assert_eq!(
+            relation.expected_output_openings::<Fr>(),
+            referenced_openings([relation.output_expression::<Fr>()])
+        );
+    }
 
     /// The expanded `output_expression` reproduces the factored quadratic form
     /// `tau_kernel * (Σ az[i] o[i] + az_c) * (Σ bz[i] o[i] + bz_c)` when fed the

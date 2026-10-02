@@ -75,16 +75,29 @@ pub trait SymbolicSumcheck {
     where
         Self::OpeningId: Ord,
     {
-        let mut openings = BTreeSet::new();
-        for term in self.output_expression::<F>().terms {
+        referenced_openings([self.output_expression::<F>()])
+    }
+}
+
+/// The distinct opening ids referenced by `expressions`.
+///
+/// A relation whose output is a product of factors can pass the factors
+/// instead of their expansion when no product term cancels: then the product
+/// references exactly the openings of its factors.
+pub fn referenced_openings<F, O: Ord, D, C>(
+    expressions: impl IntoIterator<Item = Expr<F, O, D, C>>,
+) -> BTreeSet<O> {
+    let mut openings = BTreeSet::new();
+    for expression in expressions {
+        for term in expression.terms {
             for factor in term.factors {
                 if let Source::Opening(id) = factor {
                     let _ = openings.insert(id);
                 }
             }
         }
-        openings
     }
+    openings
 }
 
 #[cfg(test)]
