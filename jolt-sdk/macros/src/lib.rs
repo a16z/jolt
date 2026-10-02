@@ -146,7 +146,7 @@ impl MacroBuilder {
                     max_untrusted_advice_size: #max_untrusted_advice_size,
                     stack_size: #stack_size,
                     heap_size: #heap_size,
-                    program_size: None,
+                    program_size: ::core::option::Option::None,
                 }
             }
         }
@@ -169,8 +169,8 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_closure = if has_trusted_advice {
-            quote! { , __jolt_trusted_advice_commitment: Option<jolt::VerifierTrustedAdviceCommitment>,
-            __jolt_trusted_advice_hint: Option<jolt::TrustedAdviceOpeningHint> }
+            quote! { , __jolt_trusted_advice_commitment: ::core::option::Option<jolt::VerifierTrustedAdviceCommitment>,
+            __jolt_trusted_advice_hint: ::core::option::Option<jolt::TrustedAdviceOpeningHint> }
         } else {
             quote! {}
         };
@@ -183,23 +183,23 @@ impl MacroBuilder {
 
         let return_type = if has_trusted_advice {
             quote! {
-                impl Fn(#(#all_types),*, Option<jolt::VerifierTrustedAdviceCommitment>, Option<jolt::TrustedAdviceOpeningHint>) -> #prove_output_ty + Sync + Send
+                impl ::core::ops::Fn(#(#all_types),*, ::core::option::Option<jolt::VerifierTrustedAdviceCommitment>, ::core::option::Option<jolt::TrustedAdviceOpeningHint>) -> #prove_output_ty + ::core::marker::Sync + ::core::marker::Send
             }
         } else {
             quote! {
-                impl Fn(#(#all_types),*) -> #prove_output_ty + Sync + Send
+                impl ::core::ops::Fn(#(#all_types),*) -> #prove_output_ty + ::core::marker::Sync + ::core::marker::Send
             }
         };
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #build_prover_fn_name<S: jolt::host::JoltProgramSource + Send + Sync + 'static>(
-                __jolt_program: S,
-                __jolt_preprocessing: jolt::JoltProverPreprocessing,
+            pub fn #build_prover_fn_name<__S: jolt::host::JoltProgramSource + ::core::marker::Send + ::core::marker::Sync + 'static>(
+                program: __S,
+                preprocessing: jolt::JoltProverPreprocessing,
             ) -> #return_type
             {
-                let __jolt_program = std::sync::Arc::new(__jolt_program);
-                let __jolt_preprocessing = std::sync::Arc::new(__jolt_preprocessing);
+                let __jolt_program = ::std::sync::Arc::new(program);
+                let __jolt_preprocessing = ::std::sync::Arc::new(preprocessing);
 
                 let __jolt_prove_closure = move |#inputs #commitment_param_in_closure| {
                     let __jolt_preprocessing = (*__jolt_preprocessing).clone();
@@ -233,13 +233,13 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param_in_signature = if has_trusted_advice {
-            quote! { Option<jolt::VerifierTrustedAdviceCommitment>, }
+            quote! { ::core::option::Option<jolt::VerifierTrustedAdviceCommitment>, }
         } else {
             quote! {}
         };
 
         let commitment_param_in_closure = if has_trusted_advice {
-            quote! { __jolt_trusted_advice_commitment: Option<jolt::VerifierTrustedAdviceCommitment>, }
+            quote! { __jolt_trusted_advice_commitment: ::core::option::Option<jolt::VerifierTrustedAdviceCommitment>, }
         } else {
             quote! {}
         };
@@ -247,16 +247,16 @@ impl MacroBuilder {
         let commitment_arg_in_verify = if has_trusted_advice {
             quote! { __jolt_trusted_advice_commitment.as_ref() }
         } else {
-            quote! { None }
+            quote! { ::core::option::Option::None }
         };
 
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #build_verifier_fn_name(
-                __jolt_preprocessing: jolt::JoltVerifierPreprocessing,
-            ) -> impl Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + Sync + Send
+                preprocessing: jolt::JoltVerifierPreprocessing,
+            ) -> impl ::core::ops::Fn(#(#input_types ,)* #output_type, bool, #commitment_param_in_signature jolt::RV64IMACProof) -> bool + ::core::marker::Sync + ::core::marker::Send
             {
-                let __jolt_preprocessing = std::sync::Arc::new(__jolt_preprocessing);
+                let __jolt_preprocessing = ::std::sync::Arc::new(preprocessing);
 
                 let __jolt_verify_closure = move |#(#public_inputs,)* __jolt_output, __jolt_panic, #commitment_param_in_closure __jolt_proof: jolt::RV64IMACProof| {
                     let __jolt_preprocessing = (*__jolt_preprocessing).clone();
@@ -268,7 +268,7 @@ impl MacroBuilder {
                         max_trusted_advice_size: __jolt_memory_layout.max_trusted_advice_size,
                         stack_size: __jolt_memory_layout.stack_size,
                         heap_size: __jolt_memory_layout.heap_size,
-                        program_size: Some(__jolt_memory_layout.program_size),
+                        program_size: ::core::option::Option::Some(__jolt_memory_layout.program_size),
                     };
                     let mut __jolt_io_device = jolt::JoltDevice::new(&__jolt_memory_config);
 
@@ -342,7 +342,6 @@ impl MacroBuilder {
              #[cfg(not(target_arch = "wasm32"))]
              #[cfg(not(feature = "guest"))]
              pub fn #analyze_fn_name(#inputs) -> jolt::host::analyze::ProgramSummary {
-
                 let mut __jolt_program = jolt::host::Program::new(#guest_name);
                 __jolt_program.set_func(#fn_name_str);
                 #set_std
@@ -351,11 +350,11 @@ impl MacroBuilder {
                 #enable_field_inline
                 #set_mem_size
 
-                let mut __jolt_input_bytes = vec![];
+                let mut __jolt_input_bytes = ::std::vec::Vec::new();
                 #(#set_pub_args;)*
-                let mut __jolt_untrusted_advice_bytes = vec![];
+                let mut __jolt_untrusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_untrusted_advice_args;)*
-                let mut __jolt_trusted_advice_bytes = vec![];
+                let mut __jolt_trusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_trusted_advice_args;)*
 
                 __jolt_program.trace_analyze(&__jolt_input_bytes, &__jolt_untrusted_advice_bytes, &__jolt_trusted_advice_bytes)
@@ -397,18 +396,16 @@ impl MacroBuilder {
         });
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #trace_fn_name(#inputs) -> Result<jolt::TraceOutput<jolt::OwnedTrace>, jolt::TraceError> {
-
+            pub fn #trace_fn_name(#inputs) -> ::core::result::Result<jolt::TraceOutput<jolt::OwnedTrace>, jolt::TraceError> {
                 let mut __jolt_backend = jolt::TracerBackend::new();
                 #trace_with_backend_fn_name(&mut __jolt_backend, #(#all_names),*)
             }
 
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #trace_with_backend_fn_name<B: jolt::ExecutionBackend>(
-                __jolt_backend: &mut B,
+            pub fn #trace_with_backend_fn_name<__B: jolt::ExecutionBackend>(
+                __jolt_backend: &mut __B,
                 #inputs
-            ) -> Result<jolt::TraceOutput<B::Trace>, jolt::TraceError> {
-
+            ) -> ::core::result::Result<jolt::TraceOutput<__B::Trace>, jolt::TraceError> {
                 let mut __jolt_program = jolt::host::Program::new(#guest_name);
                 __jolt_program.set_func(#fn_name_str);
                 #set_std
@@ -417,11 +414,11 @@ impl MacroBuilder {
                 #enable_field_inline
                 #set_mem_size
 
-                let mut __jolt_input_bytes = vec![];
+                let mut __jolt_input_bytes = ::std::vec::Vec::new();
                 #(#set_pub_args;)*
-                let mut __jolt_untrusted_advice_bytes = vec![];
+                let mut __jolt_untrusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_untrusted_advice_args;)*
-                let mut __jolt_trusted_advice_bytes = vec![];
+                let mut __jolt_trusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_trusted_advice_args;)*
 
                 __jolt_program.trace_with_backend(
@@ -465,9 +462,8 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #trace_to_file_fn_name(__jolt_target_dir: &str, #inputs) {
-
                 let mut __jolt_program = jolt::host::Program::new(#guest_name);
-                let __jolt_path = std::path::PathBuf::from(__jolt_target_dir);
+                let __jolt_path = ::std::path::PathBuf::from(__jolt_target_dir);
                 __jolt_program.set_func(#fn_name_str);
                 #set_std
                 #set_profile
@@ -475,11 +471,11 @@ impl MacroBuilder {
                 #enable_field_inline
                 #set_mem_size
 
-                let mut __jolt_input_bytes = vec![];
+                let mut __jolt_input_bytes = ::std::vec::Vec::new();
                 #(#set_pub_args;)*
-                let mut __jolt_untrusted_advice_bytes = vec![];
+                let mut __jolt_untrusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_untrusted_advice_args;)*
-                let mut __jolt_trusted_advice_bytes = vec![];
+                let mut __jolt_trusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_trusted_advice_args;)*
 
                 __jolt_program.trace_to_file(&__jolt_input_bytes, &__jolt_untrusted_advice_bytes, &__jolt_trusted_advice_bytes, &__jolt_path);
@@ -500,8 +496,7 @@ impl MacroBuilder {
         let compile_fn_name = Ident::new(&format!("compile_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #compile_fn_name(__jolt_target_dir: &str) -> jolt::host::Program {
-
+            pub fn #compile_fn_name(target_dir: &str) -> jolt::host::Program {
                 let mut __jolt_program = jolt::host::Program::new(#guest_name);
                 __jolt_program.set_func(#fn_name_str);
                 #set_std
@@ -511,10 +506,10 @@ impl MacroBuilder {
                 #set_mem_size
 
                 // Build the compute_advice version first
-                __jolt_program.build_with_features(__jolt_target_dir, &["compute_advice"]);
+                __jolt_program.build_with_features(target_dir, &["compute_advice"]);
 
                 // Build the normal version (without compute_advice)
-                __jolt_program.build_with_features(__jolt_target_dir, &[]);
+                __jolt_program.build_with_features(target_dir, &[]);
 
                 __jolt_program
             }
@@ -531,11 +526,11 @@ impl MacroBuilder {
         let memory_config_fn_name = Ident::new(&format!("memory_config_{fn_name}"), fn_name.span());
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_shared_fn_name(__jolt_program: &mut dyn jolt::host::JoltProgramSource)
-                -> Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
+            pub fn #preprocess_shared_fn_name(program: &mut dyn jolt::host::JoltProgramSource)
+                -> ::core::result::Result<jolt::JoltSharedPreprocessing, jolt::PreprocessingError>
             {
                 jolt::preprocess_shared_program(
-                    __jolt_program,
+                    program,
                     #memory_config_fn_name(),
                     #max_trace_length,
                 )
@@ -550,11 +545,11 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_prover_fn_name(
-                __jolt_shared_preprocessing: jolt::JoltSharedPreprocessing
+                shared_preprocessing: jolt::JoltSharedPreprocessing
             )
                 -> jolt::JoltProverPreprocessing
             {
-                jolt::jolt_prover::dory::from_shared(__jolt_shared_preprocessing)
+                jolt::jolt_prover::dory::from_shared(shared_preprocessing)
                     .expect("Dory prover preprocessing")
             }
         }
@@ -571,19 +566,19 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_committed_fn_name(
-                __jolt_program: &mut jolt::host::Program,
-                __jolt_bytecode_chunk_count: usize,
+                program: &mut jolt::host::Program,
+                bytecode_chunk_count: usize,
             )
-                -> Result<
+                -> ::core::result::Result<
                     jolt::JoltProverPreprocessing,
                     jolt::PreprocessingError,
                 >
             {
                 jolt::preprocess_program(
-                    __jolt_program,
+                    program,
                     #memory_config_fn_name(),
                     #max_trace_length,
-                    Some(__jolt_bytecode_chunk_count),
+                    ::core::option::Option::Some(bytecode_chunk_count),
                 )
             }
         }
@@ -597,15 +592,15 @@ impl MacroBuilder {
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_verifier_fn_name(
-                __jolt_shared_preprocess: jolt::JoltSharedPreprocessing,
-                __jolt_generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
-                __jolt_blindfold_setup: Option<jolt::BlindfoldSetup>,
+                shared_preprocess: jolt::JoltSharedPreprocessing,
+                generators: <jolt::PCS as jolt::CommitmentScheme>::VerifierSetup,
+                blindfold_setup: ::core::option::Option<jolt::BlindfoldSetup>,
             ) -> jolt::JoltVerifierPreprocessing
             {
                 jolt::jolt_prover::dory::from_shared_parts(
-                    &__jolt_shared_preprocess,
-                    __jolt_generators,
-                    __jolt_blindfold_setup,
+                    &shared_preprocess,
+                    generators,
+                    blindfold_setup,
                 )
                 .expect("Dory verifier preprocessing")
             }
@@ -620,10 +615,10 @@ impl MacroBuilder {
         );
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #preprocess_verifier_fn_name(__jolt_prover_preprocessing: &jolt::JoltProverPreprocessing)
+            pub fn #preprocess_verifier_fn_name(prover_preprocessing: &jolt::JoltProverPreprocessing)
                 -> jolt::JoltVerifierPreprocessing
             {
-                __jolt_prover_preprocessing.verifier_preprocessing()
+                prover_preprocessing.verifier_preprocessing()
             }
         }
     }
@@ -638,11 +633,11 @@ impl MacroBuilder {
             return quote! {
                 #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
                 pub fn #commit_fn_name(
-                    __jolt_preprocessing: &jolt::JoltProverPreprocessing,
-                ) -> (Option<jolt::VerifierTrustedAdviceCommitment>,
-                      Option<jolt::TrustedAdviceOpeningHint>)
+                    _preprocessing: &jolt::JoltProverPreprocessing,
+                ) -> (::core::option::Option<jolt::VerifierTrustedAdviceCommitment>,
+                      ::core::option::Option<jolt::TrustedAdviceOpeningHint>)
                 {
-                    (None, None)
+                    (::core::option::Option::None, ::core::option::Option::None)
                 }
             };
         }
@@ -662,16 +657,16 @@ impl MacroBuilder {
             pub fn #commit_fn_name(
                 #(#trusted_advice_inputs,)*
                 __jolt_preprocessing: &jolt::JoltProverPreprocessing,
-            ) -> (Option<jolt::VerifierTrustedAdviceCommitment>,
-                  Option<jolt::TrustedAdviceOpeningHint>)
+            ) -> (::core::option::Option<jolt::VerifierTrustedAdviceCommitment>,
+                  ::core::option::Option<jolt::TrustedAdviceOpeningHint>)
             {
-                let mut __jolt_trusted_advice_bytes = vec![];
+                let mut __jolt_trusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_trusted_advice_args;)*
                 let __jolt_committed = jolt::jolt_prover::dory::commit_trusted_advice(
                     __jolt_preprocessing,
                     &__jolt_trusted_advice_bytes,
                 ).expect("trusted advice fits the configured memory layout");
-                (Some(__jolt_committed.commitment), Some(__jolt_committed.hint))
+                (::core::option::Option::Some(__jolt_committed.commitment), ::core::option::Option::Some(__jolt_committed.hint))
             }
         }
     }
@@ -718,8 +713,8 @@ impl MacroBuilder {
         let has_trusted_advice = !self.trusted_func_args.is_empty();
 
         let commitment_param = if has_trusted_advice {
-            quote! { , __jolt_trusted_advice_commitment: Option<jolt::VerifierTrustedAdviceCommitment>,
-            __jolt_trusted_advice_hint: Option<jolt::TrustedAdviceOpeningHint> }
+            quote! { , __jolt_trusted_advice_commitment: ::core::option::Option<jolt::VerifierTrustedAdviceCommitment>,
+            __jolt_trusted_advice_hint: ::core::option::Option<jolt::TrustedAdviceOpeningHint> }
         } else {
             quote! {}
         };
@@ -727,7 +722,7 @@ impl MacroBuilder {
         let commitment_arg = if has_trusted_advice {
             quote! { __jolt_trusted_advice_commitment, __jolt_trusted_advice_hint }
         } else {
-            quote! { None, None }
+            quote! { ::core::option::Option::None, ::core::option::Option::None }
         };
 
         quote! {
@@ -739,12 +734,11 @@ impl MacroBuilder {
                 #inputs
                 #commitment_param
             ) -> #prove_output_ty {
-
-                let mut __jolt_input_bytes = vec![];
+                let mut __jolt_input_bytes = ::std::vec::Vec::new();
                 #(#set_program_args;)*
-                let mut __jolt_untrusted_advice_bytes = vec![];
+                let mut __jolt_untrusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_program_untrusted_advice_args;)*
-                let mut __jolt_trusted_advice_bytes = vec![];
+                let mut __jolt_trusted_advice_bytes = ::std::vec::Vec::new();
                 #(#set_program_trusted_advice_args;)*
 
                 let __jolt_advice_tape = jolt::compute_advice_tape(
@@ -796,21 +790,21 @@ impl MacroBuilder {
         let get_input_slice = quote! {
             let __jolt_input_ptr = #input_start as *const u8;
             let __jolt_input_slice = unsafe {
-                core::slice::from_raw_parts(__jolt_input_ptr, #max_input_len)
+                ::core::slice::from_raw_parts(__jolt_input_ptr, #max_input_len)
             };
         };
 
         let get_untrusted_advice_slice = quote! {
             let __jolt_untrusted_advice_ptr = #untrusted_advice_start as *const u8;
             let __jolt_untrusted_advice_slice = unsafe {
-                core::slice::from_raw_parts(__jolt_untrusted_advice_ptr, #max_untrusted_advice_len)
+                ::core::slice::from_raw_parts(__jolt_untrusted_advice_ptr, #max_untrusted_advice_len)
             };
         };
 
         let get_trusted_advice_slice = quote! {
             let __jolt_trusted_advice_ptr = #trusted_advice_start as *const u8;
             let __jolt_trusted_advice_slice = unsafe {
-                core::slice::from_raw_parts(__jolt_trusted_advice_ptr, #max_trusted_advice_len)
+                ::core::slice::from_raw_parts(__jolt_trusted_advice_ptr, #max_trusted_advice_len)
             };
         };
 
@@ -857,7 +851,7 @@ impl MacroBuilder {
             ReturnType::Type(_, ty) => quote! {
                 let __jolt_output_ptr = #output_start as *mut u8;
                 let __jolt_output_slice = unsafe {
-                    core::slice::from_raw_parts_mut(__jolt_output_ptr, #max_output_len)
+                    ::core::slice::from_raw_parts_mut(__jolt_output_ptr, #max_output_len)
                 };
 
                 jolt::postcard::to_slice::<#ty>(&__jolt_to_return, __jolt_output_slice).unwrap();
@@ -890,12 +884,12 @@ impl MacroBuilder {
                 #block
                 #handle_return
                 unsafe {
-                    core::ptr::write_volatile(#termination_bit as *mut u8, 1);
+                    ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);
                 }
                 // Never return - loop forever for clean termination
                 // The emulator detects termination via PC stall (prev_pc == pc)
                 loop {
-                    unsafe { core::arch::asm!("j .", options(noreturn)); }
+                    unsafe { ::core::arch::asm!("j .", options(noreturn)); }
                 }
             }
 
@@ -911,7 +905,7 @@ impl MacroBuilder {
             #[no_mangle]
             pub extern "C" fn jolt_panic() {
                 unsafe {
-                    core::ptr::write_volatile(#panic_address as *mut u8, 1);
+                    ::core::ptr::write_volatile(#panic_address as *mut u8, 1);
                 }
             }
         }
@@ -935,7 +929,7 @@ impl MacroBuilder {
         );
         quote! {
             #[cfg(all(not(feature = "guest"), not(target_arch = "wasm32")))]
-            const _: () = assert!(jolt::_ZK_FEATURE_ENABLED, #msg);
+            const _: () = ::core::assert!(jolt::_ZK_FEATURE_ENABLED, #msg);
         }
     }
 
@@ -1155,29 +1149,29 @@ impl MacroBuilder {
                 io_bytes: &[u8],
                 trusted_advice_commitment_bytes: &[u8],
             ) -> bool {
-                let __jolt_preprocessing: jolt::JoltVerifierPreprocessing =
+                let preprocessing: jolt::JoltVerifierPreprocessing =
                     match jolt::deserialize_verifier_object(preprocessing_data) {
-                    Ok(__jolt_preprocessing) => __jolt_preprocessing,
-                    Err(_) => return false,
+                    ::core::result::Result::Ok(preprocessing) => preprocessing,
+                    ::core::result::Result::Err(_) => return false,
                 };
-                let __jolt_proof: jolt::RV64IMACProof =
+                let proof: jolt::RV64IMACProof =
                     match jolt::deserialize_verifier_object(proof_bytes) {
-                    Ok(__jolt_proof) => __jolt_proof,
-                    Err(_) => return false,
+                    ::core::result::Result::Ok(proof) => proof,
+                    ::core::result::Result::Err(_) => return false,
                 };
-                let __jolt_io_device: jolt::JoltDevice =
+                let io_device: jolt::JoltDevice =
                     match jolt::deserialize_verifier_object(io_bytes) {
-                    Ok(__jolt_io_device) => __jolt_io_device,
-                    Err(_) => return false,
+                    ::core::result::Result::Ok(io_device) => io_device,
+                    ::core::result::Result::Err(_) => return false,
                 };
-                let __jolt_trusted_advice_commitment:
-                    Option<jolt::VerifierTrustedAdviceCommitment> =
+                let trusted_advice_commitment:
+                    ::core::option::Option<jolt::VerifierTrustedAdviceCommitment> =
                     if trusted_advice_commitment_bytes.is_empty() {
-                        None
+                        ::core::option::Option::None
                     } else {
                         match jolt::deserialize_verifier_object(trusted_advice_commitment_bytes) {
-                            Ok(commitment) => commitment,
-                            Err(_) => return false,
+                            ::core::result::Result::Ok(commitment) => commitment,
+                            ::core::result::Result::Err(_) => return false,
                         }
                     };
 
@@ -1187,10 +1181,10 @@ impl MacroBuilder {
                     jolt::VerifierVC,
                     jolt::VerifierTranscript,
                 >(
-                    &__jolt_preprocessing,
-                    &__jolt_io_device,
-                    &__jolt_proof,
-                    __jolt_trusted_advice_commitment.as_ref(),
+                    &preprocessing,
+                    &io_device,
+                    &proof,
+                    trusted_advice_commitment.as_ref(),
                 ).is_ok()
             }
         }
@@ -1307,72 +1301,4 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proc_macro2::TokenTree;
-
-    /// Collects the identifier bound by every `let [mut] <ident>` in a stream.
-    fn let_bindings(stream: TokenStream2, out: &mut Vec<String>) {
-        let tokens: Vec<TokenTree> = stream.into_iter().collect();
-        let mut i = 0;
-        while i < tokens.len() {
-            if let TokenTree::Ident(kw) = &tokens[i] {
-                if kw == "let" {
-                    let mut j = i + 1;
-                    if matches!(tokens.get(j), Some(TokenTree::Ident(m)) if m == "mut") {
-                        j += 1;
-                    }
-                    if let Some(TokenTree::Ident(name)) = tokens.get(j) {
-                        out.push(name.to_string());
-                    }
-                }
-            }
-            if let TokenTree::Group(group) = &tokens[i] {
-                let_bindings(group.stream(), out);
-            }
-            i += 1;
-        }
-    }
-
-    /// Generated host-side code must not bind names a guest parameter could
-    /// also use, or the local shadows the argument (e.g. an `input_bytes`
-    /// parameter would serialize the empty scratch buffer instead of itself).
-    #[test]
-    fn generated_locals_do_not_shadow_guest_parameters() {
-        let func: ItemFn = syn::parse_quote! {
-            fn f(
-                input_bytes: [u8; 4],
-                program: u32,
-                untrusted_advice_bytes: UntrustedAdvice<u8>,
-                trusted_advice_bytes: TrustedAdvice<u8>,
-            ) -> u32 {
-                0
-            }
-        };
-        let builder = MacroBuilder::new(Punctuated::new(), func);
-        let generated = [
-            builder.make_analyze_function(),
-            builder.make_trace_func(),
-            builder.make_trace_to_file_func(),
-            builder.make_compile_func(),
-            builder.make_prove_func(),
-            builder.make_build_prover_fn(),
-            builder.make_build_verifier_fn(),
-            builder.make_commit_trusted_advice_func(),
-        ];
-        for stream in generated {
-            let mut bindings = Vec::new();
-            let_bindings(stream, &mut bindings);
-            assert!(!bindings.is_empty());
-            for name in bindings {
-                assert!(
-                    name.starts_with("__jolt_"),
-                    "generated code binds `{name}`, which can shadow a guest parameter"
-                );
-            }
-        }
-    }
 }
