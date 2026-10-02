@@ -503,7 +503,7 @@ pub(super) fn sparse_quadratic_soa<F: JoltField>(
 /// Per-thread intermediate rows for one 4-row group.
 type FusedScratch<F> = (Vec<SparseEntry<F, LutIndex>>, Vec<SparseEntry<F, LutIndex>>);
 
-fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
+pub(super) fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
     (
         Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
         Vec::with_capacity(1 << REGISTER_ADDRESS_BITS),
@@ -512,7 +512,7 @@ fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
 
 /// Rebuild one 4-row group's two first-bind intermediates.
 #[inline]
-fn fused_intermediates<F: JoltField>(
+pub(super) fn fused_intermediates<F: JoltField>(
     group: &[SeedEntry],
     seed_ra_lut: &CoeffLut<F>,
     seed_wa_lut: &CoeffLut<F>,

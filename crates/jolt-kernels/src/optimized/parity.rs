@@ -32,6 +32,37 @@ pub(crate) fn synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
         .collect()
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ExceptionalEq {
+    Zero,
+    One,
+    ZeroPrefix,
+}
+
+impl ExceptionalEq {
+    pub(crate) const ALL: [Self; 3] = [Self::Zero, Self::One, Self::ZeroPrefix];
+
+    pub(crate) fn point<F: JoltField>(self, len: usize, first_bind: F) -> Vec<F> {
+        let mut point = vec![
+            match self {
+                Self::One => F::one(),
+                _ => F::zero(),
+            };
+            len
+        ];
+        if matches!(self, Self::ZeroPrefix) {
+            // Solve eq(w, first_bind)=0, then subsequent coordinates still
+            // exercise exceptional endpoints under a vanished prefix.
+            let w = (first_bind - F::one())
+                * (first_bind + first_bind - F::one())
+                    .inverse()
+                    .expect("fixture binding is not one half");
+            *point.last_mut().expect("fixture has cycle rounds") = w;
+        }
+        point
+    }
+}
+
 /// Probe the committed one-hot family sizes and chunk bits off the backend's
 /// shape surface: family count by scanning indices until the shape errors,
 /// chunk bits from `log(one-hot rows) − log_t`.

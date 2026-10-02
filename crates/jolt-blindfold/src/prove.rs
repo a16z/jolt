@@ -504,6 +504,14 @@ where
                     actual: opened,
                 });
             }
+            // Absorb per binding (output, then blinding), in the order the
+            // verifier reads them.
+            append_vector_opening(
+                transcript,
+                b"bf_eval_out_open",
+                b"bf_eval_out_blind",
+                &opening,
+            );
             folded_eval_output_openings.push(opening);
         }
         if let Some(coordinate) = coordinates.blinding {
@@ -523,24 +531,14 @@ where
                     actual: opened,
                 });
             }
+            append_vector_opening(
+                transcript,
+                b"bf_eval_blind_open",
+                b"bf_eval_blind_bl",
+                &opening,
+            );
             folded_eval_blinding_openings.push(opening);
         }
-    }
-    for opening in &folded_eval_output_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_out_open",
-            b"bf_eval_out_blind",
-            opening,
-        );
-    }
-    for opening in &folded_eval_blinding_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_blind_open",
-            b"bf_eval_blind_bl",
-            opening,
-        );
     }
 
     transcript.append(&Label(b"bf_spartan"));
@@ -738,10 +736,17 @@ where
             });
         }
     }
+    // At most one job per worker: ark-ec's msm_bigint_wnaf builds a 2-thread pool per
+    // chunk (variable_base/mod.rs:853), so more outer jobs than workers oversubscribe.
+    let rows_per_job = rows.len().div_ceil(rayon::current_num_threads()).max(1);
     Ok(rows
-        .par_iter()
-        .zip(blindings.par_iter())
-        .map(|(row, blinding)| VC::commit(setup, row, blinding))
+        .par_chunks(rows_per_job)
+        .zip(blindings.par_chunks(rows_per_job))
+        .flat_map_iter(|(rows, blindings)| {
+            rows.iter()
+                .zip(blindings)
+                .map(|(row, blinding)| VC::commit(setup, row, blinding))
+        })
         .collect())
 }
 
