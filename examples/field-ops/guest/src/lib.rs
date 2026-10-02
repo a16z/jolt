@@ -47,8 +47,8 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
             core::arch::asm!(
                 ".word {load_high}",
                 ".word {load_low}",
-                load_high = const memory_load_word(1),
-                load_low = const memory_load_word(0),
+                load_high = const jolt::field_inline::memory_accumulate_word(12, 1),
+                load_low = const jolt::field_inline::memory_accumulate_word(12, 0),
                 in("a0") limbs.as_ptr(),
                 out("a1") _,
                 options(nostack, readonly),
@@ -71,17 +71,4 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     jolt::field_add!(10, 10, 11);
     let [result] = jolt::field_to_limbs!(10, 1);
     result
-}
-
-/// FIELD_LOAD_ACCUMULATE_FROM_MEMORY of the word at `a0 + 8 * offset` into
-/// field register 12, through the `a1` scratch register.
-#[cfg(target_arch = "riscv64")]
-const fn memory_load_word(offset: u32) -> u32 {
-    jolt::field_inline_r_word(
-        jolt::FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7 | offset,
-        jolt::FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3,
-        11,
-        10,
-        12,
-    )
 }

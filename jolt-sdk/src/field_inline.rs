@@ -34,7 +34,8 @@ use crate::{
 /// through [`FIELD_INLINE_MODULUS_ENV`](crate::FIELD_INLINE_MODULUS_ENV); builds
 /// without it assume BN254, the field of the SDK's Dory prover. Every limb
 /// conversion proves in-guest that this is the field executing the guest, so
-/// a guest built for the wrong field cannot be proven.
+/// no proof exists for a guest built for the wrong field that runs one. Reading
+/// this constant directly proves nothing about the executing field.
 // `option_env!` takes a literal: this spells `FIELD_INLINE_MODULUS_ENV`. A
 // misspelling would make Akita guests assume BN254 and fail that binding.
 pub const MODULUS: FieldInlineModulus = match option_env!("JOLT_FIELD_INLINE_MODULUS") {
@@ -275,9 +276,11 @@ const fn assert_zero_word(register: u32) -> u32 {
 }
 
 /// FIELD_LOAD_ACCUMULATE_FROM_MEMORY of the word at `a0 + 8 * offset` into
-/// `register`, through the `a1` scratch register.
+/// `register`, writing the loaded word to the `a1` scratch register. The asm
+/// block emitting it must bind the base address to `a0` and clobber `a1`.
+#[doc(hidden)]
 #[cfg(target_arch = "riscv64")]
-const fn memory_accumulate_word(register: u32, offset: u32) -> u32 {
+pub const fn memory_accumulate_word(register: u32, offset: u32) -> u32 {
     assert!(
         offset < 1 << 5,
         "memory-sourced accumulation offsets are 5 bits"

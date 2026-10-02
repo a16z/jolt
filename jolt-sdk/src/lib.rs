@@ -267,9 +267,10 @@ macro_rules! field_load_accumulate_from_register {
 ///
 /// # Failures
 ///
-/// A guest built for a different proof field fails the step-2 FIELD_ASSERT_ZERO
-/// at trace time ("FIELD_ASSERT_ZERO of nonzero field register"), and no proof
-/// exists. Only the riscv64 Jolt guest target has field registers; elsewhere
+/// A guest built for a different proof field fails a FIELD_ASSERT_ZERO at trace
+/// time ("FIELD_ASSERT_ZERO of nonzero field register"), and no proof exists:
+/// the step-2 binding, or the step-1 residual first when the value is wider
+/// than the guest's modulus. Only the riscv64 Jolt guest target has field registers; elsewhere
 /// the macro panics rather than return placeholder limbs.
 #[macro_export]
 macro_rules! field_to_limbs {

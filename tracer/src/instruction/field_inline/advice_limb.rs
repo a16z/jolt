@@ -282,7 +282,8 @@ mod tests {
     /// injected limbs.
     #[test]
     fn injected_limbs_keep_the_constrained_relation() {
-        let word = FIELD_ADVICE_LIMB::MATCH | (10 << 7) | (3 << 15) | (3 << 20);
+        let word =
+            FieldInlineOp::AdviceLimb.instruction_match() | (10 << 7) | (3 << 15) | (3 << 20);
         let instruction = FIELD_ADVICE_LIMB::new(word, 0x1000, true, false);
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
         let radix = ProofField::from_u128(1 << 64);
