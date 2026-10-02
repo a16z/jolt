@@ -654,32 +654,35 @@ fn read_raf_flag_terms(
 
 /// Dense indices for the distinct [`JoltInstructionRow::flag_class`]es of a
 /// bytecode table, in first-seen order (open addressing over the class key).
+/// Slots and keys are word-sized: a Jolt guest expands sub-word stores and
+/// loads into multi-row sequences.
 struct FlagClasses {
-    slots: Vec<u32>,
-    keys: Vec<u32>,
+    slots: Vec<usize>,
+    keys: Vec<usize>,
 }
 
 impl FlagClasses {
     fn with_rows(rows: usize) -> Self {
         Self {
-            slots: vec![u32::MAX; (2 * rows).next_power_of_two().max(16)],
+            slots: vec![usize::MAX; (2 * rows).next_power_of_two().max(16)],
             keys: Vec::new(),
         }
     }
 
     /// The index of `key`'s class, and whether this call created it.
     fn index(&mut self, key: u32) -> (usize, bool) {
+        let key = key as usize;
         let mask = self.slots.len() - 1;
-        let mut slot = (key.wrapping_mul(0x9e37_79b9) as usize) & mask;
+        let mut slot = key.wrapping_mul(0x9e37_79b9) & mask;
         loop {
             match self.slots[slot] {
-                u32::MAX => {
+                usize::MAX => {
                     let class = self.keys.len();
                     self.keys.push(key);
-                    self.slots[slot] = class as u32;
+                    self.slots[slot] = class;
                     return (class, true);
                 }
-                class if self.keys[class as usize] == key => return (class as usize, false),
+                class if self.keys[class] == key => return (class, false),
                 _ => slot = (slot + 1) & mask,
             }
         }
