@@ -314,6 +314,7 @@ akita-planner = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/
 akita-schedules = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-schedules", default-features = false }
 akita-challenges = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-challenges", default-features = false }
 akita-types = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-types", default-features = false }
+akita-transcript = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-transcript", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }

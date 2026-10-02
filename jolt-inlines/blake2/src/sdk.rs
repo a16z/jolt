@@ -100,6 +100,22 @@ impl Blake2b {
         out.copy_from_slice(&full[..len]);
     }
 
+    /// Absorb `block` as the next 128 input bytes and compress it now.
+    ///
+    /// BLAKE2b compresses its last block with the final flag, so this equals
+    /// [`Self::update`] only when at least one more byte is absorbed before
+    /// finalizing. A hasher prepared this way can be cloned to start many
+    /// hashes that share a constant first block.
+    ///
+    /// # Panics
+    /// Panics if earlier input is still buffered.
+    #[inline(always)]
+    pub fn update_block_eager(&mut self, block: &[u8; BLOCK_INPUT_SIZE_IN_BYTES]) {
+        assert_eq!(self.buffer_len, 0, "eager block after buffered input");
+        self.buffer.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
+        compress(&mut self.h, block, self.buffer.counter, false);
+    }
+
     #[inline(always)]
     pub fn new_with_params(salt: &[u8], persona: &[u8]) -> Self {
         Self {
