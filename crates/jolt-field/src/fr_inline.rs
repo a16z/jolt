@@ -264,6 +264,14 @@ mod emit {
     pub fn acc_add_out() {
         fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_OUT));
     }
+    #[inline(always)]
+    pub fn acc_add_a() {
+        fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_A));
+    }
+    #[inline(always)]
+    pub fn acc_sub_a() {
+        fixed!(r_word(FUNCT3_SUB, REG_ACC, REG_ACC, REG_A));
+    }
     /// Zero row accumulator `k` (registers 9..=13).
     #[inline(always)]
     pub fn row_acc_zero(k: usize) {
@@ -415,6 +423,25 @@ mod guest {
             load(REG_B, y);
             emit::mul_out();
             emit::acc_add_out();
+        }
+        read_out(REG_ACC)
+    }
+
+    /// `Σ ±terms[i]` with the sum register-resident: each term costs its
+    /// ingress and one add or subtract, and only the result is read out.
+    /// Canonical limbs only.
+    #[inline(always)]
+    pub fn signed_sum<'a, const N: usize>(
+        terms: impl IntoIterator<Item = (&'a [u64; N], bool)>,
+    ) -> [u64; N] {
+        emit::acc_zero();
+        for (term, negative) in terms {
+            load(REG_A, term);
+            if negative {
+                emit::acc_sub_a();
+            } else {
+                emit::acc_add_a();
+            }
         }
         read_out(REG_ACC)
     }
@@ -577,4 +604,6 @@ mod guest {
 }
 
 #[cfg(target_arch = "riscv64")]
-pub use guest::{add, dot, dot_rows, inv, mul, neg, sub, sum_of_products4, weighted_dot_rows};
+pub use guest::{
+    add, dot, dot_rows, inv, mul, neg, signed_sum, sub, sum_of_products4, weighted_dot_rows,
+};

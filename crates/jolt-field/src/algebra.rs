@@ -178,6 +178,25 @@ pub trait Field: Ring {
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
     }
 
+    /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
+    /// otherwise. Fields with a batched guest path (a register-resident sum
+    /// read out once) override this.
+    #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        terms
+            .into_iter()
+            .fold(<Self as Zero>::zero(), |acc, (term, negative)| {
+                if negative {
+                    acc - *term
+                } else {
+                    acc + *term
+                }
+            })
+    }
+
     /// `Σ_i terms[i][0]·terms[i][1]·terms[i][2]·terms[i][3]`. Fields with a
     /// batched guest path (register-resident products and sum) override this.
     #[inline]

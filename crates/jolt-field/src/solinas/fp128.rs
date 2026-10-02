@@ -1089,6 +1089,19 @@ impl<const P: u128> Field for Fp128<P> {
 
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        Self::from_inline_limbs(crate::fr_inline::signed_sum(
+            terms
+                .into_iter()
+                .map(|(term, negative)| (&term.0, negative)),
+        ))
+    }
+
+    #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+    #[inline]
     fn sum_of_products4(terms: &[[Self; 4]]) -> Self {
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
         let terms: &[[[u64; 2]; 4]] =
