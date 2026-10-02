@@ -442,7 +442,8 @@ impl Default for FrSignedProductAccumulator {
 
 impl FrSignedProductAccumulator {
     #[inline(always)]
-    fn fmadd_magnitude(slots: &mut [u128; 8], value: Fr, magnitude: Limbs<4>) {
+    fn fmadd_magnitude<const M: usize>(slots: &mut [u128; 8], value: Fr, magnitude: Limbs<M>) {
+        const { assert!(M <= 4, "magnitudes wider than 256 bits overflow the slots") }
         for (i, value_limb) in value.inner_limbs().into_iter().enumerate() {
             for (j, magnitude_limb) in magnitude.0.into_iter().enumerate() {
                 let product = (value_limb as u128) * (magnitude_limb as u128);
@@ -467,7 +468,7 @@ impl FrSignedProductAccumulator {
 
     #[inline(always)]
     fn fmadd_unsigned(&mut self, value: Fr, scalar: u64) {
-        Self::fmadd_magnitude(&mut self.pos, value, Limbs::from_u64(scalar));
+        Self::fmadd_magnitude(&mut self.pos, value, Limbs::<1>::from_u64(scalar));
     }
 }
 
@@ -518,7 +519,7 @@ impl Accumulator for FrSignedProductAccumulator {
 
     #[inline(always)]
     fn fmadd_i64(&mut self, value: Fr, scalar: i64) {
-        let magnitude = Limbs::from_u64(scalar.unsigned_abs());
+        let magnitude = Limbs::<1>::from_u64(scalar.unsigned_abs());
         if scalar >= 0 {
             Self::fmadd_magnitude(&mut self.pos, value, magnitude);
         } else {
@@ -526,9 +527,22 @@ impl Accumulator for FrSignedProductAccumulator {
         }
     }
 
+    /// The sign folds into the multiplicand, so every term lands in `pos`
+    /// without a data-dependent branch or address select.
+    #[inline(always)]
+    fn fmadd_i128(&mut self, value: Fr, scalar: i128) {
+        let value = if scalar < 0 { -value } else { value };
+        let magnitude = scalar.unsigned_abs();
+        Self::fmadd_magnitude(
+            &mut self.pos,
+            value,
+            Limbs([magnitude as u64, (magnitude >> 64) as u64]),
+        );
+    }
+
     #[inline(always)]
     fn fmadd_signed_u64(&mut self, value: Fr, magnitude: u64, is_positive: bool) {
-        let magnitude = Limbs::from_u64(magnitude);
+        let magnitude = Limbs::<1>::from_u64(magnitude);
         if is_positive {
             Self::fmadd_magnitude(&mut self.pos, value, magnitude);
         } else {
@@ -630,6 +644,7 @@ mod tests {
     use ark_ff::UniformRand;
     use num_traits::One;
     use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
 
     fn spread(seed: u64) -> Fr {
         let a = Fr::from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
@@ -722,8 +737,24 @@ mod tests {
     }
 
     #[test]
+    fn signed_product_accumulator_i128_matches_field() {
+        let mut rng = ChaCha20Rng::seed_from_u64(9);
+        let mut accumulator = FrSignedProductAccumulator::default();
+        let mut expected = Fr::zero();
+        let scalars = (0..256)
+            .map(|_| rng.gen::<i128>())
+            .chain([i128::MIN, i128::MAX, -1, 0]);
+        for (seed, scalar) in scalars.enumerate() {
+            let value = spread(seed as u64);
+            accumulator.fmadd_i128(value, scalar);
+            expected += value * Fr::from_i128(scalar);
+        }
+        assert_eq!(accumulator.reduce(), expected);
+    }
+
+    #[test]
     fn kernel_matches_arkworks() {
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(7);
+        let mut rng = ChaCha20Rng::seed_from_u64(7);
         for _ in 0..500 {
             let a = InnerFr::rand(&mut rng);
             let b: u64 = rng.gen();
@@ -740,7 +771,7 @@ mod tests {
 
     #[test]
     fn montgomery_reduce_roundtrip() {
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(8);
+        let mut rng = ChaCha20Rng::seed_from_u64(8);
         for _ in 0..200 {
             let a = InnerFr::rand(&mut rng);
             let b = InnerFr::rand(&mut rng);

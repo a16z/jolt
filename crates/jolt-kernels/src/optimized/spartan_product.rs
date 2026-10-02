@@ -492,18 +492,9 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             left_acc.fmadd_u64(weights_ref[1], row.lookup_output.0);
             left_acc.fmadd_u64(weights_ref[2], u64::from(row.jump_flag.0));
             let mut right_acc = <F as WithAccumulator>::SignedProductAccumulator::default();
-            right_acc.fmadd_s256(
-                weights_ref[0],
-                &S256::from_i128(row.right_instruction_input.0),
-            );
-            right_acc.fmadd_s256(
-                weights_ref[1],
-                &S256::from_u64(u64::from(row.branch_flag.0)),
-            );
-            right_acc.fmadd_s256(
-                weights_ref[2],
-                &S256::from_u64(1 - u64::from(row.next_is_noop.0)),
-            );
+            right_acc.fmadd_i128(weights_ref[0], row.right_instruction_input.0);
+            right_acc.fmadd_u64(weights_ref[1], u64::from(row.branch_flag.0));
+            right_acc.fmadd_u64(weights_ref[2], 1 - u64::from(row.next_is_noop.0));
             (left_acc.reduce(), right_acc.reduce())
         };
         #[cfg(feature = "field-inline")]
@@ -638,9 +629,9 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             let mut flags: [<F as WithAccumulator>::SmallScalarAccumulator; 5] = Default::default();
             for (t, &weight) in (start..end).zip(&weights[start..end]) {
                 let row = access.row(t)?;
-                words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
-                words[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
-                words[2].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
+                words[0].fmadd_u64(weight, row.left_instruction_input.0);
+                words[1].fmadd_i128(weight, row.right_instruction_input.0);
+                words[2].fmadd_u64(weight, row.lookup_output.0);
                 flags[0].fmadd_u64(weight, u64::from(row.jump_flag.0));
                 flags[1].fmadd_u64(weight, u64::from(row.write_lookup_output_to_rd.0));
                 flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
