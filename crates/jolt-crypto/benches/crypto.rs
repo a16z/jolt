@@ -3,11 +3,12 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_crypto::{
-    Bn254, Bn254G1, Bn254G2, JoltGroup, PairingGroup, Pedersen, PedersenSetup, VectorCommitment,
+    compress_gt, decompress_gt, Bn254, Bn254G1, Bn254G1Affine, Bn254G2, JoltGroup, PairingGroup,
+    Pedersen, PedersenSetup, VectorCommitment,
 };
 use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
+use rand_core::{RngCore, SeedableRng};
 
 fn bench_g1_scalar_mul(c: &mut Criterion) {
     let mut rng = ChaCha20Rng::seed_from_u64(0);
@@ -58,6 +59,48 @@ fn bench_g1_msm(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| Bn254G1::msm(&bases, &scalars));
+        });
+    }
+    group.finish();
+}
+
+/// Distinct affine points `[i]G`, i = 1..=n, cheap to generate at 2^20.
+fn sequential_affine_bases(n: usize) -> Vec<Bn254G1Affine> {
+    let g = Bn254::g1_generator();
+    let mut acc = g;
+    let mut points = Vec::with_capacity(n);
+    for _ in 0..n {
+        points.push(acc);
+        acc += g;
+    }
+    Bn254::g1_to_affine(&points)
+}
+
+fn bench_g1_msm_small(c: &mut Criterion) {
+    use jolt_crypto::ec::bn254::bit_columns::g1_bit_columns_msm;
+
+    let mut group = c.benchmark_group("g1_msm_small");
+    group.sample_size(10);
+    for log_n in [17, 20] {
+        let n = 1usize << log_n;
+        let mut rng = ChaCha20Rng::seed_from_u64(log_n as u64);
+        let bases = sequential_affine_bases(n);
+        let full: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
+        let u16s: Vec<u16> = (0..n).map(|_| rng.next_u32() as u16).collect();
+        let u8s: Vec<u8> = (0..n).map(|_| rng.next_u32() as u8).collect();
+        let bits: Vec<u8> = (0..n).map(|_| (rng.next_u32() & 1) as u8).collect();
+
+        group.bench_with_input(BenchmarkId::new("full_width", log_n), &n, |b, _| {
+            b.iter(|| Bn254::g1_affine_msm(&bases, &full));
+        });
+        group.bench_with_input(BenchmarkId::new("u16", log_n), &n, |b, _| {
+            b.iter(|| Bn254::g1_affine_msm_small(&bases, &u16s));
+        });
+        group.bench_with_input(BenchmarkId::new("u8", log_n), &n, |b, _| {
+            b.iter(|| Bn254::g1_affine_msm_small(&bases, &u8s));
+        });
+        group.bench_with_input(BenchmarkId::new("bit_column", log_n), &n, |b, _| {
+            b.iter(|| g1_bit_columns_msm(&bases, &[&bits]));
         });
     }
     group.finish();
@@ -138,6 +181,23 @@ fn bench_gt_scalar_mul(c: &mut Criterion) {
     });
 }
 
+fn bench_gt_decompression(c: &mut Criterion) {
+    let gt = Bn254::pairing(&Bn254::g1_generator(), &Bn254::g2_generator());
+    let compressed = compress_gt(&gt);
+    c.bench_function("gt_decompress", |b| {
+        b.iter(|| decompress_gt(&compressed).unwrap());
+    });
+
+    let compressed_set = vec![compressed; 110];
+    c.bench_function("gt_decompress_110", |b| {
+        b.iter(|| {
+            for compressed in &compressed_set {
+                decompress_gt(compressed).unwrap();
+            }
+        });
+    });
+}
+
 fn bench_g1_serde(c: &mut Criterion) {
     let mut rng = ChaCha20Rng::seed_from_u64(60);
     let g = Bn254::random_g1(&mut rng);
@@ -162,11 +222,13 @@ criterion_group!(
     bench_g1_add,
     bench_g1_double,
     bench_g1_msm,
+    bench_g1_msm_small,
     bench_g2_msm,
     bench_pairing,
     bench_multi_pairing,
     bench_pedersen_commit,
     bench_gt_scalar_mul,
+    bench_gt_decompression,
     bench_g1_serde,
 );
 criterion_main!(benches);

@@ -72,11 +72,26 @@ impl<F: Field> BatchPrelude<F> {
         max_num_vars: usize,
         max_degree: usize,
     ) -> Result<Self, SumcheckError<F>> {
+        Self::try_new_observed(members, max_num_vars, max_degree, || {})
+    }
+
+    /// Validates and computes the batch head while reporting each field
+    /// multiplication.
+    pub fn try_new_observed(
+        members: Vec<BatchMember<F>>,
+        max_num_vars: usize,
+        max_degree: usize,
+        mut observe_mul: impl FnMut(),
+    ) -> Result<Self, SumcheckError<F>> {
         validate_batch_dimensions(&members, max_num_vars, max_degree)?;
         let claimed_sum = members
             .iter()
             .map(|member| {
-                member.coefficient * member.input_claim.mul_pow_2(max_num_vars - member.rounds)
+                let scaled = member
+                    .input_claim
+                    .mul_pow_2_observed(max_num_vars - member.rounds, &mut observe_mul);
+                observe_mul();
+                member.coefficient * scaled
             })
             .sum();
         Ok(Self {

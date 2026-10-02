@@ -3239,6 +3239,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-serialize 0.5.0",
+ "bincode 2.0.1",
  "criterion",
  "dory-pcs",
  "jolt-akita",
@@ -3343,6 +3344,26 @@ dependencies = [
  "postcard",
  "serde",
  "tracer",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-hyperkzg"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "num-traits",
+ "rand 0.8.7",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "thiserror 2.0.20",
  "tracing",
 ]
 
@@ -3689,6 +3710,9 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
+ "blake2 0.11.0",
+ "blake3",
+ "hex",
  "jolt-claims",
  "jolt-field",
  "jolt-poly",
@@ -3792,12 +3816,14 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "blake2 0.11.0",
+ "blake3",
  "criterion",
  "digest 0.11.3",
  "jolt-field",
  "light-poseidon",
  "num-traits",
  "rand 0.8.7",
+ "sha3 0.12.0",
  "spongefish",
 ]
 
@@ -3881,6 +3907,47 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "jolt-wrapper"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "bincode 2.0.1",
+ "blake3",
+ "common",
+ "dory-pcs",
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-host",
+ "jolt-hyperkzg",
+ "jolt-lookup-tables",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "jolt-witness",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "postcard",
+ "rand 0.8.7",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "thiserror 2.0.20",
+ "tracer",
+ "tracing",
 ]
 
 [[package]]

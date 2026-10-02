@@ -29,6 +29,7 @@ parallel = ["jolt-crypto/parallel", "jolt-poly/parallel"]
 profiling = ["jolt-akita/profiling"]
 
 [dev-dependencies]
+bincode = { workspace = true }
 jolt-akita.workspace = true
 akita-config.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }

@@ -12,7 +12,12 @@ categories = ["cryptography", "no-std"]
 workspace = true
 
 [features]
-default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
+default = [
+  "transcript-blake2b",
+  "transcript-blake3",
+  "transcript-keccak",
+  "transcript-poseidon",
+]
 spongefish = ["dep:rand", "dep:spongefish", "spongefish/sha3"]
 digest = ["dep:digest"]
 bn254 = [
@@ -22,7 +27,8 @@ bn254 = [
   "spongefish?/ark-ff",
 ]
 transcript-blake2b = ["spongefish", "digest", "spongefish/blake2", "dep:blake2"]
-transcript-keccak = ["spongefish", "spongefish/keccak"]
+transcript-blake3 = ["bn254", "dep:blake3"]
+transcript-keccak = ["spongefish", "digest", "spongefish/keccak", "dep:sha3"]
 transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
 
 [dependencies]
@@ -31,9 +37,11 @@ ark-ff = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
 spongefish = { workspace = true, optional = true }
 blake2 = { workspace = true, optional = true }
+blake3 = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
 rand = { workspace = true, features = ["std_rng"], optional = true }
+sha3 = { workspace = true, optional = true }
 
 [dev-dependencies]
 num-traits = { workspace = true }
@@ -53,7 +61,15 @@ name = "blake2b_tests"
 required-features = ["bn254", "transcript-blake2b"]
 
 [[test]]
+name = "blake3_tests"
+required-features = ["transcript-blake3"]
+
+[[test]]
 name = "keccak_tests"
+required-features = ["bn254", "transcript-keccak"]
+
+[[test]]
+name = "keccak256_digest_tests"
 required-features = ["bn254", "transcript-keccak"]
 
 [[test]]

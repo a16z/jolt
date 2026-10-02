@@ -14,6 +14,9 @@
 //! Three sponges feature-gated: `transcript-blake2b` (spongefish
 //! `Blake2b512`), `transcript-keccak` (spongefish `Keccak`),
 //! `transcript-poseidon` (local Circom-compatible BN254 [`PoseidonSponge`]).
+//! Two chained-digest transcripts ride the same gates ([`LegacyBlake2bTranscript`],
+//! [`Keccak256Transcript`]); `transcript-blake3` adds the streaming keyed
+//! [`Blake3Transcript`].
 
 #![deny(missing_docs)]
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -32,6 +35,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
+#[cfg(feature = "transcript-blake3")]
+mod blake3;
 #[cfg(feature = "spongefish")]
 mod codec;
 #[cfg(feature = "digest")]
@@ -46,6 +51,8 @@ mod setup;
 #[cfg(feature = "spongefish")]
 mod verifier;
 
+#[cfg(feature = "transcript-blake3")]
+pub use blake3::Blake3Transcript;
 #[cfg(feature = "spongefish")]
 pub use codec::BytesMsg;
 #[cfg(feature = "digest")]
@@ -86,6 +93,8 @@ use blake2::{digest::consts::U32, Blake2b};
     )
 ))]
 use jolt_field::Fr;
+#[cfg(feature = "transcript-keccak")]
+use sha3::Keccak256;
 #[cfg(feature = "transcript-blake2b")]
 use spongefish::instantiations::Blake2b512;
 #[cfg(feature = "transcript-keccak")]
@@ -105,6 +114,13 @@ pub type LegacyBlake2bTranscript<F = Fr> = DigestTranscript<Blake2b<U32>, F>;
 /// Legacy Blake2b-256 transcript for an explicitly selected field.
 #[cfg(all(feature = "transcript-blake2b", not(feature = "bn254")))]
 pub type LegacyBlake2bTranscript<F> = DigestTranscript<Blake2b<U32>, F>;
+
+/// Keccak-256 chained-digest transcript for EVM-verifiable outer protocols.
+#[cfg(all(feature = "transcript-keccak", feature = "bn254"))]
+pub type Keccak256Transcript<F = Fr> = DigestTranscript<Keccak256, F>;
+/// Keccak-256 chained-digest transcript for an explicitly selected field.
+#[cfg(all(feature = "transcript-keccak", not(feature = "bn254")))]
+pub type Keccak256Transcript<F> = DigestTranscript<Keccak256, F>;
 
 /// Fiat-Shamir transcript backed by Keccak-f1600 (spongefish duplex sponge).
 #[cfg(all(feature = "transcript-keccak", feature = "bn254"))]

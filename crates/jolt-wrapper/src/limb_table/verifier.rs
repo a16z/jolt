@@ -1,0 +1,553 @@
+//! Verifier-side evaluation of the wiring kernels at the stage point:
+//! `K(τ, r) = Σ_row eq(τ,row)·w(row)·eq(r, src(row))` factorizes over the row
+//! bit-fields, each field's factor being the sum over its admitted values of
+//! `eq(τ_u, u)·w(u)·eq(r_v, v(u))`. Every distinct field group is evaluated
+//! once (memoized), bit-field `eq` tables are shared, and every field
+//! multiplication is reported to the observer.
+
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::ops::Range;
+
+use crate::stream::TermObserver;
+use jolt_field::{Fr, One, Ring, Zero};
+
+use super::layout::{field_groups, Bits, Factor, Rel, LOG_ROWS};
+
+/// Which point a bit-field is read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Point {
+    Row,
+    Src,
+}
+
+/// Fields wider than this are evaluated as products of table lookups.
+/// Block boundaries of the eq tables: a field within one block is a single
+/// table; a field spanning blocks is the product of its per-block pieces.
+const BLOCKS: [u8; 4] = [0, 6, 12, 18];
+
+fn block_end(bit: u8) -> u8 {
+    BLOCKS
+        .iter()
+        .copied()
+        .find(|&b| b > bit)
+        .unwrap_or_else(|| unreachable!("bit {bit} beyond the row index"))
+}
+
+pub struct Evaluator<'o, O: TermObserver + ?Sized> {
+    row: Vec<Fr>,
+    src: Vec<Fr>,
+    tables: HashMap<(Point, Bits), Vec<Fr>>,
+    consts: HashMap<(Point, Bits, u32), Fr>,
+    groups: HashMap<Vec<Factor>, Fr>,
+    /// `Π_{cell fields ≠ map field} field(group)` per cell factor list and
+    /// map field: shared by every element of a family.
+    products: HashMap<(Vec<Factor>, Bits), Option<Fr>>,
+    pairs: HashMap<(Bits, Bits, u32, u32), Fr>,
+    /// `(q, Σ_u eq(p_bits, u)·q^u)` per field: the digit link's window
+    /// weights are shared by every family of a lane.
+    geometrics: HashMap<(Point, Bits), (Fr, Fr)>,
+    observer: &'o mut O,
+}
+
+impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
+    /// `row_le`: the kernel's row point (the copy identity's `τ`), `src_le`:
+    /// the source point (the stage point `r`), both little-endian.
+    pub fn new(row_le: &[Fr], src_le: &[Fr], observer: &'o mut O) -> Self {
+        assert_eq!(src_le.len(), LOG_ROWS);
+        Self {
+            row: row_le.to_vec(),
+            src: src_le.to_vec(),
+            tables: HashMap::new(),
+            consts: HashMap::new(),
+            groups: HashMap::new(),
+            products: HashMap::new(),
+            pairs: HashMap::new(),
+            geometrics: HashMap::new(),
+            observer,
+        }
+    }
+
+    pub fn mul(&mut self, a: Fr, b: Fr) -> Fr {
+        self.observer.fr_mul(a, b)
+    }
+
+    /// `eq(row, src)` over the whole point: `Π_i (1 − ρ_i − σ_i + 2·ρ_i·σ_i)`.
+    pub fn eq_row_src(&mut self) -> Fr {
+        let mut product: Option<Fr> = None;
+        for i in 0..LOG_ROWS {
+            let (a, b) = (self.row[i], self.src[i]);
+            let ab = self.mul(a, b);
+            let term = ab + ab - a - b + Fr::one();
+            product = Some(match product {
+                Some(p) => self.mul(p, term),
+                None => term,
+            });
+        }
+        product.unwrap_or(Fr::one())
+    }
+
+    /// `(Π_i v_i, [Π_{j ≠ i} v_j]_i)` by prefix and suffix products
+    /// (`3m − 4` multiplications for `m ≥ 2` values).
+    pub fn all_but_one_products(&mut self, values: &[Fr]) -> (Fr, Vec<Fr>) {
+        let m = values.len();
+        // `prefix[i] = Π_{j < i}`, `suffix[i] = Π_{j ≥ i}`.
+        let mut prefix = vec![Fr::one(); m + 1];
+        for i in 0..m {
+            prefix[i + 1] = if i == 0 {
+                values[0]
+            } else {
+                self.mul(prefix[i], values[i])
+            };
+        }
+        let mut suffix = vec![Fr::one(); m + 1];
+        for i in (0..m).rev() {
+            suffix[i] = if i + 1 == m {
+                values[i]
+            } else {
+                self.mul(values[i], suffix[i + 1])
+            };
+        }
+        let others = (0..m)
+            .map(|i| match (i == 0, i + 1 == m) {
+                (true, true) => Fr::one(),
+                (true, false) => suffix[1],
+                (false, true) => prefix[m - 1],
+                (false, false) => self.mul(prefix[i], suffix[i + 1]),
+            })
+            .collect();
+        (prefix[m], others)
+    }
+
+    fn point(&self, point: Point) -> &[Fr] {
+        match point {
+            Point::Row => &self.row,
+            Point::Src => &self.src,
+        }
+    }
+
+    /// `eq(p_bits, u)` for every `u < 2^width` (the field lies within one block).
+    fn table(&mut self, point: Point, bits: Bits) -> &[Fr] {
+        debug_assert!(
+            block_end(bits.lo) >= bits.hi,
+            "table field {bits:?} crosses a block"
+        );
+        if !self.tables.contains_key(&(point, bits)) {
+            let coords: Vec<Fr> =
+                self.point(point)[usize::from(bits.lo)..usize::from(bits.hi)].to_vec();
+            let mut table = vec![Fr::one()];
+            // Most significant coordinate first so index bit `i` pairs with `coords[i]`.
+            for r in coords.into_iter().rev() {
+                let mut next = Vec::with_capacity(table.len() * 2);
+                for &entry in &table {
+                    let hi = self.mul(entry, r);
+                    next.push(entry - hi);
+                    next.push(hi);
+                }
+                table = next;
+            }
+            let _ = self.tables.insert((point, bits), table);
+        }
+        &self.tables[&(point, bits)]
+    }
+
+    fn lookup(&mut self, point: Point, bits: Bits, value: u32) -> Fr {
+        self.table(point, bits)[value as usize]
+    }
+
+    /// `eq(p_bits, value)`, split at the fixed block boundaries so fields
+    /// sharing a block share its tables.
+    pub fn eq_const(&mut self, point: Point, bits: Bits, value: u32) -> Fr {
+        if bits.width() == 0 {
+            return Fr::one();
+        }
+        if block_end(bits.lo) >= bits.hi {
+            return self.lookup(point, bits, value);
+        }
+        if let Some(&v) = self.consts.get(&(point, bits, value)) {
+            return v;
+        }
+        let mut product = Fr::one();
+        let mut lo = bits.lo;
+        let mut first = true;
+        while lo < bits.hi {
+            let hi = block_end(lo).min(bits.hi);
+            let piece = Bits::new(lo, hi);
+            let piece_value = (value >> (lo - bits.lo)) & ((1u32 << piece.width()) - 1);
+            let part = self.lookup(point, piece, piece_value);
+            product = if first { part } else { self.mul(product, part) };
+            first = false;
+            lo = hi;
+        }
+        let _ = self.consts.insert((point, bits, value), product);
+        product
+    }
+
+    fn pair(&mut self, u: Bits, v: Bits, c: u32, t: u32) -> Fr {
+        if let Some(&p) = self.pairs.get(&(u, v, c, t)) {
+            return p;
+        }
+        let a = self.eq_const(Point::Row, u, c);
+        let b = self.eq_const(Point::Src, v, t);
+        let p = self.mul(a, b);
+        let _ = self.pairs.insert((u, v, c, t), p);
+        p
+    }
+
+    fn scaled(&mut self, value: Fr, weight: i32) -> Fr {
+        match weight {
+            1 => value,
+            -1 => -value,
+            w => self.mul(value, Fr::from_i64(i64::from(w))),
+        }
+    }
+
+    /// The factor of one row field: `Σ_u eq(τ_u, u)·Π_f w_f(u)·eq(r_v, v(u))`
+    /// over the values every factor of the group admits. At most one factor
+    /// has a source field.
+    pub fn field(&mut self, group: &[Factor]) -> Fr {
+        let key: Vec<Factor> = group.to_vec();
+        if let Some(&v) = self.groups.get(&key) {
+            return v;
+        }
+        let value = self.field_uncached(group);
+        let _ = self.groups.insert(key, value);
+        value
+    }
+
+    fn field_uncached(&mut self, group: &[Factor]) -> Fr {
+        let relation = group.iter().find(|f| f.v.width() > 0);
+        let u = group[0].u;
+        debug_assert!(group.iter().all(|f| f.u == u));
+        if u.width() == 0 {
+            // Source-only constant.
+            let Some(f) = relation else { return Fr::one() };
+            let Rel::Const(value) = f.rel else {
+                unreachable!("a source-only factor is a constant")
+            };
+            return self.eq_const(Point::Src, f.v, value);
+        }
+        // Unrestricted `same` field: product of per-bit equalities (two
+        // multiplications per bit beat one per admitted value from width 2).
+        if let [f] = group {
+            if f.rel == Rel::Shift(0) && f.range.is_none() && u.width() >= 2 {
+                let mut product = Fr::one();
+                for i in 0..u.width() {
+                    let a = self.row[usize::from(u.lo + i)];
+                    let b = self.src[usize::from(f.v.lo + i)];
+                    let ab = self.mul(a, b);
+                    let eq = ab + ab - a - b + Fr::one();
+                    product = if i == 0 { eq } else { self.mul(product, eq) };
+                }
+                return product;
+            }
+        }
+        // One shift (or identity) with range restrictions over a large range:
+        // the bitwise automaton, `≤ 17` multiplications per bit.
+        if let Some(rel) = relation {
+            if let Rel::Shift(delta) = rel.rel {
+                let restricts_only = group.iter().all(|f| {
+                    std::ptr::eq(f, rel)
+                        || (f.v.width() == 0 && matches!(f.rel, Rel::Const(_)) && f.range.is_some())
+                });
+                if restricts_only {
+                    let mut range = 0..1u32 << u.width();
+                    for f in group {
+                        if let Some(r) = &f.range {
+                            range.start = range.start.max(r.start);
+                            range.end = range.end.min(r.end);
+                        }
+                    }
+                    let values = range.end.saturating_sub(range.start) as usize;
+                    if 3 * values > 17 * usize::from(u.width()) {
+                        return self.shift_automaton(u, rel.v, delta, &range);
+                    }
+                }
+            }
+        }
+        let mut sum = Fr::zero();
+        for value in 0..1u32 << u.width() {
+            let mut weight = 1i32;
+            let mut src = None;
+            let mut admitted = true;
+            for f in group {
+                let Some((v, w)) = f.apply(value) else {
+                    admitted = false;
+                    break;
+                };
+                weight *= w;
+                if f.v.width() > 0 {
+                    src = Some((f.v, v));
+                }
+            }
+            if !admitted || weight == 0 {
+                continue;
+            }
+            let term = match src {
+                Some((v_bits, v)) => self.pair(u, v_bits, value, v),
+                None => self.eq_const(Point::Row, u, value),
+            };
+            sum += self.scaled(term, weight);
+        }
+        sum
+    }
+
+    /// `Σ_{u ∈ range} eq(r_u, u)·eq(r_v, u + delta)` (no carry out of the
+    /// field) by the bitwise automaton of [`super::layout`]'s `shift_mle`:
+    /// states are (carry, `u < lo` so far, `u < hi` so far), read least
+    /// significant bit first; one multiplication per bit for the four bit
+    /// products and one per live transition.
+    fn shift_automaton(&mut self, u: Bits, v: Bits, delta: i64, range: &Range<u32>) -> Fr {
+        let width = usize::from(u.width());
+        let magnitude = delta.unsigned_abs();
+        if magnitude >= 1u64 << width {
+            return Fr::zero();
+        }
+        let (lo, hi) = (u64::from(range.start), u64::from(range.end));
+        let mut states = [Fr::zero(); 8];
+        states[0] = Fr::one();
+        for i in 0..width {
+            let a = self.row[usize::from(u.lo) + i];
+            let b = self.src[usize::from(v.lo) + i];
+            let ab = self.mul(a, b);
+            // `products[u][v] = bit(a, u)·bit(b, v)`.
+            let products = [[Fr::one() - a - b + ab, b - ab], [a - ab, ab]];
+            let d = (magnitude >> i) & 1;
+            let (lo_i, hi_i) = ((lo >> i) & 1, (hi >> i) & 1);
+            let mut next = [Fr::zero(); 8];
+            for (state, &weight) in states.iter().enumerate() {
+                if weight.is_zero() {
+                    continue;
+                }
+                let (carry, lt_lo, lt_hi) = (
+                    state as u64 & 1,
+                    (state >> 1) as u64 & 1,
+                    (state >> 2) as u64 & 1,
+                );
+                for bit_u in 0..2u64 {
+                    let (bit_v, carry_out) = if delta >= 0 {
+                        let sum = bit_u + d + carry;
+                        (sum & 1, sum >> 1)
+                    } else {
+                        let diff = bit_u as i64 - d as i64 - carry as i64;
+                        (diff.rem_euclid(2) as u64, u64::from(diff < 0))
+                    };
+                    let step = |flag: u64, bound: u64| -> u64 {
+                        match bit_u.cmp(&bound) {
+                            Ordering::Less => 1,
+                            Ordering::Greater => 0,
+                            Ordering::Equal => flag,
+                        }
+                    };
+                    let next_state =
+                        (carry_out | (step(lt_lo, lo_i) << 1) | (step(lt_hi, hi_i) << 2)) as usize;
+                    let term = self.mul(weight, products[bit_u as usize][bit_v as usize]);
+                    next[next_state] += term;
+                }
+            }
+            states = next;
+        }
+        let hi_open = hi >= 1u64 << width;
+        (0..8usize)
+            .filter(|state| {
+                let (carry, lt_lo, lt_hi) = (state & 1, (state >> 1) & 1, (state >> 2) & 1);
+                carry == 0 && lt_lo == 0 && (hi_open || lt_hi == 1)
+            })
+            .fold(Fr::zero(), |acc, state| acc + states[state])
+    }
+
+    /// `Σ_u eq(p_bits, u)·q^u` over the whole field: `Π_i (1 − r_i + r_i·q^{2^i})`,
+    /// memoized per field for one `q`.
+    pub fn geometric(&mut self, point: Point, bits: Bits, q: Fr) -> Fr {
+        if let Some((cached_q, value)) = self.geometrics.get(&(point, bits)) {
+            if *cached_q == q {
+                return *value;
+            }
+        }
+        let coords = self.point(point)[usize::from(bits.lo)..usize::from(bits.hi)].to_vec();
+        let mut power = q;
+        let mut product = Fr::one();
+        for (i, r) in coords.into_iter().enumerate() {
+            if i > 0 {
+                power = self.mul(power, power);
+            }
+            let term = self.mul(r, power - Fr::one()) + Fr::one();
+            product = if i == 0 {
+                term
+            } else {
+                self.mul(product, term)
+            };
+        }
+        let _ = self.geometrics.insert((point, bits), (q, product));
+        product
+    }
+
+    /// `Σ_{u ∈ range} eq(p_bits, u)·f(u)`: one multiplication per admitted
+    /// value plus one per high-block value when the field crosses a block
+    /// boundary (`eq = eq_lo·eq_hi` factored out of the inner sums).
+    pub fn field_sum(
+        &mut self,
+        point: Point,
+        bits: Bits,
+        range: Range<u32>,
+        f: &dyn Fn(u32) -> Fr,
+    ) -> Fr {
+        let split = block_end(bits.lo);
+        if split >= bits.hi {
+            let mut sum = Fr::zero();
+            for u in range {
+                let e = self.lookup(point, bits, u);
+                sum += self.mul(e, f(u));
+            }
+            return sum;
+        }
+        let lo_bits = Bits::new(bits.lo, split);
+        let hi_bits = Bits::new(split, bits.hi);
+        let lo_width = lo_bits.width();
+        let mut total = Fr::zero();
+        let mut u = range.start;
+        while u < range.end {
+            let hi = u >> lo_width;
+            let block_end_u = ((hi + 1) << lo_width).min(range.end);
+            let mut inner = Fr::zero();
+            for v in u..block_end_u {
+                let e = self.lookup(point, lo_bits, v & ((1 << lo_width) - 1));
+                inner += self.mul(e, f(v));
+            }
+            let e_hi = self.eq_const(point, hi_bits, hi);
+            total += self.mul(e_hi, inner);
+            u = block_end_u;
+        }
+        total
+    }
+
+    /// `(Σ_{u ∈ range} eq(p_bits, u), Σ_{u ∈ range} eq(p_bits, u)·u)` by bit
+    /// decomposition (the moment recombined by doublings, no multiplication).
+    pub fn field_moment(&mut self, point: Point, bits: Bits, range: Range<u32>) -> (Fr, Fr) {
+        if bits.width() == 0 {
+            return (Fr::one(), Fr::zero());
+        }
+        if range == (0..1 << bits.width()) {
+            // Free field: `Σ_u eq = 1`, `Σ_u eq·u = Σ_i 2^i·r_i`.
+            let coords = &self.point(point)[usize::from(bits.lo)..usize::from(bits.hi)];
+            let moment = coords
+                .iter()
+                .rev()
+                .fold(Fr::zero(), |acc, r| acc + acc + *r);
+            return (Fr::one(), moment);
+        }
+        let mut total = Fr::zero();
+        let mut per_bit = vec![Fr::zero(); usize::from(bits.width())];
+        for u in range {
+            let e = self.eq_const(point, bits, u);
+            total += e;
+            for (i, acc) in per_bit.iter_mut().enumerate() {
+                if (u >> i) & 1 == 1 {
+                    *acc += e;
+                }
+            }
+        }
+        let moment = per_bit
+            .iter()
+            .rev()
+            .fold(Fr::zero(), |acc, bit_sum| acc + acc + *bit_sum);
+        (total, moment)
+    }
+
+    /// `Π_fields field(group)`: a kernel's MLE.
+    pub fn kernel(&mut self, factors: &[Factor]) -> Fr {
+        let mut product = Fr::one();
+        for (i, group) in field_groups(factors).into_iter().enumerate() {
+            let value = self.field(&group);
+            product = if i == 0 {
+                value
+            } else {
+                self.mul(product, value)
+            };
+        }
+        product
+    }
+
+    /// Adds `Π_{other cell fields}·m_map` for every map into `buckets[index]`,
+    /// the caller applying one weight per bucket; the cell factors sharing
+    /// the maps' row field join each map's sum. The maps of one bucket are
+    /// summed before the product, and the cell product is memoized across
+    /// the elements sharing the cell.
+    pub fn group_into(&mut self, cell: &[Factor], maps: &[(usize, &Factor)], buckets: &mut [Fr]) {
+        let Some((_, first)) = maps.first() else {
+            return;
+        };
+        let map_field = first.u;
+        let mut shared: Vec<Factor> = Vec::new();
+        let mut others: Vec<Vec<Factor>> = Vec::new();
+        for group in field_groups(cell) {
+            if group[0].u == map_field {
+                shared = group;
+            } else {
+                others.push(group);
+            }
+        }
+        let key = (cell.to_vec(), map_field);
+        let product = if let Some(&p) = self.products.get(&key) {
+            p
+        } else {
+            let mut product: Option<Fr> = None;
+            for group in &others {
+                let value = self.field(group);
+                product = Some(match product {
+                    Some(p) => self.mul(p, value),
+                    None => value,
+                });
+            }
+            let _ = self.products.insert(key, product);
+            product
+        };
+        let mut sums: Vec<(usize, Fr)> = Vec::new();
+        for (index, map) in maps {
+            let mut group = shared.clone();
+            group.push((*map).clone());
+            let m = self.field(&group);
+            if let Some((_, sum)) = sums.iter_mut().find(|(i, _)| i == index) {
+                *sum += m;
+            } else {
+                sums.push((*index, m));
+            }
+        }
+        for (index, sum) in sums {
+            buckets[index] += match product {
+                Some(p) => self.mul(p, sum),
+                None => sum,
+            };
+        }
+    }
+
+    /// The same evaluator with the source point also as the row point,
+    /// keeping the source tables (kernels over one point only).
+    pub fn rebase_row_to_src(mut self) -> Self {
+        self.row = self.src.clone();
+        let src_tables: Vec<(Bits, Vec<Fr>)> = self
+            .tables
+            .iter()
+            .filter(|((point, _), _)| *point == Point::Src)
+            .map(|((_, bits), table)| (*bits, table.clone()))
+            .collect();
+        self.tables.retain(|(point, _), _| *point == Point::Src);
+        for (bits, table) in src_tables {
+            let _ = self.tables.insert((Point::Row, bits), table);
+        }
+        let src_consts: Vec<((Bits, u32), Fr)> = self
+            .consts
+            .iter()
+            .filter(|((point, _, _), _)| *point == Point::Src)
+            .map(|((_, bits, value), v)| ((*bits, *value), *v))
+            .collect();
+        self.consts.retain(|(point, _, _), _| *point == Point::Src);
+        for ((bits, value), v) in src_consts {
+            let _ = self.consts.insert((Point::Row, bits, value), v);
+        }
+        self.groups.clear();
+        self.products.clear();
+        self.pairs.clear();
+        self
+    }
+}

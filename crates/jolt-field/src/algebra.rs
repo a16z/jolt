@@ -153,13 +153,21 @@ pub trait Ring:
     /// Multiplies this ring element by the integer `2^pow`.
     #[inline]
     fn mul_pow_2(&self, pow: usize) -> Self {
+        self.mul_pow_2_observed(pow, || {})
+    }
+
+    /// Multiplies by `2^pow`, calling `observe_mul` for each field multiplication.
+    #[inline]
+    fn mul_pow_2_observed(&self, pow: usize, mut observe_mul: impl FnMut()) -> Self {
         assert!(pow <= 255, "pow > 255");
         let mut res = *self;
         let mut p = pow;
         while p >= 64 {
+            observe_mul();
             res *= Self::from_u64(1 << 63);
             p -= 63;
         }
+        observe_mul();
         res * Self::from_u64(1 << p)
     }
 }

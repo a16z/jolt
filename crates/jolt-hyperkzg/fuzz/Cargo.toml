@@ -1,0 +1,36 @@
+[workspace]
+
+[package]
+name = "jolt-hyperkzg-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jolt-hyperkzg = { path = ".." }
+jolt-crypto = { path = "../../jolt-crypto" }
+jolt-field = { path = "../../jolt-field", features = ["bn254"] }
+jolt-openings = { path = "../../jolt-openings" }
+jolt-poly = { path = "../../jolt-poly" }
+jolt-transcript = { path = "../../jolt-transcript" }
+rand_chacha = "0.3"
+rand_core = "0.6"
+
+[[bin]]
+name = "commit_open_verify"
+path = "fuzz_targets/commit_open_verify.rs"
+doc = false
+
+[[bin]]
+name = "tampered_proof"
+path = "fuzz_targets/tampered_proof.rs"
+doc = false
+
+[[bin]]
+name = "wrong_eval"
+path = "fuzz_targets/wrong_eval.rs"
+doc = false

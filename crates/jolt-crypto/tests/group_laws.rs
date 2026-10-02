@@ -1,6 +1,6 @@
 //! Algebraic group law tests for BN254 G1 and G2.
 
-use jolt_crypto::{Bn254, Bn254G1, Bn254G2, JoltGroup};
+use jolt_crypto::{Bn254, Bn254G1, Bn254G2, JoltGroup, PairingGroup};
 use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -76,6 +76,20 @@ fn g1_msm_matches_naive() {
     let msm_result = Bn254G1::msm(&[g1, g2], &[s1, s2]);
     let naive = g1.scalar_mul(&s1) + g2.scalar_mul(&s2);
     assert_eq!(msm_result, naive);
+}
+
+#[test]
+fn g1_pairing_backend_msm_matches_group_msm() {
+    let mut rng = ChaCha20Rng::seed_from_u64(70);
+    let bases = (0..257).map(|_| random_g1(&mut rng)).collect::<Vec<_>>();
+    let mut scalars = (0..257).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
+    scalars[0] = Fr::from_u64(0);
+    scalars[1] = Fr::from_u64(1);
+    scalars[2] = -Fr::from_u64(1);
+    let expected = Bn254G1::msm(&bases, &scalars);
+
+    let bases = Bn254::g1_to_affine(&bases);
+    assert_eq!(Bn254::g1_affine_msm(&bases, &scalars), expected);
 }
 
 #[test]
