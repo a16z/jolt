@@ -23,6 +23,7 @@
 // this crate those paths only resolve via this self-alias.
 extern crate self as jolt_claims;
 
+pub mod blake2b256;
 mod claim_data;
 mod claims;
 mod formula_error;
@@ -40,4 +41,4 @@ pub use claim_data::{
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};
 pub use sumcheck::SumcheckDomain;
-pub use symbolic::SymbolicSumcheck;
+pub use symbolic::{referenced_openings, SymbolicSumcheck};

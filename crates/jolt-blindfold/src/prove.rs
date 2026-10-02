@@ -2,7 +2,9 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpeni
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
-use jolt_sumcheck::{CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
+use jolt_sumcheck::{
+    append_round_coefficients, CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 use rand_core::RngCore;
 use rayon::prelude::*;
@@ -889,7 +891,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        append_values(
+        append_round_coefficients(
             transcript,
             SUMCHECK_ROUND_TRANSCRIPT_LABEL,
             compressed.coeffs_except_linear_term(),
@@ -971,7 +973,7 @@ where
             });
         }
         let compressed = round_poly.compress();
-        append_values(
+        append_round_coefficients(
             transcript,
             INNER_SUMCHECK_LABEL,
             compressed.coeffs_except_linear_term(),

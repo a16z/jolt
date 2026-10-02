@@ -1,7 +1,7 @@
 //! Verifier preprocessing inputs.
 
-use blake2::{digest::consts::U32, Blake2b, Digest};
 use common::jolt_device::MemoryLayout;
+use jolt_claims::blake2b256::{Blake2b256, Digest};
 use jolt_claims::protocols::jolt::JoltRelationId;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
@@ -190,7 +190,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 }
             })?;
         Ok(
-            Blake2b::<U32>::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
+            Blake2b256::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
                 .chain_update(encoded)
                 .finalize()
                 .into(),
@@ -250,19 +250,24 @@ where
 
 /// Wire form of [`JoltVerifierPreprocessing`]: everything except the derived
 /// digest.
+///
+/// Decoding a [`JoltVerifierPreprocessing`] recomputes its digest from the
+/// program. A verifier whose trust root fixes the digest together with the
+/// program, such as a recursion guest whose image embeds both, may decode this
+/// form instead and assemble the preprocessing from its fields and that digest.
 #[derive(Serialize, Deserialize)]
 #[serde(bound(
     serialize = "VC::Setup: Serialize",
     deserialize = "VC::Setup: DeserializeOwned"
 ))]
-struct VerifierPreprocessingWire<PCS, VC>
+pub struct VerifierPreprocessingWire<PCS, VC>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    program: ProgramPreprocessing<PCS>,
-    pcs_setup: PCS::VerifierSetup,
-    vc_setup: Option<VC::Setup>,
+    pub program: ProgramPreprocessing<PCS>,
+    pub pcs_setup: PCS::VerifierSetup,
+    pub vc_setup: Option<VC::Setup>,
 }
 
 impl<PCS, VC> TryFrom<VerifierPreprocessingWire<PCS, VC>> for JoltVerifierPreprocessing<PCS, VC>

@@ -16,6 +16,7 @@ pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafCyclePhaseChallenges, BytecodeReadRafCyclePhaseCommittedChallenges,
     BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
 };
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{
     geometry::{
         bytecode::{
@@ -25,7 +26,8 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::bytecode::{bytecode_val_stage_opening, NUM_BYTECODE_VAL_STAGES},
         dimensions::committed_address_chunks,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltRelationId,
+    BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltChallengeId, JoltDerivedId,
+    JoltRelationId,
 };
 use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
@@ -206,47 +208,58 @@ fn fold_stage_values<F: JoltField>(
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
     let bytecode_rows = fold.bytecode;
-    let row_values = bytecode::read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: bytecode_rows,
-        register_read_write_point: fold.register_read_write_point,
-        register_val_evaluation_point: fold.register_val_evaluation_point,
-        stage1_gammas: fold.stage_gammas[0],
-        stage2_gammas: fold.stage_gammas[1],
-        stage3_gammas: fold.stage_gammas[2],
-        stage4_gammas: fold.stage_gammas[3],
-        stage5_gammas: fold.stage_gammas[4],
-    });
-    let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
-    for (row_values, eq_address) in row_values.into_iter().zip(&address_eq_evals) {
-        for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
-            *stage_value += row_value * *eq_address;
-        }
-    }
+    let stage_values = bytecode::read_raf_folded_stage_values(
+        BytecodeReadRafStageValueInputs {
+            bytecode: bytecode_rows,
+            register_read_write_point: fold.register_read_write_point,
+            register_val_evaluation_point: fold.register_val_evaluation_point,
+            stage1_gammas: fold.stage_gammas[0],
+            stage2_gammas: fold.stage_gammas[1],
+            stage3_gammas: fold.stage_gammas[2],
+            stage4_gammas: fold.stage_gammas[3],
+            stage5_gammas: fold.stage_gammas[4],
+        },
+        &address_eq_evals,
+    );
     #[cfg(feature = "field-inline")]
     let field_registers = {
         use jolt_claims::protocols::field_inline::geometry::bytecode::{
-            read_raf_stage_values, FieldInlineBytecodeReadRafStageValueInputs,
+            read_raf_folded_stage_values, FieldInlineBytecodeReadRafStageValueInputs,
         };
-        let rows = read_raf_stage_values(FieldInlineBytecodeReadRafStageValueInputs {
-            bytecode: bytecode_rows,
-            field_register_read_write_point: &field_inline.read_write_address,
-            field_register_val_evaluation_point: &field_inline.val_evaluation_address,
-            stage4_gammas: &field_inline.gammas.stage4,
-            stage5_gammas: &field_inline.gammas.stage5,
-        });
-        let mut values = [F::zero(); 5];
-        for (row, eq_address) in rows.into_iter().zip(address_eq_evals) {
-            for (value, row_value) in values.iter_mut().zip(row) {
-                *value += row_value * eq_address;
-            }
-        }
-        values
+        read_raf_folded_stage_values(
+            FieldInlineBytecodeReadRafStageValueInputs {
+                bytecode: bytecode_rows,
+                field_register_read_write_point: &field_inline.read_write_address,
+                field_register_val_evaluation_point: &field_inline.val_evaluation_address,
+                stage4_gammas: &field_inline.gammas.stage4,
+                stage5_gammas: &field_inline.gammas.stage5,
+            },
+            &address_eq_evals,
+        )
     };
     Ok(FoldedStageValues {
         ordinary: stage_values,
         #[cfg(feature = "field-inline")]
         field_registers,
     })
+}
+
+/// Produced `BytecodeRa` opening values keyed by id, for the expression
+/// resolvers: sorted once so each factor resolves by binary search instead of
+/// a scan over every opening.
+fn bytecode_ra_table<F: JoltField>(ids: &[JoltOpeningId], values: &[F]) -> Vec<(JoltOpeningId, F)> {
+    let mut table: Vec<(JoltOpeningId, F)> =
+        ids.iter().copied().zip(values.iter().copied()).collect();
+    table.sort_unstable_by_key(|(id, _)| *id);
+    table
+}
+
+fn bytecode_ra_value<F: JoltField>(table: &[(JoltOpeningId, F)], id: &JoltOpeningId) -> Option<F> {
+    table
+        .binary_search_by_key(id, |(key, _)| *key)
+        .ok()
+        .and_then(|index| table.get(index))
+        .map(|(_, value)| *value)
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {
@@ -291,20 +304,21 @@ fn expected_output_from_publics<F: JoltField>(
         });
     }
     let relation = relations::bytecode::ReadRaf::new(dimensions);
+    let table = bytecode_ra_table(&output_openings.bytecode_ra, bytecode_ra);
     relation.output_expression::<F>().try_evaluate(
         |id| {
-            for (opening, value) in output_openings.bytecode_ra.iter().zip(bytecode_ra) {
-                if *id == *opening {
-                    return Ok(*value);
-                }
-            }
-            Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
+            bytecode_ra_value(&table, id)
+                .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
         },
         |id| match id {
             JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(gamma),
             _ => Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
         },
         |id| match id {
+            JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                challenge: BytecodeReadRafChallenge::Gamma,
+                exponent,
+            }) => Ok(bytecode::challenge_pow(gamma, *exponent)),
             JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                 .value(*public_id)
                 .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
@@ -440,21 +454,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     output_values.bytecode_ra.len()
                 )));
             }
+            let table = bytecode_ra_table(&output_openings.bytecode_ra, &output_values.bytecode_ra);
             self.symbolic().output_expression::<F>().try_evaluate(
                 |id| {
                     if *id == bytecode::fused_inc_read_raf_opening() {
                         return Ok(output_values.fused_inc);
                     }
-                    for (opening_id, value) in output_openings
-                        .bytecode_ra
-                        .iter()
-                        .zip(&output_values.bytecode_ra)
-                    {
-                        if *id == *opening_id {
-                            return Ok(*value);
-                        }
-                    }
-                    Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
+                    bytecode_ra_value(&table, id)
+                        .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
                 },
                 |id| match id {
                     JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
@@ -466,6 +473,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     JoltDerivedId::BytecodeReadRaf(
                         jolt_claims::protocols::jolt::BytecodeReadRafPublic::StageValue(stage),
                     ) if *stage >= base_stages => fused_stage_value(*stage),
+                    JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                        challenge: BytecodeReadRafChallenge::Gamma,
+                        exponent,
+                    }) => Ok(bytecode::challenge_pow(challenges.gamma, *exponent)),
                     JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                         .value(*public_id)
                         .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
@@ -788,6 +799,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
             },
         );
         let output_openings = bytecode::read_raf_output_openings(self.dimensions);
+        let table = bytecode_ra_table(&output_openings.bytecode_ra, &output_values.bytecode_ra);
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
                 #[cfg(feature = "akita")]
@@ -799,16 +811,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                         return Ok(*value);
                     }
                 }
-                for (index, opening_id) in output_openings.bytecode_ra.iter().enumerate() {
-                    if *id == *opening_id {
-                        return output_values
-                            .bytecode_ra
-                            .get(index)
-                            .copied()
-                            .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() });
-                    }
-                }
-                Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
+                bytecode_ra_value(&table, id)
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges
@@ -816,6 +820,15 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| match id {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                    challenge,
+                    exponent,
+                }) => challenges
+                    .resolve_challenge(&(*challenge).into())
+                    .map(|value| bytecode::challenge_pow(value, *exponent))
+                    .ok_or(VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(*challenge).into(),
+                    }),
                 JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                     .value(*public_id)
                     .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),

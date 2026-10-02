@@ -10,9 +10,9 @@ use crate::{challenge, derived, opening, Expr};
 /// folded by `gamma`, reduced to three openings at the shared reduction point,
 /// weighted by the `EqSpartan` public.
 pub trait ValueReductionIds {
-    type OpeningId: Clone;
-    type DerivedId: Clone;
-    type ChallengeId: Clone;
+    type OpeningId: Copy;
+    type DerivedId: Copy;
+    type ChallengeId: Copy;
 
     /// Consumed upstream openings, in `gamma` power order (γ⁰, γ¹, γ²).
     fn consumed() -> [Self::OpeningId; 3];
@@ -65,9 +65,9 @@ pub struct IncrementReductionGroup<O, P> {
 /// Id supplier for the increment claim-reduction shape: `groups()` source
 /// groups, group `g` riding the γ^(2g) offset.
 pub trait IncrementReductionIds {
-    type OpeningId: Clone;
-    type DerivedId: Clone;
-    type ChallengeId: Clone;
+    type OpeningId: Copy;
+    type DerivedId: Copy;
+    type ChallengeId: Copy;
 
     /// The source groups in `gamma` offset order.
     fn groups() -> Vec<IncrementReductionGroup<Self::OpeningId, Self::DerivedId>>;

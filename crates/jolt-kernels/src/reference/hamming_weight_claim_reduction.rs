@@ -14,6 +14,7 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 use jolt_claims::protocols::jolt::{
     HammingWeightClaimReductionPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId,
     JoltRelationId,
@@ -152,6 +153,12 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>> for Referenc
                             ) => virtualization_points
                                 .get(*index)
                                 .map(|point| vec![eq_at_digit_zero(point); k as usize]),
+                            JoltDerivedId::HammingWeightClaimReduction(
+                                HammingWeightClaimReductionPublic::GammaPow(exponent),
+                            ) => Some(vec![
+                                gamma_pow(inputs.challenges.gamma, *exponent);
+                                k as usize
+                            ]),
                             _ => None,
                         };
                         if let Some(table) = table {

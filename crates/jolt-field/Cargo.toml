@@ -15,6 +15,7 @@ ignored = ["cc", "allocative"]
 workspace = true
 
 [dependencies]
+jolt-riscv = { workspace = true, features = ["field-inline"], optional = true }
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -35,6 +36,9 @@ parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
 fp128-proof-linkage = ["asm"]
 fp64-proof-linkage = []
+# Guest arithmetic uses native field instructions and range-checked limb advice.
+# Host arithmetic remains the portable reference; see `fr_inline`.
+field-inline-guest = ["dep:jolt-riscv"]
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires

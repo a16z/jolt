@@ -61,6 +61,24 @@ pub trait Transcript: Default + Sync + Send + 'static {
         self.append(value);
     }
 
+    /// Absorbs `values` as one labeled message: the [`LabelWithCount`] word
+    /// for `label` and the value count, then every value's big-endian
+    /// canonical encoding, in a single [`append_bytes`](Self::append_bytes).
+    /// One message costs one hash over its bytes, where [`append_values`]
+    /// hashes once per value.
+    ///
+    /// [`append_values`]: Self::append_values
+    fn append_scalars<F: CanonicalBytes>(&mut self, label: &'static [u8], values: &[F]) {
+        let mut message = Vec::with_capacity(32 + values.len() * F::NUM_BYTES);
+        message.extend_from_slice(&LabelWithCount(label, values.len() as u64).word());
+        let mut encoded = vec![0u8; F::NUM_BYTES];
+        for value in values {
+            value.to_bytes_le(&mut encoded);
+            message.extend(encoded.iter().rev());
+        }
+        self.append_bytes(&message);
+    }
+
     /// Absorbs a domain label with a count followed by each value in order.
     fn append_values<A: AppendToTranscript>(&mut self, label: &'static [u8], values: &[A]) {
         self.append(&LabelWithCount(label, values.len() as u64));
@@ -128,10 +146,17 @@ pub trait AppendToTranscript {
 /// Big-endian field element absorption used by the deployed proof format.
 impl<F: CanonicalBytes> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let mut buf = vec![0u8; F::NUM_BYTES];
-        self.to_bytes_le(&mut buf);
+        let mut stack = [0u8; 32];
+        let mut heap = Vec::new();
+        let buf = if let Some(buf) = stack.get_mut(..F::NUM_BYTES) {
+            buf
+        } else {
+            heap.resize(F::NUM_BYTES, 0);
+            &mut heap
+        };
+        self.to_bytes_le(buf);
         buf.reverse();
-        transcript.append_bytes(&buf);
+        transcript.append_bytes(buf);
     }
 }
 
@@ -173,8 +198,13 @@ impl AppendToTranscript for Label {
 /// used by the deployed proof format.
 pub struct LabelWithCount(pub &'static [u8], pub u64);
 
-impl AppendToTranscript for LabelWithCount {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+impl LabelWithCount {
+    /// The packed 32-byte word this label absorbs as.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the label exceeds 24 bytes.
+    pub fn word(&self) -> [u8; 32] {
         assert!(
             self.0.len() <= 24,
             "label {:?} exceeds 24 bytes",
@@ -184,7 +214,13 @@ impl AppendToTranscript for LabelWithCount {
         let (head, _) = packed.split_at_mut(self.0.len());
         head.copy_from_slice(self.0);
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
-        transcript.append_bytes(&packed);
+        packed
+    }
+}
+
+impl AppendToTranscript for LabelWithCount {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append_bytes(&self.word());
     }
 }
 
@@ -281,11 +317,21 @@ where
         // `append_bytes(a) ; append_bytes(b)` distinct from
         // `append_bytes(a || b)`.
         const APPEND_MARKER: u8 = 0x9B;
-        let mut buf = Vec::with_capacity(9 + bytes.len());
-        buf.push(APPEND_MARKER);
-        buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-        buf.extend_from_slice(bytes);
-        let _ = self.sponge.absorb(&buf);
+        let mut stack = [0u8; 128];
+        let mut heap = Vec::new();
+        let len = 9 + bytes.len();
+        let buf = if let Some(buf) = stack.get_mut(..len) {
+            buf
+        } else {
+            heap.resize(len, 0);
+            &mut heap
+        };
+        let (marker, rest) = buf.split_at_mut(1);
+        marker.copy_from_slice(&[APPEND_MARKER]);
+        let (length, body) = rest.split_at_mut(8);
+        length.copy_from_slice(&(bytes.len() as u64).to_le_bytes());
+        body.copy_from_slice(bytes);
+        let _ = self.sponge.absorb(buf);
     }
 
     fn challenge(&mut self) -> F {

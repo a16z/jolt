@@ -169,6 +169,45 @@ pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
+    /// `Σ a[i]·b[i]` over the shorter of the two slices. Fields with a batched
+    /// guest path (register-resident field-inline accumulation) override this.
+    #[inline]
+    fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        a.iter()
+            .zip(b)
+            .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
+    }
+
+    /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
+    /// otherwise. Fields with a batched guest path (a register-resident sum
+    /// read out once) override this.
+    #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        terms
+            .into_iter()
+            .fold(<Self as Zero>::zero(), |acc, (term, negative)| {
+                if negative {
+                    acc - *term
+                } else {
+                    acc + *term
+                }
+            })
+    }
+
+    /// `Σ_i terms[i][0]·terms[i][1]·terms[i][2]·terms[i][3]`. Fields with a
+    /// batched guest path (register-resident products and sum) override this.
+    #[inline]
+    fn sum_of_products4(terms: &[[Self; 4]]) -> Self {
+        terms
+            .iter()
+            .fold(<Self as Zero>::zero(), |acc, [a, b, c, d]| {
+                acc + *a * *b * *c * *d
+            })
+    }
+
     /// Multiplicative inverse with zero mapped to zero.
     #[inline]
     fn inv_or_zero(self) -> Self {
@@ -219,6 +258,34 @@ pub trait Field: Ring {
 pub trait PseudoMersenne: Field + CanonicalEncoding {
     /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
+
+    /// `Σ a[i]·b[i]` on a field-inline guest, with the sum register-resident
+    /// and one hint for the result; `None` where no such path exists (the
+    /// caller then folds in software). Fields whose guest arithmetic is
+    /// hinted override this; the host counterpart records the single hint.
+    #[inline]
+    fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
+        let _ = (a, b);
+        None
+    }
+
+    /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]` on a field-inline guest with
+    /// the powers loaded once per block of rows and one hint for the total;
+    /// `None` where no such path exists.
+    #[inline]
+    fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
+        let _ = (rows, weights, pows);
+        None
+    }
+
+    /// `out[i] = Σ_j rows[i][j]·shared[j]` on a field-inline guest with each
+    /// shared element loaded once per block of rows; `false` (and `out`
+    /// untouched) where no such path exists.
+    #[inline]
+    fn inline_dot_rows(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) -> bool {
+        let _ = (rows, shared, out);
+        false
+    }
 
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.
     ///

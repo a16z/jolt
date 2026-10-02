@@ -1,7 +1,7 @@
 use jolt_field::JoltField;
 use thiserror::Error;
 
-use crate::eq_index_msb;
+use crate::{eq_index_msb, EqPolynomial};
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum MleError {
@@ -22,13 +22,31 @@ pub enum MleError {
 }
 
 pub fn sparse_mle_msb<F: JoltField>(start_index: u128, values: &[u64], point: &[F]) -> F {
-    values
-        .iter()
-        .enumerate()
-        .map(|(offset, value)| {
-            F::from_u64(*value) * eq_index_msb(point, start_index + offset as u128)
-        })
-        .sum()
+    // Consecutive indices share their high bits: with `k` low bits,
+    // `eq(point, i) = eq(high, i >> k) · eq(low, i mod 2^k)`, so one low table
+    // serves every aligned block of `2^k` indices the run touches.
+    let Some(len_log2) = values.len().checked_ilog2() else {
+        return F::zero();
+    };
+    let low_bits = (len_log2 as usize).min(point.len());
+    let (high_point, low_point) = point.split_at(point.len() - low_bits);
+    let low = EqPolynomial::<F>::evals(low_point, None);
+    let mask = (1u128 << low_bits) - 1;
+    let mut sum = F::zero();
+    let mut index = start_index;
+    let mut rest = values;
+    while !rest.is_empty() {
+        let low_start = (index & mask) as usize;
+        let (block, tail) = rest.split_at((low.len() - low_start).min(rest.len()));
+        let partial = block
+            .iter()
+            .zip(&low[low_start..])
+            .fold(F::zero(), |acc, (value, eq)| acc + eq.mul_u64(*value));
+        sum += eq_index_msb(high_point, index >> low_bits) * partial;
+        index += block.len() as u128;
+        rest = tail;
+    }
+    sum
 }
 
 pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
@@ -176,6 +194,26 @@ mod tests {
             sparse_mle_msb(1, &values, &point),
             Fr::from_u64(7) * eq_index_msb(&point, 1) + Fr::from_u64(11) * eq_index_msb(&point, 2)
         );
+    }
+
+    #[test]
+    fn sparse_mle_matches_explicit_sum_across_blocks() {
+        let point: Vec<Fr> = (2..8).map(Fr::from_u64).collect();
+        for (start, len) in [(0u128, 1usize), (5, 13), (3, 61), (60, 4)] {
+            let values: Vec<u64> = (0..len as u64).map(|i| 3 * i + 1).collect();
+            let expected = values
+                .iter()
+                .enumerate()
+                .map(|(offset, value)| {
+                    Fr::from_u64(*value) * eq_index_msb(&point, start + offset as u128)
+                })
+                .sum::<Fr>();
+            assert_eq!(
+                sparse_mle_msb(start, &values, &point),
+                expected,
+                "{start} {len}"
+            );
+        }
     }
 
     #[test]

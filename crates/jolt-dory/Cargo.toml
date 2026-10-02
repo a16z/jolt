@@ -9,7 +9,7 @@ description = "Dory commitment scheme implementation for the Jolt zkVM"
 workspace = true
 
 [dependencies]
-jolt-crypto = { workspace = true }
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true }
 jolt-openings = { workspace = true }
 jolt-poly = { workspace = true }
@@ -24,6 +24,8 @@ ark-ec = { workspace = true }
 ark-serialize = { workspace = true }
 
 [features]
+# Only for verifier preprocessing authenticated by the caller.
+unchecked-verifier-setup = []
 default = ["parallel"]
 parallel = ["jolt-crypto/parallel", "jolt-poly/parallel"]
 profiling = ["jolt-akita/profiling"]

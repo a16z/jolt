@@ -25,16 +25,15 @@ use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
-    booleanity_claim, reduced_claim, virtualization_claim,
+    booleanity_claim, gamma_power_expr, reduced_claim, virtualization_claim,
 };
 use crate::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
 use crate::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use crate::protocols::jolt::{
-    HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltExpr,
-    JoltOpeningId, JoltRelationId,
+    HammingWeightClaimReductionPublic, JoltExpr, JoltOpeningId, JoltRelationId,
 };
-use crate::{challenge, constant, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{constant, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 use crate::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
 
@@ -181,7 +180,6 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity_digit_zero =
             derived(HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero);
         let mut input = JoltExpr::zero();
@@ -192,9 +190,9 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
                 // includes the digit-zero row.
                 JoltRaPolynomial::Ram(_) => {
                     input = input
-                        + gamma.clone().pow(power) * opening(ram_hamming_weight())
-                        + gamma.clone().pow(power + 1) * opening(booleanity_claim(polynomial))
-                        + gamma.clone().pow(power + 2) * opening(virtualization_claim(polynomial));
+                        + gamma_power_expr(power) * opening(ram_hamming_weight())
+                        + gamma_power_expr(power + 1) * opening(booleanity_claim(polynomial))
+                        + gamma_power_expr(power + 2) * opening(virtualization_claim(polynomial));
                     power += 3;
                 }
                 // Public M_mu = 1: fold eq(r_address, 0) into each input claim.
@@ -202,10 +200,10 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
                     let eq_virtualization_digit_zero =
                         derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
                     input = input
-                        + gamma.clone().pow(power)
+                        + gamma_power_expr(power)
                             * (opening(booleanity_claim(polynomial))
                                 - eq_booleanity_digit_zero.clone())
-                        + gamma.clone().pow(power + 1)
+                        + gamma_power_expr(power + 1)
                             * (opening(virtualization_claim(polynomial))
                                 - eq_virtualization_digit_zero);
                     power += 2;
@@ -214,26 +212,25 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
         }
         for index in 0..self.shape.chunking.chunk_count() {
             input = input
-                + gamma.clone().pow(power)
+                + gamma_power_expr(power)
                     * (opening(booleanity_balanced_inc_digit_opening(index))
                         - eq_booleanity_digit_zero.clone());
             power += 1;
         }
         input = input
-            + gamma.clone().pow(power)
+            + gamma_power_expr(power)
                 * (opening(booleanity_balanced_inc_carry_opening()) - eq_booleanity_digit_zero);
         power += 1;
         debug_assert_eq!(power, self.decode_power());
-        input + gamma.pow(self.decode_power()) * opening(fused_inc_read_raf_opening())
+        input + gamma_power_expr(self.decode_power()) * opening(fused_inc_read_raf_opening())
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity = derived(HammingWeightClaimReductionPublic::EqBooleanity);
         let eq_booleanity_digit_zero =
             derived(HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero);
         let inc_value = derived(HammingWeightClaimReductionPublic::BalancedIncValueAtAddress);
-        let decode_scale = gamma.clone().pow(self.decode_power());
+        let decode_scale = gamma_power_expr(self.decode_power());
         let mut output = JoltExpr::zero();
         let mut power = 0usize;
 
@@ -242,9 +239,9 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
             let coefficient = match polynomial {
                 // RAM: base Hamming, Booleanity, and virtualization legs.
                 JoltRaPolynomial::Ram(_) => {
-                    let c = gamma.clone().pow(power)
-                        + gamma.clone().pow(power + 1) * eq_booleanity.clone()
-                        + gamma.clone().pow(power + 2) * eq_virtualization;
+                    let c = gamma_power_expr(power)
+                        + gamma_power_expr(power + 1) * eq_booleanity.clone()
+                        + gamma_power_expr(power + 2) * eq_virtualization;
                     power += 3;
                     c
                 }
@@ -252,9 +249,9 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
                 JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
                     let eq_virtualization_digit_zero =
                         derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
-                    let c = gamma.clone().pow(power)
+                    let c = gamma_power_expr(power)
                         * (eq_booleanity.clone() - eq_booleanity_digit_zero.clone())
-                        + gamma.clone().pow(power + 1)
+                        + gamma_power_expr(power + 1)
                             * (eq_virtualization - eq_virtualization_digit_zero);
                     power += 2;
                     c
@@ -263,7 +260,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
             output = output + coefficient * opening(reduced_claim(polynomial));
         }
         for index in 0..self.shape.chunking.chunk_count() {
-            let coefficient = gamma.clone().pow(power)
+            let coefficient = gamma_power_expr(power)
                 * (eq_booleanity.clone() - eq_booleanity_digit_zero.clone())
                 + decode_scale.clone()
                     * constant(self.shape.chunking.place_value::<F>(index))
@@ -271,7 +268,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
             output = output + coefficient * opening(reduced_balanced_inc_digit_opening(index));
             power += 1;
         }
-        let coefficient = gamma.pow(power) * (eq_booleanity - eq_booleanity_digit_zero)
+        let coefficient = gamma_power_expr(power) * (eq_booleanity - eq_booleanity_digit_zero)
             + decode_scale * constant(F::pow2(FUSED_INC_BITS)) * inc_value;
         output + coefficient * opening(reduced_balanced_inc_carry_opening())
     }
@@ -352,6 +349,9 @@ mod tests {
             _ => zero,
         };
         let derived_value = |id: &JoltDerivedId| match *id {
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::GammaPow(exponent),
+            ) => power(exponent),
             JoltDerivedId::HammingWeightClaimReduction(
                 HammingWeightClaimReductionPublic::EqBooleanity,
             ) => eq_bool,
@@ -443,6 +443,9 @@ mod tests {
             _ => zero,
         };
         let derived_value = |id: &JoltDerivedId| match *id {
+            JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::GammaPow(exponent),
+            ) => power(exponent),
             JoltDerivedId::HammingWeightClaimReduction(
                 HammingWeightClaimReductionPublic::EqBooleanity,
             ) => eq_bool,
