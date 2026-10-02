@@ -163,8 +163,8 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
             for ((lane, left), right) in lanes.iter_mut().zip(left_window).zip(right_window) {
                 lane.fmadd(left, right);
             }
-            let left_six = left[4] + left[4] + left[4] + left[4] + left[4] + left[4];
-            let right_six = right[4] + right[4] + right[4] + right[4] + right[4] + right[4];
+            let left_six = left[4].mul_u64(6);
+            let right_six = right[4].mul_u64(6);
             for lane in &mut lanes[4..7] {
                 let left_next = quartic_next(left_window, left_six);
                 let right_next = quartic_next(right_window, right_six);
