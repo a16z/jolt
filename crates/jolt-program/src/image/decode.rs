@@ -149,7 +149,7 @@ fn decode_op_32(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 fn decode_amo(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), (word >> 27) & 0x1f) {
         // LR has no rs2 operand; its encoding requires rs2 = 0.
-        (0b010 | 0b011, 0b00010) if (word >> 20) & 0x1f != 0 => invalid("invalid LR rs2"),
+        (0b010 | 0b011, 0b00010) if rs2(word) != 0 => invalid("invalid LR rs2"),
         (0b010, 0b00010) => Ok(SourceInstructionKind::LRW),
         (0b011, 0b00010) => Ok(SourceInstructionKind::LRD),
         (0b010, 0b00011) => Ok(SourceInstructionKind::SCW),
