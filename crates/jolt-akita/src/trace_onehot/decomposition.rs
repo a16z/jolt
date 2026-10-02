@@ -7,7 +7,7 @@ use akita_pcs::custom_source::{fill_rotated_challenge, DecomposeFoldWitness};
 use rayon::prelude::*;
 use tracing::field::Empty;
 
-use super::source::TracePackedOneHot;
+use super::source::TraceOneHotColumn;
 use super::traversal::{
     row_is_committed, validate_block_geometry, visit_segment_ring_range,
     visit_segment_ring_row_range,
@@ -468,8 +468,8 @@ fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[
     }
 }
 
-pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
-    source: &TracePackedOneHot,
+pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
+    source: &TraceOneHotColumn,
     challenges: &[SparseChallenge],
     chunk_ranges: &[Range<usize>],
     num_positions: usize,
@@ -478,11 +478,10 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
 ) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
     let num_chunks = chunk_ranges.len();
     let _span = tracing::info_span!(
-        "TracePackedOneHot::decompose_fold_batch",
+        "TraceOneHotColumn::decompose_fold_batch",
         ring_dimension = D,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
-        column_capacity = source.column_capacity,
         num_chunks,
         num_positions,
         num_digits,
@@ -495,7 +494,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
     }
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) =
-        validate_block_geometry(segment_rings, source.column_capacity, num_positions)?;
+        validate_block_geometry(segment_rings, source.num_columns, num_positions)?;
     if challenges.len() != num_blocks {
         return Err(AkitaError::InvalidSize {
             expected: num_blocks,
@@ -505,13 +504,14 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
     for challenge in challenges {
         challenge.validate::<D>()?;
     }
-    let expected_ranges = akita_params::dyadic_block_ranges(num_blocks, num_chunks)?;
+    let blocks_per_poly = num_blocks / source.num_columns;
+    let expected_ranges = akita_params::dyadic_block_ranges(blocks_per_poly, num_chunks)?;
     if chunk_ranges != expected_ranges {
         return Err(AkitaError::InvalidInput(
             "noncanonical fold chunk ranges".into(),
         ));
     }
-    let mut block_chunks = vec![0usize; num_blocks];
+    let mut block_chunks = vec![0usize; blocks_per_poly];
     for (chunk, range) in chunk_ranges.iter().enumerate() {
         for block_chunk in &mut block_chunks[range.clone()] {
             *block_chunk = chunk;
@@ -598,7 +598,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                 let position_end = position_start + positions;
                 let mut local_rotations =
                     use_local_dense_rotations.then(|| vec![[0i16; D]; local_rotation_rows]);
-                for trace_block in 0..blocks_per_column {
+                for (trace_block, &chunk) in block_chunks.iter().enumerate() {
                     if let Some(local_rotations) = local_rotations.as_mut() {
                         let PreparedRotations::Compact(challenges) = &rotations else {
                             unreachable!("local dense rotations require compact challenges");
@@ -625,8 +625,6 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                                 let position = ring - trace_block * num_positions;
                                 if rows_per_ring <= 4 {
                                     for column in 0..num_columns {
-                                        let block = column * blocks_per_column + trace_block;
-                                        let chunk = block_chunks[block];
                                         let dst = &mut compressed
                                             [(position - position_start) * num_chunks + chunk];
                                         let mut fixed_coefficients = [0usize; 4];
@@ -655,8 +653,6 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                                     }
                                 } else {
                                     for column in 0..num_columns {
-                                        let block = column * blocks_per_column + trace_block;
-                                        let chunk = block_chunks[block];
                                         let dst = &mut compressed
                                             [(position - position_start) * num_chunks + chunk];
                                         coefficients.clear();
@@ -697,7 +693,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                                     &mut compressed[dst_start..][..num_chunks],
                                     local_rotations,
                                     contributions,
-                                    |column| block_chunks[column * blocks_per_column + trace_block],
+                                    |_| chunk,
                                     |column, coefficient| column * D + coefficient,
                                 );
                             },
@@ -715,9 +711,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                                         &mut compressed[dst_start..][..num_chunks],
                                         rotated,
                                         contributions,
-                                        |column| {
-                                            block_chunks[column * blocks_per_column + trace_block]
-                                        },
+                                        |_| chunk,
                                         |column, coefficient| {
                                             ((trace_block * source.rows.num_columns() + column) * D)
                                                 + coefficient
@@ -725,8 +719,6 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                                     );
                                 } else {
                                     for &(column, coefficient) in contributions {
-                                        let block = column * blocks_per_column + trace_block;
-                                        let chunk = block_chunks[block];
                                         add_rotated(
                                             &mut compressed[dst_start + chunk],
                                             &rotations,
@@ -757,11 +749,10 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         let mut compressed = vec![[0i32; D]; compressed_len];
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
-                let global_ring = column * segment_rings + ring;
-                let block = global_ring / num_positions;
-                let chunk = block_chunks[block];
+                let block = column;
+                let chunk = block_chunks[0];
                 add_rotated(
-                    &mut compressed[(global_ring % num_positions) * num_chunks + chunk],
+                    &mut compressed[ring * num_chunks + chunk],
                     &rotations,
                     block,
                     coefficient,

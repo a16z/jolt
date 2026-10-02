@@ -3,14 +3,14 @@ use akita_error::AkitaError;
 use akita_pcs::custom_source::{OpeningFoldOutput, OpeningFoldPlan};
 use rayon::prelude::*;
 
-use super::source::TracePackedOneHot;
+use super::source::TraceOneHotColumn;
 use super::traversal::{
     row_is_committed, trace_block_task_schedule, validate_block_geometry, visit_segment_ring_range,
     visit_segment_ring_row_range,
 };
 use crate::AkitaField;
 
-enum PackedOpeningWeights<'a, const D: usize> {
+enum OpeningWeights<'a, const D: usize> {
     Base {
         live_block_weights: &'a [AkitaField],
         position_weights: &'a [AkitaField],
@@ -21,10 +21,10 @@ enum PackedOpeningWeights<'a, const D: usize> {
     },
 }
 
-pub(super) fn opening_fold_packed<const D: usize>(
-    source: &TracePackedOneHot,
+pub(super) fn opening_fold_columns<const D: usize>(
+    source: &TraceOneHotColumn,
     plan: OpeningFoldPlan<'_, AkitaField>,
-) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
+) -> Result<Vec<OpeningFoldOutput<AkitaField, D>>, AkitaError> {
     let (num_positions, weights) = match plan {
         OpeningFoldPlan::Base {
             live_block_weights,
@@ -32,7 +32,7 @@ pub(super) fn opening_fold_packed<const D: usize>(
             num_positions_per_block,
         } => (
             num_positions_per_block,
-            PackedOpeningWeights::Base {
+            OpeningWeights::Base {
                 live_block_weights,
                 position_weights,
             },
@@ -42,41 +42,40 @@ pub(super) fn opening_fold_packed<const D: usize>(
             num_positions_per_block,
         } => (
             num_positions_per_block,
-            PackedOpeningWeights::Subfield {
+            OpeningWeights::Subfield {
                 live_block_weights: multipliers.materialize_fold_rings::<D>()?,
                 position_weights: multipliers.materialize_position_rings::<D>()?,
             },
         ),
     };
     let weight_kind = match &weights {
-        PackedOpeningWeights::Base { .. } => "base",
-        PackedOpeningWeights::Subfield { .. } => "subfield",
+        OpeningWeights::Base { .. } => "base",
+        OpeningWeights::Subfield { .. } => "subfield",
     };
     let _span = tracing::info_span!(
-        "TracePackedOneHot::evaluate_and_fold",
+        "TraceOneHotColumn::evaluate_and_fold",
         ring_dimension = D,
         one_hot_k = source.one_hot_k,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
-        column_capacity = source.column_capacity,
         positions_per_block = num_positions,
         weight_kind,
     )
     .entered();
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) =
-        validate_block_geometry(segment_rings, source.column_capacity, num_positions)?;
+        validate_block_geometry(segment_rings, source.num_columns, num_positions)?;
     let (live_weights, position_weights) = match &weights {
-        PackedOpeningWeights::Base {
+        OpeningWeights::Base {
             live_block_weights,
             position_weights,
         } => (live_block_weights.len(), position_weights.len()),
-        PackedOpeningWeights::Subfield {
+        OpeningWeights::Subfield {
             live_block_weights,
             position_weights,
         } => (live_block_weights.len(), position_weights.len()),
     };
-    if live_weights != num_blocks || position_weights != num_positions {
+    if live_weights != num_blocks / source.num_columns || position_weights != num_positions {
         return Err(AkitaError::InvalidInput(format!(
             "trace one-hot opening weights ({live_weights}, {position_weights}) do not match block geometry ({num_blocks}, {num_positions})"
         )));
@@ -115,7 +114,7 @@ pub(super) fn opening_fold_packed<const D: usize>(
                         |ring, selected_rows, committed_zero_masks| {
                             let position = ring - block_ring_start;
                             match &weights {
-                                PackedOpeningWeights::Base {
+                                OpeningWeights::Base {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
@@ -134,7 +133,7 @@ pub(super) fn opening_fold_packed<const D: usize>(
                                         }
                                     }
                                 }
-                                PackedOpeningWeights::Subfield {
+                                OpeningWeights::Subfield {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
@@ -166,7 +165,7 @@ pub(super) fn opening_fold_packed<const D: usize>(
                         |ring, contributions| {
                             let position = ring - block_ring_start;
                             match &weights {
-                                PackedOpeningWeights::Base {
+                                OpeningWeights::Base {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
@@ -174,7 +173,7 @@ pub(super) fn opening_fold_packed<const D: usize>(
                                         folded[column].coeffs[coefficient] += weight;
                                     }
                                 }
-                                PackedOpeningWeights::Subfield {
+                                OpeningWeights::Subfield {
                                     position_weights, ..
                                 } => {
                                     let weight = position_weights[position];
@@ -226,16 +225,15 @@ pub(super) fn opening_fold_packed<const D: usize>(
         let mut folded = vec![CyclotomicRing::zero(); num_blocks];
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
-                let global_ring = column * segment_rings + ring;
-                let block = global_ring / num_positions;
-                let position = global_ring % num_positions;
+                let block = column;
+                let position = ring;
                 match &weights {
-                    PackedOpeningWeights::Base {
+                    OpeningWeights::Base {
                         position_weights, ..
                     } => {
                         folded[block].coeffs[coefficient] += position_weights[position];
                     }
-                    PackedOpeningWeights::Subfield {
+                    OpeningWeights::Subfield {
                         position_weights, ..
                     } => {
                         position_weights[position]
@@ -252,23 +250,31 @@ pub(super) fn opening_fold_packed<const D: usize>(
         weight_kind,
     )
     .entered();
-    let eval = match &weights {
-        PackedOpeningWeights::Base {
-            live_block_weights, ..
-        } => folded
-            .iter()
-            .zip(live_block_weights.iter().copied())
-            .fold(CyclotomicRing::zero(), |acc, (value, weight)| {
-                acc + value.scale(&weight)
-            }),
-        PackedOpeningWeights::Subfield {
-            live_block_weights, ..
-        } => folded
-            .iter()
-            .zip(live_block_weights)
-            .fold(CyclotomicRing::zero(), |acc, (value, weight)| {
-                acc + *value * *weight
-            }),
-    };
-    Ok(OpeningFoldOutput { eval, folded })
+    Ok(folded
+        .chunks_exact(num_blocks / source.num_columns)
+        .map(|folded| {
+            let eval = match &weights {
+                OpeningWeights::Base {
+                    live_block_weights, ..
+                } => folded
+                    .iter()
+                    .zip(live_block_weights.iter().copied())
+                    .fold(CyclotomicRing::zero(), |acc, (value, weight)| {
+                        acc + value.scale(&weight)
+                    }),
+                OpeningWeights::Subfield {
+                    live_block_weights, ..
+                } => folded
+                    .iter()
+                    .zip(live_block_weights)
+                    .fold(CyclotomicRing::zero(), |acc, (value, weight)| {
+                        acc + *value * *weight
+                    }),
+            };
+            OpeningFoldOutput {
+                eval,
+                folded: folded.to_vec(),
+            }
+        })
+        .collect())
 }

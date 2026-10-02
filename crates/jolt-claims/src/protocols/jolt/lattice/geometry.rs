@@ -40,14 +40,6 @@ pub enum LatticeGeometryError {
         actual: usize,
         expected: usize,
     },
-    #[error(
-        "OneHotTrace has {actual} columns, exceeding the K=2^{chunk_width} packed capacity {capacity}"
-    )]
-    TooManyOneHotTraceColumns {
-        chunk_width: usize,
-        actual: usize,
-        capacity: usize,
-    },
 }
 
 impl From<BalancedChunkingError> for LatticeGeometryError {

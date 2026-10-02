@@ -19,12 +19,12 @@ profiling = []
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-params.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
 akita-types.workspace = true
+akita-params.workspace = true
 jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
   "parallel",
 ] }

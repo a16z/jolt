@@ -1,4 +1,4 @@
-//! Prover-side packed (Akita) witness assembly: the `OneHotTrace` columns
+//! Prover-side Akita witness assembly: the `OneHotTrace` columns
 //! from the witness plane's typed rows, the advice word objects, the
 //! direct bounded-dense committed-program objects.
 
@@ -116,7 +116,7 @@ impl OneHotTraceRows {
             .ok_or(ProverError::Unsupported {
                 reason: "packed one-hot trace dimensions overflow",
             })?;
-        if plan.packing().logical_num_vars() != logical_num_vars {
+        if plan.num_vars() != logical_num_vars {
             return Err(ProverError::InvariantViolation {
                 reason: "OneHotTrace plan dimensions disagree with the witness dimensions",
             });
@@ -232,14 +232,14 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
 ) -> Result<AssembledTrace<F>, ProverError<F>> {
     OneHotTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
     let num_rows = 1usize << log_t;
-    let num_columns = plan.packing().ids().len();
+    let num_columns = plan.ids().len();
     let ram_digit_zero_mask = plan
         .ranges()
         .ram
         .clone()
         .fold(0u64, |mask, column| mask | (1u64 << column));
     let mut columns = Vec::with_capacity(num_columns);
-    for polynomial in plan.packing().ids() {
+    for polynomial in plan.ids() {
         match polynomial {
             JoltCommittedPolynomial::InstructionRa(index) => {
                 let selector = RaChunkSelector::new(*index, ra_layout.instruction(), log_k_chunk)?;

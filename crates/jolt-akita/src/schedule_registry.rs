@@ -23,7 +23,7 @@ use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
-use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
+use crate::one_hot_family::{with_one_hot_family, OneHotFamily, AKITA_ONE_HOT_K256};
 
 const MAX_PROVISIONED_ROWS: usize = 128;
 
@@ -60,14 +60,14 @@ fn producer<Cfg: CommitmentConfig>(
 }
 
 /// Public inputs needed to construct this setup's grouped schedules.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroupedScheduleParams {
     untrusted_physical_arity: Option<usize>,
     trusted_physical_arity: Option<usize>,
     #[serde(default)]
     mandatory_dense_layouts: Vec<DenseGroupLayout>,
-    final_arity: usize,
+    final_group: PolynomialGroupLayout,
 }
 
 impl GroupedScheduleParams {
@@ -75,13 +75,13 @@ impl GroupedScheduleParams {
         untrusted_physical_num_vars: Option<usize>,
         trusted_physical_num_vars: Option<usize>,
         mandatory_dense_layouts: Vec<DenseGroupLayout>,
-        final_num_vars: usize,
+        final_group: PolynomialGroupLayout,
     ) -> Self {
         Self {
             untrusted_physical_arity: untrusted_physical_num_vars,
             trusted_physical_arity: trusted_physical_num_vars,
             mandatory_dense_layouts,
-            final_arity: final_num_vars,
+            final_group,
         }
     }
 
@@ -94,8 +94,8 @@ impl GroupedScheduleParams {
             })
     }
 
-    pub(crate) fn final_num_vars(&self) -> usize {
-        self.final_arity
+    pub(crate) fn final_group(&self) -> PolynomialGroupLayout {
+        self.final_group
     }
 
     /// Provision and audit the exact grouped rows before constructing backend matrices.
@@ -172,13 +172,10 @@ pub fn extend_catalog<Cfg: CommitmentConfig>(
 
 fn plan_row<Cfg: CommitmentConfig>(
     base: &ValidatedScheduleCatalog,
-    final_num_vars: usize,
+    final_group: PolynomialGroupLayout,
     producers: &[PrecommittedProducer],
 ) -> Result<Option<ResolvedScheduleRow>, AkitaError> {
-    let request = GroupedGenerationRequest::new(
-        PolynomialGroupLayout::new(final_num_vars, 1),
-        producers.to_vec(),
-    );
+    let request = GroupedGenerationRequest::new(final_group, producers.to_vec());
     let key = request.key();
     if base.resolve_key(&key).is_ok() {
         return Ok(None);
@@ -220,7 +217,7 @@ fn plan_row<Cfg: CommitmentConfig>(
 fn provision_producers<Cfg: CommitmentConfig>(
     base: &ValidatedScheduleCatalog,
     group_combinations: &[Vec<PrecommittedProducer>],
-    final_num_vars: usize,
+    final_group: PolynomialGroupLayout,
 ) -> Result<RegisteredRows, AkitaError> {
     akita_config::validate_config_policy::<Cfg>()?;
     base.validate_binding(
@@ -245,7 +242,7 @@ fn provision_producers<Cfg: CommitmentConfig>(
         group_combinations,
         workers,
         |producers| {
-            plan_row::<Cfg>(base, final_num_vars, producers).map_err(|error| error.to_string())
+            plan_row::<Cfg>(base, final_group, producers).map_err(|error| error.to_string())
         },
     )
     .map_err(AkitaError::InvalidSetup)?;
@@ -316,8 +313,8 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
     params: &GroupedScheduleParams,
     family: OneHotFamily,
 ) -> Result<RegisteredRows, AkitaError> {
-    let final_num_vars = params.final_arity;
-    family.validate_num_vars(final_num_vars, 1)?;
+    let final_group = params.final_group;
+    family.validate_num_vars(final_group.num_vars(), final_group.num_polynomials())?;
     akita_config::validate_config_policy::<JoltDenseBounded>()?;
     dense_catalog.validate_binding(
         JoltDenseBounded::schedule_family_name(),
@@ -359,21 +356,31 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
             combinations.push(mandatory);
         }
     }
-    if family.profile() == AkitaChunkProfile::Single && params.full_width_arities().next().is_none()
+    let main_row = one_hot_catalog
+        .resolve_key(&ScheduleLookupKey::single(final_group))
+        .map_err(|error| {
+            let guidance = if family.k() == AKITA_ONE_HOT_K256 {
+                "; shipped K=256 trace catalogs cover fixture and benchmark shapes only; use K=16 for production traces or supply a catalog containing the exact K=256 shape"
+            } else {
+                ""
+            };
+            AkitaError::InvalidSetup(format!(
+                "one-hot K={} final shape (num_vars={}, num_polys={}) is outside the admitted catalog{guidance}: {error}",
+                family.k(), final_group.num_vars(), final_group.num_polynomials(),
+            ))
+        })?;
+    if family.profile() == AkitaChunkProfile::Single
+        && params.full_width_arities().next().is_none()
+        && main_row.schedule().recursive_folds.is_empty()
     {
-        let main_row = one_hot_catalog.resolve_key(&ScheduleLookupKey::single(
-            PolynomialGroupLayout::new(final_num_vars, 1),
-        ))?;
-        if main_row.schedule().recursive_folds.is_empty() {
-            // Bounded-only Single admission follows the scalar guide's child-fold
-            // capability; full planner search is intentionally not attempted here.
-            return Err(AkitaError::UnsupportedSchedule(format!(
-                "one-hot K={} profile {:?} final arity {final_num_vars} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one; requested groups: {params:?}",
-                family.k(), family.profile()
-            )));
-        }
+        // Bounded-only Single admission follows the scalar guide's child-fold
+        // capability; full planner search is intentionally not attempted here.
+        return Err(AkitaError::UnsupportedSchedule(format!(
+            "one-hot K={} profile {:?} final arity {} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one; requested groups: {params:?}",
+            family.k(), family.profile(), final_group.num_vars()
+        )));
     }
-    provision_producers::<Cfg>(one_hot_catalog, &combinations, final_num_vars)
+    provision_producers::<Cfg>(one_hot_catalog, &combinations, final_group)
 }
 
 /// Adapt grouped rows for the standard single-chunk one-hot family.
@@ -411,7 +418,12 @@ mod tests {
         for (k, last_scalar_arity) in [(AKITA_ONE_HOT_K16, 15), (AKITA_ONE_HOT_K256, 16)] {
             let base = artifacts.one_hot_catalog(k).unwrap();
             for final_arity in 12..=last_scalar_arity {
-                let params = GroupedScheduleParams::new(None, Some(14), Vec::new(), final_arity);
+                let params = GroupedScheduleParams::new(
+                    None,
+                    Some(14),
+                    Vec::new(),
+                    PolynomialGroupLayout::new(final_arity, 1),
+                );
                 let error = params
                     .extend_catalog(&dense, &full_dense, &base, k, AkitaChunkProfile::Single)
                     .unwrap_err();
@@ -438,20 +450,20 @@ mod tests {
             let base = artifacts
                 .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
                 .unwrap();
-            for final_num_vars in [31, 32] {
+            for (final_num_vars, num_polys) in [(31, 1), (32, 1), (25, 51), (26, 51)] {
                 for untrusted in [21, 22] {
                     for trusted in [21, 22] {
                         let params = GroupedScheduleParams::new(
                             Some(untrusted),
                             Some(trusted),
                             Vec::new(),
-                            final_num_vars,
+                            PolynomialGroupLayout::new(final_num_vars, num_polys),
                         );
                         let catalog = params
                             .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
                             .unwrap();
                         let key = ScheduleLookupKey {
-                            final_group: PolynomialGroupLayout::new(final_num_vars, 1),
+                            final_group: PolynomialGroupLayout::new(final_num_vars, num_polys),
                             precommitteds: [untrusted, trusted]
                                 .into_iter()
                                 .map(|num_vars| {
@@ -500,8 +512,12 @@ mod tests {
                     vec![DenseGroupLayout::FullWidth { num_vars: 14 }],
                 ] {
                     let has_full_producer = !mandatory.is_empty();
-                    let params =
-                        GroupedScheduleParams::new(Some(14), Some(22), mandatory, final_num_vars);
+                    let params = GroupedScheduleParams::new(
+                        Some(14),
+                        Some(22),
+                        mandatory,
+                        PolynomialGroupLayout::new(final_num_vars, 1),
+                    );
                     let catalog = params
                         .extend_catalog(&dense, &full_dense, &base, one_hot_k, profile)
                         .unwrap();

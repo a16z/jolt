@@ -6,7 +6,7 @@ use jolt_field::Fp128x8i32;
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
-use super::source::TracePackedOneHot;
+use super::source::TraceOneHotColumn;
 use super::traversal::{
     flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
     validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
@@ -15,18 +15,17 @@ use super::traversal::{
 use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
 use crate::AkitaField;
 
-pub(super) fn commit_packed<const D: usize>(
+pub(super) fn commit_columns<const D: usize>(
     expanded: &AkitaExpandedSetup<AkitaField>,
-    source: &TracePackedOneHot,
+    source: &TraceOneHotColumn,
     plan: CommitInnerPlan,
-) -> Result<RingVec<AkitaField>, AkitaError> {
+) -> Result<Vec<RingVec<AkitaField>>, AkitaError> {
     let _span = tracing::info_span!(
-        "TracePackedOneHot::commit_inner",
+        "TraceOneHotColumn::commit_inner",
         ring_dimension = D,
         one_hot_k = source.one_hot_k,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
-        column_capacity = source.column_capacity,
         n_a = plan.n_a,
         positions_per_block = plan.num_positions_per_block,
         inner_digits = plan.num_digits_inner,
@@ -36,9 +35,14 @@ pub(super) fn commit_packed<const D: usize>(
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) = validate_block_geometry(
         segment_rings,
-        source.column_capacity,
+        source.num_columns,
         plan.num_positions_per_block,
     )?;
+    if plan.num_live_blocks != num_blocks / source.num_columns {
+        return Err(AkitaError::InvalidInput(
+            "trace commitment live-block extent disagrees with its columns".into(),
+        ));
+    }
     let active_cols = plan
         .num_positions_per_block
         .checked_mul(plan.num_digits_inner)
@@ -272,9 +276,8 @@ pub(super) fn commit_packed<const D: usize>(
         let mut budget = 0usize;
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
-                let global_ring = column * segment_rings + ring;
-                let block = global_ring / plan.num_positions_per_block;
-                let position = global_ring % plan.num_positions_per_block;
+                let block = column;
+                let position = ring;
                 let a_col = position * plan.num_digits_inner;
                 for (a, a_row) in a_rows.iter().enumerate() {
                     let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
@@ -296,17 +299,14 @@ pub(super) fn commit_packed<const D: usize>(
             .collect()
     };
 
-    let coefficient_count = rows
-        .iter()
-        .map(Vec::len)
-        .sum::<usize>()
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidInput("inner commitment output overflow".into()))?;
-    let mut coefficients = Vec::with_capacity(coefficient_count);
-    for block in rows {
-        for row in block {
-            coefficients.extend_from_slice(row.coefficients());
-        }
-    }
-    RingVec::from_coeffs_with_ring_dim(coefficients, D)
+    rows.chunks_exact(num_blocks / source.num_columns)
+        .map(|blocks| {
+            let coefficients = blocks
+                .iter()
+                .flatten()
+                .flat_map(|row| row.coefficients().iter().copied())
+                .collect();
+            RingVec::from_coeffs_with_ring_dim(coefficients, D)
+        })
+        .collect()
 }

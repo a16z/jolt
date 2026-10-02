@@ -1,7 +1,7 @@
 //! The Akita final opening.
 //!
-//! `OneHotTrace` prefix-packs its semantic columns into one physical
-//! polynomial. Advice, field increments, and direct committed-program objects
+//! `OneHotTrace` batches its native columns at one common point. Advice,
+//! field increments, and direct committed-program objects
 //! join it as auxiliary Akita groups and are discharged by one joint opening.
 
 use std::collections::BTreeMap;
@@ -48,7 +48,7 @@ fn validate_one_hot_trace_metadata<C, S>(
     commitment: &C,
     setup: &S,
     canonical_digest: [u8; 32],
-    packed_arity: usize,
+    column_arity: usize,
     physical_poly_count: usize,
     one_hot_k: usize,
 ) -> Result<(), VerifierError>
@@ -71,9 +71,9 @@ where
             "OneHotTrace commitment has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != packed_arity || setup.max_num_vars() != packed_arity {
+    if commitment.num_vars() != column_arity || setup.max_num_vars() != column_arity {
         return Err(batch_failed(format!(
-            "OneHotTrace commitment/setup arity must equal canonical packed arity {packed_arity}"
+            "OneHotTrace commitment/setup arity must equal canonical column arity {column_arity}"
         )));
     }
     if commitment.poly_count() != physical_poly_count
@@ -253,8 +253,8 @@ where
         one_hot_trace_commitment,
         &preprocessing.pcs_setup,
         plan.layout_digest(),
-        plan.packing().packed_num_vars(),
-        1,
+        plan.num_vars(),
+        plan.ids().len(),
         1 << chunk_width,
     )?;
     let leaves = leaf_claims(
@@ -264,11 +264,7 @@ where
         stage6b,
         stage7,
     )?;
-    let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
-    let packed_claim = plan
-        .packing()
-        .reduce_claims(&packed_claims, transcript)
-        .map_err(batch_failed)?;
+    let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)?;
     let untrusted = advice_object::<PCS>(
         leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
         untrusted_advice_commitment,
@@ -360,11 +356,6 @@ where
         }
     }
 
-    let main_group = GroupOpeningClaim::new(
-        one_hot_trace_commitment.clone(),
-        packed_claim.point.as_slice().to_vec(),
-        vec![packed_claim.value],
-    );
     PCS::verify_batch(
         &preprocessing.pcs_setup,
         &auxiliary_groups,
@@ -377,18 +368,19 @@ where
     Ok(())
 }
 
-/// Assembles the `OneHotTrace` prefix-packed claims: every canonical
+/// Assembles the native `OneHotTrace` group claim: every canonical
 /// column's leaf claim, its point mapped to the committed row-major order,
 /// all required to share one canonical opening point. Shared verbatim by the
-/// packed prover's stage 8, so both sides derive the same packed statement.
-pub fn one_hot_trace_packed_claims<F: JoltField>(
+/// packed prover's stage 8, so both sides derive the same native statement.
+pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
     plan: &OneHotTraceLayoutPlan,
     chunk_width: usize,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-) -> Result<jolt_openings::PrefixPackedClaims<F>, VerifierError> {
+    commitment: &C,
+) -> Result<GroupOpeningClaim<F, C>, VerifierError> {
     let mut common_point: Option<Vec<F>> = None;
-    let mut evaluations = Vec::with_capacity(plan.packing().ids().len());
-    for polynomial in plan.packing().ids() {
+    let mut evaluations = Vec::with_capacity(plan.ids().len());
+    for polynomial in plan.ids() {
         let claim = leaves.get(polynomial).ok_or_else(|| {
             batch_failed(format!(
                 "missing final OneHotTrace claim for {polynomial:?}"
@@ -409,7 +401,16 @@ pub fn one_hot_trace_packed_claims<F: JoltField>(
         evaluations.push(claim.value);
     }
     let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
-    Ok(plan.packed_claims(common_point, evaluations))
+    if common_point.len() != plan.num_vars() {
+        return Err(batch_failed(
+            "OneHotTrace opening point has incorrect arity",
+        ));
+    }
+    Ok(GroupOpeningClaim::new(
+        commitment.clone(),
+        common_point,
+        evaluations,
+    ))
 }
 
 /// One precommitted object's leaf claims: each of the plan's canonical columns

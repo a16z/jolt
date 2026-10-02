@@ -1070,7 +1070,7 @@ pub struct AkitaProverHint {
 pub(crate) enum AkitaHintSource {
     Dense { poly_count: usize },
     OneHot { poly_count: usize, one_hot_k: usize },
-    TraceOneHot { one_hot_k: usize },
+    TraceOneHot { poly_count: usize, one_hot_k: usize },
 }
 
 impl Default for AkitaHintSource {
@@ -1097,8 +1097,9 @@ impl AkitaHintSource {
 
     pub(crate) const fn len(self) -> usize {
         match self {
-            Self::Dense { poly_count } | Self::OneHot { poly_count, .. } => poly_count,
-            Self::TraceOneHot { .. } => 1,
+            Self::Dense { poly_count }
+            | Self::OneHot { poly_count, .. }
+            | Self::TraceOneHot { poly_count, .. } => poly_count,
         }
     }
 }

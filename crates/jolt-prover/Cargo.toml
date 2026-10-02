@@ -44,6 +44,7 @@ field-inline = [
 # Mutually exclusive with `zk` (compile error on the combination).
 akita = [
   "dep:jolt-akita",
+  "dep:akita-params",
   "jolt-verifier/akita",
   "jolt-claims/akita",
   "jolt-field/solinas",
@@ -97,6 +98,7 @@ allocative = [
 [dependencies]
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
+akita-params = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true

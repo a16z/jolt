@@ -41,14 +41,17 @@ The one-hot artifacts are hybrid catalogs. A logical trace shorter than
 `2^21` uses a direct schedule. A trace of `2^21` cycles or longer uses a
 setup-offloaded schedule. Akita uses K=16 committed chunks at every trace
 length, with catalog coverage through `2^30`. Virtual lookup chunks are 16 bits
-below `2^25` and 32 bits at or above it. The K=256 catalog remains available
-for explicitly configured layouts. This is an offline catalog policy: proving and verification simply
+below `2^25` and 32 bits at or above it. The K=256 catalogs retain explicit native trace test and benchmark keys plus
+the scalar adapter/planner grid; they do not provide a general native trace range.
+This is an offline catalog policy: proving and verification simply
 resolve the exact admitted row and never choose a mode dynamically.
 
 Each K=16 and K=256 family has W2R2, W4R2, and W8R2 multi-chunk companion
 catalogs. The selected profile splits the root and first recursive fold into
-two, four, or eight chunks, while later folds remain single-chunk. The pinned
-planner admits the following minimum physical arities for both K values:
+two, four, or eight chunks, while later folds remain single-chunk. Native K=16
+trace groups cover column arities 16–34 and widths 51–64 in every profile.
+The adapter and grouped-planner diagnostic grids retain the base branch's
+one- and two-polynomial rows, with these minimum physical arities for both K values:
 
 | Profile | One polynomial | Two polynomials |
 | --- | ---: | ---: |
@@ -57,14 +60,16 @@ planner admits the following minimum physical arities for both K values:
 | Four (W4R2) | 13 | 12 |
 | Eight (W8R2) | 14 | 13 |
 
-The upper arity is 40 for K=16 and 43 for K=256. Setup and grouped provisioning
-check these profile-specific floors before constructing backend matrices;
-grouped trace rows contain one final polynomial. The smaller rejected shapes
-have no schedule in the pinned planner's audited fold domain. The original one-hot
-catalogs remain single-chunk. Dense standalone opening schedules use the fixed
-eight-chunk budget. Four-file directories with the current dense catalogs support `Single`;
+The scalar diagnostic upper arity is 40 for K=16 and 43 for K=256. These are
+physical scalar shapes, not selector-packed Jolt traces. Setup and grouped
+provisioning check the profile floors before constructing backend matrices
+and resolve the exact native group shape, including its column count.
+The original one-hot catalogs remain single-chunk. Dense standalone opening
+schedules use the fixed eight-chunk budget. Four-file directories with the
+current dense catalogs support `Single`;
 selecting a profile whose companion catalog is absent fails during setup.
-Grouped precommit setups inherit the selected trace profile.
+Grouped opening rows inherit the selected trace profile; precommit producers
+keep their fixed profiles.
 
 ### Grouped provisioning diagnostic
 
@@ -98,9 +103,9 @@ Record the code revision and catalog checksums alongside the report when sharing
 results. This command never changes schedule artifacts.
 
 Use `boundary` instead of `full` for the 24 K=16 cutover cases: final arities
-31 and 32, both advice roles at 21 or 22, and Two/Four/Eight profiles. The same
-cases are covered by `grouped_advice_rows_cover_recursive_cutover` in the unit
-suite.
+31 and 32, both advice roles at 21 or 22, and Two/Four/Eight profiles. The unit test `grouped_advice_rows_cover_recursive_cutover` also covers native
+51-column groups at arities 25 and 26, the same logical trace cutover after
+removing selector variables.
 
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:
@@ -154,6 +159,41 @@ Regenerate all base catalogs from the planner with:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Pass `k16`, `k256`, `w2r2`, `w4r2`, `w8r2`, `dense-bounded`, `dense-full`, or `dense` as a final
-argument to narrow regeneration to matching families. `k16-single` and
+Pass `k16`, `k256`, `w2r2`, `w4r2`, `w8r2`, `dense-bounded`, `dense-full`, or `dense`
+as a selector to narrow regeneration to matching families. `k16-single` and
 `k256-single` select only the corresponding standard single-chunk catalog.
+
+Check complete artifact freshness without overwriting the catalogs:
+
+```sh
+cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules --check
+```
+
+This replans every selected row with the pinned Akita revision, renders canonical
+artifacts in a temporary directory, and fails on any byte difference or missing
+file. Ordinary catalog tests check admitted keys and coverage of production
+trace geometry; key agreement alone does not establish schedule freshness.
+
+Trace groups use native columns with arity `log_T + log_K`, without selector
+variables. Production trace keys cover K=16 arities 16–34 with 51–64 columns.
+The bounds follow the 32-bit bytecode PCs, 61-bit remapped RAM word addresses,
+and 64-column row mask. The K=256 single-chunk keys `(num_vars, num_polys)` are
+`(14,1)`, `(15,1)`, `(16,1)`, `(20,1)`, `(20,29)`, `(25,1)`,
+`(28,27)`, `(29,27)`, and `(34,27)`, retained for adapter, benchmark, cutover,
+advice, and forced-K tests. Each K=256 multi-chunk catalog retains the `(16,1)` roundtrip fixture alongside
+the scalar diagnostic grid described above. K=16 fixtures also remain explicit
+in `one_hot_keys`.
+These K=256 keys are fixture and benchmark coverage, not a supported general
+trace range. Other explicit configurations require a deployment-owned catalog
+containing that exact shape. Grouped preprocessing rejects a missing final shape
+during setup and reports the requested K, arity, and column count.
+
+Native trace batching establishes first-fold cycle locality. At the pinned
+revision `83574331`, later folds still halve a flat recursive witness and can
+cross chunk owners. The pin upgrade from its parent `e2c49ed` is intentionally
+part of Jolt's native batching PR: [Akita #169](https://github.com/LayerZero-Labs/akita/pull/169)
+adds the batch evaluation dispatch used by the fused trace opening.
+[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175) is the separate
+recursive ownership alignment follow-up. Upgrading past that change requires
+regenerating the affected Jolt multi-chunk catalogs. Regenerate catalogs after
+updating Akita.

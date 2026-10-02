@@ -19,9 +19,7 @@ use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage8::packed::field_inc_claim;
-use jolt_verifier::stages::stage8::packed::{
-    leaf_claims, object_leaf_claims, one_hot_trace_packed_claims,
-};
+use jolt_verifier::stages::stage8::packed::{leaf_claims, object_leaf_claims, one_hot_trace_claim};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
 #[cfg(feature = "field-inline")]
@@ -93,12 +91,8 @@ where
 
     let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
 
-    let packed_claims =
-        one_hot_trace_packed_claims(&plan, chunk_width, &leaves).map_err(ProverError::Verifier)?;
-    let packed_claim = plan
-        .packing()
-        .reduce_claims(&packed_claims, transcript)
-        .map_err(batch_failed::<F>)?;
+    let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)
+        .map_err(ProverError::Verifier)?;
 
     let untrusted_physical = untrusted_advice
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
@@ -154,11 +148,6 @@ where
         }
     }
 
-    let main_group = GroupOpeningClaim::new(
-        one_hot_trace_commitment.clone(),
-        packed_claim.point.as_slice().to_vec(),
-        vec![packed_claim.value],
-    );
     let joint_opening_proof = tracing::info_span!("akita_main_batched_prove").in_scope(|| {
         PCS::prove_batch(
             &preprocessing.pcs_setup,

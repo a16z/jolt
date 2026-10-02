@@ -5,7 +5,7 @@ use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalEncoding, ExtField, PseudoMersenne, Unreduced, Zero};
 use rayon::prelude::*;
 
-use super::source::{validate_dimension, TracePackedOneHot};
+use super::source::{validate_dimension, TraceOneHotColumn};
 use super::{K256_ROW_BATCH, NO_SELECTED_ROW, TASKS_PER_RAYON_WORKER};
 use crate::AkitaField;
 
@@ -95,7 +95,7 @@ impl<const D: usize> DeferredFp128Ring<D> {
 /// receives the segment-relative ring index and `(column, coefficient)` pairs
 /// contributed by the same trace rows.
 pub(super) fn visit_segment_ring_range<const D: usize>(
-    source: &TracePackedOneHot,
+    source: &TraceOneHotColumn,
     ring_start: usize,
     ring_end: usize,
     mut visit: impl FnMut(usize, &[(usize, usize)]),
@@ -175,7 +175,7 @@ pub(super) fn visit_segment_ring_range<const D: usize>(
 /// into each ring. This avoids expanding the row buffer into contribution
 /// tuples when a kernel can consume the indices directly.
 pub(super) fn visit_segment_ring_row_range<const D: usize>(
-    source: &TracePackedOneHot,
+    source: &TraceOneHotColumn,
     ring_start: usize,
     ring_end: usize,
     mut visit: impl FnMut(usize, &[u8], &[u64]),
@@ -232,10 +232,10 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
     Ok(())
 }
 
-pub(super) fn coefficient_packing_partials_packed<E, const D: usize>(
-    source: &TracePackedOneHot,
+pub(super) fn coefficient_packing_partials_columns<E, const D: usize>(
+    source: &TraceOneHotColumn,
     plan: SubringCoefficientPackingPlan<'_, E>,
-) -> Result<Vec<AkitaField>, AkitaError>
+) -> Result<Vec<Vec<AkitaField>>, AkitaError>
 where
     E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
 {
@@ -285,7 +285,7 @@ where
             let ring_start = task / schedule.parts * span + part_start;
             let ring_end = task / schedule.parts * span + part_end;
             let first_positions = (0..num_columns)
-                .map(|column| (column * segment_rings + ring_start) % positions_per_block)
+                .map(|_| ring_start % positions_per_block)
                 .collect::<Vec<_>>();
             let mut sums = vec![E::zero(); num_columns * D];
             visit_segment_ring_range::<D>(source, ring_start, ring_end, |ring, contributions| {
@@ -308,10 +308,10 @@ where
             Ok::<_, AkitaError>((ring_start, blocks))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut packed = vec![E::zero(); packed_len];
+    let mut packed = vec![E::zero(); packed_len * num_columns];
     for (ring_start, blocks) in partials {
         for (column, column_blocks) in blocks.chunks_exact(subring_dimension).enumerate() {
-            let block = (column * segment_rings + ring_start) / positions_per_block;
+            let block = column * num_blocks + ring_start / positions_per_block;
             for (dst, value) in packed[block * subring_dimension..][..subring_dimension]
                 .iter_mut()
                 .zip(column_blocks)
@@ -325,7 +325,7 @@ where
     let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
         AkitaError::InvalidInput("coefficient-packing output length overflow".to_string())
     })?;
-    let mut coordinates = vec![AkitaField::zero(); output_len];
+    let mut coordinates = vec![AkitaField::zero(); output_len * num_columns];
     for (packed_index, coefficient) in packed.into_iter().enumerate() {
         let block = packed_index / subring_dimension;
         let subring = packed_index % subring_dimension;
@@ -341,7 +341,10 @@ where
             coordinates[block * partial_width + local_index] = coordinate;
         }
     }
-    Ok(coordinates)
+    Ok(coordinates
+        .chunks_exact(output_len)
+        .map(<[AkitaField]>::to_vec)
+        .collect())
 }
 
 pub(super) fn flush_wide<const D: usize>(
@@ -367,7 +370,7 @@ pub(super) fn flush_deferred_rank<const D: usize>(
 
 pub(super) fn validate_block_geometry(
     segment_rings: usize,
-    column_capacity: usize,
+    num_columns: usize,
     num_positions: usize,
 ) -> Result<(usize, usize), AkitaError> {
     if num_positions == 0 || !num_positions.is_power_of_two() {
@@ -375,10 +378,11 @@ pub(super) fn validate_block_geometry(
             "trace one-hot positions per block {num_positions} must be a nonzero power of two"
         )));
     }
-    let total_rings = segment_rings
-        .checked_mul(column_capacity)
-        .ok_or_else(|| AkitaError::InvalidInput("trace one-hot ring count overflow".to_string()))?;
-    Ok((total_rings, total_rings.div_ceil(num_positions)))
+    let num_blocks = segment_rings
+        .div_ceil(num_positions)
+        .checked_mul(num_columns)
+        .ok_or_else(|| AkitaError::InvalidInput("trace one-hot block count overflow".into()))?;
+    Ok((segment_rings, num_blocks))
 }
 
 pub(super) struct TraceBlockTaskSchedule {

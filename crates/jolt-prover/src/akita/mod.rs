@@ -1,5 +1,5 @@
 //! The Akita prove path. Stage 8 opens dense advice, direct committed-program
-//! objects, and the packed one-hot trace in one heterogeneous batch.
+//! objects, and the native one-hot trace group in one heterogeneous batch.
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;

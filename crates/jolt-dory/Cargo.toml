@@ -34,6 +34,7 @@ akita-config.workspace = true
 akita-params.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
 akita-types.workspace = true
+akita-params.workspace = true
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
 criterion = { workspace = true }
 jolt-transcript = { workspace = true, features = [

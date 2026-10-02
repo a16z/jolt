@@ -1,3 +1,4 @@
+use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
@@ -126,7 +127,7 @@ pub(crate) fn grouped_setup_params(
             untrusted_physical_vars,
             trusted_physical_vars,
             mandatory_dense_layouts,
-            shape.num_vars,
+            PolynomialGroupLayout::new(shape.num_vars, shape.num_polys),
         )
     });
     let params = AkitaSetupParams::one_hot_only_grouped(
