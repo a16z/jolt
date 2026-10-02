@@ -1,8 +1,9 @@
 //! Field-inline (FR) guest arithmetic.
 //!
-//! On a RISC-V guest built with the `field-inline-guest` feature, the ring
-//! operations of the FR-capable fields ([`crate::Fr`], [`Fp128`]) execute as
-//! field-inline instructions instead of software limb arithmetic: operands
+//! On a RISC-V guest that selects the field its field-inline unit computes in
+//! (`field-inline-guest-bn254` for [`crate::Fr`], `field-inline-guest-fp128`
+//! for [`Fp128`]), that field's ring operations execute as field-inline
+//! instructions instead of software limb arithmetic: operands
 //! enter a cleared register through `FIELD_LOAD_ACCUMULATE_FROM_MEMORY`, the
 //! operation runs as one instruction, and the result leaves through
 //! `FIELD_ADVICE_LIMB` (one range-bound low limb per row, the quotient staying
@@ -17,7 +18,6 @@
 //! representation-transparent. `Fp128` is stored canonically and needs no
 //! correction.
 
-#[cfg(target_arch = "riscv64")]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
@@ -31,56 +31,40 @@ pub const FUNCT3_LOAD_ACCUMULATE: u32 = FieldInlineOp::LoadAccumulateFromMemory.
 pub const FUNCT3_ADVICE_LIMB: u32 = FieldInlineOp::AdviceLimb.funct3() as u32;
 pub const FUNCT3_LOAD_IMM: u32 = FieldInlineOp::LoadImm.funct3() as u32;
 
-#[cfg(target_arch = "riscv64")]
 const fn r_word(funct3: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
     OPCODE | (rd << 7) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20)
 }
 
-#[cfg(target_arch = "riscv64")]
 const fn i_word(funct3: u32, rd: u32, imm: u32) -> u32 {
     OPCODE | (rd << 7) | (funct3 << 12) | (imm << 20)
 }
 
-// ---------------------------------------------------------------------------
 // FR register map for the hinted ops. Constants live in low registers for
 // the whole run; each operation uses the scratch registers above them.
-// ---------------------------------------------------------------------------
-#[cfg(target_arch = "riscv64")]
 const REG_RINV: u32 = 1; // BN254 R^-1 (Montgomery product correction)
-#[cfg(target_arch = "riscv64")]
 const REG_R2: u32 = 2; // BN254 R^2 (Montgomery inverse correction)
-#[cfg(target_arch = "riscv64")]
 const REG_ZERO: u32 = 3;
-#[cfg(target_arch = "riscv64")]
 const REG_A: u32 = 4;
-#[cfg(target_arch = "riscv64")]
 const REG_B: u32 = 5;
 /// The two registers the limb readout alternates its quotients through.
-#[cfg(target_arch = "riscv64")]
 const REG_SCRATCH_A: u32 = 6;
-#[cfg(target_arch = "riscv64")]
 const REG_OUT: u32 = 7;
-#[cfg(target_arch = "riscv64")]
 const REG_SCRATCH_B: u32 = 8;
 /// Running sum of a register-resident dot product.
-#[cfg(target_arch = "riscv64")]
 const REG_ACC: u32 = 9;
 /// The weighted-rows kernel keeps one accumulator per row of a block in
 /// registers 9..=13 and the weighted total in 14.
-#[cfg(target_arch = "riscv64")]
 const REG_SUM: u32 = 14;
 /// Rows per block of the weighted-rows kernel (registers 9..=13).
 pub const WEIGHTED_ROWS_BLOCK: usize = 5;
 
 /// BN254 scalar-field Montgomery constants as canonical little-endian limbs.
-#[cfg(target_arch = "riscv64")]
 const BN254_RINV: [u64; 4] = [
     0xdc5b_a005_6db1_194e,
     0x090e_f5a9_e111_ec87,
     0xc826_0de4_aeb8_5d5d,
     0x15eb_f951_82c5_551c,
 ];
-#[cfg(target_arch = "riscv64")]
 const BN254_R2: [u64; 4] = [
     0x1bb8_e645_ae21_6da7,
     0x53fe_3ab1_e35c_59e3,
@@ -88,10 +72,7 @@ const BN254_R2: [u64; 4] = [
     0x0216_d0b1_7f4e_44a5,
 ];
 
-// ---------------------------------------------------------------------------
 // Guest instruction emitters.
-// ---------------------------------------------------------------------------
-#[cfg(target_arch = "riscv64")]
 mod emit {
     use super::*;
 
@@ -181,6 +162,10 @@ mod emit {
                 match src {
                     REG_OUT => word!(REG_OUT, $quotient),
                     REG_ACC => word!(REG_ACC, $quotient),
+                    10 => word!(10, $quotient),
+                    11 => word!(11, $quotient),
+                    12 => word!(12, $quotient),
+                    13 => word!(13, $quotient),
                     REG_SUM => word!(REG_SUM, $quotient),
                     REG_SCRATCH_A => word!(REG_SCRATCH_A, $quotient),
                     REG_SCRATCH_B => word!(REG_SCRATCH_B, $quotient),
@@ -252,9 +237,22 @@ mod emit {
     pub fn acc_zero() {
         fixed!(i_word(FUNCT3_LOAD_IMM, REG_ACC, 0));
     }
+    /// `OUT = OUT * A`.
+    #[inline(always)]
+    pub fn mul_out_out_a() {
+        fixed!(r_word(FUNCT3_MUL, REG_OUT, REG_OUT, REG_A));
+    }
     #[inline(always)]
     pub fn acc_add_out() {
         fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_OUT));
+    }
+    #[inline(always)]
+    pub fn acc_add_a() {
+        fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_A));
+    }
+    #[inline(always)]
+    pub fn acc_sub_a() {
+        fixed!(r_word(FUNCT3_SUB, REG_ACC, REG_ACC, REG_A));
     }
     /// Zero row accumulator `k` (registers 9..=13).
     #[inline(always)]
@@ -299,7 +297,6 @@ mod emit {
     }
 }
 
-#[cfg(target_arch = "riscv64")]
 mod guest {
     use super::*;
 
@@ -410,6 +407,25 @@ mod guest {
         read_out(REG_ACC)
     }
 
+    /// `Σ ±terms[i]` with the sum register-resident: each term costs its
+    /// ingress and one add or subtract, and only the result is read out.
+    /// Canonical limbs only.
+    #[inline(always)]
+    pub fn signed_sum<'a, const N: usize>(
+        terms: impl IntoIterator<Item = (&'a [u64; N], bool)>,
+    ) -> [u64; N] {
+        emit::acc_zero();
+        for (term, negative) in terms {
+            load(REG_A, term);
+            if negative {
+                emit::acc_sub_a();
+            } else {
+                emit::acc_add_a();
+            }
+        }
+        read_out(REG_ACC)
+    }
+
     /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]` with the row sums and the
     /// weighted total register-resident and one readout for the result. Each
     /// power is loaded once per block of [`WEIGHTED_ROWS_BLOCK`] rows, which
@@ -480,6 +496,81 @@ mod guest {
         read_out(REG_SUM)
     }
 
+    /// `Σ_i t[0]·t[1]·t[2]·t[3]` over `terms`, with each product formed in the
+    /// field register file and only the sum read out: four operand loads and
+    /// three multiplies per term, no intermediate readout. Canonical limbs.
+    #[inline(always)]
+    pub fn sum_of_products4<const N: usize>(terms: &[[[u64; N]; 4]]) -> [u64; N] {
+        emit::acc_zero();
+        for [a, b, c, d] in terms {
+            load(REG_A, a);
+            load(REG_B, b);
+            emit::mul_out();
+            load(REG_A, c);
+            emit::mul_out_out_a();
+            load(REG_A, d);
+            emit::mul_out_out_a();
+            emit::acc_add_out();
+        }
+        read_out(REG_ACC)
+    }
+
+    /// `out[i] = Σ_j rows[i][j]·shared[j]`, each row sum register-resident
+    /// and read out once. Like [`weighted_dot_rows`], each shared element is
+    /// loaded once per block of [`WEIGHTED_ROWS_BLOCK`] rows. Canonical limbs;
+    /// every row has `shared.len()` elements and `out` has one slot per row.
+    #[inline(always)]
+    pub fn dot_rows<const N: usize>(
+        rows: &[&[[u64; N]]],
+        shared: &[[u64; N]],
+        out: &mut [[u64; N]],
+    ) {
+        let len = shared.len();
+        assert_eq!(rows.len(), out.len(), "one output per row");
+        assert!(
+            rows.iter().all(|row| row.len() == len),
+            "every row has one element per shared operand"
+        );
+        macro_rules! accumulate_block {
+            ($($row:ident => $k:literal),+) => {
+                for j in 0..len {
+                    // SAFETY: `j < len`, and every row has `len` elements
+                    // (asserted above).
+                    unsafe {
+                        load(REG_A, shared.get_unchecked(j));
+                        $(
+                            load(REG_B, $row.get_unchecked(j));
+                            emit::mul_out();
+                            emit::row_acc_add_out($k);
+                        )+
+                    }
+                }
+            };
+        }
+        for (block_rows, block_out) in rows
+            .chunks(WEIGHTED_ROWS_BLOCK)
+            .zip(out.chunks_mut(WEIGHTED_ROWS_BLOCK))
+        {
+            for k in 0..block_rows.len() {
+                emit::row_acc_zero(k);
+            }
+            match block_rows {
+                [r0, r1, r2, r3, r4] => {
+                    accumulate_block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3, r4 => 4)
+                }
+                [r0, r1, r2, r3] => accumulate_block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3),
+                [r0, r1, r2] => accumulate_block!(r0 => 0, r1 => 1, r2 => 2),
+                [r0, r1] => accumulate_block!(r0 => 0, r1 => 1),
+                [r0] => accumulate_block!(r0 => 0),
+                // `chunks(WEIGHTED_ROWS_BLOCK)` yields one to five rows.
+                _ => {}
+            }
+            for (k, slot) in block_out.iter_mut().enumerate() {
+                *slot = read_out(REG_ACC + k as u32);
+            }
+        }
+    }
+
     /// Caller guarantees `a != 0` (FIELD_INV traps on zero).
     #[inline(always)]
     pub fn inv<const N: usize>(a: &[u64; N], montgomery: bool) -> [u64; N] {
@@ -493,5 +584,6 @@ mod guest {
     }
 }
 
-#[cfg(target_arch = "riscv64")]
-pub use guest::{add, dot, inv, mul, neg, sub, weighted_dot_rows};
+pub use guest::{
+    add, dot, dot_rows, inv, mul, neg, signed_sum, sub, sum_of_products4, weighted_dot_rows,
+};

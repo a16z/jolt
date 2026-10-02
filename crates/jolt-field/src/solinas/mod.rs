@@ -164,7 +164,11 @@ pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// subgroup `3^7 = 2187`). The default protocol prime. Here `p ≡ 1 (mod 8)`,
 /// so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is
 /// a field: use it at extension degree 1.
-pub type Prime128OffsetA7F7 = Fp128<{ pm(128, 0xFFFF_A7F7) }>;
+pub type Prime128OffsetA7F7 = Fp128<FIELD_INLINE_FP128_MODULUS>;
+
+/// The modulus of [`Prime128OffsetA7F7`], the Fp128 field the field-inline
+/// unit computes in under `field-inline-guest-fp128`.
+pub(crate) const FIELD_INLINE_FP128_MODULUS: u128 = pm(128, 0xFFFF_A7F7);
 
 /// Builds the balanced signed-digit table for `1 <= log_basis <= 6`.
 pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {

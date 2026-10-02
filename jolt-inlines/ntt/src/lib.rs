@@ -10,9 +10,9 @@ pub const FUNCT3: u32 = 0;
 pub const FUNCT7: u32 = 8;
 
 #[cfg(feature = "host")]
-pub mod pointwise_builder;
+mod pointwise_builder;
 #[cfg(feature = "host")]
-pub mod sequence_builder;
+mod sequence_builder;
 #[cfg(feature = "host")]
 use jolt_inlines_sdk::host::InlineExtension;
 #[cfg(feature = "host")]
@@ -32,7 +32,9 @@ jolt_inlines_sdk::register_inlines! {
 /// `twiddles[len - 1..2*len - 1]`, for half-lengths 32 down to 1.
 /// For NTT semantics, the caller supplies an odd prime `0 < p < 2^30`,
 /// `pinv = p^-1 mod 2^32`, valid roots, and coefficients and table entries
-/// in `(-p, p)`. The final pass adds `p` only to negative coefficients.
+/// in `(-p, p)`. Butterfly sums are reduced by a Montgomery product with
+/// `twiddles[0]`, which valid roots make the Montgomery form of 1. The final
+/// pass adds `p` only to negative coefficients.
 /// Arithmetic outside that domain still follows signed wrapping i32/i64
 /// operations; the inline introduces no trusted advice or unchecked equation.
 /// Arrays without doubleword alignment use aligned stack buffers on RISC-V.
@@ -132,7 +134,7 @@ fn scalar_forward(
             for j in 0..len {
                 let u = state[start + j];
                 let v = state[start + j + len];
-                state[start + j] = reduce(u.wrapping_add(v), p);
+                state[start + j] = mont_mul(u.wrapping_add(v), twiddles[0], p, pinv);
                 state[start + j + len] =
                     mont_mul(u.wrapping_sub(v), twiddles[len - 1 + j], p, pinv);
             }
@@ -140,9 +142,10 @@ fn scalar_forward(
         len /= 2;
     }
     // With |a| < 2p, |w| < p and p < 2^30, signed Montgomery reduction
-    // has magnitude < p: |a*w|/2^32 + p/2 < p. Butterfly sums have
-    // magnitude < 2p and reduce maps them back into (-p, p). These are
-    // caller parameter bounds, not extra constraints imposed by the inline.
+    // has magnitude < p: |a*w|/2^32 + p/2 < p. Butterfly sums and
+    // differences have magnitude < 2p, so both outputs return to (-p, p).
+    // These are caller parameter bounds, not extra constraints imposed by
+    // the inline.
     for a in state {
         *a = a.wrapping_add((*a >> 31) & p);
     }

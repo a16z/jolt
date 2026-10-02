@@ -164,6 +164,30 @@ pub trait Ring:
     }
 }
 
+/// The software fold behind [`Field::signed_sum`].
+#[inline]
+pub(crate) fn signed_sum_fold<'a, F: Ring + 'a>(
+    terms: impl IntoIterator<Item = (&'a F, bool)>,
+) -> F {
+    terms
+        .into_iter()
+        .fold(<F as Zero>::zero(), |acc, (term, negative)| {
+            if negative {
+                acc - *term
+            } else {
+                acc + *term
+            }
+        })
+}
+
+/// The software fold behind [`Field::sum_of_products4`].
+#[inline]
+pub(crate) fn sum_of_products4_fold<F: Ring>(terms: &[[F; 4]]) -> F {
+    terms.iter().fold(<F as Zero>::zero(), |acc, [a, b, c, d]| {
+        acc + *a * *b * *c * *d
+    })
+}
+
 /// Algebraic field: ring arithmetic plus inversion, sampling, and halving.
 pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
@@ -176,6 +200,24 @@ pub trait Field: Ring {
         a.iter()
             .zip(b)
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
+    }
+
+    /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
+    /// otherwise. Fields with a batched guest path (a register-resident sum
+    /// read out once) override this.
+    #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        signed_sum_fold(terms)
+    }
+
+    /// `Σ_i terms[i][0]·terms[i][1]·terms[i][2]·terms[i][3]`. Fields with a
+    /// batched guest path (register-resident products and sum) override this.
+    #[inline]
+    fn sum_of_products4(terms: &[[Self; 4]]) -> Self {
+        sum_of_products4_fold(terms)
     }
 
     /// Multiplicative inverse with zero mapped to zero.
@@ -230,9 +272,9 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
     const OFFSET: u128;
 
     /// `Σ a[i]·b[i]` on a field-inline guest, with the sum register-resident
-    /// and one hint for the result; `None` where no such path exists (the
-    /// caller then folds in software). Fields whose guest arithmetic is
-    /// hinted override this; the host counterpart records the single hint.
+    /// and one readout for the result; `None` where no such path exists (the
+    /// caller then folds in software). Fields the field-inline unit computes
+    /// in override this.
     #[inline]
     fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
         let _ = (a, b);
@@ -246,6 +288,15 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
     fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
         let _ = (rows, weights, pows);
         None
+    }
+
+    /// `out[i] = Σ_j rows[i][j]·shared[j]` on a field-inline guest with each
+    /// shared element loaded once per block of rows; `false` (and `out`
+    /// untouched) where no such path exists.
+    #[inline]
+    fn inline_dot_rows(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) -> bool {
+        let _ = (rows, shared, out);
+        false
     }
 
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.

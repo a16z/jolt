@@ -14,7 +14,10 @@ use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, Wi
 use ark_bn254::{Fq as ArkFq, Fr as ArkFr};
 use ark_ff::{BigInt, BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
-#[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
+#[cfg(any(
+    test,
+    all(feature = "field-inline-guest-bn254", target_arch = "riscv64")
+))]
 use {ark_ff::Fp, core::marker::PhantomData};
 
 macro_rules! from_primitives {
@@ -366,8 +369,8 @@ impl Ring for Fq {
 }
 
 /// The ring-op bodies behind the `impl_field!` arithmetic: native arkworks
-/// for `Fq` always, and for `Fr` unless the `field-inline-guest` feature
-/// routes it through the hinted field-inline path (`crate::fr_inline`).
+/// for `Fq` always, and for `Fr` unless the `field-inline-guest-bn254`
+/// feature routes it through the field-inline path (`crate::fr_inline`).
 pub trait InlineArith: Sized {
     fn add(a: Self, b: Self) -> Self;
     fn sub(a: Self, b: Self) -> Self;
@@ -399,7 +402,7 @@ impl InlineArith for Fq {
     }
 }
 
-#[cfg(not(all(feature = "field-inline-guest", target_arch = "riscv64")))]
+#[cfg(not(all(feature = "field-inline-guest-bn254", target_arch = "riscv64")))]
 impl InlineArith for Fr {
     #[inline(always)]
     fn add(a: Self, b: Self) -> Self {
@@ -425,7 +428,10 @@ impl InlineArith for Fr {
 
 /// The guest field path: raw Montgomery limbs in, checked Montgomery limbs out
 /// (see `crate::fr_inline` for the representation argument).
-#[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
+#[cfg(any(
+    test,
+    all(feature = "field-inline-guest-bn254", target_arch = "riscv64")
+))]
 impl Fr {
     #[inline(always)]
     fn from_inline_limbs(limbs: [u64; 4]) -> Self {
@@ -436,7 +442,7 @@ impl Fr {
     }
 }
 
-#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+#[cfg(all(feature = "field-inline-guest-bn254", target_arch = "riscv64"))]
 impl InlineArith for Fr {
     fn add(a: Self, b: Self) -> Self {
         Fr::from_inline_limbs(crate::fr_inline::add(&a.inner_limbs(), &b.inner_limbs()))

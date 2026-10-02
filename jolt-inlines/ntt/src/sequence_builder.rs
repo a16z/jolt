@@ -11,12 +11,12 @@ struct NttBuilder {
     asm: InlineExpansionBuilder,
     operands: InlineOperands,
     values: [InlineRegister; DEGREE],
-    scratch: [InlineRegister; 8],
+    scratch: [InlineRegister; 10],
 }
 
 impl NttBuilder {
     fn build(mut self) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        let [psi, twiddles, p, pinv, temp, _, _, _] = self.scratch.map(|r| *r);
+        let [psi, twiddles, p, pinv, temp, _, _, _, weight, one] = self.scratch.map(|r| *r);
         self.asm.emit_ld(Kind::LD, psi, self.operands.rs2, 0);
         self.asm.emit_ld(Kind::LD, twiddles, self.operands.rs2, 8);
         self.asm.emit_ld(Kind::LD, p, self.operands.rs2, 16);
@@ -31,15 +31,17 @@ impl NttBuilder {
             self.asm.emit_i(Kind::ADDIW, lo, lo, 0);
         }
         // One table word supplies both twiddles; coefficients stay live across
-        // every stage, using 72 of the 80 inline registers.
+        // every stage, using 74 of the 80 inline registers.
         for i in (0..DEGREE).step_by(2) {
             self.asm.emit_ld(Kind::LD, temp, psi, i as i64 * 4);
-            self.asm.emit_i(Kind::ADDIW, psi, temp, 0);
-            self.mont_mul(*self.values[i], *self.values[i], psi);
+            self.asm.emit_i(Kind::ADDIW, weight, temp, 0);
+            self.mont_mul(*self.values[i], *self.values[i], weight);
             self.asm.emit_i(Kind::SRAI, temp, temp, 32);
             self.mont_mul(*self.values[i + 1], *self.values[i + 1], temp);
-            self.asm.emit_ld(Kind::LD, psi, self.operands.rs2, 0);
         }
+        // Every stage's first twiddle is the Montgomery form of 1, so a
+        // product with it reduces a butterfly sum in five rows.
+        self.asm.emit_ld(Kind::LW, one, twiddles, 0);
         let mut len = DEGREE / 2;
         while len != 0 {
             // The stage starts at an odd i32 offset except at len=1; LW
@@ -52,7 +54,7 @@ impl NttBuilder {
                     let v = *self.values[start + j + len];
                     self.asm.emit_r(Kind::SUBW, psi, u, v);
                     self.asm.emit_r(Kind::ADDW, u, u, v);
-                    self.reduce(u);
+                    self.mont_mul(u, u, one);
                     self.mont_mul(v, psi, temp);
                 }
             }
@@ -80,17 +82,12 @@ impl NttBuilder {
     }
 
     fn mont_mul(&mut self, out: u8, a: u8, b: u8) {
-        let [_, _, p, pinv, _, product, low, scratch] = self.scratch.map(|r| *r);
+        let [_, _, p, pinv, _, product, low, scratch, _, _] = self.scratch.map(|r| *r);
         self.asm.emit_r(Kind::MUL, product, a, b);
         self.asm.emit_r(Kind::MULW, low, product, pinv);
         self.asm.emit_r(Kind::MUL, scratch, low, p);
         self.asm.emit_r(Kind::SUB, product, product, scratch);
         self.asm.emit_i(Kind::SRAI, out, product, 32);
-    }
-
-    fn reduce(&mut self, value: u8) {
-        let [_, _, p, _, _, diff, mask, _] = self.scratch.map(|r| *r);
-        reduce(&mut self.asm, value, p, diff, mask);
     }
 }
 
@@ -106,7 +103,7 @@ impl InlineOp for ForwardNtt64 {
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
         let values = asm.allocate_inline_array::<DEGREE>()?;
-        let scratch = asm.allocate_inline_array::<8>()?;
+        let scratch = asm.allocate_inline_array::<10>()?;
         NttBuilder {
             asm,
             operands,
@@ -115,14 +112,4 @@ impl InlineOp for ForwardNtt64 {
         }
         .build()
     }
-}
-
-pub(super) fn reduce(asm: &mut InlineExpansionBuilder, value: u8, p: u8, diff: u8, mask: u8) {
-    asm.emit_r(Kind::SUB, diff, value, p);
-    asm.emit_i(Kind::SRAI, mask, diff, 63);
-    asm.emit_r(Kind::AND, mask, mask, p);
-    asm.emit_r(Kind::ADD, diff, diff, mask);
-    asm.emit_i(Kind::SRAI, mask, diff, 63);
-    asm.emit_r(Kind::AND, mask, mask, p);
-    asm.emit_r(Kind::ADDW, value, diff, mask);
 }

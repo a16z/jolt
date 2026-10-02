@@ -17,6 +17,7 @@ parallel = ["akita-pcs/parallel"]
 # inlines, for a RISC-V guest verifier.
 blake2-inline = ["akita-pcs/blake2-inline"]
 ntt-inline = ["akita-pcs/ntt-inline"]
+keccak-inline = ["akita-pcs/keccak-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 profiling = ["parallel"]
@@ -60,3 +61,11 @@ jolt-transcript = { workspace = true, default-features = false, features = [
 # flip jolt-claims' packed-mode geometry for every `--all` lane.
 jolt-claims = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+# The inline transcript sponge is checked against spongefish's Blake2b sponge
+# on the hasher's host software path.
+akita-transcript = { workspace = true, features = [
+  "transcript-blake2b",
+  "blake2-inline",
+] }
+jolt-inlines-blake2 = { workspace = true, features = ["host"] }
+spongefish = { workspace = true, features = ["blake2"] }

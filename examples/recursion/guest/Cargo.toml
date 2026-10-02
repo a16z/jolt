@@ -6,25 +6,30 @@ edition = "2021"
 [features]
 ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
-field-inline = ["jolt_sdk/field-inline", "jolt-field/field-inline-guest"]
+field-inline = ["jolt_sdk/field-inline"]
+# The field the field-inline unit computes in: BN254 `Fr` under Dory, the
+# Fp128 protocol prime under Akita. The host selects the one its tracer uses.
+field-inline-bn254 = ["field-inline", "jolt-field/field-inline-guest-bn254"]
+field-inline-fp128 = ["field-inline", "jolt-field/field-inline-guest-fp128"]
 akita = [
   "jolt_sdk/akita",
   "dep:jolt-akita",
   "dep:jolt-crypto",
   "dep:jolt-transcript",
 ]
-trusted-preprocessing = ["jolt-dory/unchecked-verifier-setup"]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc", "jolt_sdk/guest-fast-mem"]
-blake2-inline = [
+hash-inlines = [
   "jolt_sdk/blake2-inline",
   "jolt-transcript?/blake2-inline",
   "jolt-akita?/blake2-inline",
+  "jolt-akita?/keccak-inline",
 ]
 
 [package.metadata.cargo-machete]
-# Field/Dory edges select guest implementations; generated embedded_bytecode.rs
-# imports jolt-riscv types when the host prepares an embedded guest.
-ignored = ["jolt-field", "jolt-dory", "jolt-riscv"]
+# The jolt-field edge selects the guest's field-inline arithmetic; generated
+# embedded_bytecode.rs imports jolt-riscv types when the host prepares an
+# embedded guest.
+ignored = ["jolt-field", "jolt-riscv"]
 
 [dependencies]
 jolt-riscv = { path = "../../../crates/jolt-riscv" }
@@ -37,7 +42,6 @@ bincode.workspace = true
 serde.workspace = true
 jolt-field = { path = "../../../crates/jolt-field" }
 jolt-akita = { path = "../../../crates/jolt-akita", optional = true, default-features = false }
-jolt-dory = { path = "../../../crates/jolt-dory" }
 jolt-crypto = { path = "../../../crates/jolt-crypto", optional = true, default-features = false }
 jolt-transcript = { path = "../../../crates/jolt-transcript", default-features = false, features = [
   "transcript-blake2b",

@@ -9,7 +9,8 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
-host = ["jolt-inlines-sdk/host"]
+# The host build also checks the `digest` adapter against the `blake2` crate.
+host = ["jolt-inlines-sdk/host", "digest"]
 # `digest` trait adapter over the inline hasher, for `Digest`-generic users
 # such as Fiat-Shamir transcripts.
 digest = ["dep:digest"]

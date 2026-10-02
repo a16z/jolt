@@ -66,13 +66,6 @@ impl Blake2b {
         }
     }
 
-    /// Creates a new hasher with the given salt and personalization,
-    /// matching the `blake2` crate's `new_with_params` semantics.
-    ///
-    /// Shorter values are zero-padded per the BLAKE2b specification.
-    ///
-    /// # Panics
-    /// Panics if `salt` or `persona` is longer than 16 bytes.
     /// Blake2b with an `output_len`-byte digest (1..=64). The digest length is
     /// part of the parameter block folded into the IV, so a shorter digest is
     /// its own hash function, not a truncation of the 64-byte one.
@@ -100,6 +93,29 @@ impl Blake2b {
         out.copy_from_slice(&full[..len]);
     }
 
+    /// Absorb `block` as the next 128 input bytes and compress it now.
+    ///
+    /// BLAKE2b compresses its last block with the final flag, so this equals
+    /// [`Self::update`] only when at least one more byte is absorbed before
+    /// finalizing. A hasher prepared this way can be cloned to start many
+    /// hashes that share a constant first block.
+    ///
+    /// # Panics
+    /// Panics if earlier input is still buffered.
+    #[inline(always)]
+    pub fn update_block_eager(&mut self, block: &[u8; BLOCK_INPUT_SIZE_IN_BYTES]) {
+        assert_eq!(self.buffer_len, 0, "eager block after buffered input");
+        self.buffer.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
+        compress(&mut self.h, block, self.buffer.counter, false);
+    }
+
+    /// Creates a new hasher with the given salt and personalization,
+    /// matching the `blake2` crate's `new_with_params` semantics.
+    ///
+    /// Shorter values are zero-padded per the BLAKE2b specification.
+    ///
+    /// # Panics
+    /// Panics if `salt` or `persona` is longer than 16 bytes.
     #[inline(always)]
     pub fn new_with_params(salt: &[u8], persona: &[u8]) -> Self {
         Self {
@@ -515,6 +531,26 @@ pub(crate) unsafe fn blake2b_compress(_state: *mut u64, _message: *const u64) {
 mod digest_tests {
     use super::*;
     use hex_literal::hex;
+
+    /// An eagerly compressed first block followed by more input hashes as
+    /// the `blake2` crate does over the concatenation.
+    #[test]
+    fn eager_block_matches_blake2_over_concatenation() {
+        use blake2::{Blake2b512, Digest as _};
+        let block: [u8; BLOCK_INPUT_SIZE_IN_BYTES] = core::array::from_fn(|i| (i * 7 + 3) as u8);
+        for tail_len in [1, 64, 128, 129, 300] {
+            let tail: Vec<u8> = (0..tail_len).map(|i| (i * 13 + 1) as u8).collect();
+            let mut hasher = Blake2b::new();
+            hasher.update_block_eager(&block);
+            hasher.update(&tail);
+            let expected = Blake2b512::digest([block.as_slice(), &tail].concat());
+            assert_eq!(
+                hasher.finalize().as_slice(),
+                expected.as_slice(),
+                "tail {tail_len}"
+            );
+        }
+    }
 
     #[test]
     fn test_blake2b_digest() {

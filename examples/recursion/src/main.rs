@@ -4,6 +4,7 @@ use jolt_akita::{AkitaField, AkitaScheme};
 #[cfg(feature = "akita")]
 use jolt_field::Ring;
 use jolt_inlines_blake2 as _;
+use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
 use jolt_riscv::JoltInstructionRow;
@@ -871,19 +872,23 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.set_func("verify");
     program.set_std(true);
     // The verifier guest computes its field arithmetic through the
-    // field-inline instructions, so it decodes under the FR profile.
+    // field-inline instructions, so it decodes under the FR profile, and
+    // routes the one field the tracer's field-inline unit computes in.
     #[cfg(feature = "field-inline")]
-    program.enable_field_inline();
+    {
+        program.enable_field_inline();
+        program.add_guest_feature(if cfg!(feature = "akita") {
+            "field-inline-fp128"
+        } else {
+            "field-inline-bn254"
+        });
+    }
     #[cfg(feature = "akita")]
     program.add_guest_feature("akita");
     #[cfg(feature = "ntt-inline")]
     program.add_guest_feature("ntt-inline");
     program.add_guest_feature("fast-alloc");
-    program.add_guest_feature("blake2-inline");
-    // The verifier preprocessing is the recursion circuit's own trusted
-    // constant: its group elements need no subgroup validation on decode.
-    #[cfg(not(feature = "akita"))]
-    program.add_guest_feature("trusted-preprocessing");
+    program.add_guest_feature("hash-inlines");
     program.set_memory_config(memory_config);
     program
 }

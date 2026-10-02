@@ -4,7 +4,6 @@ use jolt_inlines_sdk::host::{
 };
 
 use crate::pointwise::{DOT_FUNCT7, DOT_PRODUCTS};
-use crate::sequence_builder::reduce;
 use crate::{DEGREE, OPCODE};
 
 pub struct PointwiseDot64;
@@ -117,4 +116,14 @@ impl InlineOp for PointwiseDot64 {
         }
         .build()
     }
+}
+
+fn reduce(asm: &mut InlineExpansionBuilder, value: u8, p: u8, diff: u8, mask: u8) {
+    asm.emit_r(Kind::SUB, diff, value, p);
+    asm.emit_i(Kind::SRAI, mask, diff, 63);
+    asm.emit_r(Kind::AND, mask, mask, p);
+    asm.emit_r(Kind::ADD, diff, diff, mask);
+    asm.emit_i(Kind::SRAI, mask, diff, 63);
+    asm.emit_r(Kind::AND, mask, mask, p);
+    asm.emit_r(Kind::ADDW, value, diff, mask);
 }
