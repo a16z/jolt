@@ -61,6 +61,24 @@ pub trait Transcript: Default + Sync + Send + 'static {
         self.append(value);
     }
 
+    /// Absorbs `values` as one labeled message: the [`LabelWithCount`] word
+    /// for `label` and the value count, then every value's big-endian
+    /// canonical encoding, in a single [`append_bytes`](Self::append_bytes).
+    /// One message costs one hash over its bytes, where [`append_values`]
+    /// hashes once per value.
+    ///
+    /// [`append_values`]: Self::append_values
+    fn append_scalars<F: CanonicalBytes>(&mut self, label: &'static [u8], values: &[F]) {
+        let mut message = Vec::with_capacity(32 + values.len() * F::NUM_BYTES);
+        message.extend_from_slice(&LabelWithCount(label, values.len() as u64).word());
+        let mut encoded = vec![0u8; F::NUM_BYTES];
+        for value in values {
+            value.to_bytes_le(&mut encoded);
+            message.extend(encoded.iter().rev());
+        }
+        self.append_bytes(&message);
+    }
+
     /// Absorbs a domain label with a count followed by each value in order.
     fn append_values<A: AppendToTranscript>(&mut self, label: &'static [u8], values: &[A]) {
         self.append(&LabelWithCount(label, values.len() as u64));
@@ -180,8 +198,13 @@ impl AppendToTranscript for Label {
 /// used by the deployed proof format.
 pub struct LabelWithCount(pub &'static [u8], pub u64);
 
-impl AppendToTranscript for LabelWithCount {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+impl LabelWithCount {
+    /// The packed 32-byte word this label absorbs as.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the label exceeds 24 bytes.
+    pub fn word(&self) -> [u8; 32] {
         assert!(
             self.0.len() <= 24,
             "label {:?} exceeds 24 bytes",
@@ -191,7 +214,13 @@ impl AppendToTranscript for LabelWithCount {
         let (head, _) = packed.split_at_mut(self.0.len());
         head.copy_from_slice(self.0);
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
-        transcript.append_bytes(&packed);
+        packed
+    }
+}
+
+impl AppendToTranscript for LabelWithCount {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append_bytes(&self.word());
     }
 }
 

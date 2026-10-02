@@ -428,13 +428,12 @@ mod field_inline_round_trip {
         // The verifier's absorb: the curated order with the runtime
         // booleanity-vs-bytecode dedup (single-sourced with the prover's
         // curation through `stage6b_opening_values`).
-        for value in jolt_verifier::stages::stage6b::stage6b_opening_values(
+        let values = jolt_verifier::stages::stage6b::stage6b_opening_values(
             &out.claims,
             &cycle_points.bytecode_read_raf.bytecode_ra,
             &booleanity_point,
-        ) {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
+        );
+        jolt_sumcheck::append_opening_claims(&mut transcript, &values);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }

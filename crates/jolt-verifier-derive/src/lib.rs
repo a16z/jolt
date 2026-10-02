@@ -1093,17 +1093,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 __values
             }
 
-            /// Append every absorbed opening to the transcript in canonical order,
-            /// each under the `b"opening_claim"` label, matching the prover's
-            /// commitment order.
+            /// Append every absorbed opening to the transcript in canonical order
+            /// as one opening-claim message, matching the prover's commitment
+            /// order.
             pub fn append_output_claims<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
                 &self,
                 transcript: &mut __T,
                 claims: &#output_claims_name<#f>,
             ) {
-                for value in self.opening_values(claims) {
-                    transcript.append_labeled(b"opening_claim", &value);
-                }
+                ::jolt_sumcheck::append_opening_claims(transcript, &self.opening_values(claims));
             }
         }
     };

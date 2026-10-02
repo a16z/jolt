@@ -12,8 +12,10 @@ use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::{ClearSumcheckProof, CompressedSumcheckProof};
 use jolt_sumcheck::round_proof::RoundMessage;
-use jolt_sumcheck::{BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_sumcheck::{
+    append_round_coefficients, BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
 type F = Fr;
 
@@ -459,13 +461,7 @@ fn honest_prove_product_compressed(
         let compressed = UnivariatePoly::new(vec![c0, c1, c2]).compress();
 
         let coeffs = compressed.coeffs_except_linear_term();
-        transcript.append(&LabelWithCount(
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-            coeffs.len() as u64,
-        ));
-        for coeff in coeffs {
-            coeff.append_to_transcript(transcript);
-        }
+        append_round_coefficients(transcript, SUMCHECK_ROUND_TRANSCRIPT_LABEL, coeffs);
         let r: F = transcript.challenge();
 
         for i in 0..half {

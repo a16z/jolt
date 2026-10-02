@@ -4,15 +4,15 @@ use std::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use jolt_field::{AdditiveGroup, Field, Prime64Offset59, Ring};
+use jolt_field::{AdditiveGroup, CanonicalBytes, Field, Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof,
+    append_opening_claims, prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof,
     ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
-    SumcheckProof, SumcheckRecorder, SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    SumcheckProof, SumcheckRecorder, SumcheckVerifier, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
+    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Transcript;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 
@@ -173,9 +173,11 @@ impl Field for ExternalField {
     }
 }
 
-impl AppendToTranscript for ExternalField {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.0.append_to_transcript(transcript);
+impl CanonicalBytes for ExternalField {
+    const NUM_BYTES: usize = Prime64Offset59::NUM_BYTES;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        self.0.to_bytes_le(out);
     }
 }
 
@@ -230,22 +232,16 @@ impl ProveRounds<ExternalField> for LinearRound {
     ) -> Result<UnivariatePoly<ExternalField>, SumcheckError<ExternalField>> {
         assert!(bind.is_none());
         assert_eq!(round, 0);
-        let polynomial = field_only_polynomial([
-            ExternalField::from_u64(3),
-            ExternalField::from_u64(2),
-        ]);
+        let polynomial =
+            field_only_polynomial([ExternalField::from_u64(3), ExternalField::from_u64(2)]);
         assert_eq!(
-            polynomial.evaluate(ExternalField::zero())
-                + polynomial.evaluate(ExternalField::one()),
+            polynomial.evaluate(ExternalField::zero()) + polynomial.evaluate(ExternalField::one()),
             previous_claim
         );
         Ok(polynomial)
     }
 
-    fn finish_rounds(
-        &mut self,
-        _bind: ExternalField,
-    ) -> Result<(), SumcheckError<ExternalField>> {
+    fn finish_rounds(&mut self, _bind: ExternalField) -> Result<(), SumcheckError<ExternalField>> {
         Ok(())
     }
 }
@@ -302,9 +298,7 @@ fn external_field_runs_stock_clear_prover_and_verifier() {
         &mut verifier_transcript,
     )
     .unwrap();
-    for claim in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, claim);
-    }
+    append_opening_claims(&mut verifier_transcript, &proved.member_claims);
 
     let point = reduced.point.as_slice()[0];
     let expected = ExternalField::from_u64(3) + ExternalField::from_u64(2) * point;
