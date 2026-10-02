@@ -3,6 +3,8 @@
 #![expect(clippy::unwrap_used, reason = "test harness")]
 
 use akita_transcript::TranscriptSponge;
+// The inline sponge hashes on this crate's host software path.
+use jolt_inlines_blake2 as _;
 use spongefish::instantiations::Blake2b512;
 use spongefish::DuplexSpongeInterface;
 
