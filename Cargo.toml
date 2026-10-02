@@ -305,14 +305,14 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
 ] }
 # Immutable fork revision: upstream 1cc7a2a90 plus the recursion verifier-guest support
 # (inline hooks, trusted in-place setup views, selected-row catalog views).
-akita-algebra = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
-akita-config = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
-akita-error = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
-akita-pcs = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
-akita-planner = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
-akita-schedules = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
-akita-challenges = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
-akita-types = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-algebra = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-algebra", default-features = false }
+akita-config = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-config", default-features = false }
+akita-error = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-error", default-features = false }
+akita-pcs = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-pcs", default-features = false }
+akita-planner = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-planner", default-features = false }
+akita-schedules = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-schedules", default-features = false }
+akita-challenges = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-challenges", default-features = false }
+akita-types = { path = "/Users/mgeorghiades/worktrees/akita-fr-refresh/crates/akita-types", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }

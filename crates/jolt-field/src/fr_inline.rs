@@ -182,6 +182,10 @@ mod emit {
                 match src {
                     REG_OUT => word!(REG_OUT, $quotient),
                     REG_ACC => word!(REG_ACC, $quotient),
+                    10 => word!(10, $quotient),
+                    11 => word!(11, $quotient),
+                    12 => word!(12, $quotient),
+                    13 => word!(13, $quotient),
                     REG_SUM => word!(REG_SUM, $quotient),
                     REG_SCRATCH_A => word!(REG_SCRATCH_A, $quotient),
                     _ => word!(REG_SCRATCH_B, $quotient),
@@ -480,6 +484,62 @@ mod guest {
         read_out(REG_SUM)
     }
 
+    /// `out[i] = Σ_j rows[i][j]·shared[j]`, each row sum register-resident
+    /// and read out once. Like [`weighted_dot_rows`], each shared element is
+    /// loaded once per block of [`WEIGHTED_ROWS_BLOCK`] rows. Canonical limbs;
+    /// every row has `shared.len()` elements and `out` has one slot per row.
+    #[inline(always)]
+    pub fn dot_rows<const N: usize>(
+        rows: &[&[[u64; N]]],
+        shared: &[[u64; N]],
+        out: &mut [[u64; N]],
+    ) {
+        let len = shared.len();
+        assert_eq!(rows.len(), out.len(), "one output per row");
+        assert!(
+            rows.iter().all(|row| row.len() == len),
+            "every row has one element per shared operand"
+        );
+        macro_rules! accumulate_block {
+            ($($row:ident => $k:literal),+) => {
+                for j in 0..len {
+                    // SAFETY: `j < len`, and every row has `len` elements
+                    // (asserted above).
+                    unsafe {
+                        load(REG_A, shared.get_unchecked(j));
+                        $(
+                            load(REG_B, $row.get_unchecked(j));
+                            emit::mul_out();
+                            emit::row_acc_add_out($k);
+                        )+
+                    }
+                }
+            };
+        }
+        for (block_rows, block_out) in rows
+            .chunks(WEIGHTED_ROWS_BLOCK)
+            .zip(out.chunks_mut(WEIGHTED_ROWS_BLOCK))
+        {
+            for k in 0..block_rows.len() {
+                emit::row_acc_zero(k);
+            }
+            match block_rows {
+                [r0, r1, r2, r3, r4] => {
+                    accumulate_block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3, r4 => 4)
+                }
+                [r0, r1, r2, r3] => accumulate_block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3),
+                [r0, r1, r2] => accumulate_block!(r0 => 0, r1 => 1, r2 => 2),
+                [r0, r1] => accumulate_block!(r0 => 0, r1 => 1),
+                [r0] => accumulate_block!(r0 => 0),
+                // `chunks(WEIGHTED_ROWS_BLOCK)` yields one to five rows.
+                _ => {}
+            }
+            for (k, slot) in block_out.iter_mut().enumerate() {
+                *slot = read_out(REG_ACC + k as u32);
+            }
+        }
+    }
+
     #[inline(always)]
     pub fn inv<const N: usize>(a: &[u64; N], montgomery: bool) -> [u64; N] {
         load(REG_A, a);
@@ -493,4 +553,4 @@ mod guest {
 }
 
 #[cfg(target_arch = "riscv64")]
-pub use guest::{add, dot, inv, mul, neg, sub, weighted_dot_rows};
+pub use guest::{add, dot, dot_rows, inv, mul, neg, sub, weighted_dot_rows};

@@ -1209,6 +1209,12 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
     fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
         Some(Self::inline_weighted_dot_kernel(rows, weights, pows))
     }
+
+    #[cfg(feature = "field-inline-guest")]
+    fn inline_dot_rows(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) -> bool {
+        Self::inline_dot_rows_kernel(rows, shared, out);
+        true
+    }
 }
 
 #[cfg(all(feature = "field-inline-guest", not(target_arch = "riscv64")))]
@@ -1222,6 +1228,13 @@ impl<const P: u128> Fp128<P> {
             |acc, (x, y)| acc + x.mul_unreduced(*y),
         );
         <Self as Unreduced>::reduce_product(accum)
+    }
+
+    /// Host side of the shared-operand rows kernel: one exact dot per row.
+    fn inline_dot_rows_kernel(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) {
+        for (slot, row) in out.iter_mut().zip(rows) {
+            *slot = Self::inline_dot_kernel(row, shared);
+        }
     }
 
     /// Host side of the weighted-rows kernel: exact per-row accumulation,
@@ -1265,6 +1278,21 @@ impl<const P: u128> Fp128<P> {
             )
         };
         Self::from_inline_limbs(crate::fr_inline::dot(a, b))
+    }
+
+    fn inline_dot_rows_kernel(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) {
+        assert_eq!(rows.len(), out.len(), "one output per row");
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`, so a slice
+        // of it, and a slice of such slices, have the limb slices' layout.
+        let rows: &[&[[u64; 2]]] =
+            unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
+        let shared: &[[u64; 2]] =
+            unsafe { core::slice::from_raw_parts(shared.as_ptr().cast(), shared.len()) };
+        let mut limbs = vec![[0u64; 2]; out.len()];
+        crate::fr_inline::dot_rows(rows, shared, &mut limbs);
+        for (slot, limbs) in out.iter_mut().zip(limbs) {
+            *slot = Self::from_inline_limbs(limbs);
+        }
     }
 
     fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {

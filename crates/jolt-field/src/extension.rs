@@ -101,6 +101,15 @@ pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
     fn weighted_dot_base_rows(rows: &[&[F]], weights: &[Self], pows: &[Self]) -> Self {
         weighted_dot_base_rows_fold(rows, weights, pows)
     }
+
+    /// `out[i] = Σ_j pows[j]·rows[i][j]`: each row's dot product with the
+    /// shared powers. `out` has one slot per row.
+    #[inline]
+    fn dot_base_rows(pows: &[Self], rows: &[&[F]], out: &mut [Self]) {
+        for (slot, row) in out.iter_mut().zip(rows) {
+            *slot = Self::dot_base(pows, row);
+        }
+    }
 }
 
 /// The fold behind [`MulBaseUnreduced::weighted_dot_base_rows`].
@@ -139,6 +148,15 @@ impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {
     fn weighted_dot_base_rows(rows: &[&[F]], weights: &[Self], pows: &[Self]) -> Self {
         F::inline_weighted_dot(rows, weights, pows)
             .unwrap_or_else(|| weighted_dot_base_rows_fold(rows, weights, pows))
+    }
+
+    #[inline]
+    fn dot_base_rows(pows: &[Self], rows: &[&[F]], out: &mut [Self]) {
+        if !F::inline_dot_rows(rows, pows, out) {
+            for (slot, row) in out.iter_mut().zip(rows) {
+                *slot = dot_base_fold(pows, row);
+            }
+        }
     }
 }
 

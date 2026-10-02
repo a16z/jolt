@@ -248,6 +248,15 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
         None
     }
 
+    /// `out[i] = Σ_j rows[i][j]·shared[j]` on a field-inline guest with each
+    /// shared element loaded once per block of rows; `false` (and `out`
+    /// untouched) where no such path exists.
+    #[inline]
+    fn inline_dot_rows(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) -> bool {
+        let _ = (rows, shared, out);
+        false
+    }
+
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.
     ///
     /// Defaults to the generic coefficient schedule; base fields whose
