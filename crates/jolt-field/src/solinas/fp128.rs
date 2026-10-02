@@ -89,6 +89,9 @@ impl<const P: u128> Fp128<P> {
         c
     };
 
+    /// The modulus as canonical little-endian limbs.
+    pub const MODULUS_LIMBS: [u64; 2] = [P as u64, (P >> 64) as u64];
+
     /// Low 64 bits of `C` (always equals `C` since `C < 2^32`).
     pub const C_LO: u64 = Self::C as u64;
 

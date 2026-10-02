@@ -15,7 +15,7 @@ use super::Fr;
 type InnerFr = ark_bn254::Fr;
 
 const N: usize = 4;
-const MODULUS: [u64; N] = <FrConfig as MontConfig<N>>::MODULUS.0;
+const MODULUS: [u64; N] = Fr::MODULUS_LIMBS;
 const INV: u64 = <FrConfig as MontConfig<N>>::INV;
 const R: BigInt<N> = <FrConfig as MontConfig<N>>::R;
 

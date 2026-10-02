@@ -14,6 +14,9 @@ use crate::{
 use super::{decode_field, encode_field, ProofField};
 
 #[cfg(any(feature = "test-utils", test))]
+use jolt_field::{Field, Ring};
+
+#[cfg(any(feature = "test-utils", test))]
 use crate::instruction::{Cycle, RISCVCycle};
 #[cfg(any(feature = "test-utils", test))]
 use rand::rngs::StdRng;
@@ -30,7 +33,6 @@ declare_riscv_instr!(
         fn random_cycle(rng: &mut StdRng) -> RISCVCycle<Self> {
             use crate::emulator::terminal::DummyTerminal;
             use common::constants::RISCV_REGISTER_COUNT;
-            use jolt_field::Field;
             use jolt_riscv::FIELD_REGISTER_COUNT;
             use rand::{Rng, RngCore};
 
@@ -83,6 +85,18 @@ impl FIELD_ADVICE_LIMB {
             cpu.read_pc(),
         );
         let field_value = cpu.field_registers.read(field_register);
+        #[cfg(any(feature = "test-utils", test))]
+        if let Some(limb) = injection::take(self.address) {
+            let radix_inverse = ProofField::from_u128(1 << 64)
+                .inverse()
+                .expect("2^64 is invertible in the proof field");
+            let quotient = (decode_field::<ProofField>(field_value) - ProofField::from_u64(limb))
+                * radix_inverse;
+            cpu.write_register(x_register as usize, limb as i64);
+            cpu.field_registers
+                .write(quotient_register, encode_field(quotient));
+            return;
+        }
         let canonical = encode_field(decode_field::<ProofField>(field_value));
         let mut low = [0u8; 8];
         low.copy_from_slice(&canonical.bytes_le[..8]);
@@ -96,6 +110,89 @@ impl FIELD_ADVICE_LIMB {
 }
 
 impl RISCVTrace for FIELD_ADVICE_LIMB {}
+
+#[cfg(any(feature = "test-utils", test))]
+pub use injection::{inject_advice_limbs, InjectedAdviceLimbs};
+
+/// Dishonest limb advice for guest-level soundness tests.
+#[cfg(any(feature = "test-utils", test))]
+mod injection {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::marker::PhantomData;
+
+    struct Injection {
+        pending: VecDeque<u64>,
+        consumed_at: Vec<u64>,
+    }
+
+    thread_local! {
+        static INJECTION: RefCell<Option<Injection>> = const { RefCell::new(None) };
+    }
+
+    /// Makes the next `limbs.len()` FIELD_ADVICE_LIMB executions on this thread
+    /// emit `limbs` in place of the honest advice, each with the quotient that
+    /// keeps `source = limb + 2^64 * quotient` in the proof field: the only
+    /// relation the constraints impose on the instruction. Honest advice
+    /// resumes once the limbs run out or the returned guard drops.
+    ///
+    /// Only serial tracing sees the injection; two-pass parallel tracing
+    /// replays chunks on other threads.
+    pub fn inject_advice_limbs(limbs: &[u64]) -> InjectedAdviceLimbs {
+        assert!(
+            crate::parallel_config_from_env().is_none(),
+            "advice injection needs serial tracing; unset TRACER_PARALLEL"
+        );
+        INJECTION.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            assert!(
+                slot.is_none(),
+                "advice limbs are already injected on this thread"
+            );
+            *slot = Some(Injection {
+                pending: limbs.iter().copied().collect(),
+                consumed_at: Vec::with_capacity(limbs.len()),
+            });
+        });
+        InjectedAdviceLimbs {
+            _thread: PhantomData,
+        }
+    }
+
+    /// The scope of an [`inject_advice_limbs`] injection on this thread.
+    pub struct InjectedAdviceLimbs {
+        _thread: PhantomData<*const ()>,
+    }
+
+    impl InjectedAdviceLimbs {
+        /// Addresses of the FIELD_ADVICE_LIMB instructions that emitted
+        /// injected limbs, in execution order.
+        pub fn consumed_addresses(&self) -> Vec<u64> {
+            INJECTION.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .map(|injection| injection.consumed_at.clone())
+                    .unwrap_or_default()
+            })
+        }
+    }
+
+    impl Drop for InjectedAdviceLimbs {
+        fn drop(&mut self) {
+            INJECTION.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+
+    pub(super) fn take(address: u64) -> Option<u64> {
+        INJECTION.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let injection = slot.as_mut()?;
+            let limb = injection.pending.pop_front()?;
+            injection.consumed_at.push(address);
+            Some(limb)
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -178,5 +275,35 @@ mod tests {
             saw_wide_source,
             "advice fixtures must exercise full-width sources"
         );
+    }
+
+    /// Injected advice is any advice the constraints accept: zero split as the
+    /// limb one leaves the quotient -1/2^64. Honest advice resumes after the
+    /// injected limbs.
+    #[test]
+    fn injected_limbs_keep_the_constrained_relation() {
+        let word = FIELD_ADVICE_LIMB::MATCH | (10 << 7) | (3 << 15) | (3 << 20);
+        let instruction = FIELD_ADVICE_LIMB::new(word, 0x1000, true, false);
+        let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        let radix = ProofField::from_u128(1 << 64);
+
+        let injection = inject_advice_limbs(&[1]);
+        instruction.trace(&mut cpu, None);
+        let quotient = decode_field::<ProofField>(cpu.field_registers.read(3));
+        assert_eq!(cpu.x[10], 1);
+        assert_eq!(
+            ProofField::from_u64(1) + radix * quotient,
+            ProofField::from_u64(0)
+        );
+        assert_eq!(injection.consumed_addresses(), [0x1000]);
+
+        instruction.trace(&mut cpu, None);
+        let honest_limb = cpu.x[10] as u64;
+        let honest_quotient = decode_field::<ProofField>(cpu.field_registers.read(3));
+        assert_eq!(
+            ProofField::from_u64(honest_limb) + radix * honest_quotient,
+            quotient
+        );
+        assert_eq!(injection.consumed_addresses(), [0x1000]);
     }
 }

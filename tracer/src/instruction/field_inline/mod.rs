@@ -30,6 +30,7 @@ use jolt_field::Fr;
 #[cfg(feature = "fp128-field-inline")]
 use jolt_field::Prime128OffsetA7F7;
 use jolt_field::{CanonicalEncoding, Field};
+use jolt_platform::FieldInlineModulus;
 use jolt_program::field_inline::FieldEncodedValue;
 
 // Execute in the proof field: fp128 for Akita, BN254 Fr for Dory.
@@ -37,6 +38,35 @@ use jolt_program::field_inline::FieldEncodedValue;
 type ProofField = Fr;
 #[cfg(feature = "fp128-field-inline")]
 type ProofField = Prime128OffsetA7F7;
+
+/// The field field-inline instructions execute over. jolt-host forwards it to
+/// field-inline guest builds, whose SDK conversions prove they were compiled
+/// for this field.
+#[cfg(not(feature = "fp128-field-inline"))]
+pub const FIELD_INLINE_MODULUS: FieldInlineModulus = FieldInlineModulus::Bn254;
+#[cfg(feature = "fp128-field-inline")]
+pub const FIELD_INLINE_MODULUS: FieldInlineModulus = FieldInlineModulus::Fp128;
+
+// The guest-visible limb table is a copy; pin it to the executing field in
+// every field-inline build.
+const _: () = assert!(
+    limbs_eq(FIELD_INLINE_MODULUS.limbs(), &ProofField::MODULUS_LIMBS),
+    "FIELD_INLINE_MODULUS limbs must equal the proof field modulus"
+);
+
+const fn limbs_eq(left: &[u64], right: &[u64]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
 
 fn accumulate_word<F: Field + CanonicalEncoding>(
     previous: FieldEncodedValue,
@@ -88,5 +118,39 @@ mod tests {
                 .all(|byte| *byte == 0));
             assert_eq!(decode_field::<ProofField>(encoded), value);
         }
+    }
+
+    /// A guest compiled for another field fails its conversions' modulus
+    /// binding, because that field's modulus is a nonzero element here; and the
+    /// pinned limbs are exactly this field's modulus, whose predecessor is the
+    /// canonical encoding of -1.
+    #[test]
+    fn only_the_executing_modulus_reduces_to_zero() {
+        let encode_limbs = |limbs: &[u64]| {
+            let mut encoded = FieldEncodedValue::zero();
+            for (chunk, limb) in encoded.bytes_le.chunks_exact_mut(8).zip(limbs) {
+                chunk.copy_from_slice(&limb.to_le_bytes());
+            }
+            encoded
+        };
+        for modulus in [FieldInlineModulus::Bn254, FieldInlineModulus::Fp128] {
+            assert_eq!(
+                decode_field::<ProofField>(encode_limbs(modulus.limbs()))
+                    == ProofField::from_u64(0),
+                modulus == FIELD_INLINE_MODULUS,
+                "{modulus:?}"
+            );
+        }
+
+        let mut below = ProofField::MODULUS_LIMBS;
+        below[0] -= 1;
+        assert_eq!(
+            ProofField::from_bytes_le_checked(
+                &encode_limbs(&below).bytes_le[..ProofField::NUM_BYTES]
+            ),
+            Some(ProofField::from_u64(0) - ProofField::from_u64(1))
+        );
+        assert!(FIELD_INLINE_MODULUS.is_canonical(&below));
+        assert!(!FIELD_INLINE_MODULUS.is_canonical(&ProofField::MODULUS_LIMBS));
     }
 }
