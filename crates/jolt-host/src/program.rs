@@ -265,7 +265,6 @@ impl Program {
             };
 
             // ELF is built to guest_target_dir with standard cargo layout.
-            // Note: output directory includes the selected cargo profile (default: "release").
             let out_profile = profile_output_dir(self.profile.as_deref());
             let elf_path = PathBuf::from(&guest_target_dir)
                 .join(target_triple)
