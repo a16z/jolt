@@ -10,7 +10,7 @@ use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
-use jolt_riscv::JoltTraceRow;
+use jolt_riscv::{CircuitFlags, JoltTraceRow};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -76,6 +76,7 @@ impl ProverConfig {
                 RamAccess::Write(write) => Some(write.address),
                 RamAccess::NoOp => None,
             },
+            |row| row.circuit_flags().get(CircuitFlags::Jump),
         )
     }
 
@@ -99,6 +100,7 @@ impl ProverConfig {
             program_image_len_words,
             max_padded_trace_length,
             |row| (row.is_load() || row.is_store()).then(|| row.ram_address()),
+            |row| row.circuit_flags().get(CircuitFlags::Jump),
         )
     }
 
@@ -110,7 +112,13 @@ impl ProverConfig {
         program_image_len_words: usize,
         max_padded_trace_length: usize,
         ram_address: impl Fn(&R) -> Option<u64> + Sync,
+        is_jump: impl Fn(&R) -> bool,
     ) -> Result<Self, ProverError<F>> {
+        // The tracer stops when the PC stops changing or on a trap that emits
+        // no rows, so only `j .` (or `jalr` to itself) leaves a jump last.
+        if rows.last().is_some_and(|row| !is_jump(row)) {
+            return Err(ProverError::TraceDoesNotEndInJump);
+        }
         let trace_length = if rows.len() < MIN_PADDED_TRACE_LENGTH {
             MIN_PADDED_TRACE_LENGTH
         } else {
@@ -264,4 +272,95 @@ impl CommittedProgramCandidates {
 pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
     let words = (max_advice_size_bytes / 8) as usize;
     words.next_power_of_two().max(1).ilog2() as usize
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use common::jolt_device::MemoryLayout;
+    use jolt_field::Fr;
+    use jolt_program::execution::TraceRow;
+    use jolt_riscv::JoltInstructionKind as Kind;
+    use jolt_riscv::{CapturedState, JoltInstructionRow, JoltTraceRow, NormalizedOperands};
+
+    use super::ProverConfig;
+    use crate::ProverError;
+
+    const TEXT_BASE: u64 = 0x8000_0000;
+
+    fn instruction(instruction_kind: Kind, operands: NormalizedOperands) -> JoltInstructionRow {
+        JoltInstructionRow {
+            instruction_kind,
+            address: TEXT_BASE as usize,
+            operands,
+            ..JoltInstructionRow::default()
+        }
+    }
+
+    fn derive_both(trace: &[JoltInstructionRow]) -> [Result<ProverConfig, ProverError<Fr>>; 2] {
+        let rows: Vec<TraceRow> = trace
+            .iter()
+            .map(|&row| TraceRow::from_instruction(row).unwrap())
+            .collect();
+        let compact: Vec<JoltTraceRow> = trace
+            .iter()
+            .map(|row| JoltTraceRow::from_components(CapturedState::default(), row, 1).unwrap())
+            .collect();
+        let layout = MemoryLayout::default();
+        [
+            ProverConfig::derive(&rows, &layout, TEXT_BASE, 0, 1 << 12),
+            ProverConfig::derive_compact(&compact, &layout, TEXT_BASE, 0, 1 << 12),
+        ]
+    }
+
+    fn addi() -> JoltInstructionRow {
+        instruction(
+            Kind::ADDI,
+            NormalizedOperands {
+                rs1: Some(0),
+                rd: Some(1),
+                imm: 1,
+                ..NormalizedOperands::default()
+            },
+        )
+    }
+
+    #[test]
+    fn derive_rejects_a_trace_whose_last_row_is_not_a_jump() {
+        let self_branch = instruction(
+            Kind::BEQ,
+            NormalizedOperands {
+                rs1: Some(0),
+                rs2: Some(0),
+                ..NormalizedOperands::default()
+            },
+        );
+        // A taken self-branch, and the last row before a trap that emitted none.
+        for last in [self_branch, addi()] {
+            for result in derive_both(&[addi(), last]) {
+                assert!(
+                    matches!(result, Err(ProverError::TraceDoesNotEndInJump)),
+                    "{:?}: {result:?}",
+                    last.instruction_kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn derive_accepts_a_trace_ending_in_a_jump() {
+        let jal = instruction(Kind::JAL, NormalizedOperands::default());
+        let jalr = instruction(
+            Kind::JALR,
+            NormalizedOperands {
+                rs1: Some(1),
+                ..NormalizedOperands::default()
+            },
+        );
+        for last in [jal, jalr] {
+            for result in derive_both(&[addi(), last]) {
+                assert!(result.is_ok(), "{:?}: {result:?}", last.instruction_kind);
+            }
+        }
+    }
 }
