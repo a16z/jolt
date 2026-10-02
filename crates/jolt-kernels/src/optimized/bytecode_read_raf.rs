@@ -57,6 +57,7 @@ use jolt_field::JoltField;
 use jolt_poly::BindingOrder;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
@@ -816,7 +817,7 @@ impl<F: JoltField> LazyFusedInc<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        *self = match std::mem::replace(self, Self::Dense(Polynomial::zeros(0))) {
+        match self {
             Self::Lazy {
                 branch_weights,
                 rows,
@@ -826,10 +827,7 @@ impl<F: JoltField> LazyFusedInc<F> {
                 next.extend(branch_weights.iter().map(|weight| one_minus * *weight));
                 next.extend(branch_weights.iter().map(|weight| challenge * *weight));
                 if next.len() < 16 {
-                    Self::Lazy {
-                        branch_weights: next,
-                        rows,
-                    }
+                    *branch_weights = next;
                 } else {
                     let len = rows.len() / next.len();
                     let evaluate = |index: usize| {
@@ -843,14 +841,13 @@ impl<F: JoltField> LazyFusedInc<F> {
                     let evals = (0..len).into_par_iter().map(evaluate).collect();
                     #[cfg(not(feature = "parallel"))]
                     let evals = (0..len).map(evaluate).collect();
-                    Self::Dense(Polynomial::new(evals))
+                    *self = Self::Dense(Polynomial::new(evals));
                 }
             }
-            Self::Dense(mut polynomial) => {
+            Self::Dense(polynomial) => {
                 polynomial.bind_with_order(challenge, BindingOrder::LowToHigh);
-                Self::Dense(polynomial)
             }
-        };
+        }
     }
 }
 
@@ -943,7 +940,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             }
         }
 
-        let mut combined = vec![F::zero(); cycles];
+        let mut combined = unsafe_allocate_zero_vec(cycles);
         for (point, weight) in stage_cycle_points[..base_stages].iter().zip(stage_weights) {
             let scaled = scaled_eq_table(point, weight);
             #[cfg(feature = "parallel")]
@@ -993,7 +990,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         #[cfg(feature = "akita")]
         let fused_combined = {
             let store = stage_values[base_stages];
-            let mut combined = vec![F::zero(); cycles];
+            let mut combined = unsafe_allocate_zero_vec(cycles);
             for stage in base_stages..num_stages {
                 let value = if stage < base_stages + 2 {
                     store
