@@ -3338,6 +3338,7 @@ dependencies = [
  "bincode 2.0.1",
  "common",
  "jolt-field",
+ "jolt-platform",
  "jolt-program",
  "jolt-riscv",
  "postcard",
