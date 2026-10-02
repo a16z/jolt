@@ -1288,13 +1288,14 @@ impl Instruction {
             }
             0b0101111 => {
                 // Atomic Memory Operations (A-extension): LR, SC, AMOSWAP, AMOADD, etc.
-                // Only check funct3 (width) and funct5 (operation type)
-                // bits [26:25] are aq/rl flags which can vary
+                // Match on funct3 (width) and funct5 (operation type); LR also
+                // requires rs2 = 0. Bits [26:25] are aq/rl flags which can vary
                 let funct3 = (instr >> 12) & 0x7;
                 let funct5 = (instr >> 27) & 0x1f;
 
                 match (funct3, funct5) {
-                    // LR (Load Reserved)
+                    // LR (Load Reserved) has no rs2 operand; its encoding requires rs2 = 0
+                    (0b010 | 0b011, 0b00010) if (instr >> 20) & 0x1f != 0 => Err("Invalid LR rs2"),
                     (0b010, 0b00010) => Ok(LRW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00010) => Ok(LRD::new(instr, address, true, compressed).into()),
 
@@ -2589,6 +2590,11 @@ mod tests {
             (
                 amo(0b00101, 0b010, 3, 1, 2),
                 "Invalid atomic memory operation",
+            ),
+            (amo(0b00010, 0b010, 1, 1, 2), "Invalid LR rs2"),
+            (
+                amo(0b00010, 0b011, 31, 1, 2) | (0b11 << 25),
+                "Invalid LR rs2",
             ),
             (
                 i_type(0, 1, 0b101, 2, 0x73),
