@@ -209,6 +209,7 @@ jolt-field = { path = "crates/jolt-field" }
 jolt-poly = { path = "crates/jolt-poly" }
 jolt-inlines-blake2 = { path = "jolt-inlines/blake2" }
 jolt-inlines-ntt = { path = "jolt-inlines/ntt" }
+jolt-inlines-keccak256 = { path = "jolt-inlines/keccak256" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

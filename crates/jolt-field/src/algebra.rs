@@ -178,6 +178,17 @@ pub trait Field: Ring {
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
     }
 
+    /// `Σ_i terms[i][0]·terms[i][1]·terms[i][2]·terms[i][3]`. Fields with a
+    /// batched guest path (register-resident products and sum) override this.
+    #[inline]
+    fn sum_of_products4(terms: &[[Self; 4]]) -> Self {
+        terms
+            .iter()
+            .fold(<Self as Zero>::zero(), |acc, [a, b, c, d]| {
+                acc + *a * *b * *c * *d
+            })
+    }
+
     /// Multiplicative inverse with zero mapped to zero.
     #[inline]
     fn inv_or_zero(self) -> Self {

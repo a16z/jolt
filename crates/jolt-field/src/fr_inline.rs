@@ -255,6 +255,11 @@ mod emit {
     pub fn acc_zero() {
         fixed!(i_word(FUNCT3_LOAD_IMM, REG_ACC, 0));
     }
+    /// `OUT = OUT * A`.
+    #[inline(always)]
+    pub fn mul_out_out_a() {
+        fixed!(r_word(FUNCT3_MUL, REG_OUT, REG_OUT, REG_A));
+    }
     #[inline(always)]
     pub fn acc_add_out() {
         fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_OUT));
@@ -484,6 +489,25 @@ mod guest {
         read_out(REG_SUM)
     }
 
+    /// `Σ_i t[0]·t[1]·t[2]·t[3]` over `terms`, with each product formed in the
+    /// field register file and only the sum read out: four operand loads and
+    /// three multiplies per term, no intermediate readout. Canonical limbs.
+    #[inline(always)]
+    pub fn sum_of_products4<const N: usize>(terms: &[[[u64; N]; 4]]) -> [u64; N] {
+        emit::acc_zero();
+        for [a, b, c, d] in terms {
+            load(REG_A, a);
+            load(REG_B, b);
+            emit::mul_out();
+            load(REG_A, c);
+            emit::mul_out_out_a();
+            load(REG_A, d);
+            emit::mul_out_out_a();
+            emit::acc_add_out();
+        }
+        read_out(REG_ACC)
+    }
+
     /// `out[i] = Σ_j rows[i][j]·shared[j]`, each row sum register-resident
     /// and read out once. Like [`weighted_dot_rows`], each shared element is
     /// loaded once per block of [`WEIGHTED_ROWS_BLOCK`] rows. Canonical limbs;
@@ -553,4 +577,4 @@ mod guest {
 }
 
 #[cfg(target_arch = "riscv64")]
-pub use guest::{add, dot, dot_rows, inv, mul, neg, sub, weighted_dot_rows};
+pub use guest::{add, dot, dot_rows, inv, mul, neg, sub, sum_of_products4, weighted_dot_rows};

@@ -4,6 +4,7 @@ use jolt_akita::{AkitaField, AkitaScheme};
 #[cfg(feature = "akita")]
 use jolt_field::Ring;
 use jolt_inlines_blake2 as _;
+use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
 use jolt_riscv::JoltInstructionRow;
@@ -893,7 +894,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     #[cfg(feature = "ntt-inline")]
     program.add_guest_feature("ntt-inline");
     program.add_guest_feature("fast-alloc");
-    program.add_guest_feature("blake2-inline");
+    program.add_guest_feature("hash-inlines");
     // The verifier preprocessing is the recursion circuit's own trusted
     // constant: its group elements need no subgroup validation on decode.
     #[cfg(not(feature = "akita"))]

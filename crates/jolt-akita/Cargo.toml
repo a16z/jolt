@@ -17,6 +17,7 @@ parallel = ["akita-pcs/parallel"]
 # inlines, for a RISC-V guest verifier.
 blake2-inline = ["akita-pcs/blake2-inline"]
 ntt-inline = ["akita-pcs/ntt-inline"]
+keccak-inline = ["akita-pcs/keccak-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 profiling = ["parallel"]
