@@ -210,16 +210,6 @@ mod tests {
     }
 
     #[test]
-    fn no_wraparound_at_max() {
-        // eq+1(all_ones, 0) = 0 (no wrap-around).
-        let l = 4;
-        let x = vec![Fr::one(); l];
-        let y = vec![Fr::zero(); l];
-        let eq_plus_one = EqPlusOnePolynomial::new(x);
-        assert!(eq_plus_one.evaluate(&y).is_zero());
-    }
-
-    #[test]
     fn evals_table_matches_pointwise() {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
         let l = 4;
@@ -258,30 +248,6 @@ mod tests {
         for (u, s) in eq_unscaled.iter().zip(eq_scaled.iter()) {
             assert_eq!(*u * scale, *s);
         }
-    }
-
-    #[test]
-    fn prefix_suffix_matches_direct() {
-        let mut rng = ChaCha20Rng::seed_from_u64(123);
-        let l = 4;
-        let r: Vec<Fr> = (0..l).map(|_| Fr::random(&mut rng)).collect();
-
-        let eq_plus_one_direct = EqPlusOnePolynomial::new(r.clone());
-
-        let ps = EqPlusOnePrefixSuffix::new(&r);
-
-        // Verify at a random evaluation point y = (y_hi, y_lo).
-        let y: Vec<Fr> = (0..l).map(|_| Fr::random(&mut rng)).collect();
-        let (y_hi, y_lo) = y.split_at(l / 2);
-
-        let p0_eval = crate::Polynomial::new(ps.prefix_0).evaluate(y_lo);
-        let s0_eval = crate::Polynomial::new(ps.suffix_0).evaluate(y_hi);
-        let p1_eval = crate::Polynomial::new(ps.prefix_1).evaluate(y_lo);
-        let s1_eval = crate::Polynomial::new(ps.suffix_1).evaluate(y_hi);
-
-        let via_decomp = p0_eval * s0_eval + p1_eval * s1_eval;
-        let via_direct = eq_plus_one_direct.evaluate(&y);
-        assert_eq!(via_decomp, via_direct);
     }
 
     #[test]

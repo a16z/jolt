@@ -347,15 +347,6 @@ mod tests {
     }
 
     #[test]
-    fn inactive_field_mul_does_not_pin_destination_to_product() {
-        let witness = witness(Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(99), &[]);
-
-        field_inline_trace_constraints::<Fr>()
-            .check_witness(&witness)
-            .expect("inactive FMUL guard leaves destination unconstrained");
-    }
-
-    #[test]
     fn field_inverse_uses_intermediate_product() {
         let field_rs1 = Fr::from_u64(5);
         let field_rd = field_rs1

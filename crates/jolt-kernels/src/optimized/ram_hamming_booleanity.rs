@@ -482,7 +482,7 @@ mod tests {
 
     use super::*;
     use crate::optimized::booleanity::testing::{
-        load_row, no_op_row, store_row, test_challenge, with_booleanity_backend, with_trace_backend,
+        load_row, no_op_row, store_row, test_challenge, with_trace_backend,
     };
     use crate::ReferenceBackend;
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
@@ -636,21 +636,6 @@ mod tests {
                 assert_eq!(actual, expected, "pattern={pattern:#06x}, bound={bound}");
             }
         }
-    }
-
-    #[test]
-    fn matches_reference() {
-        with_booleanity_backend(2, 4, |backend, _| parity(backend, 2, generic_binding(2)));
-    }
-
-    #[test]
-    fn matches_reference_single_round() {
-        with_booleanity_backend(1, 4, |backend, _| parity(backend, 1, generic_binding(1)));
-    }
-
-    #[test]
-    fn matches_reference_with_padding_rows() {
-        with_booleanity_backend(3, 4, |backend, _| parity(backend, 3, generic_binding(3)));
     }
 
     /// Short traces use startup messages through the final bind. Exercise

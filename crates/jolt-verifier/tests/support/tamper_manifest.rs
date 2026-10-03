@@ -1197,13 +1197,6 @@ pub fn required_target(name: &str) -> TamperTarget {
         .unwrap_or_else(|| panic!("missing tamper manifest target {name}"))
 }
 
-pub fn target_names_are_unique() -> bool {
-    let mut names = BTreeSet::new();
-    all_targets()
-        .into_iter()
-        .all(|target| names.insert(target.name))
-}
-
 pub fn manifest_paths() -> BTreeSet<String> {
     all_targets()
         .into_iter()
@@ -1263,16 +1256,6 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.stages.stage6b_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage7_sumcheck_proof.round_polynomials[*]",
     ]
-}
-
-pub fn verifier_owned_targets_without_active_coverage() -> Vec<TamperTarget> {
-    all_targets()
-        .into_iter()
-        .filter(|target| {
-            target.disposition == TamperDisposition::CheckedAtStage
-                && target.coverage != TamperCoverage::Active
-        })
-        .collect()
 }
 
 pub fn assert_manifest_target_is_active(target: TamperTarget) {

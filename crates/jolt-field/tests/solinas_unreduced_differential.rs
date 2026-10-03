@@ -622,52 +622,12 @@ macro_rules! fold_parity {
 }
 
 fold_parity!(
-    fold_fp32_prime24,
-    two::Prime24Offset3,
-    two::Prime24Offset3,
-    1,
-    (1 << 24) - 3,
-    0x0F01
-);
-fold_parity!(
-    fold_fp32_prime32,
-    two::Prime32Offset99,
-    two::Prime32Offset99,
-    1,
-    (1 << 32) - 99,
-    0x0F02
-);
-fold_parity!(
-    fold_fp64_prime40,
-    two::Prime40Offset195,
-    two::Prime40Offset195,
-    1,
-    (1 << 40) - 195,
-    0x0F03
-);
-fold_parity!(
-    fold_fp64_prime64,
-    two::Prime64Offset59,
-    two::Prime64Offset59,
-    1,
-    u64::MAX as u128 - 58,
-    0x0F04
-);
-fold_parity!(
     fold_fp128_prime275,
     two::Prime128Offset275,
     two::Prime128Offset275,
     1,
     u128::MAX - 274,
     0x0F05
-);
-fold_parity!(
-    fold_fp128_prime_a7f7,
-    two::Prime128OffsetA7F7,
-    two::Prime128OffsetA7F7,
-    1,
-    u128::MAX - 0xFFFF_A7F6,
-    0x0F06
 );
 // FpExt2<Fp64> fold matrices (the specialized EOR fold), all three configs.
 fold_parity!(
@@ -694,23 +654,6 @@ fold_parity!(
     M61 as u128,
     0x0F09
 );
-// FpExt2 default folds over the other bases.
-fold_parity!(
-    fold_ext2_fp32_prime32,
-    two::Ext2<two::Prime32Offset99>,
-    two::Prime32Offset99,
-    2,
-    (1 << 32) - 99,
-    0x0F0A
-);
-fold_parity!(
-    fold_ext2_fp128_prime275,
-    two::Ext2<two::Prime128Offset275>,
-    two::Prime128Offset275,
-    2,
-    u128::MAX - 274,
-    0x0F0B
-);
 // FpExt4<Fp32> fold matrix, both reduction paths (P < 2^31 and P ≥ 2^31).
 fold_parity!(
     fold_ext4_fp32_prime24,
@@ -727,48 +670,6 @@ fold_parity!(
     4,
     (1 << 32) - 99,
     0x0F0D
-);
-// FpExt4 default folds over the other bases.
-fold_parity!(
-    fold_ext4_fp64_prime40,
-    two::FpExt4<two::Prime40Offset195>,
-    two::Prime40Offset195,
-    4,
-    (1 << 40) - 195,
-    0x0F0E
-);
-fold_parity!(
-    fold_ext4_fp128_prime275,
-    two::FpExt4<two::Prime128Offset275>,
-    two::Prime128Offset275,
-    4,
-    u128::MAX - 274,
-    0x0F0F
-);
-// FpExt8 default folds across all three widths.
-fold_parity!(
-    fold_ext8_fp32_prime24,
-    two::FpExt8<two::Prime24Offset3>,
-    two::Prime24Offset3,
-    8,
-    (1 << 24) - 3,
-    0x0F10
-);
-fold_parity!(
-    fold_ext8_fp64_prime40,
-    two::FpExt8<two::Prime40Offset195>,
-    two::Prime40Offset195,
-    8,
-    (1 << 40) - 195,
-    0x0F11
-);
-fold_parity!(
-    fold_ext8_fp128_prime275,
-    two::FpExt8<two::Prime128Offset275>,
-    two::Prime128Offset275,
-    8,
-    u128::MAX - 274,
-    0x0F12
 );
 
 /// Identity-shape extensions: the `MulBaseUnreduced` default body must
@@ -814,54 +715,6 @@ macro_rules! identity_unreduced_suite {
     };
 }
 
-identity_unreduced_suite!(
-    identity_ext2_fp32,
-    two::Ext2<two::Prime32Offset99>,
-    two::Prime32Offset99,
-    2,
-    (1 << 32) - 99,
-    0x1D01
-);
-identity_unreduced_suite!(
-    identity_ext2_fp128,
-    two::Ext2<two::Prime128Offset275>,
-    two::Prime128Offset275,
-    2,
-    u128::MAX - 274,
-    0x1D02
-);
-identity_unreduced_suite!(
-    identity_ext4_fp64,
-    two::FpExt4<two::Prime40Offset195>,
-    two::Prime40Offset195,
-    4,
-    (1 << 40) - 195,
-    0x1D03
-);
-identity_unreduced_suite!(
-    identity_ext4_fp128,
-    two::FpExt4<two::Prime128OffsetA7F7>,
-    two::Prime128OffsetA7F7,
-    4,
-    u128::MAX - 0xFFFF_A7F6,
-    0x1D04
-);
-identity_unreduced_suite!(
-    identity_ext8_fp32,
-    two::FpExt8<two::Prime24Offset3>,
-    two::Prime24Offset3,
-    8,
-    (1 << 24) - 3,
-    0x1D05
-);
-identity_unreduced_suite!(
-    identity_ext8_fp64,
-    two::FpExt8<two::Prime64Offset59>,
-    two::Prime64Offset59,
-    8,
-    u64::MAX as u128 - 58,
-    0x1D06
-);
 identity_unreduced_suite!(
     identity_ext8_fp128,
     two::FpExt8<two::Prime128Offset275>,

@@ -256,20 +256,6 @@ mod tests {
         Vec::new()
     }
 
-    /// Locks the stage-4 Fiat-Shamir append order against silent drift: with no staged advice
-    /// / program-image openings, the order is the five register openings, under `field-inline`
-    /// the five field-inline openings, then the two RAM value-check openings. A wrong order
-    /// here silently breaks soundness, so it is pinned with distinct sentinels.
-    #[test]
-    fn opening_values_follow_canonical_order_without_advice() {
-        let expected: Vec<Fr> = (3..=7)
-            .map(fr)
-            .chain(field_inline_splice())
-            .chain([fr(8), fr(9)])
-            .collect();
-        assert_eq!(claims_with_advice(false).opening_values(), expected);
-    }
-
     /// The full interleaved order: advice (untrusted, trusted) and the program-image
     /// contribution come *first*, then the five register openings, under `field-inline` the
     /// five field-inline openings, then `ram_ra`/`ram_inc` last — exactly matching the

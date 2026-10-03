@@ -306,12 +306,3 @@ mod clear {
         );
     }
 }
-
-#[cfg(not(all(
-    feature = "prover-fixtures",
-    feature = "field-inline",
-    feature = "akita"
-)))]
-#[test]
-#[ignore = "enable --features prover-fixtures,field-inline,akita to run the packed field-inline e2e"]
-fn akita_field_inline_e2e() {}

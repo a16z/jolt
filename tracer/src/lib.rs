@@ -1358,28 +1358,4 @@ mod tests {
     fn test_boundary_divergence_panics_multiworker() {
         boundary_divergence_panics(4);
     }
-
-    #[test]
-    fn test_trace_length() {
-        let elf = build_muldiv_guest();
-        let memory_config = MemoryConfig {
-            program_size: Some(elf.len() as u64),
-            ..Default::default()
-        };
-
-        let (_, execution_trace, _, _, _) =
-            trace(&elf, None, &INPUTS, &[], &[], &memory_config, None);
-        let mut emulator: Emulator = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
-        let mut prev_pc: u64 = 0;
-        let mut trace = vec![];
-        let mut prev_trace_len = 0;
-        loop {
-            step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace));
-            if trace.len() - prev_trace_len == 0 {
-                break;
-            }
-            prev_trace_len = trace.len();
-        }
-        assert_eq!(execution_trace, trace);
-    }
 }

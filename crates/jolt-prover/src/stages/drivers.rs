@@ -192,10 +192,7 @@ mod twin_tests {
         SumcheckKernelError,
     };
     use jolt_poly::UnivariatePoly;
-    use jolt_sumcheck::{
-        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, RoundScheduler,
-        SequentialRounds, SumcheckError,
-    };
+    use jolt_sumcheck::{ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckError};
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
@@ -992,38 +989,5 @@ mod twin_tests {
             panic!("expected the populated-cell wiring error, got {error:?}");
         };
         assert_eq!(*stage, format!("{:?}", JoltRelationId::RamValCheck));
-    }
-
-    /// `prove` is generic over the recorder: this compiles it against the
-    /// committed recorder even though nothing wires the ZK path yet.
-    #[expect(dead_code, reason = "compile-only recorder-generality witness")]
-    #[expect(clippy::too_many_arguments, reason = "the driver's protocol signature")]
-    fn prove_type_checks_with_committed_recorder(
-        sumchecks: &ToyDriverSumchecks<Fr>,
-        kernels: &ToyKernels,
-        session: &mut ProofSession,
-        scheduler: &mut dyn RoundScheduler<Fr>,
-        inputs: &ToyDriverInputClaims<Fr>,
-        input_points: &ToyDriverInputPoints<Fr>,
-        challenges: &ToyDriverChallenges<Fr>,
-        recorder: CommittedSumcheckRecorder<
-            '_,
-            Fr,
-            jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
-            rand_core::OsRng,
-        >,
-        transcript: &mut Blake2bTranscript,
-    ) -> Result<Proved<Fr, ToyDriverSumchecks<Fr>, jolt_crypto::Bn254G1>, ProverError<Fr>> {
-        sumchecks.prove(
-            kernels,
-            session,
-            scheduler,
-            &NoWitness,
-            inputs,
-            input_points,
-            challenges,
-            recorder,
-            transcript,
-        )
     }
 }

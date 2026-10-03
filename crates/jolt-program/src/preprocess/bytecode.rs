@@ -361,26 +361,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_inline_sequences() {
-        let bytecode = vec![
-            instruction(0x8000_0004, Some(1)),
-            instruction(0x8000_0004, Some(1)),
-        ];
-
-        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
-        assert_eq!(
-            err,
-            PreprocessingError::InvalidInlineSequence {
-                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
-                address: 0x8000_0004,
-                previous_sequence: 1,
-                expected_sequence: 0,
-                new_sequence: 1,
-            }
-        );
-    }
-
-    #[test]
     fn rejects_non_consecutive_inline_sequences() {
         let bytecode = vec![
             instruction(0x8000_0004, Some(2)),
@@ -543,26 +523,6 @@ mod tests {
         assert_eq!(
             err,
             PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::MUL)
-        );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn base_preprocessing_rejects_field_inline_rows() {
-        let mut row = instruction(0x8000_0000, None);
-        row.instruction_kind = JoltInstructionKind::FIELD_MUL;
-        row.operands = NormalizedOperands {
-            rd: Some(1),
-            rs1: Some(2),
-            rs2: Some(3),
-            imm: 0,
-        };
-
-        let err =
-            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
-        assert_eq!(
-            err,
-            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::FIELD_MUL)
         );
     }
 

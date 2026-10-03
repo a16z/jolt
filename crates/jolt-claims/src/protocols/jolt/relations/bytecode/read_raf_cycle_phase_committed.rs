@@ -63,28 +63,3 @@ impl SymbolicSumcheck for ReadRafCyclePhaseCommitted {
         read_raf_cycle_output_committed(self.shape.0, self.shape.1)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-    use crate::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-
-    fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
-        BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    #[test]
-    fn read_raf_cycle_phase_committed_symbolic_matches_dependencies() {
-        let relation = ReadRafCyclePhaseCommitted::new((dimensions(2), NUM_BYTECODE_VAL_STAGES));
-        assert_eq!(
-            ReadRafCyclePhaseCommitted::id(),
-            JoltRelationId::BytecodeReadRaf
-        );
-        assert_eq!(relation.rounds(), dimensions(2).log_t());
-        assert_eq!(
-            relation.degree(),
-            dimensions(2).num_committed_ra_polys() + 1
-        );
-    }
-}

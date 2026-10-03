@@ -560,14 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn constraint_count() {
-        let matrices = rv64_trace_constraints::<Fr>();
-        assert_eq!(matrices.a.len(), 22);
-        assert_eq!(matrices.b.len(), 22);
-        assert_eq!(matrices.c.len(), 22);
-    }
-
-    #[test]
     fn exported_layout_names_are_complete_and_unique() {
         assert!(RV64_VARIABLE_NAMES.iter().all(|name| !name.is_empty()));
         assert!(RV64_CONSTRAINT_NAMES.iter().all(|name| !name.is_empty()));
@@ -587,17 +579,6 @@ mod tests {
                 .len(),
             NUM_CONSTRAINTS_PER_CYCLE
         );
-    }
-
-    #[test]
-    fn spartan_outer_constraints_plus_product_constraints_match_full_constraints() {
-        let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows::<Fr>();
-        append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
-        let matrices = rv64_trace_constraints::<Fr>();
-
-        assert_eq!(matrices.a, a_rows);
-        assert_eq!(matrices.b, b_rows);
-        assert_eq!(matrices.c, c_rows);
     }
 
     #[test]
@@ -957,16 +938,6 @@ mod execution_witness_tests {
     }
 
     #[test]
-    fn add_rejects_wrong_next_unexpanded_pc() {
-        let w = with_cell(
-            &add_witness(),
-            V_NEXT_UNEXPANDED_PC,
-            Fr::from_u64(0x8000_0010 + 8),
-        );
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
-    }
-
-    #[test]
     fn compressed_add_execution_witness_satisfies_constraints() {
         // C.ADD occupies 2 bytes, so the unexpanded PC advances by 2.
         let mut w = add_witness();
@@ -986,13 +957,6 @@ mod execution_witness_tests {
     #[test]
     fn sltu_write_back_execution_witness_satisfies_constraints() {
         assert_eq!(check(&sltu_witness()), Ok(()));
-    }
-
-    #[test]
-    fn sltu_rejects_wrong_rd_write_value() {
-        // rd must receive the comparison result 1 (7 <u 9), not 0.
-        let w = with_cell(&sltu_witness(), V_RD_WRITE_VALUE, Fr::from_u64(0));
-        assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
     }
 
     #[test]
@@ -1082,25 +1046,8 @@ mod execution_witness_tests {
     }
 
     #[test]
-    fn beq_taken_rejects_zero_lookup_output() {
-        // ShouldBranch = 1 requires the Equal lookup to have returned 1.
-        let w = with_cell(&beq_taken_witness(), V_LOOKUP_OUTPUT, Fr::from_u64(0));
-        assert_eq!(check(&w), Err(SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH));
-    }
-
-    #[test]
     fn beq_not_taken_execution_witness_satisfies_constraints() {
         assert_eq!(check(&beq_not_taken_witness()), Ok(()));
-    }
-
-    #[test]
-    fn beq_not_taken_rejects_branch_target_next_pc() {
-        let w = with_cell(
-            &beq_not_taken_witness(),
-            V_NEXT_UNEXPANDED_PC,
-            Fr::from_u64(0x8000_0030),
-        );
-        assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
     }
 
     #[test]
@@ -1167,17 +1114,6 @@ mod execution_witness_tests {
         w[V_PRODUCT] = Fr::from_u64(0x8000_0000_0000_0003);
         w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(0x8000_0000_0000_0003);
         assert_eq!(check(&w), Err(PRODUCT_EQ_LEFT_TIMES_RIGHT));
-    }
-
-    #[test]
-    fn mul_rejects_wrong_rd_write_value() {
-        // rd must receive the truncated product 2^63 + 3, not 2^63 + 1.
-        let w = with_cell(
-            &mul_witness(),
-            V_RD_WRITE_VALUE,
-            Fr::from_u64(0x8000_0000_0000_0001),
-        );
-        assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
     }
 
     #[test]

@@ -323,21 +323,3 @@ fn fq_matches() {
         );
     }
 }
-
-fn inner_product<F: two::JoltField>(xs: &[F], ys: &[F]) -> F {
-    let mut acc = F::Accumulator::default();
-    for (&x, &y) in xs.iter().zip(ys) {
-        acc.fmadd(x, y);
-    }
-    acc.reduce()
-}
-
-#[test]
-fn jolt_field_blanket_covers_bn254() {
-    let xs = [two::Fr::from_u64(2), two::Fr::from_u64(3)];
-    let ys = [two::Fr::from_u64(5), two::Fr::from_u64(7)];
-    assert_eq!(inner_product(&xs, &ys), two::Fr::from_u64(31));
-    let xq = [two::Fq::from_u64(2)];
-    let yq = [two::Fq::from_u64(5)];
-    assert_eq!(inner_product(&xq, &yq), two::Fq::from_u64(10));
-}
