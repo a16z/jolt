@@ -114,20 +114,12 @@ impl TraceData {
         &self.rows
     }
 
-    pub fn as_slice(&self) -> &[JoltTraceRow] {
-        self.rows()
-    }
-
     pub fn len(&self) -> usize {
         self.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
-    }
-
-    pub fn get(&self, cycle: usize) -> Option<&JoltTraceRow> {
-        self.rows.get(cycle)
     }
 
     pub fn proof_len(&self) -> usize {
@@ -154,20 +146,6 @@ impl TraceData {
             .ok()
             .and_then(|index| self.field_events.get(index))
             .map(|event| event.data.as_ref())
-    }
-
-    pub fn event(&self, cycle: usize) -> Option<TraceEvent> {
-        let row = *self.rows.get(cycle)?;
-        Some(TraceEvent {
-            row,
-            #[cfg(feature = "field-inline")]
-            field_inline: self
-                .field_events
-                .binary_search_by_key(&cycle, |event| event.cycle)
-                .ok()
-                .and_then(|index| self.field_events.get(index))
-                .map(|event| Arc::clone(&event.data)),
-        })
     }
 }
 

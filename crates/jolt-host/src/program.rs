@@ -463,7 +463,10 @@ impl Program {
             .expect("failed to trace program with default tracer backend");
 
         ProgramSummary {
-            trace: trace_output.trace.into_rows(),
+            trace: trace_output
+                .trace
+                .into_data()
+                .expect("fresh execution trace is unconsumed"),
             bytecode,
             memory_init: init_memory_state,
             io_device: trace_output.device,

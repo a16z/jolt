@@ -9,10 +9,11 @@
 //!
 //! The per-cycle witness values are described by [`CapturedState`], a typed enum
 //! over the three final row classes (`NonMemory` / `Load` / `Store`). Each
-//! variant only names the columns that are independent for that class, so the
-//! memory-row aliasing is enforced by the type rather than by runtime checks:
-//! a load's `RamReadValue`, `RamWriteValue`, and `RdWriteValue` are one field,
-//! and a store's `RamWriteValue` and `Rs2Value` are one field. The cached
+//! variant only names the columns that are independent for that class. The
+//! constructor checks equalities between logical register and RAM observations;
+//! the packed accessor view then stores one value per alias: a load's
+//! `RamReadValue`, `RamWriteValue`, and `RdWriteValue` are one field, and a
+//! store's `RamWriteValue` and `Rs2Value` are one field. The cached
 //! `Load`/`Store` circuit flags determine the class on read, so the enum is the
 //! accessor view while storage stays flat (no separate discriminant).
 //!
@@ -230,6 +231,8 @@ pub enum TraceRowError {
     NoOpEffects,
     #[error("bytecode PC {pc} is invalid for {kind:?}: only no-ops occupy slot zero")]
     InvalidBytecodePc { kind: JoltInstructionKind, pc: u32 },
+    #[error("no-op rows cannot be compressed or first in a virtual sequence")]
+    NoOpMetadata,
 }
 
 /// Four aliased 64-bit value slots. Their logical meaning depends on the row's
@@ -337,8 +340,11 @@ impl JoltTraceRow {
     /// Build a final row from logical observations and an already resolved PC.
     ///
     /// This checks slot aliasing, captured integer-register identities, storage
-    /// bounds, and the reserved no-op PC. The producer's program mapper must
-    /// establish that the PC identifies this instruction in its bytecode.
+    /// bounds, and the reserved no-op PC. Accepted instruction metadata is
+    /// reconstructed exactly. No-ops cannot be compressed or first in a
+    /// sequence: their proof flags do not retain those booleans. The producer's
+    /// program mapper must establish that the PC identifies this instruction
+    /// in its bytecode.
     pub fn new(
         instruction: JoltInstructionRow,
         registers: RegisterState,
@@ -356,6 +362,9 @@ impl JoltTraceRow {
                 kind,
                 pc: bytecode_pc,
             });
+        }
+        if is_noop && (instruction.is_first_in_sequence || instruction.is_compressed) {
+            return Err(TraceRowError::NoOpMetadata);
         }
         if is_noop && (registers != RegisterState::default() || ram_access != RamAccess::NoOp) {
             return Err(TraceRowError::NoOpEffects);
@@ -438,13 +447,14 @@ impl JoltTraceRow {
             return Err(TraceRowError::ImmTooWide { imm });
         }
 
-        let control = u8::from(registers.rs1.is_some()) * CAPTURE_RS1
-            | u8::from(registers.rs2.is_some()) * CAPTURE_RS2
-            | u8::from(registers.rd.is_some()) * CAPTURE_RD
-            | u8::from(instruction.virtual_sequence_remaining.is_some()) * VIRTUAL_SEQUENCE_PRESENT
-            | u8::from(integer_operands.rs1.is_some()) * INTEGER_RS1
-            | u8::from(integer_operands.rs2.is_some()) * INTEGER_RS2
-            | u8::from(integer_operands.rd.is_some()) * INTEGER_RD;
+        let control = (u8::from(registers.rs1.is_some()) * CAPTURE_RS1)
+            | (u8::from(registers.rs2.is_some()) * CAPTURE_RS2)
+            | (u8::from(registers.rd.is_some()) * CAPTURE_RD)
+            | (u8::from(instruction.virtual_sequence_remaining.is_some())
+                * VIRTUAL_SEQUENCE_PRESENT)
+            | (u8::from(integer_operands.rs1.is_some()) * INTEGER_RS1)
+            | (u8::from(integer_operands.rs2.is_some()) * INTEGER_RS2)
+            | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD);
 
         Ok(Self {
             values: state.into_value_slots(),
@@ -816,6 +826,21 @@ mod tests {
             row.captured_state(),
             CapturedState::NonMemory(NonMemoryState::default())
         );
+        let instruction = JoltInstructionRow {
+            address: 0x8000_0000,
+            operands: NormalizedOperands {
+                rs1: Some(2),
+                rs2: Some(3),
+                rd: Some(4),
+                imm: -7,
+            },
+            virtual_sequence_remaining: Some(3),
+            ..Default::default()
+        };
+        let source_noop =
+            JoltTraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 0).unwrap();
+        assert_eq!(source_noop.instruction(), instruction);
+        assert_ne!(source_noop, row);
     }
 
     #[test]
@@ -1085,6 +1110,17 @@ mod tests {
             ),
             Err(TraceRowError::NoOpEffects)
         ));
+        for (is_first_in_sequence, is_compressed) in [(true, false), (false, true)] {
+            let source = JoltInstructionRow {
+                is_first_in_sequence,
+                is_compressed,
+                ..Default::default()
+            };
+            assert!(matches!(
+                JoltTraceRow::new(source, RegisterState::default(), RamAccess::NoOp, 0),
+                Err(TraceRowError::NoOpMetadata)
+            ));
+        }
     }
 
     #[test]

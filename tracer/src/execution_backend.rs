@@ -632,13 +632,12 @@ mod tests {
         let bytecode =
             BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
         let data = super::collect_rows(&trace, &bytecode).unwrap();
-        let event = data.event(0).unwrap();
-        let row = event.row;
+        let row = data.rows()[0];
         assert_eq!(row.rs1_read().unwrap().register, 5);
         assert_eq!(row.rs1_read().unwrap().value, 11);
         assert!(row.rs2_read().is_none());
         assert!(row.rd_write().is_none());
-        let field_trace = event.field_inline.unwrap();
+        let field_trace = data.field_inline(0).unwrap();
         assert_eq!(
             field_trace.op,
             Some(FieldInlineOp::LoadAccumulateFromRegister)
@@ -681,7 +680,11 @@ mod tests {
         let mut retained = OwnedTrace::from_data(collect_rows(&trace, &bytecode).unwrap());
         for (cycle, captured) in trace.iter().enumerate() {
             let event = retained.next_row().unwrap();
-            assert_eq!(Some(&event), retained.data().event(cycle).as_ref());
+            assert_eq!(event.row, retained.rows()[cycle]);
+            assert_eq!(
+                event.field_inline.as_deref(),
+                retained.data().field_inline(cycle)
+            );
             assert_eq!(event.field_inline.is_some(), positions.contains(&cycle));
             if let Some(payload) = event.field_inline {
                 assert_eq!(*payload, captured.field_inline_trace().unwrap());
