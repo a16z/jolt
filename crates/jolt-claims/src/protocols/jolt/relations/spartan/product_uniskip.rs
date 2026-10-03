@@ -1,5 +1,3 @@
-//! Spartan product univariate-skip symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -136,9 +134,6 @@ mod tests {
         );
     }
 
-    /// The output claim is the single reduced uni-skip opening passed through
-    /// verbatim (coefficient one, no other sources), and the symbolically
-    /// derived produced-opening set contains exactly that id.
     #[test]
     fn output_expression_is_the_uniskip_opening_verbatim() {
         let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
@@ -160,8 +155,6 @@ mod tests {
         );
     }
 
-    /// Pins the uni-skip sumcheck spec: a single round over the centered-integer
-    /// domain, with the shared geometry constants for size and degree.
     #[test]
     fn sumcheck_spec_matches_uniskip_geometry_constants() {
         let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
@@ -177,9 +170,6 @@ mod tests {
         );
     }
 
-    /// The derived `InputClaims` wiring: each consumed opening resolves under
-    /// its Spartan-outer id in field-declaration order, and an id from a
-    /// different relation resolves to `None`.
     #[test]
     fn input_claims_resolve_by_spartan_outer_ids_in_declaration_order() {
         let claims = ProductUniskipInputClaims {

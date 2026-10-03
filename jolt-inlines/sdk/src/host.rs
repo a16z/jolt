@@ -45,7 +45,6 @@ pub fn nbiguint_to_limbs(n: &NBigUint) -> Vec<u64> {
     limbs
 }
 
-/// Type of multiplication-style modular operation (multiply, square, or divide).
 pub enum MulqType {
     Mul,
     Square,

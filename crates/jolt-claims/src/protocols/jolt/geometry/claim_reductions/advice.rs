@@ -204,8 +204,6 @@ fn advice_opening(kind: JoltAdviceKind, relation: JoltRelationId) -> JoltOpening
     }
 }
 
-/// Compute the column-side and row-side active round ranges for the advice
-/// cycle-phase sumcheck, given the main/advice matrix shapes and trace order.
 fn cycle_phase_round_schedule(
     trace_order: TracePolynomialOrder,
     log_t: usize,

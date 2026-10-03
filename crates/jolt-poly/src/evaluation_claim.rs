@@ -5,7 +5,6 @@ use crate::{Point, HIGH_TO_LOW};
 #[cfg(feature = "transcript")]
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
-/// An evaluation of a multilinear polynomial at a point.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationClaim<F> {
     pub point: Point<HIGH_TO_LOW, F>,

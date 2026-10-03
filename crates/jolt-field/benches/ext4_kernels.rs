@@ -83,7 +83,7 @@ mod harness {
         ]
     }
 
-    const P: u32 = 4_294_967_197; // 2^32 − 99
+    const P: u32 = 4_294_967_197;
 
     /// Port of the baseline's fused `Fp32` degree-4 multiply: accumulate the
     /// raw products of each output coefficient in a `u128`, reduce once.
@@ -170,7 +170,6 @@ mod harness {
         let pairs: Vec<(E4, E4)> = (0..N)
             .map(|_| (E4::random(&mut rng), E4::random(&mut rng)))
             .collect();
-        // Sanity: the fused port agrees with the wired generic path.
         for (a, b) in pairs.iter().take(64) {
             assert_eq!(
                 generic_mul(a.coeffs, b.coeffs),

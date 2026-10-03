@@ -1,5 +1,3 @@
-//! Register-domain virtual polynomials.
-
 use super::*;
 
 impl<T: TraceSource> TraceBackend<T> {

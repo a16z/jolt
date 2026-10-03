@@ -1,5 +1,3 @@
-//! The full bytecode read-RAF symbolic sumcheck (monolith).
-
 use jolt_field::Ring;
 
 use crate::protocols::jolt::geometry::bytecode::{
@@ -330,7 +328,6 @@ mod tests {
                 Some(value),
             );
         }
-        // Each id the relation declares it draws resolves under the struct.
         for id in stage_gammas() {
             assert!(challenges.resolve_challenge(&id).is_some());
         }

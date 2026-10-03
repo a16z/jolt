@@ -80,8 +80,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Per-stage cycle-eq pushforwards onto the bytecode address domain. Base and
-/// row-weighted stages share one trace walk over the split-eq decomposition.
 fn stage_pushforwards<F: JoltField, R: Sync>(
     base_cycle_points: &[Vec<F>],
     weighted_cycle_points: &[Vec<F>],
@@ -457,9 +455,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let row_weight = |_: &InstructionCycleRow| F::one();
         #[cfg(feature = "akita")]
         let row_weight = InstructionCycleRow::fused_inc::<F>;
-        // One walk computes every pushforward: the base stages (packed: plus the fused
-        // stages) and, with field-inline enabled, the two field-inline cycle sub-points
-        // appended as unweighted base stages.
         #[cfg(feature = "field-inline")]
         let active_legs = field_inline_values
             .into_iter()
@@ -670,7 +665,6 @@ impl<F: JoltField> AddressKernel<F> {
         self.progress.advance();
     }
 
-    /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
         let (int_lo, int_hi) = pair(&self.int_table, y);
@@ -1442,7 +1436,6 @@ mod tests {
             #[cfg(feature = "field-inline")]
             let field_val_evaluation_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 43);
 
-            // ---- Stage 6a: address phase.
             let address_relation = BytecodeReadRafAddressPhase::new(
                 dimensions,
                 committed_program,

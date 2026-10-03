@@ -35,7 +35,6 @@ impl Default for GuestMemoryConfig {
     }
 }
 
-/// Maximum allowed values for memory config parameters.
 const MAX_INPUT_SIZE: u64 = 1 << 16;
 const MAX_OUTPUT_SIZE: u64 = 1 << 16;
 const MAX_STACK_SIZE: u64 = 1 << 16;
@@ -103,7 +102,6 @@ impl<'a> Arbitrary<'a> for SoundnessInput {
     }
 }
 
-/// Cached paths resolved once during setup.
 pub struct SoundnessSetup {
     sandbox_dir: PathBuf,
 }
@@ -159,17 +157,12 @@ impl Invariant for SoundnessInvariant {
     }
 
     fn check(&self, setup: &SoundnessSetup, input: SoundnessInput) -> Result<(), CheckError> {
-        // 1. Validate memory config
         input.memory.validate()?;
         let memory_config = input.memory.to_memory_config();
 
-        // 2. Apply patch to sandbox in-place, revert on exit
         let _guard = apply_patch(&setup.sandbox_dir, &input.patch)?;
 
-        // 3. Compile the patched guest
         let mut program = compile_guest(&setup.sandbox_dir, &memory_config)?;
-
-        // _guard drops here (or on early return), reverting the patch
 
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input.program_input, &[], &[]);
 
@@ -192,12 +185,10 @@ impl Invariant for SoundnessInvariant {
             )));
         }
 
-        // 5. Prove and verify
         let prover_pp = guests::prover_preprocessing(&mut program, memory_config, max_trace_length);
         let verifier_pp = guests::verifier_preprocessing(&prover_pp);
         let (proof, honest_device) = guests::prove(&program, &prover_pp, &input.program_input);
 
-        // 6. Skip no-op claims (the claim matches the honest execution)
         if input.claimed_output == honest_device.outputs
             && input.claimed_panic == honest_device.panic
         {
@@ -206,7 +197,6 @@ impl Invariant for SoundnessInvariant {
             ));
         }
 
-        // 7. Verify with the dishonest claim — this SHOULD fail
         match guests::verify_with_claims(
             &verifier_pp,
             proof,
@@ -250,7 +240,6 @@ impl Invariant for SoundnessInvariant {
     }
 }
 
-/// RAII guard that reverts a patch on drop via `git checkout`.
 struct PatchGuard {
     dir: PathBuf,
     patch: Option<String>,
@@ -379,8 +368,6 @@ mod tests {
         }
     }
 
-    // ── filter_patch ────────────────────────────────────────────────
-
     #[test]
     fn filter_keeps_safe_hunks() {
         let patch = "\
@@ -443,8 +430,6 @@ diff --git a/Cargo.toml b/Cargo.toml
         assert!(filter_patch("   \n  ").trim().is_empty());
     }
 
-    // ── memory config validation ────────────────────────────────────
-
     #[test]
     fn validate_accepts_defaults() {
         assert!(GuestMemoryConfig::default().validate().is_ok());
@@ -503,8 +488,6 @@ diff --git a/Cargo.toml b/Cargo.toml
         ));
     }
 
-    // ── patching ────────────────────────────────────────────────────
-
     #[test]
     fn check_garbage_patch_is_noop() {
         let inv = SoundnessInvariant;
@@ -518,8 +501,6 @@ diff --git a/Cargo.toml b/Cargo.toml
         // so the unpatched sandbox compiles and the check proceeds normally.
         assert!(inv.check(&setup, input).is_ok());
     }
-
-    // ── compilation + prove/verify (slow) ───────────────────────────
 
     #[test]
     fn check_path_traversal_filtered_then_compiles() {
@@ -537,8 +518,6 @@ diff --git a/../../etc/passwd b/../../etc/passwd
             .into(),
             ..default_input()
         };
-        // Traversal hunks are filtered out → empty patch → compiles
-        // unpatched sandbox → proves → verifier rejects dishonest claim.
         assert!(inv.check(&setup, input).is_ok());
     }
 
@@ -546,8 +525,6 @@ diff --git a/../../etc/passwd b/../../etc/passwd
     fn check_unpatched_sandbox_rejects_dishonest_output() {
         let inv = SoundnessInvariant;
         let setup = inv.setup();
-        // claimed_output=[0xFF] doesn't match the identity function's
-        // honest output for input [1,2,3]. Verifier should reject.
         assert!(inv.check(&setup, default_input()).is_ok());
     }
 
@@ -555,8 +532,6 @@ diff --git a/../../etc/passwd b/../../etc/passwd
     fn check_noop_claim_returns_invalid_input() {
         let inv = SoundnessInvariant;
         let setup = inv.setup();
-        // The sandbox computes h = wrapping hash of input bytes.
-        // For input [1,2,3]: h = ((0*31+1)*31+2)*31+3 = 1026
         let mut honest_output = postcard::to_stdvec(&1026u32).unwrap();
         honest_output.resize(8, 0);
         let input = SoundnessInput {

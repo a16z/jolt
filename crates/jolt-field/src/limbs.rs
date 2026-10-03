@@ -261,8 +261,6 @@ impl<const N: usize> allocative::Allocative for Limbs<N> {
     }
 }
 
-/// Core schoolbook multiplication accumulator: `acc += a * b`, keeping only
-/// the low `P` limbs.
 #[inline(always)]
 fn fm_limbs_into<const N: usize, const M: usize, const P: usize>(
     a: &[u64; N],

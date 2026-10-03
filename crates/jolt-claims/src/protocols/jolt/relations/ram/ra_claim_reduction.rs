@@ -1,5 +1,3 @@
-//! RAM `ra` claim-reduction symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +39,6 @@ pub struct RamRaClaimReductionInputClaims<C> {
     pub val_check: C,
 }
 
-/// Fiat-Shamir challenge drawn by the RAM `ra` claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamRaClaimReductionChallenges<F> {

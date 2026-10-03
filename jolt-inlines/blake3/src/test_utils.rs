@@ -5,7 +5,6 @@ pub mod helpers {
         use rand::{RngCore, SeedableRng};
 
         let mut buf = vec![0u8; len];
-        // Use a fixed seed for deterministic test results
         let mut rng = StdRng::seed_from_u64(12345);
         rng.fill_bytes(&mut buf);
         buf

@@ -244,8 +244,6 @@ mod tests {
         }
     }
 
-    /// A weight vector that does not cover the composed lane domain is a miss,
-    /// never a silent truncation.
     #[test]
     fn composed_contributions_reject_short_weight_vectors() {
         let base_lanes = 3usize;

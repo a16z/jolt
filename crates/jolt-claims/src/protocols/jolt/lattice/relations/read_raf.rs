@@ -245,9 +245,6 @@ mod tests {
         (0..exponent).fold(Fr::from_u64(1), |acc, _| acc * base)
     }
 
-    /// With the five staged claims zeroed, the address-phase input collapses
-    /// to the inc/pc/shift/entry placements:
-    /// `γ⁵·ram_rw + γ⁶·ram_val + γ⁷·rd_rw + γ⁸·rd_val + γ⁹·pc + γ¹⁰·shift + γ¹¹`.
     #[test]
     fn lattice_address_phase_folds_the_inc_stages_at_gamma_5_to_8() {
         let relation = LatticeReadRafAddressPhase::new(dimensions());
@@ -303,9 +300,6 @@ mod tests {
         assert_eq!(output, intermediate);
     }
 
-    /// Nine stage values fold at `γ^0..8` — the last four against the fused
-    /// opening — with RAF and entry publics at `γ^9..11`, all against the
-    /// committed RA product.
     #[test]
     fn lattice_cycle_phase_carries_the_fused_factor_on_stages_5_to_8() {
         let relation = LatticeReadRafCyclePhase::new(dimensions());
@@ -353,9 +347,6 @@ mod tests {
         assert_eq!(output, coefficient * ra[0] * ra[1]);
     }
 
-    /// The committed cycle output resolves the four fused stages through the
-    /// staged store val (index 5) and its complement, against the fused
-    /// opening; the base five stage their own vals; RAF and entry at `γ^9..11`.
     #[test]
     fn lattice_committed_cycle_phase_reuses_the_staged_store_val() {
         let relation = LatticeReadRafCyclePhaseCommitted::new(dimensions());

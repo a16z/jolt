@@ -1,5 +1,3 @@
-//! The address phase of the bytecode read-RAF symbolic sumcheck.
-
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};

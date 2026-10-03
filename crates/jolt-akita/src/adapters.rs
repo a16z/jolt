@@ -331,7 +331,6 @@ pub struct AkitaSetupParams {
     /// instead, which contains the finalized catalog and never replans.
     #[serde(default, rename = "advice_schedule")]
     pub(crate) grouped_schedule: Option<GroupedScheduleParams>,
-    /// Immutable base catalogs loaded once by application preprocessing.
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
 }
 
@@ -529,7 +528,6 @@ pub struct AkitaVerifierSetup {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    /// Exact setup-owned catalogs, including any program-specific grouped rows.
     pub(crate) schedule_artifacts: AkitaVerifierScheduleArtifacts,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
@@ -1032,9 +1030,6 @@ pub struct AkitaProverHint {
     pub(crate) source: AkitaHintSource,
 }
 
-/// Shape of the source the backend handle retains. The variant doubles as the
-/// source-kind discriminator, so a hint can never pair one kind's metadata
-/// with another kind's commitment.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AkitaHintSource {
     Dense { poly_count: usize },
@@ -1383,8 +1378,6 @@ mod tests {
         assert_eq!(jolt_to_akita_index(0, 0), 0);
     }
 
-    /// Reversing a reversal is the identity, and the map permutes the whole
-    /// domain (every Akita index is hit exactly once).
     #[test]
     fn jolt_to_akita_index_is_a_self_inverse_permutation() {
         let num_vars = 4;

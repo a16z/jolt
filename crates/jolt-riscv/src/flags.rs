@@ -28,11 +28,8 @@ pub enum CircuitFlags {
     SubtractOperands,
     /// First lookup operand is the product of the two instruction operands.
     MultiplyOperands,
-    /// Instruction is a load (e.g. `LW`).
     Load,
-    /// Instruction is a store (e.g. `SW`).
     Store,
-    /// Instruction is a jump (e.g. `JAL`, `JALR`).
     Jump,
     /// Lookup output is stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
@@ -42,7 +39,6 @@ pub enum CircuitFlags {
     Assert,
     /// PC unchanged during inline virtual sequences.
     DoNotUpdateUnexpandedPC,
-    /// Is a (virtual) advice instruction.
     Advice,
     /// Is a compressed instruction (UnexpandedPc += 2 instead of 4).
     IsCompressed,
@@ -72,7 +68,6 @@ pub enum CircuitFlags {
     FieldAdviceLimb,
 }
 
-/// Number of circuit flags.
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
 pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
@@ -122,24 +117,16 @@ pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, EnumCount)]
 #[repr(u8)]
 pub enum InstructionFlags {
-    /// First instruction operand is the program counter.
     LeftOperandIsPC,
-    /// Second instruction operand is an immediate value.
     RightOperandIsImm,
-    /// First instruction operand is RS1 register value.
     LeftOperandIsRs1Value,
-    /// Second instruction operand is RS2 register value.
     RightOperandIsRs2Value,
-    /// Instruction is a branch (e.g. `BEQ`, `BNE`).
     Branch,
-    /// No-op instruction.
     IsNoop,
 }
 
-/// Number of instruction flags.
 pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
-/// Packed bitfield of [`CircuitFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CircuitFlagSet(u32);
 
@@ -177,7 +164,6 @@ impl Index<CircuitFlags> for CircuitFlagSet {
     }
 }
 
-/// Packed bitfield of [`InstructionFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InstructionFlagSet(u8);
 

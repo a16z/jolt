@@ -1,5 +1,3 @@
-//! Committed sumcheck round messages.
-
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, JoltField};

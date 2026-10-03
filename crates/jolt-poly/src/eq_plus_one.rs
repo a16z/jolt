@@ -19,7 +19,6 @@ use jolt_utils::unsafe_allocate_zero_vec;
 /// Stores a fixed point `x` in big-endian order. Call [`evaluate`](Self::evaluate)
 /// to compute `eq+1(x, y)` at any `y`.
 pub struct EqPlusOnePolynomial<F: JoltField> {
-    /// Fixed point (big-endian: `point[0]` = MSB).
     point: Vec<F>,
 }
 
@@ -86,14 +85,12 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
             let step = 1usize << (ell - i);
             let half_step = step / 2;
 
-            // r_lower_product = (1 - r[i]) · Π_{j > i} r[j]
             let mut r_lower_product = F::one();
             for &x in r.iter().skip(i + 1) {
                 r_lower_product *= x;
             }
             r_lower_product *= F::one() - r[i];
 
-            // Fill eq+1 entries for bit position i.
             let mut idx = half_step;
             while idx < size {
                 eq_plus_one_evals[idx] = eq_evals[idx - half_step] * r_lower_product;
@@ -151,7 +148,6 @@ impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
         let mid = r.len() / 2;
         let (r_hi, r_lo) = r.split_at(mid);
 
-        // is_max(r_lo) = eq((1,...,1), r_lo) = Π r_lo[i]
         let ones: Vec<F> = vec![F::one(); r_lo.len()];
         let is_max_eval = EqPolynomial::<F>::mle(&ones, r_lo);
 
@@ -191,7 +187,6 @@ mod tests {
 
     #[test]
     fn successor_at_boolean_points() {
-        // For l=3, eq+1(x, y) = 1 iff y = x + 1 (no wrap at 7).
         let l = 3;
         for x_int in 0..(1 << l) {
             let x_bits = index_to_bits(x_int, l);
@@ -211,7 +206,6 @@ mod tests {
 
     #[test]
     fn no_wraparound_at_max() {
-        // eq+1(all_ones, 0) = 0 (no wrap-around).
         let l = 4;
         let x = vec![Fr::one(); l];
         let y = vec![Fr::zero(); l];
@@ -270,7 +264,6 @@ mod tests {
 
         let ps = EqPlusOnePrefixSuffix::new(&r);
 
-        // Verify at a random evaluation point y = (y_hi, y_lo).
         let y: Vec<Fr> = (0..l).map(|_| Fr::random(&mut rng)).collect();
         let (y_hi, y_lo) = y.split_at(l / 2);
 

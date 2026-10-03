@@ -152,8 +152,6 @@ where
     commit_streamed(source, ids, grid, setup, superchunk)
 }
 
-/// The chunk-walk commit pass: extraction and the commit grid alternate, a
-/// barrier between every phase.
 fn commit_streamed<F, PCS>(
     source: &dyn RowSource,
     ids: &[JoltCommittedPolynomial],
@@ -249,7 +247,6 @@ where
     Ok(package::<F, PCS>(state.finish(setup), ids))
 }
 
-/// Zips finished per-column outputs back to their polynomial ids.
 fn package<F, PCS>(
     outputs: Vec<(PCS::Output, PCS::OpeningHint)>,
     ids: &[JoltCommittedPolynomial],
@@ -500,9 +497,6 @@ mod tests {
                     .unwrap();
             assert_same_commitments(&reference, &single_window_superchunks);
 
-            // Both delivery shapes pinned explicitly: the chunk-walk pass
-            // (re-emulating sources) and the pipelined pass (slice-backed
-            // sources), at whole-trace and single-window superchunks.
             let streamed =
                 commit_streamed::<Fr, DoryScheme>(source, &ids, grid, &setup, grid.num_columns())
                     .unwrap();

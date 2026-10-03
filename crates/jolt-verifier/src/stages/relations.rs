@@ -547,7 +547,6 @@ pub(crate) mod draw_recording {
     use jolt_field::{Fr, Ring};
     use jolt_transcript::Transcript;
 
-    /// One observable transcript operation a `draw_challenges` performs.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(crate) enum DrawEvent {
         /// A challenge squeeze (`challenge`/`challenge_scalar`/the single squeeze
@@ -736,7 +735,6 @@ mod tests {
             claims.resolve_output(&virt(JoltVirtualPolynomial::InstructionRafFlag, relation)),
             Some(fr(30)),
         );
-        // Out-of-range index and wrong relation both miss.
         assert_eq!(
             claims.resolve_output(&virt(JoltVirtualPolynomial::LookupTableFlag(2), relation)),
             None,
@@ -813,7 +811,6 @@ mod tests {
             )),
             Some(fr(2)),
         );
-        // A different flag payload is a different opening and misses.
         assert_eq!(
             claims.resolve_output(&virt(
                 JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
@@ -852,8 +849,6 @@ mod tests {
         );
         assert_append_matches_values(&present);
 
-        // An absent optional opening drops out of the count, the value stream,
-        // the transcript appends, and id resolution.
         let absent = OptionalOutput {
             untrusted: None,
             ram_inc: fr(8),
@@ -869,8 +864,6 @@ mod tests {
 
     #[test]
     fn from_opening_values_reassembles_by_id() {
-        // Round-trip: a hand-built instance's (canonical_order, opening_values)
-        // pairs feed a map resolver; the assembled struct reproduces both.
         let claims = InstructionLeaf {
             lookup_table_flags: vec![fr(1), fr(2)],
             instruction_ra: vec![fr(3), fr(4), fr(5)],
@@ -894,7 +887,6 @@ mod tests {
         let advice_id = JoltOpeningId::untrusted_advice(relation);
         let ram_inc_id = committed(JoltCommittedPolynomial::RamInc, relation);
 
-        // Present `Option`: both ids resolve.
         let present = OptionalOutput::<Fr>::from_opening_values(|id| {
             (*id == advice_id)
                 .then(|| fr(7))
@@ -903,14 +895,12 @@ mod tests {
         .unwrap();
         assert_eq!(present.opening_values(), vec![fr(7), fr(8)]);
 
-        // Absent `Option`: only the plain field resolves.
         let absent =
             OptionalOutput::<Fr>::from_opening_values(|id| (*id == ram_inc_id).then(|| fr(8)))
                 .unwrap();
         assert_eq!(absent.opening_values(), vec![fr(8)]);
         assert_eq!(absent.resolve_output(&advice_id), None);
 
-        // A plain field that fails to resolve is an error naming its id.
         let missing =
             OptionalOutput::<Fr>::from_opening_values(|id| (*id == advice_id).then(|| fr(7)));
         assert!(
@@ -920,9 +910,6 @@ mod tests {
 
     #[test]
     fn canonical_order_lists_ids_in_declaration_order() {
-        // A struct mixing `Vec` (element-wise) and scalar leaves: the ids appear in
-        // field-declaration order, each `Vec` expanded by index, and the list lines
-        // up one-for-one with `opening_values()`.
         let relation = JoltRelationId::InstructionReadRaf;
         let claims = InstructionLeaf {
             lookup_table_flags: vec![fr(1), fr(2)],
@@ -940,7 +927,6 @@ mod tests {
                 virt(JoltVirtualPolynomial::InstructionRafFlag, relation),
             ],
         );
-        // The canonical order is the id of each value at the same index.
         assert_eq!(
             claims.canonical_order().len(),
             claims.opening_values().len()
@@ -952,8 +938,6 @@ mod tests {
 
     #[test]
     fn canonical_order_skips_absent_options() {
-        // An `Option` leaf contributes its id only when `Some`, so a present and an
-        // absent struct list different ids — the order tracks instance presence.
         let relation = JoltRelationId::RamValCheck;
         let present = OptionalOutput {
             untrusted: Some(fr(7)),
@@ -979,8 +963,6 @@ mod tests {
 
     #[test]
     fn input_canonical_order_lists_ids_in_declaration_order() {
-        // The `InputClaims` derive emits `canonical_order` too: same polynomial
-        // across three producing relations, listed in field order.
         let inputs = ReductionInputs {
             raf: fr(1),
             read_write: fr(2),
@@ -1004,8 +986,6 @@ mod tests {
 
     #[test]
     fn output_leaf_point_accessors_follow_fields() {
-        // The point cell (`C = Vec<F>`) exposes per-field accessors returning the
-        // derived opening points: scalar `&[F]`, `Vec` `&[Vec<F>]`.
         let points = InstructionLeaf::<Vec<Fr>> {
             lookup_table_flags: vec![vec![fr(10)], vec![fr(11)]],
             instruction_ra: vec![vec![fr(12), fr(13)]],
@@ -1024,7 +1004,6 @@ mod tests {
 
     #[test]
     fn output_leaf_option_point_accessor() {
-        // The `Option` point accessor surfaces the point only when `Some`.
         let present = OptionalOutput::<Vec<Fr>> {
             untrusted: Some(vec![fr(7)]),
             ram_inc: vec![fr(8)],
@@ -1041,7 +1020,6 @@ mod tests {
 
     #[test]
     fn input_leaf_point_accessors_follow_fields() {
-        // The `InputClaims` derive emits point accessors on the `Vec<F>` cell too.
         let points = ReductionInputs::<Vec<Fr>> {
             raf: vec![fr(1)],
             read_write: vec![fr(2)],
@@ -1136,7 +1114,6 @@ mod tests {
 }
 
 #[cfg(test)]
-// `Fixture*Sumchecks` exist only to exercise `#[derive(SumcheckBatch)]`.
 #[expect(clippy::unwrap_used)]
 mod sumcheck_batch_derive_tests {
     use super::SumcheckBatch;
@@ -1158,8 +1135,6 @@ mod sumcheck_batch_derive_tests {
 
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
-    // The generated absorb resolves the alias skip-sets statically (no instance
-    // state), so this alias-free fixture's members are never read.
     #[expect(dead_code)]
     struct FixtureSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
@@ -1287,7 +1262,6 @@ mod sumcheck_batch_derive_tests {
     // opt-out suppressed it.
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(no_opening_values, crate = "crate")]
-    // The custom absorb below never reads the members (no aliased sets to consult).
     #[expect(dead_code)]
     struct FixtureCustomSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
@@ -1332,8 +1306,6 @@ mod sumcheck_batch_derive_tests {
             },
         };
 
-        // The hand-written curated order (registers first), proving no generated
-        // `opening_values` (which would be instruction-first) shadows or collides.
         assert_eq!(
             sumchecks.opening_values(&claims),
             vec![fr(4), fr(5), fr(1), fr(2), fr(3)]
@@ -1483,8 +1455,6 @@ mod begin_batch_tests {
         assert_eq!(coefficients.registers_val_evaluation, Some(registers_coeff));
     }
 
-    /// An absent `Option` member contributes no absorb, no coefficient squeeze,
-    /// and no batch entry.
     #[test]
     fn begin_batch_skips_absent_option_member() {
         let sumchecks = fixture(false);

@@ -1,9 +1,5 @@
 #![no_main]
 
-//! Group-element deserialization: no panics on arbitrary bytes, and every
-//! accepted decode re-encodes canonically (decode → encode → decode is
-//! stable and reproduces the same encoding).
-
 use jolt_crypto::{Bn254G1, Bn254G2, Bn254GT, PedersenSetup};
 use libfuzzer_sys::fuzz_target;
 

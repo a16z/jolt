@@ -353,7 +353,6 @@ mod tests {
             fixture_document(1000, Some(900)),
         ] {
             let parsed: RealSummary = serde_json::from_str(&fixture).unwrap();
-            // And our extraction agrees with the runner's own reserialization.
             let reserialized = serde_json::to_string(&parsed).unwrap();
             assert_eq!(parse_instruction_count(&reserialized).unwrap(), 1000.0);
         }
@@ -388,7 +387,6 @@ mod tests {
 
     #[test]
     fn missing_ir_is_an_error() {
-        // A document without any Callgrind profile carries no Ir.
         let no_callgrind = fixture_document(1, None).replace("\"Callgrind\"", "\"Cachegrind\"");
         assert!(parse_instruction_count(&no_callgrind).is_err());
         assert!(parse_instruction_count("").is_err());

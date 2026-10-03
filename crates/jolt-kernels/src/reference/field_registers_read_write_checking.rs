@@ -1,5 +1,3 @@
-//! Dense witness tables for the symbolic `FieldRegistersReadWriteChecking` relation.
-
 use super::views::{eq_table, tile};
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend,

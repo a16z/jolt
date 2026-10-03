@@ -318,8 +318,6 @@ impl TraceBackedFieldInlineWitness {
         }
     }
 
-    /// Materializes one cycle-domain witness column; rows beyond the trace
-    /// are zero. All per-witness logic lives on `W`.
     fn materialize_cycle<F: JoltField, W: Extract<TraceRow> + FieldValue<F> + Send>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {

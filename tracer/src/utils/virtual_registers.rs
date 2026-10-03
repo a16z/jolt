@@ -12,12 +12,12 @@ const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 
 /// CSR addresses for M-mode CSRs supported by the virtual register system.
 /// These are the standard RISC-V CSR addresses.
-pub const CSR_MSTATUS: u16 = 0x300; // Machine Status
-pub const CSR_MTVEC: u16 = 0x305; // Machine Trap-Vector Base Address
-pub const CSR_MSCRATCH: u16 = 0x340; // Machine Scratch Register
-pub const CSR_MEPC: u16 = 0x341; // Machine Exception Program Counter
-pub const CSR_MCAUSE: u16 = 0x342; // Machine Trap Cause
-pub const CSR_MTVAL: u16 = 0x343; // Machine Trap Value
+pub const CSR_MSTATUS: u16 = 0x300;
+pub const CSR_MTVEC: u16 = 0x305;
+pub const CSR_MSCRATCH: u16 = 0x340;
+pub const CSR_MEPC: u16 = 0x341;
+pub const CSR_MCAUSE: u16 = 0x342;
+pub const CSR_MTVAL: u16 = 0x343;
 
 /// Layout of virtual registers:
 /// - Registers 32-39: Reserved registers (persistent, never allocated)
@@ -34,16 +34,16 @@ pub const CSR_MTVAL: u16 = 0x343; // Machine Trap Value
 ///
 /// The reserved registers (32-39) are skipped by allocate() and allocate_for_inline()
 /// to ensure they persist across instructions.
-const RESERVATION_W_REGISTER: u8 = RISCV_REGISTER_BASE; // register 32 (LR.W/SC.W)
-const RESERVATION_D_REGISTER: u8 = RISCV_REGISTER_BASE + 1; // register 33 (LR.D/SC.D)
+const RESERVATION_W_REGISTER: u8 = RISCV_REGISTER_BASE;
+const RESERVATION_D_REGISTER: u8 = RISCV_REGISTER_BASE + 1;
 
 /// CSR Virtual Register Mapping (persistent, not allocated):
 const TRAP_HANDLER_REGISTER: u8 = RISCV_REGISTER_BASE + 2; // register 34 (mtvec)
-const MSCRATCH_REGISTER: u8 = RISCV_REGISTER_BASE + 3; // register 35
-const MEPC_REGISTER: u8 = RISCV_REGISTER_BASE + 4; // register 36
-const MCAUSE_REGISTER: u8 = RISCV_REGISTER_BASE + 5; // register 37
-const MTVAL_REGISTER: u8 = RISCV_REGISTER_BASE + 6; // register 38
-const MSTATUS_REGISTER: u8 = RISCV_REGISTER_BASE + 7; // register 39
+const MSCRATCH_REGISTER: u8 = RISCV_REGISTER_BASE + 3;
+const MEPC_REGISTER: u8 = RISCV_REGISTER_BASE + 4;
+const MCAUSE_REGISTER: u8 = RISCV_REGISTER_BASE + 5;
+const MTVAL_REGISTER: u8 = RISCV_REGISTER_BASE + 6;
+const MSTATUS_REGISTER: u8 = RISCV_REGISTER_BASE + 7;
 
 /// Number of reserved virtual registers that are NOT allocated.
 /// Includes: reservation_w (32), reservation_d (33), mtvec (34), mscratch (35),
@@ -156,7 +156,7 @@ impl VirtualRegisterAllocator {
             .expect("Failed to lock virtual register allocator")
             .iter_mut()
             .enumerate()
-            .skip(NUM_RESERVED_VIRTUAL_REGISTERS) // Skip reserved registers (32-39)
+            .skip(NUM_RESERVED_VIRTUAL_REGISTERS)
             .take(NUM_VIRTUAL_INSTRUCTION_REGISTERS)
         // Take 8 registers (40-47)
         {
@@ -278,27 +278,25 @@ impl Drop for VirtualRegisterGuard {
 mod tests {
     use super::*;
 
-    // First allocatable register (after skipping reserved 32-39)
-    const FIRST_ALLOC_REG: u8 = RISCV_REGISTER_BASE + NUM_RESERVED_VIRTUAL_REGISTERS as u8; // 40
+    const FIRST_ALLOC_REG: u8 = RISCV_REGISTER_BASE + NUM_RESERVED_VIRTUAL_REGISTERS as u8;
 
-    // First inline register (after reserved + instruction registers)
     const FIRST_INLINE_REG: u8 = RISCV_REGISTER_BASE
         + NUM_RESERVED_VIRTUAL_REGISTERS as u8
-        + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8; // 48
+        + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8;
 
     #[test]
     fn test_allocate_deallocate() {
         let allocator = VirtualRegisterAllocator::new();
         {
             let guard1 = allocator.allocate();
-            assert_eq!(*guard1, FIRST_ALLOC_REG); // register 40
+            assert_eq!(*guard1, FIRST_ALLOC_REG);
 
             let guard2 = allocator.allocate();
-            assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 41
+            assert_eq!(*guard2, FIRST_ALLOC_REG + 1);
         }
 
         let guard3 = allocator.allocate();
-        assert_eq!(*guard3, FIRST_ALLOC_REG); // register 40 (reused)
+        assert_eq!(*guard3, FIRST_ALLOC_REG);
     }
 
     #[test]
@@ -306,7 +304,7 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let guard = allocator.allocate();
         let index: u8 = *guard;
-        assert_eq!(index, FIRST_ALLOC_REG); // register 40
+        assert_eq!(index, FIRST_ALLOC_REG);
     }
 
     #[test]
@@ -321,7 +319,6 @@ mod tests {
             guards.push(guard);
         }
 
-        // This should panic
         let _guard = allocator.allocate();
     }
 
@@ -330,14 +327,14 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         {
             let guard1 = allocator.allocate_for_inline();
-            assert_eq!(*guard1, FIRST_INLINE_REG); // register 48
+            assert_eq!(*guard1, FIRST_INLINE_REG);
 
             let guard2 = allocator.allocate_for_inline();
-            assert_eq!(*guard2, FIRST_INLINE_REG + 1); // register 49
+            assert_eq!(*guard2, FIRST_INLINE_REG + 1);
         }
 
         let guard3 = allocator.allocate_for_inline();
-        assert_eq!(*guard3, FIRST_INLINE_REG); // register 48 (reused)
+        assert_eq!(*guard3, FIRST_INLINE_REG);
     }
 
     #[test]
@@ -345,7 +342,7 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let guard = allocator.allocate_for_inline();
         let index: u8 = *guard;
-        assert_eq!(index, FIRST_INLINE_REG); // register 48
+        assert_eq!(index, FIRST_INLINE_REG);
     }
 
     #[test]
@@ -354,7 +351,6 @@ mod tests {
         let allocator = VirtualRegisterAllocator::new();
         let mut guards = Vec::new();
 
-        // Inline registers start after reserved + instruction registers
         let num_inline_registers = NUM_VIRTUAL_REGISTERS
             - NUM_RESERVED_VIRTUAL_REGISTERS
             - NUM_VIRTUAL_INSTRUCTION_REGISTERS;
@@ -364,48 +360,41 @@ mod tests {
             guards.push(guard);
         }
 
-        // This should panic
         let _guard = allocator.allocate_for_inline();
     }
 
     #[test]
     fn test_combined_allocate_and_inline() {
         let allocator = VirtualRegisterAllocator::new();
-        // Allocate some instruction registers (40-47)
         let guard1 = allocator.allocate();
-        assert_eq!(*guard1, FIRST_ALLOC_REG); // register 40
+        assert_eq!(*guard1, FIRST_ALLOC_REG);
 
         let guard2 = allocator.allocate();
-        assert_eq!(*guard2, FIRST_ALLOC_REG + 1); // register 41
+        assert_eq!(*guard2, FIRST_ALLOC_REG + 1);
 
-        // Allocate some inline registers (48+)
         let inline_guard1 = allocator.allocate_for_inline();
-        assert_eq!(*inline_guard1, FIRST_INLINE_REG); // register 48
+        assert_eq!(*inline_guard1, FIRST_INLINE_REG);
 
         let inline_guard2 = allocator.allocate_for_inline();
-        assert_eq!(*inline_guard2, FIRST_INLINE_REG + 1); // register 49
+        assert_eq!(*inline_guard2, FIRST_INLINE_REG + 1);
 
-        // Allocate more instruction registers
         let guard3 = allocator.allocate();
-        assert_eq!(*guard3, FIRST_ALLOC_REG + 2); // register 42
+        assert_eq!(*guard3, FIRST_ALLOC_REG + 2);
 
-        // Drop some guards and reallocate
         drop(guard2);
         drop(inline_guard1);
 
-        // Should reuse the freed slots
         let guard4 = allocator.allocate();
-        assert_eq!(*guard4, FIRST_ALLOC_REG + 1); // register 41 (reused)
+        assert_eq!(*guard4, FIRST_ALLOC_REG + 1);
 
         let inline_guard3 = allocator.allocate_for_inline();
-        assert_eq!(*inline_guard3, FIRST_INLINE_REG); // register 48 (reused)
+        assert_eq!(*inline_guard3, FIRST_INLINE_REG);
     }
 
     #[test]
     fn test_csr_to_virtual_register() {
         let allocator = VirtualRegisterAllocator::new();
 
-        // Test all supported CSRs
         assert_eq!(
             allocator.csr_to_virtual_register(CSR_MSTATUS),
             Some(MSTATUS_REGISTER)
@@ -431,7 +420,6 @@ mod tests {
             Some(MTVAL_REGISTER)
         );
 
-        // Test unsupported CSR
         assert_eq!(allocator.csr_to_virtual_register(0x999), None);
     }
 }

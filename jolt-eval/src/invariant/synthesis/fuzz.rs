@@ -16,7 +16,6 @@ macro_rules! fuzz_invariant {
         use $crate::Invariant as _;
         use $crate::InvariantTargets as _;
 
-        // Assert at init time that this invariant includes the Fuzz target.
         fn __assert_fuzz_target<I: $crate::InvariantTargets>(inv: &I) {
             assert!(
                 inv.targets()

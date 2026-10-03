@@ -1,5 +1,3 @@
-//! Increment claim-reduction symbolic sumcheck relation.
-
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::increments::{
@@ -42,7 +40,6 @@ pub struct IncClaimReductionInputClaims<C> {
     pub rd_inc_val_evaluation: C,
 }
 
-/// Fiat-Shamir challenge drawn by the increment claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct IncClaimReductionChallenges<F> {

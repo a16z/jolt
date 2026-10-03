@@ -177,9 +177,6 @@ mod tests {
     };
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayoutError};
 
-    /// Layout with io_end at word index 8 and lowest address 64 bytes below
-    /// RAM start (16-byte input + 16-byte output + 16 control bytes, padded
-    /// to 8 words).
     fn bounded_device() -> JoltDevice {
         JoltDevice::new(&MemoryConfig {
             program_size: Some(1024),
@@ -270,7 +267,6 @@ mod tests {
     fn compute_max_ram_k_accepts_heap_end_equal_to_lowest_address() {
         let mut layout = bounded_device().memory_layout;
         layout.heap_end = layout.get_lowest_address();
-        // zero words round up to a domain of size 1, not an error
         assert_eq!(compute_max_ram_k(&layout), Ok(1));
     }
 
@@ -279,12 +275,10 @@ mod tests {
         let device = bounded_device();
         let layout = &device.memory_layout;
         let lowest_address = layout.get_lowest_address();
-        // bytecode_start (word 1) + usize::MAX image words overflows the sum
         assert_eq!(
             compute_min_ram_k(lowest_address + 8, usize::MAX, layout),
             Err(RamDomainError::DomainTooLarge)
         );
-        // 2^63 + 1 words has no representable next power of two
         assert_eq!(
             compute_min_ram_k(0, (usize::MAX >> 1) + 2, layout),
             Err(RamDomainError::DomainTooLarge)
@@ -294,10 +288,7 @@ mod tests {
     #[test]
     fn compute_min_ram_k_maps_zero_bytecode_address_to_word_zero() {
         let device = bounded_device();
-        // remap_word_address(0) is None, so the image occupies words 0..len:
-        // 9 image words beat the io_end word index of 8 and round up to 16
         assert_eq!(compute_min_ram_k(0, 9, &device.memory_layout), Ok(16));
-        // with no image words, io_end alone determines the domain
         assert_eq!(compute_min_ram_k(0, 0, &device.memory_layout), Ok(8));
     }
 

@@ -247,7 +247,6 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
 pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     symbolic: AddressPhaseSymbolic,
     dimensions: BytecodeReadRafDimensions,
-    /// Committed-program mode stages the `BytecodeValClaim` wire claims.
     committed_program: bool,
     /// The upstream cycle points and register opening points the address-phase
     /// kernel's PC pushforwards and stage-value folds bind against (the same
@@ -282,8 +281,6 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         }
     }
 
-    /// The relation composed with the field-inline kernel geometry (field-register
-    /// opening points).
     #[cfg(feature = "field-inline")]
     pub fn with_field_inline_geometry(
         mut self,
@@ -342,8 +339,6 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         self.entry_bytecode_index
     }
 
-    /// The staged `BytecodeValClaim` wire-claim count: all
-    /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, none in full mode.
     fn num_val_stages(&self) -> usize {
         if self.committed_program {
             bytecode_reduction::NUM_BYTECODE_VAL_STAGES
@@ -433,8 +428,6 @@ mod tests {
             0,
         );
 
-        // Inline: six `challenge_scalar_powers(..)`, each contributing its
-        // degree-1 power.
         let (inline_events, inline_gammas) = record(|t| {
             [
                 t.challenge_scalar_powers(8)[1],
@@ -447,13 +440,11 @@ mod tests {
         });
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
-        // Six squeezes in the same order, byte-for-byte.
         assert_eq!(draw_events, inline_events);
         assert_eq!(
             draw_events,
             (1..=6).map(DrawEvent::Squeeze).collect::<Vec<_>>()
         );
-        // Each field stores the corresponding inline degree-1 power.
         assert_eq!(
             [
                 challenges.gamma,
@@ -556,7 +547,6 @@ mod field_inline_tests {
         powers
     }
 
-    /// Field-register accesses extend the ordinary input fold at their stage powers.
     #[test]
     fn composed_input_claim_matches_from_scratch_fold() {
         let relation = relation();

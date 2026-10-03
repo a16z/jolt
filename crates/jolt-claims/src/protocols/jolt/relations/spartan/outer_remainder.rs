@@ -1,5 +1,3 @@
-//! Spartan outer remainder symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};

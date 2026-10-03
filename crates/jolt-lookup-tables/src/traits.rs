@@ -1,5 +1,3 @@
-//! Lookup-table-related traits.
-
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
@@ -13,7 +11,6 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::interleave::interleave_bits;
 use crate::tables::LookupTableKind;
 
-/// Materialize and MLE-evaluate a single lookup table.
 pub trait LookupTable: Clone + Debug + Send + Sync {
     fn materialize_entry(&self, index: u128) -> u64;
 
@@ -110,7 +107,6 @@ pub trait LookupQuery<const XLEN: usize> {
         interleave_bits(x, y as u64)
     }
 
-    /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
 }
 
@@ -352,9 +348,6 @@ mod tests {
                     $(
                         $(#[$meta])*
                         {
-                            // `$variant` is the concrete newtype, so flags and the
-                            // index come from the type; the row only supplies
-                            // operands.
                             let cycle = TestCycle {
                                 instruction: JoltInstructionRow {
                                     operands,
@@ -381,7 +374,6 @@ mod tests {
                         }
                     )*
                 }
-                // Guard against the assertion silently covering nothing.
                 assert!(
                     checked > 0,
                     "no non-interleaved instruction was exercised"

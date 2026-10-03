@@ -761,9 +761,6 @@ struct SumcheckTrace {
     point: Vec<F>,
 }
 
-/// Everything needed to drive a prover (harness or real) over the same
-/// protocol-backed instance: the statement-derived protocol plus the real
-/// witness rows, blindings, and final-opening evaluations.
 pub struct ProtocolBackedInstance {
     pub setup: PedersenSetup<Bn254G1>,
     pub protocol: BlindFoldProtocol<F, Bn254G1>,

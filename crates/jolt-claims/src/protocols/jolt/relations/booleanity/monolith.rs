@@ -1,5 +1,3 @@
-//! The full (monolithic) booleanity symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +23,6 @@ pub struct BooleanityOutputClaims<C> {
     pub ram_ra: Vec<C>,
 }
 
-/// The `BooleanityAddrClaim` intermediate consumed from the address phase.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BooleanityInputClaims<C> {
     #[opening(BooleanityAddrClaim, from = Booleanity)]

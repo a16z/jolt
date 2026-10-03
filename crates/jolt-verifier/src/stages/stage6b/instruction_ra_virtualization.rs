@@ -172,10 +172,6 @@ mod tests {
         InstructionRaVirtualization::new(dimensions, Vec::new(), Vec::new(), 1)
     }
 
-    // Inherits the default `draw_challenges`: one `challenge_scalar` squeeze
-    // storing the squeezed scalar — the same draw the prover's
-    // `InstructionRaSumcheckParams::new` performs and stage 6b's hand-assembled
-    // `Stage6bChallenges` mirrors.
     #[test]
     fn default_draw_challenges_matches_inline_instruction_ra_gamma() {
         let relation = relation(2);

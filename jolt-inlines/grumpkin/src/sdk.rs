@@ -1,5 +1,3 @@
-//! grumpkin operations optimized for Jolt zkVM.
-
 use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
 use ark_grumpkin::{Fq, Fr};
 

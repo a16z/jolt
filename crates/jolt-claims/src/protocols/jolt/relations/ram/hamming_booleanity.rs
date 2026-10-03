@@ -1,5 +1,3 @@
-//! RAM Hamming-booleanity symbolic sumcheck relation.
-
 use core::marker::PhantomData;
 
 use jolt_field::{JoltField, Ring};

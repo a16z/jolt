@@ -181,9 +181,6 @@ where
             )
         })
         .collect();
-    // Stage-0 validation: every id the proof will request — the committed
-    // set and each bundle's annotated set — must be servable by the backend
-    // before witness generation starts.
     let requested = ids
         .iter()
         .map(|&id| JoltPolynomialId::Committed(id))
@@ -382,7 +379,6 @@ where
     ))
 }
 
-/// Split the kernel's flat id-ordered output into the proof's wire shape.
 #[expect(
     clippy::type_complexity,
     reason = "the wire aggregate paired with its opening hints"
@@ -466,8 +462,6 @@ mod field_inline_tests {
         }
     }
 
-    /// Commit `values` directly through the streaming PCS calls the dense
-    /// grid columns use — the placement spec the kernel must match.
     fn direct_dense_commitment(
         values: &[Fr],
         setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
@@ -547,8 +541,6 @@ mod field_inline_tests {
             direct_dense_commitment(&column, &setup)
         );
 
-        // Byte-for-byte absorb parity between the prover-side call and the
-        // verifier's own absorb (the same shared fn on the same payload).
         let mut prover_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
         absorb_transcript_commitments(&commitments, None, None, &mut prover_transcript);
         let mut verifier_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
@@ -574,8 +566,6 @@ mod field_inline_tests {
         );
     }
 
-    /// Zero-short-circuit sanity: a field-inline guest with no field-inline instructions
-    /// still serves the field-inline committed order and commits the all-zero column.
     #[test]
     fn field_inline_guest_without_field_instructions_commits_the_zero_column() {
         let witness = addi_only_backend().with_field_inline().unwrap();
@@ -609,8 +599,6 @@ mod field_inline_tests {
         );
     }
 
-    /// D1 fail-closed: a plane without the field-inline oracle cannot start
-    /// a field-inline proof.
     #[test]
     fn stage0_fails_closed_without_the_field_inline_oracle() {
         let witness = field_arithmetic_backend();

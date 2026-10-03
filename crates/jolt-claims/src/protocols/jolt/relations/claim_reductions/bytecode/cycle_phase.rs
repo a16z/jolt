@@ -1,5 +1,3 @@
-//! Cycle phase of the two-phase committed-bytecode claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +37,6 @@ pub struct BytecodeReductionCyclePhaseInputClaims<C> {
     pub val_stages: Vec<C>,
 }
 
-/// Fiat-Shamir challenge drawn by the committed-bytecode reduction cycle phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReductionCyclePhaseChallenges<F> {

@@ -1,5 +1,3 @@
-//! Spartan shift symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
@@ -57,7 +55,6 @@ pub struct SpartanShiftInputClaims<C> {
     pub next_is_noop: C,
 }
 
-/// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct SpartanShiftChallenges<F> {

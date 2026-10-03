@@ -290,7 +290,6 @@ where
 mod tests {
     use super::*;
 
-    /// The stage table follows the composed geometry, including field-inline lanes when enabled.
     #[test]
     fn stage_domains_use_the_composed_uniskip_constants() {
         use jolt_claims::protocols::jolt::geometry::dimensions::{

@@ -122,7 +122,6 @@ mod gpu {
         assert_eq!(out32.read().unwrap(), expected32);
     }
 
-    /// A later dispatch in the same batch reads what an earlier one wrote.
     #[test]
     fn dispatches_in_a_batch_run_in_order() {
         let (_gpu, device) = gpu("dispatches_in_a_batch_run_in_order");

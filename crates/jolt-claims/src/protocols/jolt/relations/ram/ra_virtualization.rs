@@ -1,5 +1,3 @@
-//! RAM `ra` virtualization symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 

@@ -1,5 +1,3 @@
-//! Instruction input-virtualization symbolic sumcheck relation.
-
 use jolt_riscv::InstructionFlags;
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +59,6 @@ pub struct InstructionInputInputClaims<C> {
     pub left_instruction_input: C,
 }
 
-/// Fiat-Shamir challenge drawn by the instruction input-virtualization sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionInputChallenges<F> {

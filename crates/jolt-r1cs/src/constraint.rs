@@ -60,7 +60,6 @@ pub struct MatrixColumnContributions<F: Field> {
     pub c: F,
 }
 
-/// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
 struct RawConstraintMatrices<F: Field> {
@@ -340,7 +339,6 @@ mod tests {
 
     #[test]
     fn satisfied_constraint() {
-        // x * x = y with witness [1, x=3, y=9]
         let m = ConstraintMatrices::new(
             1,
             3,

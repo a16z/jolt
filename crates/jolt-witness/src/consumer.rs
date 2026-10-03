@@ -136,7 +136,6 @@ pub trait RowSource {
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
 
-    /// Returns shared random access when the source can provide it.
     fn random_access(&self) -> Option<RandomAccessRows> {
         None
     }
@@ -213,7 +212,6 @@ pub fn stream_witnesses<S: RowSource + ?Sized, C: ConsumerSet>(
     })
 }
 
-/// The chunk size of a single-consumer bundle-collection pass.
 const BUNDLE_PASS_CHUNK: usize = 1 << 12;
 
 /// Materialize one bundle type over `0..cycles` from a row source. The
@@ -344,7 +342,6 @@ mod tests {
         for chunk_size in [1, 2, 3] {
             assert_eq!(collect_with_chunk_size(chunk_size), whole);
         }
-        // The shifted column: next_pc[t] == pc[t + 1], 0 at the end.
         for (index, bundle) in whole.iter().enumerate() {
             let expected = whole.get(index + 1).map_or(0, |next| next.pc.0);
             assert_eq!(bundle.next_pc.0, expected);
@@ -354,9 +351,7 @@ mod tests {
     #[test]
     fn random_access_collection_matches_the_chunked_walk() {
         with_sample_backend(|backend| {
-            // The routed path (index-parallel over the slice-backed trace).
             let routed: Vec<WindowBundle> = collect_bundles(backend, 4).unwrap();
-            // The chunked walk, forced.
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
             stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
             assert_eq!(routed, consumers.0.into_rows());

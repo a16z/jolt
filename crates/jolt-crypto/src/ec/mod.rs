@@ -1,5 +1,3 @@
-//! Elliptic curve primitives: groups, pairings, and Pedersen commitments.
-
 mod group;
 pub use group::JoltGroup;
 

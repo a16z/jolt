@@ -116,7 +116,6 @@ pub enum BalancedIncColumn {
     Carry { width: usize },
 }
 
-/// The row selected by one `BalancedIncDigit`/`BalancedIncCarry` column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BalancedIncRow(pub usize);
 

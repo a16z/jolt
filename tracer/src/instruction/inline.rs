@@ -155,7 +155,6 @@ pub fn find_inline_registration(
         .find(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
 }
 
-/// Check whether a linked inline registration exists for the encoded key.
 pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
     inventory::iter::<InlineRegistration>
         .into_iter()
@@ -225,7 +224,6 @@ pub struct INLINE {
     pub funct7: u32,
     /// Memory address of this instruction
     pub address: u64,
-    /// R-format operands (rd, rs1, rs2)
     pub operands: FormatInline,
     /// Tracks remaining virtual instructions (used by tracer)
     pub virtual_sequence_remaining: Option<u16>,

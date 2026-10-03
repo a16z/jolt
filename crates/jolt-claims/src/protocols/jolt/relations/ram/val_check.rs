@@ -1,5 +1,3 @@
-//! RAM value-check symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +84,6 @@ pub struct RamValCheckShape {
     pub contributions: Vec<RamValContribution>,
 }
 
-/// Fiat-Shamir challenge drawn by the RAM value-check sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamValCheckChallenges<F> {

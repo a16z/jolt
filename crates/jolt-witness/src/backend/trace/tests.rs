@@ -162,9 +162,6 @@ fn committed_table(
     )
 }
 
-/// Recovers the per-cycle hot addresses from a flat address-major `(K x T)`
-/// one-hot grid, asserting every entry is 0 or 1 and every cycle has at most
-/// one hot address (`None` is a cold cycle).
 fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
     assert!(table.len().is_multiple_of(cycles));
     let addresses = table.len() / cycles;
@@ -754,7 +751,6 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
         RamReadValue::extract(&ram_row, Some(&next), &env),
         Ok(RamReadValue(7))
     );
-    // Reads write back the read value.
     assert_eq!(
         RamWriteValue::extract(&ram_row, Some(&next), &env),
         Ok(RamWriteValue(7))
@@ -792,8 +788,6 @@ fn lookahead_witnesses_pad_the_final_cycle() {
     .unwrap();
     let noop_next = JoltTraceRow::default();
 
-    // A missing successor counts as a no-op for the shift family, exactly
-    // like a present no-op successor.
     assert_eq!(NextIsNoop::extract(&row, None, &env), Ok(NextIsNoop(true)));
     assert_eq!(
         NextIsNoop::extract(&row, Some(&noop_next), &env),
@@ -1161,7 +1155,6 @@ fn excluded_ids_report_their_classification() {
     }
 }
 
-/// [`OwnedTrace`] with its slice accessor hidden.
 #[derive(Clone)]
 struct IteratorOnlyTrace(OwnedTrace);
 

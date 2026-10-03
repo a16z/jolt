@@ -48,7 +48,6 @@ pub struct Booleanity<F: JoltField> {
     dimensions: BooleanityCycleDimensions,
     /// The address opening prefix from the stage-6a phase.
     r_address: Vec<F>,
-    /// The reference address/cycle the `EqAddressCycle` public compares against.
     reference_address: Vec<F>,
     reference_cycle: Vec<F>,
 }
@@ -189,10 +188,6 @@ mod tests {
     use jolt_field::Fr;
     use jolt_transcript::Transcript;
 
-    // Booleanity inherits the default `draw_challenges` (one `challenge_scalar`): the
-    // inline draw is a single `challenge()`. The historical zero-gamma re-roll was
-    // dropped — a real Fiat-Shamir transcript never yields zero, and nothing else
-    // checks for it.
     #[test]
     fn default_draw_challenges_matches_inline_booleanity_gamma() {
         let layout = JoltRaPolynomialLayout::new(1, 1, 1).unwrap();

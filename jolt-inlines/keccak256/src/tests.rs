@@ -67,7 +67,6 @@ mod exec_unit {
 
     #[test]
     fn test_execute_theta() {
-        // Patterned state to exercise column parities; theta should change the state.
         let mut state = [0u64; NUM_LANES];
         state[0] = 1;
         state[5] = 2;
@@ -82,7 +81,6 @@ mod exec_unit {
 
     #[test]
     fn test_execute_rho_and_pi() {
-        // Rho rotates lanes and Pi permutes positions; the state must change and lane [1] should move.
         let mut state = [0u64; NUM_LANES];
         state[1] = 0xFF;
         let original_state = state;
@@ -99,7 +97,6 @@ mod exec_unit {
 
     #[test]
     fn test_execute_chi() {
-        // Chi applies non-linearity: A[x] ^= (~A[x+1] & A[x+2]). Check one row cell explicitly.
         let mut state = [0u64; NUM_LANES];
         state[0] = 0xFF;
         state[1] = 0xAA;
@@ -115,7 +112,6 @@ mod exec_unit {
 
     #[test]
     fn test_execute_iota() {
-        // Iota xors the round constant into A[0,0]; all other lanes remain unchanged.
         let mut state = [0u64; NUM_LANES];
         state[0] = 0x1234;
         execute_iota(&mut state, 0x5678);
@@ -144,7 +140,6 @@ mod exec_unit {
             step_fn(&mut state);
             assert_eq!(state, expected, "round 1: mismatch after {name}");
         }
-        // Iota has a different signature; apply it separately and check final snapshot.
         execute_iota(&mut state, ROUND_CONSTANTS[round]);
         assert_eq!(state, expected_states.iota, "round 1: mismatch after iota");
     }

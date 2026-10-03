@@ -139,8 +139,6 @@ pub struct LatticeDigitZeroClaimReduction {
 }
 
 impl LatticeDigitZeroClaimReduction {
-    /// Total γ powers consumed by the RA legs (variable: 3 per RAM poly, 2
-    /// per virtualized poly). The increment columns and decode power follow.
     fn ra_terms(&self) -> usize {
         self.shape.layout.polynomials().map(ra_leg_count).sum()
     }
@@ -240,7 +238,6 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             let eq_virtualization = derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
             let coefficient = match polynomial {
-                // RAM: base Hamming, Booleanity, and virtualization legs.
                 JoltRaPolynomial::Ram(_) => {
                     let c = gamma.clone().pow(power)
                         + gamma.clone().pow(power + 1) * eq_booleanity.clone()
@@ -399,12 +396,10 @@ mod tests {
 
     #[test]
     fn ram_base_legs_and_fused_increment_terms() {
-        // One RAM polynomial (base 3-leg) plus two increment digits and a carry.
         let layout = JoltRaPolynomialLayout::new(0, 0, 1).unwrap();
         let relation = LatticeDigitZeroClaimReduction::new(
             LatticeDigitZeroClaimReductionDimensions::new(layout, 32).unwrap(),
         );
-        // RAM occupies powers 0,1,2; inc digits 3,4; carry 5; decode 6.
         assert_eq!(relation.decode_power(), 6);
         let gamma = Fr::from_u64(3);
         let values = (2..=12).map(Fr::from_u64).collect::<Vec<_>>();
@@ -463,8 +458,6 @@ mod tests {
             challenge_value,
             derived_value,
         );
-        // RAM base 3-leg (no recentering) at powers 0,1,2; increment
-        // booleanity legs (recentered) at 3,4; carry at 5; decode at 6.
         let expected_input = power(0) * *hamming
             + power(1) * *bool_ra
             + power(2) * *virt_ra

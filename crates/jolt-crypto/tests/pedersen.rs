@@ -1,5 +1,3 @@
-//! Pedersen commitment scheme tests over BN254 G1.
-
 #![expect(clippy::unwrap_used, reason = "tests should fail loudly")]
 
 use jolt_crypto::{
@@ -147,7 +145,6 @@ fn commitment_is_binding() {
 
 #[test]
 fn additive_homomorphism() {
-    // C(m₁, r₁) + C(m₂, r₂) == C(m₁+m₂, r₁+r₂)
     let setup = deterministic_setup(3);
     let mut rng = ChaCha20Rng::seed_from_u64(6);
 
@@ -175,7 +172,6 @@ fn zero_blinding_commit() {
     let zero = Fr::from_u64(0);
 
     let commitment = Pedersen::<Bn254G1>::commit(&setup, &values, &zero);
-    // Without blinding, commitment is purely MSM of message generators.
     let expected = Bn254G1::msm(&setup.message_generators[..2], &values);
     assert_eq!(commitment, expected);
 }

@@ -344,7 +344,6 @@ where
     let one_hot_config = proof.one_hot_config;
     #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
-    // The zk axis is fixed at compile time; every branch below const-folds.
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     let vc_capacity = if zk {
         Some(validate_zk_vector_commitment_setup::<PCS, VC>(
@@ -1394,7 +1393,6 @@ mod tests {
         use jolt_transcript::LegacyBlake2bTranscript;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
-        // Invalid metadata and layout give independent later-stage failures.
         #[cfg(feature = "field-inline")]
         if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
             let bytecode = &mut Arc::make_mut(full).bytecode.bytecode;
@@ -1929,8 +1927,6 @@ mod tests {
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        // Use the build's instruction profile when
-        // required, including the all-inactive table for this empty program.
         let program = JoltProgramPreprocessing::new(
             Vec::new(),
             Vec::new(),

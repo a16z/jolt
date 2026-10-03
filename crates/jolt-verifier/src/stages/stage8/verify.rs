@@ -316,8 +316,6 @@ where
         committed_program.map(|committed| committed.bytecode_chunk_count()),
     );
 
-    // Resolves one member of an indexed one-hot RA family: its commitment from
-    // the family's commitment list and, in clear mode, its opening claim.
     fn ra_family_entry<'c, F: JoltField, O>(
         commitment_list: &'c [O],
         claim_list: Option<&[F]>,
@@ -339,7 +337,6 @@ where
         Ok((commitment, opening_claim))
     }
 
-    // Pairs a precommitted polynomial's final opening with its commitment.
     fn precommitted_entry<'c, F: JoltField, O>(
         opening: Option<&'c PrecommittedFinalOpening<F>>,
         commitment: Option<&'c O>,
@@ -539,8 +536,6 @@ mod tests {
         JoltRaPolynomialLayout::new(2, 1, 2).unwrap()
     }
 
-    /// Synthetic entries in the jolt final-opening order, commitment-free
-    /// (`C = ()`): the id/scale mechanics under test are commitment-agnostic.
     fn base_entries(include_advice: bool) -> Vec<Stage8BatchEntry<'static, Fr, ()>> {
         final_opening_polynomial_order(layout(), include_advice, include_advice, None)
             .into_iter()
@@ -557,8 +552,6 @@ mod tests {
         final_opening_id(polynomial).into()
     }
 
-    /// Without field-inline, the batch plan is exactly the jolt-typed final-opening order
-    /// lifted into composite ids — no extra entries, unchanged order.
     #[test]
     fn base_final_opening_plan_is_the_jolt_order() {
         let expected: Vec<ComposedOpeningId> =
@@ -626,7 +619,6 @@ mod tests {
         assert_eq!(spliced.scale, (Fr::from_u64(1) - opening_point[0]));
         assert_eq!(spliced.opening_claim, Some(Fr::from_u64(7)));
 
-        // Advice-free batches splice at the same anchor position.
         let mut without_advice = base_entries(false);
         crate::stages::stage8::field_inline::splice_final_opening(
             &mut without_advice,
@@ -643,8 +635,6 @@ mod tests {
         );
     }
 
-    /// The splice fails closed on a missing field-inline commitment payload and on a plan
-    /// without its RdInc anchor.
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_splice_fails_closed() {

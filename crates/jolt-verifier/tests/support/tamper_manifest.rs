@@ -1304,8 +1304,6 @@ pub fn expected_rejection_phase(target: TamperTarget) -> VerifierPhase {
     }
 }
 
-/// Which stage's batched sumcheck verifies each relation. Folds 6a/6b into
-/// `Stage6`.
 fn relation_phase(id: JoltRelationId) -> VerifierPhase {
     match id {
         JoltRelationId::SpartanOuter => VerifierPhase::Stage1,

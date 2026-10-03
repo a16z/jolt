@@ -1,5 +1,3 @@
-//! Memory size unit constants and formatting helpers.
-
 /// Bytes per gibibyte (GiB, binary, 2^30).
 pub const BYTES_PER_GIB: f64 = 1_073_741_824.0;
 

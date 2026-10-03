@@ -24,7 +24,6 @@ pub struct PackedFpExt2<PF: Packed, C: Ext2Config<PF::Scalar>> {
 }
 
 impl<PF: Packed, C: Ext2Config<PF::Scalar>> PackedFpExt2<PF, C> {
-    /// Constructs from packed coefficient vectors.
     #[inline]
     pub fn new(c0: PF, c1: PF) -> Self {
         Self {
@@ -110,7 +109,6 @@ pub struct PackedFpExt4<PF: Packed> {
 }
 
 impl<PF: Packed> PackedFpExt4<PF> {
-    /// Constructs from packed coefficient vectors.
     #[inline]
     pub fn new(coeffs: [PF; 4]) -> Self {
         Self { coeffs }
@@ -181,7 +179,6 @@ pub struct PackedFpExt8<PF: Packed> {
 }
 
 impl<PF: Packed> PackedFpExt8<PF> {
-    /// Constructs from packed coefficient vectors.
     #[inline]
     pub fn new(coeffs: [PF; 8]) -> Self {
         Self { coeffs }
@@ -232,7 +229,6 @@ where
         Self::new(value.coeffs.map(PF::broadcast))
     }
 
-    /// Squaring via the dedicated kernel hook.
     #[inline(always)]
     fn square(self) -> Self {
         Self::new(PF::ext8_square(self.coeffs))

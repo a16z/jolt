@@ -1,6 +1,3 @@
-//! The sequential cycle walk driving the atomic extractors, and the
-//! trace-backed implementation of the streaming pass.
-
 use super::*;
 use crate::consumer::ChunkVisitor;
 use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
@@ -12,8 +9,6 @@ use std::ops::Range;
 use crate::{BundleSource, RowSource, WitnessBundle};
 
 impl<T: TraceSource> TraceBackend<T> {
-    /// Materializes one cycle-domain witness column by walking the trace
-    /// once; all per-witness logic lives on `W`.
     pub(crate) fn materialize_cycle<F: JoltField, W: Extract + ToField>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
@@ -100,10 +95,6 @@ impl<T: TraceSource> TraceBackend<T> {
         Ok(values)
     }
 
-    /// One pass over `2^log_t` cycles with the one-row lookahead window;
-    /// rows beyond the trace are padding (default) rows.
-    ///
-    /// Extraction is pure per cycle window and parallel when enabled.
     fn walk_cycles<V: Copy + Send>(
         &self,
         value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<V, WitnessError>

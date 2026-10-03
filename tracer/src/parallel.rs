@@ -108,8 +108,6 @@ impl SnapshotPool {
         let (image, touched) = memory.data.flat_parts();
         let mut buf = match self.free.pop() {
             Some(buf) if buf.len() == image.len() => buf,
-            // First capture (or a size change): allocate the full zeroed
-            // image once; it stays resident through pool reuse.
             _ => {
                 self.allocated_bytes += core::mem::size_of_val(image);
                 vec![0; image.len()]
@@ -463,9 +461,6 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                 let _panic_guard = PanicGuard(worker_panicked);
                 demote_worker_thread();
                 let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
-                // Per-tick row buffer, reused across ticks and chunks: it
-                // grows to the largest single tick (a few thousand rows) and
-                // stays cache-resident.
                 let mut scratch: Vec<Cycle> = Vec::new();
                 loop {
                     // Hold the lock only for the dequeue; idle workers block
@@ -485,7 +480,6 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                             worker.run_ticks_into(job.ticks, window, &mut scratch);
                         }
                         None => {
-                            // Overflow fallback: assemble by copy afterwards.
                             let mut rows: Vec<Cycle> = Vec::with_capacity(job.rows);
                             worker.run_ticks(job.ticks, &mut rows);
                             assert_eq!(
@@ -536,7 +530,6 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         drop(out_tx);
         drop(buf_tx);
 
-        // Pass-1 on the calling thread.
         promote_pass1_thread();
         let timing = std::env::var("JOLT_TRACER_TIMING").is_ok();
         let started = std::time::Instant::now();
@@ -633,7 +626,6 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                 break;
             }
         }
-        // The last chunk's end boundary is the final pass-1 state.
         if let Some(slot) = pending_end.take() {
             let _ = slot.set(Arc::new(pass1.checkpoint()));
         }
@@ -662,7 +654,6 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
     // elements are therefore initialized.
     unsafe { trace.set_len(windowed_rows) };
 
-    // Rare overflow suffix: chunks past the reserved capacity, in order.
     let mut overflow: Vec<(usize, Vec<Cycle>)> = out_rx.iter().collect();
     overflow.sort_unstable_by_key(|(index, _)| *index);
     debug_assert!(overflow

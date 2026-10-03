@@ -1,5 +1,3 @@
-//! Address phase of the two-phase program-image (initial RAM) claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 

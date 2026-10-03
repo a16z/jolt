@@ -1,16 +1,3 @@
-//! Phase-3 baseline: both engines, one platform, one harness.
-//! Measures, per guest (median of 3, in-process):
-//! - reference serial `ExecutionBackend::trace` (modular seam, includes the
-//!   Cycle to TraceRow conversion),
-//! - reference fast pass `ChunkedExecutionBackend::execute` at 2^18 rows
-//!   (post-#1717 this runs the parallel machinery's PassOne, execute mode),
-//! - the AOT x86 fast pass (`fast_run`), where the guest's kinds are
-//!   supported (fibonacci yes; sha2-chain uses the SHA2 inline and
-//!   fail-fasts by design until slice 3).
-//!
-//! Numbers from a Rosetta container are PROVISIONAL; the gate platform is a
-//! real linux-x86_64 workstation.
-
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 
@@ -36,7 +23,6 @@ fn median3(mut f: impl FnMut() -> f64) -> f64 {
 fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
     std::env::remove_var("TRACER_PARALLEL");
 
-    // Reference serial (modular seam).
     let mut rows = 0usize;
     let serial = median3(|| {
         let mut backend = TracerBackend::new();
@@ -49,7 +35,6 @@ fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
         elapsed
     });
 
-    // Reference fast pass (execute mode + per-chunk checkpoints).
     let fast = median3(|| {
         let mut backend = TracerBackend::new();
         let start = Instant::now();

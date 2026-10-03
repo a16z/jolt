@@ -299,9 +299,6 @@ impl<F: JoltField> HammingStartup<F> {
         ]))
     }
 
-    /// Marginalize the 16-bit pattern histogram to the endpoint bits used by
-    /// this round before multiplying quadratic defects. The first four rounds
-    /// need only 2, 8, 128, and 32,768 complement classes respectively.
     fn marginalized_coefficients(&self, bound: usize, prefix: &[F], suffix: &[F]) -> [F; 3] {
         let endpoint_bits = 1usize << (bound + 1);
         let mask = (1usize << endpoint_bits) - 1;
@@ -351,9 +348,6 @@ impl<F: JoltField> HammingStartup<F> {
         [q_0, q_1, q_2]
     }
 
-    /// `H` bound at `s_{..depth}`: a pattern's multilinear extension is the
-    /// sum of `eq(s, u)` over its set bits, tabulated for every pattern by
-    /// peeling the lowest bit.
     fn materialize(&self) -> Polynomial<F> {
         let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
@@ -368,8 +362,6 @@ impl<F: JoltField> HammingStartup<F> {
     }
 }
 
-/// Histogram bin of a `width`-bit block pattern: the pattern or its
-/// complement, whichever has the top bit clear.
 fn canonical_bin(pattern: u16, width: usize) -> usize {
     let pattern = usize::from(pattern);
     if pattern >> (width - 1) & 1 == 1 {
@@ -493,9 +485,6 @@ mod tests {
             .collect()
     }
 
-    /// Lockstep parity drive against the reference kernel: identical round
-    /// polynomials every round, identical output claims, and the split-eq
-    /// scalar passing the verifier's derived-term cross-check.
     fn parity(backend: &TraceBackend<OwnedTrace>, log_t: usize, stage1_cycle_binding: Vec<Fr>) {
         let relation = RamHammingBooleanity::new(TraceDimensions::new(log_t), stage1_cycle_binding);
         let claims = RamHammingBooleanityInputClaims::default();
@@ -564,8 +553,6 @@ mod tests {
             .collect()
     }
 
-    /// Parity over a trace whose first cycles carry `bits`; the backend pads
-    /// the rest with no-op rows.
     fn hamming_parity(log_t: usize, bits: &[bool], stage1_cycle_binding: Vec<Fr>) {
         with_trace_backend(log_t, 4, hamming_rows(bits), |backend, _| {
             let mut expected: Vec<Fr> = bits.iter().map(|&bit| Fr::from_bool(bit)).collect();
@@ -587,8 +574,6 @@ mod tests {
         (0..width).map(move |offset| pattern >> offset & 1 == 1)
     }
 
-    /// Compare marginalization against the direct pattern MLE formula, with
-    /// both low and high bits set across each round's endpoint windows.
     #[test]
     fn four_round_marginals_match_direct_pattern_formula() {
         let patterns = [
@@ -672,8 +657,6 @@ mod tests {
         }
     }
 
-    /// A trace longer than startup contains varied low and high halves of
-    /// 16-bit patterns, followed by dense rounds checked against reference.
     #[test]
     fn every_pattern_above_startup_depth() {
         let width = 1 << STARTUP_ROUNDS;

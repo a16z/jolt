@@ -17,7 +17,6 @@ pub(crate) fn pext(x: u64, y: u64) -> u64 {
         // extract is a shift plus truncate.
         return (x >> tz) & normalized;
     }
-    // General mask: gather one bit per set position, lowest first.
     let mut bits = y;
     let mut out = 0u64;
     let mut k = 0;
