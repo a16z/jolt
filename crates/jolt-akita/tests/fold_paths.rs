@@ -121,7 +121,9 @@ fn deep_recursive_fold_schedule_roundtrips() {
     );
 }
 
-/// The argument parser must consume exactly one complete proof.
+/// `valid_proof || garbage` must be rejected: Akita's verifier parses the
+/// argument stream against the selected row's grammar and rejects leftover
+/// bytes.
 #[test]
 fn proof_payloads_with_trailing_or_missing_bytes_reject() {
     let fixture = fold_roundtrip(14, b"akita-fold-trailing");

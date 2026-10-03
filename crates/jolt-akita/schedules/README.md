@@ -4,7 +4,8 @@ This directory contains Jolt's base Akita schedule catalogs as canonical
 `.aks` files. They are runtime data, not generated Rust modules and not
 embedded into the executable.
 
-Application preprocessing loads the four files once, wraps the resulting
+Application preprocessing loads the four original files and any present
+multi-chunk companions once, wraps the resulting
 `AkitaScheduleArtifacts` in `Arc`, and passes that immutable bundle explicitly
 to every `AkitaSetupParams` constructor. Production deployments should call
 `AkitaScheduleArtifacts::from_directory` with a versioned, deployment-owned
@@ -31,6 +32,15 @@ length, with catalog coverage through `2^30`. Virtual lookup chunks are 16 bits
 below `2^25` and 32 bits at or above it. The K=256 catalog remains available
 for explicitly configured layouts. This is an offline catalog policy: proving and verification simply
 resolve the exact admitted row and never choose a mode dynamically.
+
+Each K=16 and K=256 family has W2R2, W4R2, and W8R2 multi-chunk companion
+catalogs. The selected profile splits the root and first recursive fold into
+two, four, or eight chunks, while later folds remain single-chunk; their
+smallest admitted physical arity is 16 variables. The original one-hot
+catalogs and the dense advice and committed-program catalog remain
+single-chunk. Existing four-file directories continue to support `Single`;
+selecting a profile whose companion catalog is absent fails during setup.
+Grouped precommit setups inherit the selected trace profile.
 
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:
@@ -70,5 +80,6 @@ Regenerate all base catalogs from the planner with:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Pass `k16`, `k256`, `dense-bounded`, or `dense-full` as a final argument to
-regenerate one family. `dense` selects both dense families.
+Pass `k16`, `k256`, `w2r2`, `w4r2`, `multi-chunk`, `dense-bounded`, `dense-full`, or `dense` as a final
+argument to narrow regeneration to matching families. `k16-single` and
+`k256-single` select only the corresponding standard single-chunk catalog.

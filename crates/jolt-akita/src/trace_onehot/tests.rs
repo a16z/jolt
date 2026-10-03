@@ -8,12 +8,14 @@ use super::*;
 use std::sync::Arc;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{Challenges, SparseChallenge};
 use akita_pcs::custom_source::{
-    CommitInnerPlan, DecomposeFoldPlan, OneHotBatchView, OpeningFoldKernel, OpeningFoldPlan,
-    RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients,
-    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPlan,
+    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OneHotBatchView,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyMeta,
+    RootPolyShape, SourceCoefficients, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPlan,
 };
+use akita_pcs::AkitaError;
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
 use akita_types::{
     BasisMode, PreparedSubringCoefficientPackingPoint, SetupMatrixCapacity,
@@ -410,33 +412,96 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     let view =
         <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap();
     let source = view.source();
+    let single_chunk = akita_types::dyadic_block_ranges(num_blocks, 1).unwrap();
     let dense = decompose_fold_packed_with_mode::<D>(
         source,
         &challenges,
+        &single_chunk,
         num_positions,
         2,
         DecomposeRotationMode::Dense,
     )
+    .unwrap()
+    .pop()
     .unwrap();
     let sparse = decompose_fold_packed_with_mode::<D>(
         source,
         &challenges,
+        &single_chunk,
         num_positions,
         2,
         DecomposeRotationMode::Sparse,
     )
+    .unwrap()
+    .pop()
     .unwrap();
     let compact = decompose_fold_packed_with_mode::<D>(
         source,
         &challenges,
+        &single_chunk,
         num_positions,
         2,
         DecomposeRotationMode::Compact,
     )
+    .unwrap()
+    .pop()
     .unwrap();
     assert_eq!(dense, materialized);
     assert_eq!(sparse, materialized);
     assert_eq!(compact, materialized);
+
+    let trace_sources = [source];
+    let materialized_sources = [&materialized_source];
+    for num_chunks in [1, 2, 4, 8]
+        .into_iter()
+        .filter(|&num_chunks| num_chunks <= num_blocks)
+    {
+        let challenge_set = Challenges::from_sparse(challenges.clone(), num_blocks, 1).unwrap();
+        let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, num_chunks).unwrap();
+        let batch_plan = if num_chunks == 1 {
+            DecomposeFoldBatchPlan::Sparse {
+                challenges: &challenges,
+                num_positions_per_block: num_positions,
+                num_digits: 2,
+                log_basis: 3,
+            }
+        } else {
+            DecomposeFoldBatchPlan::SparseChunked {
+                challenges: &challenge_set,
+                chunk_ranges: &chunk_ranges,
+                num_positions_per_block: num_positions,
+                num_digits: 2,
+                log_basis: 3,
+            }
+        };
+        let streamed_chunks = <TestBackend as OpeningBatchKernel<
+            TracePackedOneHotBatchView<'_, D>,
+            AkitaField,
+            D,
+        >>::decompose_fold_batch(
+            &backend,
+            None,
+            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&trace_sources)
+                .unwrap(),
+            batch_plan,
+        )
+        .unwrap();
+        let materialized_chunks = <TestBackend as OpeningBatchKernel<
+            OneHotBatchView<'_, AkitaField, D, u8>,
+            AkitaField,
+            D,
+        >>::decompose_fold_batch(
+            &backend,
+            None,
+            <OneHotPoly<AkitaField, u8> as RootOpeningSource<AkitaField, D>>::opening_batch(
+                &materialized_sources,
+            )
+            .unwrap(),
+            batch_plan,
+        )
+        .unwrap();
+        assert_eq!(streamed_chunks, materialized_chunks);
+    }
 
     let source_num_vars = RootPolyMeta::<AkitaField>::num_vars(&source);
     let num_live_positions = RootPolyShape::<AkitaField, D>::num_ring_elems(&source);
@@ -502,6 +567,41 @@ fn blockwise_opening_kernels_match_materialized_onehot() {
     assert_opening_kernels_match_materialized::<512>(16, 32, 2, None);
     assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1));
     assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1));
+}
+
+#[test]
+fn batch_decompose_rejects_zero_positions_per_block() {
+    const D: usize = 64;
+    let source = TracePackedOneHot::new(
+        16,
+        D,
+        8,
+        Arc::new(TestRows {
+            rows: 32,
+            columns: 3,
+            k: 16,
+            committed_zero_column: None,
+        }),
+    )
+    .unwrap();
+    let sources = [&source];
+    let backend = test_backend();
+    let result = <TestBackend as OpeningBatchKernel<
+        TracePackedOneHotBatchView<'_, D>,
+        AkitaField,
+        D,
+    >>::decompose_fold_batch(
+        &backend,
+        None,
+        <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&sources).unwrap(),
+        DecomposeFoldBatchPlan::Sparse {
+            challenges: &[],
+            num_positions_per_block: 0,
+            num_digits: 2,
+            log_basis: 3,
+        },
+    );
+    assert!(matches!(result, Err(AkitaError::InvalidInput(_))));
 }
 
 #[test]
@@ -609,6 +709,60 @@ impl TraceOneHotRows for CountingRows {
     fn committed_digit_zero_mask(&self, row: usize) -> u64 {
         self.inner.committed_digit_zero_mask(row)
     }
+}
+
+#[test]
+fn chunked_decompose_reads_each_trace_row_once() {
+    const D: usize = 64;
+    const ROWS: usize = 32;
+    const NUM_POSITIONS: usize = 4;
+    let fills = Arc::new(AtomicUsize::new(0));
+    let source = TracePackedOneHot::new(
+        16,
+        D,
+        8,
+        Arc::new(CountingRows {
+            inner: TestRows {
+                rows: ROWS,
+                columns: 3,
+                k: 16,
+                committed_zero_column: None,
+            },
+            fills: Arc::clone(&fills),
+        }),
+    )
+    .unwrap();
+    let num_blocks =
+        RootPolyShape::<AkitaField, D>::num_ring_elems(&source).div_ceil(NUM_POSITIONS);
+    let challenges = (0..num_blocks)
+        .map(|block| SparseChallenge {
+            positions: vec![0, (block % (D - 1) + 1) as u32].into(),
+            coeffs: vec![1, -1].into(),
+        })
+        .collect::<Vec<_>>();
+    let sources = [&source];
+    let backend = test_backend();
+    let challenge_set = Challenges::from_sparse(challenges, num_blocks, 1).unwrap();
+    let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, 2).unwrap();
+    let chunks = <TestBackend as OpeningBatchKernel<
+        TracePackedOneHotBatchView<'_, D>,
+        AkitaField,
+        D,
+    >>::decompose_fold_batch(
+        &backend,
+        None,
+        <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&sources).unwrap(),
+        DecomposeFoldBatchPlan::SparseChunked {
+            challenges: &challenge_set,
+            chunk_ranges: &chunk_ranges,
+            num_positions_per_block: NUM_POSITIONS,
+            num_digits: 2,
+            log_basis: 3,
+        },
+    )
+    .unwrap();
+    assert_eq!(chunks.chunk_count(), 2);
+    assert_eq!(fills.load(Ordering::Relaxed), ROWS);
 }
 
 #[test]

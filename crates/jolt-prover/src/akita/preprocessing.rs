@@ -137,7 +137,8 @@ pub(crate) fn grouped_setup_params(
         one_hot_k,
         grouped_schedule,
         Arc::clone(schedule_artifacts),
-    );
+    )
+    .with_one_hot_chunk_profile(config.one_hot_chunk_profile);
     Ok(params)
 }
 
