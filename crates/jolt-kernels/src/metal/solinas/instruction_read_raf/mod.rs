@@ -27,7 +27,7 @@ pub(crate) use scatter::{
 pub(crate) const INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS: usize = 1 << 12;
 pub(crate) const INSTRUCTION_READ_RAF_TABLES: usize = LookupTableKind::<RISCV_XLEN>::COUNT;
 pub(crate) const INSTRUCTION_READ_RAF_SEGMENTS: usize = 2 * INSTRUCTION_READ_RAF_TABLES + 2;
-const MAX_ROWS: usize = 1 << 28;
+const MAX_ROWS: usize = 1 << 29;
 const SOURCE_PRIMER_PIPELINE: &str = "solinas_instruction_read_raf_source_primer";
 const SOURCE_PRIMER_PAGE_BYTES: usize = 16 * 1024;
 const SOURCE_PRIMER_THREADS: usize = 256 * 256;
@@ -671,7 +671,7 @@ fn validate_owner(
 fn validate_rows(rows: usize) -> Result<(), MetalError> {
     if rows == 0 || !rows.is_power_of_two() || rows > MAX_ROWS {
         return Err(invalid_source(
-            "row count must be a power of two in 1..=2^28",
+            "row count must be a power of two in 1..=2^29",
         ));
     }
     Ok(())

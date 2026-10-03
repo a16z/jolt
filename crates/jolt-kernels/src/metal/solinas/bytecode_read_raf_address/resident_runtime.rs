@@ -136,7 +136,7 @@ impl SolinasMetal {
         )?;
         let status_bytes = size_of::<BytecodeAddressResidentStatus>();
         let initial_bytes = checked_sum(&[count_bytes, summary_bytes, status_bytes])?;
-        enforce_member_cap(initial_bytes)?;
+        enforce_member_cap(rows, initial_bytes)?;
         self.validate_additional_working_set(to_u64(
             "resident initial working set",
             initial_bytes,
@@ -297,7 +297,7 @@ impl SolinasMetal {
         let member_owned_bytes = initial_bytes.checked_add(remaining_bytes).ok_or(
             BytecodeAddressSparseRuntimeError::SizeOverflow("resident member-owned bytes"),
         )?;
-        enforce_member_cap(member_owned_bytes)?;
+        enforce_member_cap(rows, member_owned_bytes)?;
         self.validate_additional_working_set(to_u64(
             "resident remaining working set",
             remaining_bytes,
@@ -497,14 +497,29 @@ fn checked_sum(values: &[usize]) -> Result<usize, BytecodeAddressSparseRuntimeEr
     })
 }
 
-fn enforce_member_cap(bytes: usize) -> Result<(), BytecodeAddressSparseRuntimeError> {
-    if bytes > MAX_MEMBER_OWNED_BYTES {
-        return Err(BytecodeAddressSparseRuntimeError::ResidentStorageTooLarge {
-            bytes,
-            maximum: MAX_MEMBER_OWNED_BYTES,
-        });
+fn enforce_member_cap(rows: usize, bytes: usize) -> Result<(), BytecodeAddressSparseRuntimeError> {
+    let maximum = if rows == 1 << 29 {
+        2 * MAX_MEMBER_OWNED_BYTES
+    } else {
+        MAX_MEMBER_OWNED_BYTES
+    };
+    if bytes > maximum {
+        return Err(BytecodeAddressSparseRuntimeError::ResidentStorageTooLarge { bytes, maximum });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log29_budget_admits_large_address_count_plane() {
+        assert!(enforce_member_cap(1 << 28, 6 << 30).is_ok());
+        assert!(enforce_member_cap(1 << 28, (6 << 30) + 1).is_err());
+        assert!(enforce_member_cap(1 << 29, (9 << 30) + (1 << 20)).is_ok());
+        assert!(enforce_member_cap(1 << 29, (12 << 30) + 1).is_err());
+    }
 }
 
 fn one_dimensional_groups(elements: usize, threads: usize) -> MTLSize {

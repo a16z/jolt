@@ -14,6 +14,7 @@ use rayon::prelude::*;
 
 use super::backend::MetalBackend;
 use super::solinas::bytecode_read_raf_address::{
+    bytecode_address_stage1_topology_max_plane_bytes,
     carrier::{ADDRESS_LOG2, INNER_LOG2},
     worklist::BYTECODE_ADDRESS_PUSHFORWARD_STAGES,
     BytecodeAddressSparseStage1Carrier,
@@ -80,8 +81,10 @@ impl Default for BytecodeReadRafAddressMetalConfig {
 
 pub(super) fn bytecode_address_stage1_topology_supported(
     witness: &dyn JoltWitnessPlane<AkitaField>,
+    trace_elements: usize,
 ) -> bool {
     witness.program_preprocessing().bytecode.bytecode.len() == 1usize << ADDRESS_LOG2
+        && bytecode_address_stage1_topology_max_plane_bytes(trace_elements).is_ok()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -752,6 +755,20 @@ mod tests {
             route(3 << 12, false, true),
             BytecodeReadRafAddressRoute::Cpu("address_domain")
         );
+        with_sample_backend_at_geometry(15, 13, 8, |witness| {
+            for log_t in [28, 29] {
+                let carrier = bytecode_address_stage1_topology_supported(witness, 1 << log_t);
+                assert_eq!(carrier, log_t == 28);
+                assert_eq!(
+                    select_bytecode_address_route(1 << log_t, 1 << 13, config, carrier, true),
+                    if log_t == 28 {
+                        BytecodeReadRafAddressRoute::Stage1Sparse
+                    } else {
+                        BytecodeReadRafAddressRoute::ResidentRadix
+                    }
+                );
+            }
+        });
     }
 
     #[test]
@@ -766,7 +783,10 @@ mod tests {
     fn logk14_skips_the_stage1_carrier() {
         let log_t = 15;
         with_sample_backend_at_geometry(log_t, 14, 8, |witness| {
-            assert!(!bytecode_address_stage1_topology_supported(witness));
+            assert!(!bytecode_address_stage1_topology_supported(
+                witness,
+                1 << log_t
+            ));
             let backend = MetalBackend::new(super::super::MetalConfig {
                 instruction_read_raf: super::super::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 1 << log_t,

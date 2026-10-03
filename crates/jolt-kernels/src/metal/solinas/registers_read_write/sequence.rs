@@ -922,7 +922,7 @@ impl SolinasMetal {
         log_t: usize,
         gamma: AkitaField,
     ) -> Result<RegistersReadWriteCycleSequence, MetalError> {
-        if !(4..=28).contains(&log_t) {
+        if !(4..=29).contains(&log_t) {
             return Err(MetalError::InvalidRegistersReadWriteState(
                 "registers read-write sequence geometry is unsupported",
             ));
@@ -4424,6 +4424,36 @@ fn buffer_slice_mut<T>(buffer: &Buffer, length: usize) -> &mut [T] {
 mod tests {
     use super::*;
     use crate::metal::solinas::buffer_from_slice;
+    use crate::optimized::registers_read_write::test_support::TraceFixture;
+    use jolt_field::Ring;
+    use jolt_witness::RowSource;
+
+    #[test]
+    fn padded_source_accepts_log29_geometry() {
+        let context = SolinasMetal::for_akita().unwrap();
+        let mut fixture = TraceFixture::new();
+        fixture.op(None, Some(1), Some(2));
+        fixture.with_plane(4, |witness| {
+            let access = witness.random_access().unwrap();
+            let source = Arc::new(AlignedPackedRegisterRows::collect(&access, 1, true).unwrap());
+            let gamma = AkitaField::from_u64(7);
+            let mut sequence = context
+                .prepare_registers_read_write_cycle_sequence(Arc::clone(&source), 29, gamma)
+                .unwrap();
+            assert_eq!(sequence.cycles, 536_870_912);
+            assert_eq!(sequence.threads, 256);
+            assert_eq!(sequence.scratch.e_in.length(), 4_194_304);
+            assert_eq!(sequence.scratch.e_out.length(), 4_194_304);
+            assert_eq!(sequence.scratch.partial_a.length(), 33_554_432);
+            assert_eq!(sequence.scratch.geometry_counts.length(), 4_194_304);
+            let weights = vec![AkitaField::one(); 1 << 14];
+            let message = sequence.message(&weights, &weights, gamma).unwrap();
+            assert_eq!(message.quadratic, [AkitaField::zero(); 2]);
+            assert!(context
+                .prepare_registers_read_write_cycle_sequence(source, 30, gamma)
+                .is_err());
+        });
+    }
 
     #[test]
     fn stage1_retains_operand_carry_at_compact_source_threshold() {
