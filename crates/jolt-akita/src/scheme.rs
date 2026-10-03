@@ -93,15 +93,11 @@ impl TraceCommitmentBackend {
         }
     }
 
-    // At 42 variables (log_T 29), either Metal K256 path failed the stage-2
-    // folded-oracle check on an otherwise verified trace (2026-10-03): Metal
-    // opening, or Metal commit with CPU opening. Cause unisolated; suspected
-    // catalog outer geometry change: D128/rank1 -> D64/rank2.
     pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
         match one_hot_k {
             AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
             AKITA_ONE_HOT_K256 => {
-                matches!(num_vars.checked_sub(K256_PACKING_VARIABLES), Some(25..=28))
+                matches!(num_vars.checked_sub(K256_PACKING_VARIABLES), Some(25..=29))
             }
             _ => false,
         }
@@ -115,7 +111,7 @@ impl TraceCommitmentBackend {
         match one_hot_k {
             AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
             AKITA_ONE_HOT_K256 => {
-                matches!(num_vars.checked_sub(K256_PACKING_VARIABLES), Some(24..=28))
+                matches!(num_vars.checked_sub(K256_PACKING_VARIABLES), Some(24..=29))
             }
             _ => false,
         }
@@ -1181,23 +1177,23 @@ mod tests {
     use jolt_transcript::Blake2bTranscript;
 
     #[test]
-    fn metal_k256_qualification_stops_at_log28() {
-        for num_vars in [38, 41] {
+    fn metal_k256_qualification_includes_log29() {
+        for num_vars in [38, 41, 42] {
             assert!(TraceCommitmentBackend::shape_is_metal_qualified(
                 256, num_vars
             ));
         }
-        assert!(!TraceCommitmentBackend::shape_is_metal_qualified(256, 42));
+        assert!(!TraceCommitmentBackend::shape_is_metal_qualified(256, 43));
         assert!(!TraceCommitmentBackend::shape_is_metal_qualified(256, 37));
         #[cfg(all(feature = "metal", target_os = "macos"))]
-        for num_vars in [37, 41] {
+        for num_vars in [37, 41, 42] {
             assert!(TraceCommitmentBackend::opening_shape_is_metal_qualified(
                 256, num_vars
             ));
         }
         #[cfg(all(feature = "metal", target_os = "macos"))]
         assert!(!TraceCommitmentBackend::opening_shape_is_metal_qualified(
-            256, 42
+            256, 43
         ));
     }
 
