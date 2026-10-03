@@ -10,7 +10,7 @@ use crate::invariant::{
 };
 use crate::objective::objective_fn::ObjectiveFunction;
 use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
-use crate::objective::{OptimizationObjective, LLOC};
+use crate::objective::{OptimizationObjective, HALSTEAD_BUGS, LLOC};
 
 // Test invariants
 
@@ -242,6 +242,10 @@ fn lloc() -> OptimizationObjective {
     LLOC
 }
 
+fn halstead() -> OptimizationObjective {
+    HALSTEAD_BUGS
+}
+
 struct MockOptimizeEnv {
     measurements: Vec<HashMap<OptimizationObjective, f64>>,
     measure_index: usize,
@@ -336,6 +340,33 @@ fn opt_config(iterations: usize) -> OptimizeConfig {
 }
 
 // auto_optimize tests
+
+#[test]
+fn optimize_custom_objective_function() {
+    const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
+    let weighted = ObjectiveFunction {
+        name: "weighted",
+        inputs: INPUTS,
+        evaluate: |m, _| 2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0),
+    };
+
+    let agent = MockAgent::from_responses(vec![Ok(AgentResponse {
+        text: "optimized".into(),
+        diff: Some("diff".into()),
+    })]);
+
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![
+        m(&[(lloc(), 10.0), (halstead(), 100.0)]), // score = 120
+        m(&[(lloc(), 8.0), (halstead(), 110.0)]),  // score = 126 (regression!)
+    ]);
+
+    let config = opt_config(1);
+    let result = auto_optimize(&agent, &mut env, &weighted, &config, Path::new("/tmp"));
+
+    assert_eq!(result.best_score, 120.0);
+    assert!(env.accepted.is_empty());
+    assert_eq!(env.rejected, 1);
+}
 
 #[test]
 fn optimize_multi_iteration_progressive_improvement() {
