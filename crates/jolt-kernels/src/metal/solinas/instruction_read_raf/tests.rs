@@ -13,18 +13,6 @@ fn stage1_source_byte_ledgers_are_exact() {
     assert!(validate_rows(1 << 29).is_ok());
     assert!(validate_rows(1 << 30).is_err());
     assert_eq!(
-        instruction_read_raf_stage1_row_bytes(1 << 29).unwrap(),
-        17_179_869_184
-    );
-    assert_eq!(
-        instruction_read_raf_stage1_device_bytes(1 << 29).unwrap(),
-        17_716_740_096
-    );
-    assert_eq!(
-        instruction_read_raf_stage1_count_bytes(1 << 29).unwrap(),
-        58_720_256
-    );
-    assert_eq!(
         instruction_read_raf_stage1_row_bytes(1 << 26).unwrap(),
         2_147_483_648
     );

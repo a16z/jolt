@@ -55,6 +55,7 @@ use crate::optimized::registers_read_write::{
 };
 
 pub(crate) const MAX_REGISTER_BLOCK_CAPACITY: usize = 64;
+const MAX_LOG_T: usize = 29;
 const CROSS_REPRESENTATION_REUSE_LOG_T_MIN: usize = 25;
 const COMPACT_RS1_SOURCE_LOG_T_MIN: usize = 28;
 const ASYNC_SOURCE_RETIREMENT_LOG_T_MIN: usize = 28;
@@ -607,6 +608,16 @@ pub(crate) struct RegistersReadWriteCycleSequence {
     private_buffer_pool_epoch: u64,
 }
 
+impl Drop for RegistersReadWriteCycleSequence {
+    fn drop(&mut self) {
+        if self.log_t == MAX_LOG_T {
+            // Retired payloads must not stay resident through later proof stages.
+            self.context
+                .release_private_buffer_pool(self.private_buffer_pool_epoch);
+        }
+    }
+}
+
 impl SolinasMetal {
     pub(super) fn compile_registers_read_write_source_pipeline(
         &self,
@@ -922,7 +933,7 @@ impl SolinasMetal {
         log_t: usize,
         gamma: AkitaField,
     ) -> Result<RegistersReadWriteCycleSequence, MetalError> {
-        if !(4..=29).contains(&log_t) {
+        if !(4..=MAX_LOG_T).contains(&log_t) {
             return Err(MetalError::InvalidRegistersReadWriteState(
                 "registers read-write sequence geometry is unsupported",
             ));
@@ -1034,14 +1045,9 @@ impl SolinasMetal {
                 "registers read-write Metal state has more than 64 active registers",
             ));
         }
-        let private_buffer_pool_cap_bytes = if log_t == 29 {
-            0
-        } else {
-            PRIVATE_PAYLOAD_POOL_CAP_BYTES
-        };
         let private_buffer_pool_epoch = self.begin_private_buffer_pool_epoch(
             (physical_rows, log_t),
-            private_buffer_pool_cap_bytes,
+            PRIVATE_PAYLOAD_POOL_CAP_BYTES,
         )?;
 
         let (direct, direct_cooperative) = if uses_operand_carry(log_t, stage1_source) {
@@ -4434,7 +4440,7 @@ mod tests {
     use jolt_witness::RowSource;
 
     #[test]
-    fn padded_source_accepts_log29_geometry() {
+    fn log29_sequence_geometry_and_payload_lifetime() {
         let context = SolinasMetal::for_akita().unwrap();
         let mut fixture = TraceFixture::new();
         fixture.op(None, Some(1), Some(2));
@@ -4454,16 +4460,21 @@ mod tests {
             let weights = vec![AkitaField::one(); 1 << 14];
             let message = sequence.message(&weights, &weights, gamma).unwrap();
             assert_eq!(message.quadratic, [AkitaField::zero(); 2]);
+            let epoch = sequence.private_buffer_pool_epoch;
             let payload = || {
                 new_private_payload_buffer::<u64>(
                     &context,
                     1024,
                     MTLResourceOptions::StorageModePrivate,
-                    sequence.private_buffer_pool_epoch,
+                    epoch,
                 )
                 .unwrap()
             };
             drop(payload());
+            let live_payload = payload();
+            assert!(live_payload.was_reused());
+            drop(sequence);
+            drop(live_payload);
             assert!(!payload().was_reused());
             assert!(context
                 .prepare_registers_read_write_cycle_sequence(source, 30, gamma)

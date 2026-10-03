@@ -294,6 +294,17 @@ impl SolinasMetal {
         Ok(pool.epoch)
     }
 
+    pub(super) fn release_private_buffer_pool(&self, epoch: u64) {
+        let Ok(mut pool) = self.private_buffer_pool.lock() else {
+            return;
+        };
+        if pool.epoch == epoch {
+            pool.cap_bytes = 0;
+            pool.free_bytes = 0;
+            pool.free.clear();
+        }
+    }
+
     pub(super) fn new_pooled_private_buffer(
         &self,
         bytes: u64,

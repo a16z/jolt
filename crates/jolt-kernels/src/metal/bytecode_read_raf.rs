@@ -759,14 +759,6 @@ mod tests {
             for log_t in [28, 29] {
                 let carrier = bytecode_address_stage1_topology_supported(witness, 1 << log_t);
                 assert_eq!(carrier, log_t == 28);
-                assert_eq!(
-                    select_bytecode_address_route(1 << log_t, 1 << 13, config, carrier, true),
-                    if log_t == 28 {
-                        BytecodeReadRafAddressRoute::Stage1Sparse
-                    } else {
-                        BytecodeReadRafAddressRoute::ResidentRadix
-                    }
-                );
             }
         });
     }

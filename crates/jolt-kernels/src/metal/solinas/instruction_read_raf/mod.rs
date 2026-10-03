@@ -670,9 +670,9 @@ fn validate_owner(
 
 fn validate_rows(rows: usize) -> Result<(), MetalError> {
     if rows == 0 || !rows.is_power_of_two() || rows > MAX_ROWS {
-        return Err(invalid_source(
-            "row count must be a power of two in 1..=2^29",
-        ));
+        return Err(MetalError::InvalidInstructionReadRafGrouped(format!(
+            "row count must be a power of two in 1..={MAX_ROWS}"
+        )));
     }
     Ok(())
 }
