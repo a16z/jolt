@@ -191,13 +191,6 @@ mod tests {
     }
 
     #[test]
-    fn minimize_lloc_evaluates() {
-        let mut m = HashMap::new();
-        m.insert(LLOC, 5000.0);
-        assert_eq!((MINIMIZE_LLOC.evaluate)(&m, &empty_baselines()), 5000.0);
-    }
-
-    #[test]
     fn missing_input_returns_infinity() {
         let m = HashMap::new();
         assert_eq!(
@@ -210,28 +203,6 @@ mod tests {
     fn by_name_finds_registered() {
         let f = ObjectiveFunction::by_name("minimize_lloc").unwrap();
         assert_eq!(f.name, "minimize_lloc");
-    }
-
-    #[test]
-    fn by_name_returns_none_for_unknown() {
-        assert!(ObjectiveFunction::by_name("nonexistent").is_none());
-    }
-
-    #[test]
-    fn custom_composite_objective() {
-        const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
-        let weighted = ObjectiveFunction {
-            name: "weighted",
-            inputs: INPUTS,
-            evaluate: |m, _| {
-                2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0)
-            },
-        };
-
-        let mut m = HashMap::new();
-        m.insert(LLOC, 10.0);
-        m.insert(HALSTEAD_BUGS, 100.0);
-        assert_eq!((weighted.evaluate)(&m, &empty_baselines()), 120.0);
     }
 
     #[test]

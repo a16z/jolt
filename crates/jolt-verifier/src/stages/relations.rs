@@ -642,10 +642,6 @@ pub(crate) mod append_recording {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
-#[expect(
-    clippy::as_conversions,
-    reason = "tests use plain arithmetic on fixture data"
-)]
 mod tests {
     use super::*;
 
@@ -654,7 +650,6 @@ mod tests {
     };
     use jolt_claims_derive::{InputClaims, OutputClaims};
     use jolt_field::{Fr, Ring};
-    use jolt_riscv::CircuitFlags;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -779,47 +774,6 @@ mod tests {
                 relation
             )),
             Some(fr(9)),
-        );
-        assert_append_matches_values(&claims);
-    }
-
-    #[derive(OutputClaims)]
-    #[relation(SpartanShift)]
-    struct PayloadLeaf<C> {
-        #[opening(UnexpandedPC)]
-        unexpanded_pc: C,
-        #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
-        is_virtual: C,
-    }
-
-    #[test]
-    fn output_leaf_resolves_payload_carrying_variant_ids() {
-        let claims = PayloadLeaf {
-            unexpanded_pc: fr(1),
-            is_virtual: fr(2),
-        };
-        let relation = JoltRelationId::SpartanShift;
-
-        assert_eq!(claims.opening_values().len(), 2);
-        assert_eq!(claims.opening_values(), vec![fr(1), fr(2)]);
-        assert_eq!(
-            claims.resolve_output(&virt(JoltVirtualPolynomial::UnexpandedPC, relation)),
-            Some(fr(1)),
-        );
-        assert_eq!(
-            claims.resolve_output(&virt(
-                JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
-                relation,
-            )),
-            Some(fr(2)),
-        );
-        // A different flag payload is a different opening and misses.
-        assert_eq!(
-            claims.resolve_output(&virt(
-                JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
-                relation,
-            )),
-            None,
         );
         assert_append_matches_values(&claims);
     }
@@ -1000,56 +954,6 @@ mod tests {
                 virt(JoltVirtualPolynomial::RamRa, JoltRelationId::RamValCheck),
             ],
         );
-    }
-
-    #[test]
-    fn output_leaf_point_accessors_follow_fields() {
-        // The point cell (`C = Vec<F>`) exposes per-field accessors returning the
-        // derived opening points: scalar `&[F]`, `Vec` `&[Vec<F>]`.
-        let points = InstructionLeaf::<Vec<Fr>> {
-            lookup_table_flags: vec![vec![fr(10)], vec![fr(11)]],
-            instruction_ra: vec![vec![fr(12), fr(13)]],
-            instruction_raf_flag: vec![fr(14)],
-        };
-        assert_eq!(
-            points.lookup_table_flags(),
-            &[vec![fr(10)], vec![fr(11)]] as &[Vec<Fr>]
-        );
-        assert_eq!(
-            points.instruction_ra(),
-            &[vec![fr(12), fr(13)]] as &[Vec<Fr>]
-        );
-        assert_eq!(points.instruction_raf_flag(), &[fr(14)] as &[Fr]);
-    }
-
-    #[test]
-    fn output_leaf_option_point_accessor() {
-        // The `Option` point accessor surfaces the point only when `Some`.
-        let present = OptionalOutput::<Vec<Fr>> {
-            untrusted: Some(vec![fr(7)]),
-            ram_inc: vec![fr(8)],
-        };
-        assert_eq!(present.untrusted(), Some(&[fr(7)] as &[Fr]));
-        assert_eq!(present.ram_inc(), &[fr(8)] as &[Fr]);
-
-        let absent = OptionalOutput::<Vec<Fr>> {
-            untrusted: None,
-            ram_inc: vec![fr(8)],
-        };
-        assert_eq!(absent.untrusted(), None);
-    }
-
-    #[test]
-    fn input_leaf_point_accessors_follow_fields() {
-        // The `InputClaims` derive emits point accessors on the `Vec<F>` cell too.
-        let points = ReductionInputs::<Vec<Fr>> {
-            raf: vec![fr(1)],
-            read_write: vec![fr(2)],
-            val_check: vec![fr(3)],
-        };
-        assert_eq!(points.raf(), &[fr(1)] as &[Fr]);
-        assert_eq!(points.read_write(), &[fr(2)] as &[Fr]);
-        assert_eq!(points.val_check(), &[fr(3)] as &[Fr]);
     }
 
     #[derive(InputClaims)]

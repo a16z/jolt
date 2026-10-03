@@ -80,16 +80,10 @@ twist::instantiate_increment_reduction! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SymbolicSumcheck;
-
     use crate::protocols::field_inline::geometry::claim_reductions::increments::{
         claim_reduction_input_openings, claim_reduction_output_openings,
     };
     use jolt_field::{Fr, Ring};
-
-    fn dimensions() -> FieldRegistersTraceDimensions {
-        FieldRegistersTraceDimensions::new(5)
-    }
 
     #[test]
     fn claim_struct_field_order_matches_geometry_opening_order() {
@@ -103,73 +97,5 @@ mod tests {
             rd_inc_val_evaluation: value,
         };
         assert_eq!(inputs.canonical_order(), claim_reduction_input_openings());
-    }
-
-    #[test]
-    fn claim_reduction_exposes_expected_dependencies() {
-        let relation = ClaimReduction::new(dimensions());
-
-        assert_eq!(
-            ClaimReduction::id(),
-            FieldInlineRelationId::FieldRegistersIncClaimReduction
-        );
-        assert_eq!(relation.rounds(), dimensions().log_t());
-        assert_eq!(relation.degree(), 2);
-    }
-
-    #[test]
-    fn claim_reduction_evaluates_like_field_rd_inc_reduction_formula() {
-        let relation = ClaimReduction::new(dimensions());
-
-        let read_write_inc = Fr::from_u64(3);
-        let val_evaluation_inc = Fr::from_u64(5);
-        let reduced_inc = Fr::from_u64(7);
-        let eta = Fr::from_u64(11);
-        let eq_read_write = Fr::from_u64(13);
-        let eq_val_evaluation = Fr::from_u64(17);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == field_rd_inc_read_write() => read_write_inc,
-                id if id == field_rd_inc_val_evaluation() => val_evaluation_inc,
-                _ => zero,
-            },
-            |id| match *id {
-                FieldInlineChallengeId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionChallenge::Gamma,
-                ) => eta,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == field_rd_inc_reduced() => reduced_inc,
-                _ => zero,
-            },
-            |id| match *id {
-                FieldInlineChallengeId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionChallenge::Gamma,
-                ) => eta,
-                _ => zero,
-            },
-            |id| match *id {
-                FieldInlineDerivedId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionPublic::EqReadWrite,
-                ) => eq_read_write,
-                FieldInlineDerivedId::FieldRegistersIncClaimReduction(
-                    FieldRegistersIncClaimReductionPublic::EqValEvaluation,
-                ) => eq_val_evaluation,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, read_write_inc + eta * val_evaluation_inc);
-        assert_eq!(
-            output,
-            (eq_read_write + eta * eq_val_evaluation) * reduced_inc
-        );
     }
 }

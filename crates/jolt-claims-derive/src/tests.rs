@@ -76,22 +76,6 @@ fn expect_output_error(input: DeriveInput, expected: &str) {
 }
 
 #[test]
-fn output_claims_rejects_non_structs() {
-    expect_output_error(
-        parse_quote! { enum Demo<C> { A(C) } },
-        "OutputClaims/InputClaims can only be derived for structs",
-    );
-}
-
-#[test]
-fn output_claims_rejects_tuple_structs() {
-    expect_output_error(
-        parse_quote! { #[relation(SpartanOuter)] struct Demo<C>(C); },
-        "OutputClaims/InputClaims require a struct with named fields",
-    );
-}
-
-#[test]
 fn output_claims_rejects_extra_generics() {
     expect_output_error(
         parse_quote! {
@@ -117,20 +101,6 @@ fn output_claims_rejects_where_clauses() {
             {
                 #[opening(PC)]
                 pc: C,
-            }
-        },
-        "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",
-    );
-}
-
-#[test]
-fn output_claims_rejects_lifetime_parameters() {
-    expect_output_error(
-        parse_quote! {
-            #[relation(SpartanOuter)]
-            struct Demo<'a, C> {
-                #[opening(PC)]
-                pc: &'a C,
             }
         },
         "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",

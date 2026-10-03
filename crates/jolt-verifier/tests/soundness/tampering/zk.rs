@@ -332,13 +332,3 @@ where
     };
     let _ = proof.output_claims.commitments.pop();
 }
-
-#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
-#[test]
-#[ignore = "enable --features prover-fixtures,zk to live-generate and tamper verifier-native ZK proofs"]
-fn missing_zk_vector_commitment_setup_rejects_now() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
-#[test]
-#[ignore = "enable --features prover-fixtures,zk to live-generate and tamper verifier-native ZK proofs"]
-fn tampered_blindfold_proof_reject() {}

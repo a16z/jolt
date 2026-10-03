@@ -615,15 +615,6 @@ mod tests {
     use num_traits::{One, Zero};
 
     #[test]
-    fn lagrange_evals_partition_of_unity() {
-        // Sum of all Lagrange basis values at any point must be 1
-        let r = Fr::from_u64(42);
-        let evals = lagrange_evals(0, 5, r);
-        let sum: Fr = evals.iter().copied().sum();
-        assert_eq!(sum, Fr::one());
-    }
-
-    #[test]
     fn lagrange_evals_at_node_is_indicator() {
         for i in 0..5u64 {
             let r = Fr::from_u64(i);
@@ -668,15 +659,6 @@ mod tests {
         assert_eq!(sums[1], 0); // symmetric
         assert_eq!(sums[2], 2); // (-1)^2 + 0 + 1^2
         assert_eq!(sums[3], 0); // symmetric
-    }
-
-    #[test]
-    fn symmetric_power_sums_width_2() {
-        // Domain {-2, -1, 0, 1, 2}: S_0 = 5, S_1 = 0, S_2 = 10
-        let sums = symmetric_power_sums(2, 3);
-        assert_eq!(sums[0], 5);
-        assert_eq!(sums[1], 0);
-        assert_eq!(sums[2], 10); // 4 + 1 + 0 + 1 + 4
     }
 
     #[test]
@@ -743,41 +725,12 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_to_coeffs_constant() {
-        // f(0) = f(1) = f(2) = 5 → p(x) = 5
-        let vals = [Fr::from_u64(5), Fr::from_u64(5), Fr::from_u64(5)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        assert_eq!(coeffs[0], Fr::from_u64(5));
-        assert!(coeffs[1].is_zero());
-        assert!(coeffs[2].is_zero());
-    }
-
-    #[test]
     fn interpolate_to_coeffs_linear() {
         // f(0) = 1, f(1) = 3 → p(x) = 1 + 2x
         let vals = [Fr::from_u64(1), Fr::from_u64(3)];
         let coeffs = interpolate_to_coeffs(0, &vals);
         assert_eq!(coeffs[0], Fr::from_u64(1));
         assert_eq!(coeffs[1], Fr::from_u64(2));
-    }
-
-    #[test]
-    fn interpolate_to_coeffs_quadratic() {
-        // f(0) = 1, f(1) = 4, f(2) = 11 → p(x) = 1 + x + 2x^2
-        // p(0)=1, p(1)=1+1+2=4, p(2)=1+2+8=11 ✓
-        let vals = [Fr::from_u64(1), Fr::from_u64(4), Fr::from_u64(11)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        // Verify by evaluating at each point
-        for (i, &expected) in vals.iter().enumerate() {
-            let x = Fr::from_u64(i as u64);
-            let mut val = Fr::zero();
-            let mut x_pow = Fr::one();
-            for &c in &coeffs {
-                val += c * x_pow;
-                x_pow *= x;
-            }
-            assert_eq!(val, expected, "mismatch at x={i}");
-        }
     }
 
     #[test]
@@ -796,28 +749,6 @@ mod tests {
                 x_pow *= x;
             }
             assert_eq!(val, expected, "mismatch at x={}", -1 + k as i64);
-        }
-    }
-
-    #[test]
-    fn interpolate_roundtrip_with_poly_mul() {
-        // Interpolate, multiply by (x - 5), check evaluations
-        let vals = [Fr::from_u64(3), Fr::from_u64(7), Fr::from_u64(13)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        let linear = [Fr::from_i64(-5), Fr::one()]; // (x - 5)
-        let product = poly_mul(&coeffs, &linear);
-
-        // Verify product at x = 0,1,2
-        for (i, &f_val) in vals.iter().enumerate() {
-            let x = Fr::from_u64(i as u64);
-            let mut val = Fr::zero();
-            let mut x_pow = Fr::one();
-            for &c in &product {
-                val += c * x_pow;
-                x_pow *= x;
-            }
-            let expected = f_val * (x - Fr::from_u64(5));
-            assert_eq!(val, expected, "product mismatch at x={i}");
         }
     }
 

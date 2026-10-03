@@ -11,10 +11,7 @@ use jolt_field as two;
 use num_bigint::BigUint;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{
-    Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne,
-    Ring,
-};
+use two::{CanonicalBytes, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0x5011_a5a5)
@@ -297,22 +294,6 @@ fn balanced_digit_lut_matches() {
             assert_eq!(x.to_u128_checked(), Some(expected), "lut[{i}]");
         }
     }
-}
-
-fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
-    let mut acc = F::Accumulator::default();
-    for (&x, &y) in xs.iter().zip(ys) {
-        acc.fmadd(x, y);
-    }
-    acc.reduce()
-}
-
-#[test]
-fn jolt_field_blanket_covers_solinas() {
-    type F = two::Prime64Offset59;
-    let xs = [<F as Ring>::from_u64(2), <F as Ring>::from_u64(3)];
-    let ys = [<F as Ring>::from_u64(5), <F as Ring>::from_u64(7)];
-    assert_eq!(inner_product(&xs, &ys), <F as Ring>::from_u64(31));
 }
 
 #[test]

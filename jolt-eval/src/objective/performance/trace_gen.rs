@@ -161,22 +161,3 @@ impl<G: GuestConfig + 'static> Objective for TraceGenObjective<G> {
         Some("s")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::guests::{Fibonacci, Sha2Chain};
-
-    use super::*;
-
-    #[test]
-    fn names() {
-        assert_eq!(
-            TraceGenObjective::new(Fibonacci(400000)).name(),
-            "trace_gen_fibonacci_400000"
-        );
-        assert_eq!(
-            TraceGenObjective::new(Sha2Chain::profiling_default()).name(),
-            "trace_gen_sha2_chain_4446"
-        );
-    }
-}

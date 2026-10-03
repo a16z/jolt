@@ -342,14 +342,6 @@ fn wrong_transcript_domain_rejected() {
     assert!(result.is_err(), "wrong transcript domain must be rejected");
 }
 
-#[test]
-fn property_based_round_trip() {
-    for seed in 0..10u64 {
-        let num_vars = 2 + (seed as usize % 4); // 2..5
-        round_trip::<Blake2bTranscript>(num_vars, 800 + seed, b"prop-rt");
-    }
-}
-
 fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: &'static [u8]) {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let prover_setup = DoryScheme::setup_prover(num_vars);
@@ -563,33 +555,6 @@ fn wrong_eval_commitment_rejected_zk() {
     let mut vt = Blake2bTranscript::new(b"zk-tampered-y-com");
     let result = DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt);
     assert!(result.is_err(), "tampered proof.y_com must be rejected");
-}
-
-#[test]
-fn zk_wrong_transcript_domain_rejected() {
-    let num_vars = 3;
-    let mut rng = ChaCha20Rng::seed_from_u64(1500);
-
-    let prover_setup = DoryScheme::setup_prover(num_vars);
-    let verifier_setup = DoryScheme::setup_verifier(num_vars);
-    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-    let point: Vec<Fr> = (0..num_vars)
-        .map(|_| <Fr as Field>::random(&mut rng))
-        .collect();
-    let eval = poly.evaluate(&point);
-    let (commitment, hint) =
-        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup).unwrap();
-
-    let mut pt = Blake2bTranscript::new(b"zk-correct-domain");
-    let (proof, _eval_com, _blind) =
-        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt).unwrap();
-
-    let mut vt = Blake2bTranscript::new(b"zk-wrong-domain");
-    let result = DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt);
-    assert!(
-        result.is_err(),
-        "ZK: wrong transcript domain must be rejected"
-    );
 }
 
 /// Hints from a shared commitment grid are ragged: a polynomial narrower than

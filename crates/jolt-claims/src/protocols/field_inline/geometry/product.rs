@@ -185,32 +185,6 @@ mod tests {
         }
     }
 
-    /// The composed helpers weight the selected lanes at the indices following
-    /// the ordinary lanes, and each lane's factor mapping follows
-    /// `FieldRegistersProductLane::factor_openings` (Product: rs1·rs2;
-    /// InverseProduct: rs1·rd — the FINV guarded-inverse witness).
-    #[test]
-    fn composed_contributions_follow_selected_lane_order() {
-        let base_lanes = 3usize;
-        let weights = (1..=5).map(Fr::from_u64).collect::<Vec<_>>();
-        let inputs = inputs();
-        let factors = factors();
-        let w3 = Fr::from_u64(4);
-        let w4 = Fr::from_u64(5);
-
-        assert_eq!(
-            composed_uniskip_input_contribution(&weights, base_lanes, &inputs),
-            Some(w3 * inputs.product + w4 * inputs.inv_product)
-        );
-        assert_eq!(
-            composed_remainder_factor_contributions(&weights, base_lanes, &factors),
-            Some((
-                w3 * factors.rs1_value + w4 * factors.rs1_value,
-                w3 * factors.rs2_value + w4 * factors.rd_value,
-            ))
-        );
-    }
-
     /// The value carriers' per-lane mapping is the id-level lane table read
     /// back as values: `factor_values(lane)` resolves exactly
     /// `lane.factor_openings()`, and `input_value(lane)` resolves

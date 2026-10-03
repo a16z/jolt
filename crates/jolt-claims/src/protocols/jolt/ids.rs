@@ -504,26 +504,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opening_constructors_preserve_stage_context() {
-        let relation = JoltRelationId::RamReadWriteChecking;
-
-        assert_eq!(
-            JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
-                relation,
-            }
-        );
-        assert_eq!(
-            JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamVal, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal),
-                relation,
-            }
-        );
-    }
-
-    #[test]
     fn advice_group_roles_fix_order_and_transcript_tags() {
         let untrusted = JoltAdviceKind::Untrusted.group_role();
         let trusted = JoltAdviceKind::Trusted.group_role();

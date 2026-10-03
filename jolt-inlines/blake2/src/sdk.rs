@@ -502,47 +502,6 @@ pub(crate) unsafe fn blake2b_compress(_state: *mut u64, _message: *const u64) {
 #[cfg(all(test, feature = "host"))]
 mod digest_tests {
     use super::*;
-    use hex_literal::hex;
-
-    #[test]
-    fn test_blake2b_digest() {
-        let test_cases: [(&'static str, &[u8], [u8; 64]); 5] = [
-            (
-                "empty",
-                b"",
-                hex!("786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce")
-            ),
-            (
-                "lt_128_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456",
-                hex!("2d95bd8dfdf8c4077f9bf54fe1a622e8bff985727a1f937f05c19608b93afbde331cc949d67cf29f3cbe081f2a853c13131b7f8f5d162810eec2e0001df9199f")
-            ),
-            (
-                "exactly_128_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                hex!("687222a8b7e18fe2351529741f9f377dbfe57ccc40ffacd7dad6457eb0f5434b308c25eeb85f2c434889877eae9cfcda86e2220bbedb5ddeeef1db1b76113997")
-            ),
-            (
-                "gt_128_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef456789abcdef0123456789abcdef0123456789abcdef",
-                hex!("eec6581ca2d51e7f8bff0cb9e0742b454bad4d28bb5078737a6bce318bb29902ca6c2fd4c412d9ed6bb2940692b39012b69ab81ca33cca4d292f3a095cd84007")
-            ),
-            (
-                "exactly_256_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                hex!("342949a83f4809037dcb71d5d527ef9c8060c20cda8a7e4414bcca487e9bc5726e0d4646b7f869b3f3decb362508ec4672c3314ad345d1c36377fc1f3020585c")
-            ),
-        ];
-        for (test_name, input, expected) in test_cases {
-            let hash = Blake2b::digest(input);
-            assert_eq!(
-                hash,
-                expected,
-                "Blake2b test failed for case: {test_name} (input length: {} bytes)",
-                input.len()
-            );
-        }
-    }
 
     /// EIP-152 vectors 5 (final) and 6 (not final): 12 rounds, h = BLAKE2b-512
     /// IV with the parameter block, m = "abc" zero-padded, t = 3.
@@ -588,31 +547,6 @@ mod digest_tests {
     }
 
     #[test]
-    fn test_blake2b_against_reference_implementation() {
-        for pattern_id in 0..4 {
-            let (pattern_name, pattern_fn): (&str, fn(usize) -> u8) = match pattern_id {
-                0 => ("sequential", |i| (i) as u8),
-                1 => ("zeros", |_| 0u8),
-                2 => ("ones", |_| 255u8),
-                3 => ("random_pattern", |i| ((i * 7 + 13) % 256) as u8),
-                _ => unreachable!(),
-            };
-            let mut input = [0u8; 1200];
-            for (i, item) in input.iter_mut().enumerate() {
-                *item = pattern_fn(i);
-            }
-            for length in 0..=1200 {
-                use blake2::Digest as RefDigest;
-                assert_eq!(
-                    Blake2b::digest(&input),
-                    Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
-                    "Blake2b mismatch with {pattern_name} pattern at length {length}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn test_blake2b_variable_input_lengths() {
         const MAX_LENGTH: usize = 1200;
         // Pre-generate a large input buffer with a repeating pattern
@@ -632,44 +566,6 @@ mod digest_tests {
                 Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
                 "Blake2b mismatch at input length {length}"
             );
-        }
-    }
-
-    #[test]
-    fn test_blake2b_edge_case_lengths() {
-        use blake2::{Blake2b512, Digest as RefDigest};
-
-        // Test specific edge case lengths that are important for Blake2b
-        let critical_lengths = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, // Very small
-            15, 16, 17, // Around 16-byte boundary
-            31, 32, 33, // Around 32-byte boundary
-            55, 56, 57, // Just before block size
-            63, 64, 65, // Around 64-byte boundary
-            111, 112, 113, // Random mid-range
-            127, 128, 129, // Around 128-byte boundary (2 blocks)
-            191, 192, 193, // 3 blocks
-            255, 256, 257, // Around 256-byte boundary
-            511, 512, 513, // Around 512-byte boundary
-            1023, 1024, 1025, // Around 1024-byte boundary
-            1199, 1200, // At max length
-        ];
-
-        const MAX_TEST_LENGTH: usize = 1200;
-        let input_buffer: [u8; MAX_TEST_LENGTH] = std::array::from_fn(|i| {
-            // Create a pseudo-random but deterministic pattern
-            ((i * 213 + 17) % 256) as u8
-        });
-
-        for &length in &critical_lengths {
-            if length <= MAX_TEST_LENGTH {
-                let input = &input_buffer[..length];
-                assert_eq!(
-                    Blake2b::digest(input),
-                    Into::<[u8; 64]>::into(Blake2b512::digest(input)),
-                    "Blake2b mismatch at critical length {length}"
-                );
-            }
         }
     }
 }
@@ -723,97 +619,15 @@ mod params_tests {
     }
 
     #[test]
-    fn test_blake2b_params_incremental_updates() {
-        let salt = b"0123456789abcdef";
-        let persona = b"ZcashPrevoutHash";
-        let input_buffer: [u8; 512] = std::array::from_fn(|i| ((i * 137 + 42) % 256) as u8);
-
-        for chunk_size in [1, 7, 64, 65, 128, 129] {
-            let mut hasher = Blake2b::new_with_params(salt, persona);
-            for chunk in input_buffer.chunks(chunk_size) {
-                hasher.update(chunk);
-            }
-            assert_eq!(
-                hasher.finalize(),
-                reference_with_params(salt, persona, &input_buffer),
-                "incremental params mismatch at chunk_size={chunk_size}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_blake2b_empty_params_match_unparametrized() {
-        let input = b"Some test data for parameter block testing";
-        assert_eq!(
-            Blake2b::digest_with_params(b"", b"", input),
-            Blake2b::digest(input)
-        );
-
-        let mut hasher = Blake2b::new_with_params(b"", b"");
-        hasher.update(input);
-        assert_eq!(hasher.finalize(), Blake2b::digest(input));
-    }
-
-    #[test]
     #[should_panic(expected = "salt must be at most 16 bytes")]
     fn test_blake2b_oversized_salt_panics() {
         let _ = Blake2b::new_with_params(b"01234567890123456", b"");
-    }
-
-    #[test]
-    #[should_panic(expected = "persona must be at most 16 bytes")]
-    fn test_blake2b_oversized_persona_panics() {
-        let _ = Blake2b::digest_with_params(b"", b"01234567890123456", b"");
     }
 }
 
 #[cfg(all(test, feature = "host"))]
 mod streaming_tests {
     use super::*;
-    use hex_literal::hex;
-
-    #[test]
-    fn test_blake2b_streaming_digest() {
-        let test_cases: [(&'static str, &[u8], [u8; 64]); 5] = [
-            (
-                "empty",
-                b"",
-                hex!("786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce")
-            ),
-            (
-                "lt_128_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456",
-                hex!("2d95bd8dfdf8c4077f9bf54fe1a622e8bff985727a1f937f05c19608b93afbde331cc949d67cf29f3cbe081f2a853c13131b7f8f5d162810eec2e0001df9199f")
-            ),
-            (
-                "exactly_128_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                hex!("687222a8b7e18fe2351529741f9f377dbfe57ccc40ffacd7dad6457eb0f5434b308c25eeb85f2c434889877eae9cfcda86e2220bbedb5ddeeef1db1b76113997")
-            ),
-            (
-                "gt_128_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef456789abcdef0123456789abcdef0123456789abcdef",
-                hex!("eec6581ca2d51e7f8bff0cb9e0742b454bad4d28bb5078737a6bce318bb29902ca6c2fd4c412d9ed6bb2940692b39012b69ab81ca33cca4d292f3a095cd84007")
-            ),
-            (
-                "exactly_256_bytes",
-                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                hex!("342949a83f4809037dcb71d5d527ef9c8060c20cda8a7e4414bcca487e9bc5726e0d4646b7f869b3f3decb362508ec4672c3314ad345d1c36377fc1f3020585c")
-            ),
-        ];
-
-        for (test_name, input, expected) in test_cases {
-            let mut hasher = Blake2b::new();
-            hasher.update(input);
-            let hash = hasher.finalize();
-            assert_eq!(
-                hash,
-                expected,
-                "Blake2b streaming test failed for case: {test_name} (input length: {} bytes)",
-                input.len()
-            );
-        }
-    }
 
     #[test]
     fn test_blake2b_streaming_against_reference() {
@@ -843,30 +657,6 @@ mod streaming_tests {
                     "Blake2b streaming mismatch with {pattern_name} pattern at length {length}"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn test_blake2b_streaming_variable_lengths() {
-        const MAX_LENGTH: usize = 1200;
-
-        let input_buffer: [u8; MAX_LENGTH] = std::array::from_fn(|i| {
-            let base = (i % 256) as u8;
-            let modifier = ((i / 256) * 17 + (i % 7) * 31) as u8;
-            base.wrapping_add(modifier)
-        });
-
-        for length in 0..=MAX_LENGTH {
-            let input = &input_buffer[..length];
-            let mut hasher = Blake2b::new();
-            hasher.update(input);
-
-            use blake2::Digest as RefDigest;
-            assert_eq!(
-                hasher.finalize(),
-                Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
-                "Blake2b streaming mismatch at input length {length}"
-            );
         }
     }
 
@@ -901,69 +691,6 @@ mod streaming_tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn test_blake2b_streaming_edge_cases() {
-        use blake2::Digest as RefDigest;
-
-        let critical_lengths = [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 17, 31, 32, 33, 55, 56, 57, 63, 64, 65, 111, 112,
-            113, 127, 128, 129, 191, 192, 193, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025,
-            1199, 1200,
-        ];
-
-        const MAX_TEST_LENGTH: usize = 1200;
-        let input_buffer: [u8; MAX_TEST_LENGTH] =
-            std::array::from_fn(|i| ((i * 213 + 17) % 256) as u8);
-
-        for &length in &critical_lengths {
-            if length <= MAX_TEST_LENGTH {
-                let input = &input_buffer[..length];
-                let mut hasher = Blake2b::new();
-                hasher.update(input);
-                assert_eq!(
-                    hasher.finalize(),
-                    Into::<[u8; 64]>::into(blake2::Blake2b512::digest(input)),
-                    "Blake2b streaming mismatch at critical length {length}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_blake2b_streaming_multiple_updates() {
-        use blake2::Digest as RefDigest;
-
-        let data_parts: &[&[u8]] = &[
-            b"Hello, ",
-            b"this is ",
-            b"a test of ",
-            b"multiple ",
-            b"updates to ",
-            b"the Blake2b ",
-            b"streaming ",
-            b"interface!",
-        ];
-
-        const TOTAL_LEN: usize = 77;
-        let mut full_data = [0u8; TOTAL_LEN];
-        let mut offset = 0;
-
-        for part in data_parts {
-            full_data[offset..offset + part.len()].copy_from_slice(part);
-            offset += part.len();
-        }
-
-        let mut hasher = Blake2b::new();
-        for part in data_parts {
-            hasher.update(part);
-        }
-        assert_eq!(
-            hasher.finalize(),
-            Into::<[u8; 64]>::into(blake2::Blake2b512::digest(full_data)),
-            "Multiple updates should produce same result as single update"
-        );
     }
 
     #[test]

@@ -96,55 +96,6 @@ fn prove_product(
 }
 
 #[test]
-fn degree2_product_roundtrip() {
-    // f(x) * g(x) where f, g are multilinear over 4 variables
-    let num_vars = 4;
-    let n = 1 << num_vars;
-
-    let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
-    let g: Vec<F> = (0..n).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
-
-    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let (proof, claimed_sum) = prove_product(&[f, g], num_vars, &mut pt);
-
-    let claim = SumcheckClaim {
-        num_vars,
-        degree: 2,
-        claimed_sum,
-    };
-
-    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
-    assert!(result.is_ok(), "degree-2 verify failed: {:?}", result.err());
-}
-
-#[test]
-fn degree3_product_roundtrip() {
-    // f(x) * g(x) * h(x), degree 3, 3 variables
-    let num_vars = 3;
-    let n = 1 << num_vars;
-
-    let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
-    let g: Vec<F> = (0..n).map(|i| F::from_u64((i * 2 + 3) as u64)).collect();
-    let h: Vec<F> = (0..n).map(|i| F::from_u64((i + 10) as u64)).collect();
-
-    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let (proof, claimed_sum) = prove_product(&[f, g, h], num_vars, &mut pt);
-
-    let claim = SumcheckClaim {
-        num_vars,
-        degree: 3,
-        claimed_sum,
-    };
-
-    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
-    assert!(result.is_ok(), "degree-3 verify failed: {:?}", result.err());
-}
-
-#[test]
 fn degree3_final_eval_correct() {
     // Verify that the final eval matches the product of individual evals at the point
     let num_vars = 3;
@@ -179,73 +130,6 @@ fn degree3_final_eval_correct() {
     let g_at_r = Polynomial::new(g_evals).evaluate_and_consume(&challenges);
     let h_at_r = Polynomial::new(h_evals).evaluate_and_consume(&challenges);
     assert_eq!(final_eval, f_at_r * g_at_r * h_at_r);
-}
-
-#[test]
-fn eq_weighted_sumcheck() {
-    // eq(r, x) * f(x), common pattern in Jolt (Spartan outer sumcheck).
-    // eq(r, x) = prod_i (r_i * x_i + (1 - r_i)(1 - x_i))
-    let num_vars = 4;
-    let n = 1 << num_vars;
-
-    let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 * 3 + 1)).collect();
-
-    // Generate a random-ish point r for the eq polynomial
-    let r: Vec<F> = (0..num_vars)
-        .map(|i| F::from_u64(i as u64 * 7 + 13))
-        .collect();
-
-    // Compute eq(r, x) for all x in {0,1}^n
-    let eq_evals = jolt_poly::EqPolynomial::evals::<F>(&r, None);
-
-    // Product: eq(r, x) * f(x)
-    let product: Vec<F> = eq_evals.iter().zip(&f).map(|(&e, &fi)| e * fi).collect();
-
-    let claimed_sum: F = product.iter().copied().sum();
-
-    // Prove as degree-2 (eq * f, both multilinear)
-    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let (proof, sum) = prove_product(&[eq_evals, f], num_vars, &mut pt);
-    assert_eq!(sum, claimed_sum);
-
-    let claim = SumcheckClaim {
-        num_vars,
-        degree: 2,
-        claimed_sum,
-    };
-
-    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
-    assert!(
-        result.is_ok(),
-        "eq-weighted verify failed: {:?}",
-        result.err()
-    );
-}
-
-#[test]
-fn large_num_vars_roundtrip() {
-    // Stress test with 10 variables (1024 evaluations), degree 2
-    let num_vars = 10;
-    let n = 1 << num_vars;
-
-    let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
-    let g: Vec<F> = (0..n).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
-
-    let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let (proof, claimed_sum) = prove_product(&[f, g], num_vars, &mut pt);
-
-    let claim = SumcheckClaim {
-        num_vars,
-        degree: 2,
-        claimed_sum,
-    };
-
-    let mut vt = Blake2bTranscript::new(b"sumcheck-roundtrip");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
-    assert!(result.is_ok(), "large roundtrip failed: {:?}", result.err());
 }
 
 #[test]

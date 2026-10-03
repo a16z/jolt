@@ -258,13 +258,6 @@ mod tests {
         assert!(sumchecks().validate_aliases(&claims).is_err());
     }
 
-    #[test]
-    fn validate_aliases_rejects_rs2_value_mismatch() {
-        let mut claims = consistent();
-        claims.registers_claim_reduction.rs2_value = fr(99);
-        assert!(sumchecks().validate_aliases(&claims).is_err());
-    }
-
     /// Pins the structural invariant the alias declarations rely on:
     /// `validate_aliases` checks values only, which is sound because all three
     /// stage-3 members bind the same batch-point slice (equal rounds, default

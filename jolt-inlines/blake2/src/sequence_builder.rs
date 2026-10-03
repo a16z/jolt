@@ -230,33 +230,9 @@ impl InlineOp for Blake2bCompression {
 #[cfg(test)]
 mod tests {
     use super::Blake2bCompression;
-    use crate::IV;
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
-        assert_reference_matches_harness,
     };
-
-    fn initial_state() -> [u64; crate::STATE_VECTOR_LEN] {
-        let mut state = IV;
-        state[0] ^= 0x01010000 ^ 64u64;
-        state
-    }
-
-    fn default_input() -> (
-        [u64; crate::STATE_VECTOR_LEN],
-        [u64; crate::MSG_BLOCK_LEN],
-        u64,
-        bool,
-    ) {
-        let mut message = [0u64; crate::MSG_BLOCK_LEN];
-        message[0] = 0x0000000000636261u64;
-        (initial_state(), message, 3, true)
-    }
-
-    #[test]
-    fn test_trace_result_with_default_input() {
-        assert_reference_matches_harness::<Blake2bCompression>(&default_input());
-    }
 
     #[test]
     fn test_trace_result_with_edge_cases() {

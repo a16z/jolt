@@ -204,12 +204,3 @@ where
         .commitments
         .len()
 }
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
-#[ignore = "enable --features prover-fixtures,zk to live-generate this verifier ZK fixture"]
-fn zk_muldiv_verifier_proof_is_accepted() {}
-
-#[test]
-#[ignore = "prefix BlindFold fixture generation is not wired yet"]
-fn zk_stage1_prefix_is_accepted() {}

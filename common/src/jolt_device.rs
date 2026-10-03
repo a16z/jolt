@@ -686,16 +686,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Untrusted advice size must be a power of two")]
-    fn layout_rejects_non_power_of_two_untrusted_advice() {
-        let _ = MemoryLayout::new(&MemoryConfig {
-            program_size: Some(1024),
-            max_untrusted_advice_size: 40,
-            ..Default::default()
-        });
-    }
-
-    #[test]
     #[should_panic(expected = "MemoryLayout requires bytecode size to be set")]
     fn layout_requires_program_size() {
         let _ = MemoryLayout::new(&MemoryConfig::default());

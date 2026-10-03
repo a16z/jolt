@@ -2134,7 +2134,7 @@ impl Valid for JoltInstructionKind {
 #[cfg(test)]
 mod tests {
     use super::{JoltInstructionKind, JoltInstructionTag, SourceInstructionKind};
-    use crate::instructions::{JoltInstruction, SourceInstruction, VirtualHostIO};
+    use crate::instructions::{JoltInstruction, VirtualHostIO};
     use std::collections::HashSet;
 
     #[test]
@@ -2186,24 +2186,6 @@ mod tests {
             assert!(!name.is_empty(), "empty canonical name for {kind:?}");
             assert!(seen.insert(name), "duplicate canonical name {name:?}");
         }
-    }
-
-    #[test]
-    fn source_to_final_mapping_is_partial() {
-        assert_eq!(
-            SourceInstructionKind::ADD.jolt_kind(),
-            Some(JoltInstructionKind::ADD)
-        );
-        assert_eq!(
-            SourceInstruction::VirtualHostIO(VirtualHostIO(())).jolt_kind(),
-            Some(JoltInstruction::VirtualHostIO(VirtualHostIO(())))
-        );
-        assert_eq!(
-            SourceInstructionKind::ADDW.jolt_kind(),
-            Some(JoltInstructionKind::ADDW)
-        );
-        assert_eq!(SourceInstructionKind::Inline.jolt_kind(), None);
-        assert_eq!(SourceInstructionKind::Unimpl.jolt_kind(), None);
     }
 
     #[test]

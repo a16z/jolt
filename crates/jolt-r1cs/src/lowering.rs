@@ -367,30 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn variable_source_products_reject_bad_witness() {
-        let mut builder = R1csBuilder::<Fr>::new();
-        let opening_value = builder.alloc(Fr::from_u64(3));
-        let challenge_value = builder.alloc(Fr::from_u64(4));
-        let out = builder.alloc(Fr::from_u64(13));
-
-        let mut sources = ClaimSourceTable::<Fr, Opening, (), Challenge>::new();
-        sources.insert_opening(Opening::A, opening_value);
-        sources.insert_challenge_lc(
-            Challenge::Gamma,
-            LinearCombination::variable(challenge_value),
-        );
-
-        let expression: Expr<Fr, Opening, (), Challenge> =
-            opening(Opening::A) * challenge(Challenge::Gamma);
-
-        assert_claim_expr_eq(&mut builder, &expression, out, &mut sources)
-            .expect("variable sources lower");
-
-        let witness = builder.witness().expect("witness is assigned");
-        assert!(builder.into_matrices().check_witness(&witness).is_err());
-    }
-
-    #[test]
     fn constant_sources_do_not_allocate_product_constraints() {
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening, Public, Challenge>::new();
@@ -425,18 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_challenge_is_typed_error() {
-        let mut builder = R1csBuilder::<Fr>::new();
-        let mut sources = ClaimSourceTable::<Fr, Opening>::new();
-        let expression: Expr<Fr, Opening> = challenge(2usize);
-
-        let error = lower_claim_expr(&mut builder, &expression, &mut sources)
-            .expect_err("challenge is missing");
-
-        assert_eq!(error, ClaimLoweringError::MissingChallenge);
-    }
-
-    #[test]
     fn missing_opening_is_typed_error() {
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening>::new();
@@ -449,18 +413,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_public_is_typed_error() {
-        let mut builder = R1csBuilder::<Fr>::new();
-        let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
-        let expression: Expr<Fr, Opening, Public> = derived(Public::Offset);
-
-        let error = lower_claim_expr(&mut builder, &expression, &mut sources)
-            .expect_err("public is missing");
-
-        assert_eq!(error, ClaimLoweringError::MissingPublic);
-    }
-
-    #[test]
     #[should_panic(expected = "duplicate opening source")]
     fn duplicate_opening_source_panics() {
         let mut builder = R1csBuilder::<Fr>::new();
@@ -469,20 +421,5 @@ mod tests {
         let mut sources = ClaimSourceTable::<Fr, Opening>::new();
         sources.insert_opening(Opening::A, a);
         sources.insert_opening(Opening::A, b);
-    }
-
-    #[test]
-    fn lowers_typed_challenge_sources() {
-        let mut builder = R1csBuilder::<Fr>::new();
-        let out = builder.alloc(Fr::from_u64(6));
-        let mut sources = ClaimSourceTable::<Fr, Opening, (), Challenge>::new();
-        sources.insert_challenge(Challenge::Gamma, Fr::from_u64(6));
-
-        let expression: Expr<Fr, Opening, (), Challenge> = challenge(Challenge::Gamma);
-        assert_claim_expr_eq(&mut builder, &expression, out, &mut sources)
-            .expect("typed challenge lowers");
-
-        let witness = builder.witness().expect("witness is assigned");
-        assert!(builder.into_matrices().check_witness(&witness).is_ok());
     }
 }

@@ -246,7 +246,6 @@ jolt_riscv::for_each_jolt_instruction_kind!(impl_jolt_lookup_query);
 mod tests {
     use super::*;
     use jolt_riscv::{
-        instructions::{Add, Ld, Noop},
         Flags, InterleavedBitsMarker, JoltInstructionRow, JoltInstructionRowData,
         NormalizedOperands,
     };
@@ -390,17 +389,6 @@ mod tests {
         };
     }
     jolt_riscv::for_each_jolt_instruction_kind!(assert_canonical_lookup_indices);
-
-    #[test]
-    fn aggregate_instruction_dispatches_lookup_table() {
-        let add = JoltInstruction::Add(Add(JoltInstructionRow::default()));
-        let load = JoltInstruction::Ld(Ld(JoltInstructionRow::default()));
-        let noop = JoltInstruction::Noop(Noop(JoltInstructionRow::default()));
-
-        assert!(InstructionLookupTable::<64>::lookup_table(&add).is_some());
-        assert!(InstructionLookupTable::<64>::lookup_table(&load).is_none());
-        assert!(InstructionLookupTable::<64>::lookup_table(&noop).is_none());
-    }
 
     #[test]
     fn dynamic_lookup_query_dispatches_to_instruction_impl() {

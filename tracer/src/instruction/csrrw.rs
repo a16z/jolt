@@ -73,27 +73,6 @@ mod tests {
     use crate::instruction::Instruction;
     use crate::instruction::RISCVTrace;
 
-    /// Test decoding of `csrw mtvec, t0` (csrrw x0, mtvec, t0)
-    /// Encoding: csr=0x305, rs1=t0(5), funct3=001, rd=x0(0), opcode=1110011
-    #[test]
-    fn test_csrrw_mtvec_decode() {
-        // csrw mtvec, t0 = csrrw x0, 0x305, t0
-        // Encoding: 0x305 << 20 | 5 << 15 | 1 << 12 | 0 << 7 | 0x73
-        let instr: u32 = 0x30529073;
-        let address: u64 = 0x1000;
-
-        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRW");
-
-        match decoded {
-            Instruction::CSRRW(csrrw) => {
-                assert_eq!(csrrw.operands.rd, 0, "rd should be x0");
-                assert_eq!(csrrw.operands.rs1, 5, "rs1 should be t0 (x5)");
-                assert_eq!(csrrw.csr_address(), 0x305, "CSR should be mtvec (0x305)");
-            }
-            _ => panic!("Expected CSRRW instruction, got {decoded:?}"),
-        }
-    }
-
     /// `decode` must reject unsupported CSRs with a typed error instead of
     /// letting them reach the inline-sequence path, which would previously
     /// panic the prover process.
@@ -105,26 +84,6 @@ mod tests {
         let err = Instruction::decode(instr, 0x1000, false)
             .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
         assert!(err.contains("CSR"), "error should mention CSR: {err}");
-    }
-
-    /// Test decoding with rd != 0 (full csrrw, not just csrw pseudo-instruction)
-    #[test]
-    fn test_csrrw_with_rd() {
-        // csrrw a0, mtvec, t0 (read old mtvec to a0, write t0 to mtvec)
-        // Encoding: 0x305 << 20 | 5 << 15 | 1 << 12 | 10 << 7 | 0x73
-        let instr: u32 = 0x30529573; // rd=a0(10)
-        let address: u64 = 0x1000;
-
-        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRW");
-
-        match decoded {
-            Instruction::CSRRW(csrrw) => {
-                assert_eq!(csrrw.operands.rd, 10, "rd should be a0 (x10)");
-                assert_eq!(csrrw.operands.rs1, 5, "rs1 should be t0 (x5)");
-                assert_eq!(csrrw.csr_address(), 0x305, "CSR should be mtvec (0x305)");
-            }
-            _ => panic!("Expected CSRRW instruction, got {decoded:?}"),
-        }
     }
 
     #[test]

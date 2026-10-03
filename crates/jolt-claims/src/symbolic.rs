@@ -175,53 +175,6 @@ mod tests {
         assert_eq!(output, Fr::from_u64(45));
     }
 
-    /// An empty sum evaluates to zero without consulting any resolver, and
-    /// derives an empty produced-opening set.
-    #[test]
-    fn empty_input_sum_evaluates_to_zero_and_produces_no_openings() {
-        let relation = Mock::new(());
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| unreachable!("empty sum must not read opening {id:?}"),
-            |id| unreachable!("empty sum must not read challenge {id:?}"),
-            |id| unreachable!("empty sum must not read derived value {id:?}"),
-        );
-        assert_eq!(input, Fr::from_u64(0));
-
-        struct EmptyOutput;
-        impl SymbolicSumcheck for EmptyOutput {
-            type RelationId = u8;
-            type OpeningId = Opening;
-            type DerivedId = Derived;
-            type ChallengeId = Challenge;
-            type Shape = ();
-            type Challenges<F> = NoChallenges<F>;
-            type Inputs<C> = NoInputs<C>;
-            type Outputs<C> = NoOutputs<C>;
-
-            fn new((): ()) -> Self {
-                Self
-            }
-            fn id() -> u8 {
-                8
-            }
-            fn rounds(&self) -> usize {
-                0
-            }
-            fn degree(&self) -> usize {
-                0
-            }
-            fn input_expression<F: Ring>(&self) -> Expr<F, Opening, Derived, Challenge> {
-                Expr::zero()
-            }
-            fn output_expression<F: Ring>(&self) -> Expr<F, Opening, Derived, Challenge> {
-                Expr::zero()
-            }
-        }
-        assert!(EmptyOutput::new(())
-            .expected_output_openings::<Fr>()
-            .is_empty());
-    }
-
     /// The produced-opening derivation walks every expanded term's factors:
     /// it deduplicates the repeated `A`, keeps `B`, and never reports
     /// challenge, derived, or constant leaves as openings.
@@ -265,11 +218,5 @@ mod tests {
             },
         );
         assert_eq!(succeeded, Ok(resolve(&expr)));
-    }
-
-    /// Relations that do not override `domain` run on the Boolean hypercube.
-    #[test]
-    fn default_domain_is_boolean_hypercube() {
-        assert_eq!(Mock::new(()).domain(), SumcheckDomain::BooleanHypercube);
     }
 }

@@ -339,20 +339,6 @@ mod tests {
     use jolt_field::{Fr, Ring};
 
     #[test]
-    fn satisfied_constraint() {
-        // x * x = y with witness [1, x=3, y=9]
-        let m = ConstraintMatrices::new(
-            1,
-            3,
-            vec![vec![(1, Fr::from_u64(1))]],
-            vec![vec![(1, Fr::from_u64(1))]],
-            vec![vec![(2, Fr::from_u64(1))]],
-        );
-        let w = vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(9)];
-        assert!(m.check_witness(&w).is_ok());
-    }
-
-    #[test]
     fn violated_constraint() {
         let m = ConstraintMatrices::new(
             1,

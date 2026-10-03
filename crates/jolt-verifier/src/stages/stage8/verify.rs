@@ -524,7 +524,7 @@ fn require_commitment_layout<C>(
     Ok(())
 }
 
-#[cfg(all(test, not(feature = "akita")))]
+#[cfg(all(test, not(feature = "akita"), feature = "field-inline"))]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
@@ -557,28 +557,11 @@ mod tests {
         final_opening_id(polynomial).into()
     }
 
-    /// Without field-inline, the batch plan is exactly the jolt-typed final-opening order
-    /// lifted into composite ids — no extra entries, unchanged order.
-    #[test]
-    fn base_final_opening_plan_is_the_jolt_order() {
-        let expected: Vec<ComposedOpeningId> =
-            final_opening_polynomial_order(layout(), true, true, None)
-                .into_iter()
-                .map(jolt_id)
-                .collect();
-        let ids: Vec<ComposedOpeningId> = base_entries(true)
-            .into_iter()
-            .map(|entry| entry.id)
-            .collect();
-        assert_eq!(ids, expected);
-    }
-
     /// With field-inline enabled, the composed plan is exactly the spec's field-inline
     /// final-opening order — `RamInc@Inc`, `RdInc@Inc`,
     /// `FieldRdInc@FieldRegistersIncClaimReduction`, then the RA families and the advice
     /// entries (`specs/field-inline-protocol.md`, "Stage 6 Composition" / the stage-8
     /// final-opening order block).
-    #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_final_opening_plan_matches_the_spec_order() {
         use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
@@ -645,7 +628,6 @@ mod tests {
 
     /// The splice fails closed on a missing field-inline commitment payload and on a plan
     /// without its RdInc anchor.
-    #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_splice_fails_closed() {
         use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};

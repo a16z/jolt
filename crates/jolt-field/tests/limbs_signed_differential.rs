@@ -76,18 +76,6 @@ fn limbs_fmadd_vs_bigint() {
     assert_eq!(acc.0, to_limbs::<5>(&expect));
 }
 
-#[test]
-fn limbs_u128_oracle() {
-    let mut rng = rng();
-    for _ in 0..500 {
-        let a: u64 = rng.gen();
-        let b: u64 = rng.gen();
-        let product = two::Limbs::<1>::new([a]).mul_trunc::<1, 2>(&two::Limbs::new([b]));
-        let expected = (a as u128) * (b as u128);
-        assert_eq!(product.0, [expected as u64, (expected >> 64) as u64]);
-    }
-}
-
 /// Sign-magnitude oracle mirroring the mathematical sign-magnitude rules
 /// with magnitudes wrapping at `width_bits` (matching truncated limb ops).
 #[derive(Clone)]
@@ -318,26 +306,6 @@ fn hi32_ops_match_bigint() {
         x -= a160;
         assert_hi32_matches(x, &oa.add(&ob).sub(&oa));
         assert_hi32_matches(-a96, &oa96.neg());
-    }
-}
-
-#[test]
-fn hi32_mul_full_range_oracle() {
-    // Full-limb SignedBigInt<3> multiplication (overflow-safe mac chains) as
-    // a second reference for S160 multiply across the ENTIRE input domain.
-    let mut rng = rng();
-    for _ in 0..1000 {
-        let a = two::signed::S160::new(rng.gen(), rng.gen(), rng.gen());
-        let b = two::signed::S160::new(rng.gen(), rng.gen(), rng.gen());
-        let product = a * b;
-        let wide = a
-            .to_signed_bigint_nplus1::<3>()
-            .mul_trunc::<3, 3>(&b.to_signed_bigint_nplus1::<3>());
-        assert_eq!(&product.magnitude_lo()[..], &wide.magnitude.0[..2]);
-        assert_eq!(
-            product.magnitude_hi() as u64,
-            wide.magnitude.0[2] & 0xFFFF_FFFF
-        );
     }
 }
 

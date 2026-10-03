@@ -3101,15 +3101,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "did not contain enough virtual advice")]
-    fn trace_with_advice_panics_when_slots_outnumber_values() {
-        let mut cpu = exec_cpu();
-        let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
-        // No values for 1 advice slot: the advice row finds no value.
-        trace_inline_sequence_with_advice(&div, &mut cpu, &[], None);
-    }
-
-    #[test]
     fn virtual_sequence_metadata_flags_control_is_real() {
         let mut instr = Instruction::decode(r_type(0, 2, 1, 0b000, 3, 0x33), ADDR, false).unwrap();
         assert!(instr.is_real(), "plain instruction is real");

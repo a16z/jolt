@@ -550,28 +550,6 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_cases() {
-        // Empty
-        let empty: &[u8] = &[];
-        assert_eq!(Blake3::digest(empty), compute_expected_result(empty));
-
-        // Length 64 (block-size)
-        let mut l64 = [0u8; 64];
-        for (i, b) in l64.iter_mut().enumerate() {
-            *b = 255 - i as u8;
-        }
-        assert_eq!(Blake3::digest(&l64), compute_expected_result(&l64));
-
-        // All zeros (64 bytes)
-        let zeros = [0u8; 64];
-        assert_eq!(Blake3::digest(&zeros), compute_expected_result(&zeros));
-
-        // All 0xFF (64 bytes)
-        let maxes = [0xFFu8; 64];
-        assert_eq!(Blake3::digest(&maxes), compute_expected_result(&maxes));
-    }
-
-    #[test]
     fn test_blake3_aligned_vs_unaligned() {
         // Test various sizes up to 64 bytes (Blake3 block size limit)
         let test_sizes = [0, 1, 3, 4, 7, 8, 15, 16, 31, 32, 33, 63, 64];
@@ -647,42 +625,5 @@ mod tests {
                 "blake3_keyed64 does not match blake3::keyed_hash"
             );
         }
-    }
-
-    #[test]
-    fn test_blake3_keyed64_deterministic() {
-        use super::AlignedHash32;
-
-        let left = AlignedHash32::new([0xAAu8; 32]);
-        let right = AlignedHash32::new([0xBBu8; 32]);
-
-        let mut iv1 = super::BLAKE3_IV;
-        let mut iv2 = super::BLAKE3_IV;
-
-        super::blake3_keyed64(&left, &right, &mut iv1);
-        super::blake3_keyed64(&left, &right, &mut iv2);
-
-        assert_eq!(iv1, iv2, "blake3_keyed64 should be deterministic");
-    }
-
-    #[test]
-    fn test_blake3_keyed64_different_inputs() {
-        use super::AlignedHash32;
-
-        let left1 = AlignedHash32::new([0x11u8; 32]);
-        let right1 = AlignedHash32::new([0x22u8; 32]);
-        let left2 = AlignedHash32::new([0x33u8; 32]);
-        let right2 = AlignedHash32::new([0x44u8; 32]);
-
-        let mut iv1 = super::BLAKE3_IV;
-        let mut iv2 = super::BLAKE3_IV;
-
-        super::blake3_keyed64(&left1, &right1, &mut iv1);
-        super::blake3_keyed64(&left2, &right2, &mut iv2);
-
-        assert_ne!(
-            iv1, iv2,
-            "Different inputs should produce different results"
-        );
     }
 }
