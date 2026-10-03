@@ -31,6 +31,7 @@ const SUMMARIZE_THREADS: usize = 256;
 const LAYOUT_THREADS: usize = 64;
 const SCATTER_THREADS: usize = 256;
 const MAX_MEMBER_OWNED_BYTES: usize = 6 << 30;
+const MEMBER_OWNED_BYTES_PER_ROW: usize = 24;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -498,7 +499,7 @@ fn checked_sum(values: &[usize]) -> Result<usize, BytecodeAddressSparseRuntimeEr
 }
 
 fn enforce_member_cap(rows: usize, bytes: usize) -> Result<(), BytecodeAddressSparseRuntimeError> {
-    let maximum = MAX_MEMBER_OWNED_BYTES.max(rows * 24);
+    let maximum = MAX_MEMBER_OWNED_BYTES.max(rows * MEMBER_OWNED_BYTES_PER_ROW);
     if bytes > maximum {
         return Err(BytecodeAddressSparseRuntimeError::ResidentStorageTooLarge { bytes, maximum });
     }

@@ -611,7 +611,7 @@ pub(crate) struct RegistersReadWriteCycleSequence {
 impl Drop for RegistersReadWriteCycleSequence {
     fn drop(&mut self) {
         if self.log_t == MAX_LOG_T {
-            // Retired payloads must not stay resident through later proof stages.
+            // Keep warm-proof reuse through log 28; log 29 needs memory for later stages.
             self.context
                 .release_private_buffer_pool(self.private_buffer_pool_epoch);
         }

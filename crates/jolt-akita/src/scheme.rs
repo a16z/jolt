@@ -26,6 +26,7 @@ use crate::adapters::{
     AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+use crate::schedules::emit::K256_PACKING_VARIABLES;
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,10 +93,16 @@ impl TraceCommitmentBackend {
         }
     }
 
+    // At 42 variables (log_T 29), either Metal K256 path failed the stage-2
+    // folded-oracle check on an otherwise verified trace (2026-10-03): Metal
+    // opening, or Metal commit with CPU opening. Cause unisolated; suspected
+    // catalog outer geometry change: D128/rank1 -> D64/rank2.
     pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
         match one_hot_k {
             AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
-            AKITA_ONE_HOT_K256 => matches!(num_vars, 38..=41),
+            AKITA_ONE_HOT_K256 => {
+                matches!(num_vars.checked_sub(K256_PACKING_VARIABLES), Some(25..=28))
+            }
             _ => false,
         }
     }
@@ -107,7 +114,9 @@ impl TraceCommitmentBackend {
     ) -> bool {
         match one_hot_k {
             AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
-            AKITA_ONE_HOT_K256 => matches!(num_vars, 37..=41),
+            AKITA_ONE_HOT_K256 => {
+                matches!(num_vars.checked_sub(K256_PACKING_VARIABLES), Some(24..=28))
+            }
             _ => false,
         }
     }
@@ -1170,6 +1179,27 @@ mod tests {
     use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
+
+    #[test]
+    fn metal_k256_qualification_stops_at_log28() {
+        for num_vars in [38, 41] {
+            assert!(TraceCommitmentBackend::shape_is_metal_qualified(
+                256, num_vars
+            ));
+        }
+        assert!(!TraceCommitmentBackend::shape_is_metal_qualified(256, 42));
+        assert!(!TraceCommitmentBackend::shape_is_metal_qualified(256, 37));
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        for num_vars in [37, 41] {
+            assert!(TraceCommitmentBackend::opening_shape_is_metal_qualified(
+                256, num_vars
+            ));
+        }
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        assert!(!TraceCommitmentBackend::opening_shape_is_metal_qualified(
+            256, 42
+        ));
+    }
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
