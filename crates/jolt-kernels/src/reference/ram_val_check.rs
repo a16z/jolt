@@ -37,6 +37,8 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for ReferenceBackend {
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
         let relation = inputs.relation;
         let trace_dimensions = relation.trace_dimensions();
+        // The consumed `ram_val` point is stage 2's RAM read-write opening
+        // point: `r_address` (log_k vars) followed by `r_cycle` (log_t vars).
         let ram_val_point: &[F] = &inputs.points.ram_val;
         if ram_val_point.len() != relation.ram_log_k() + trace_dimensions.log_t() {
             return Err(KernelError::InvariantViolation {

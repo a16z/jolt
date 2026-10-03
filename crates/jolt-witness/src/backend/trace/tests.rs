@@ -396,6 +396,8 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     assert_virtual_values(&witness, JoltVirtualPolynomial::Product, &[15, 0, 0, 0])?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::LookupOutput, &[8, 0, 0, 0])?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::PC, &[1, 2, 0, 0])?;
+    // The last cycle's missing successor counts as a no-op (the
+    // product/shift-family convention; see the trace materialization).
     assert_virtual_values(&witness, JoltVirtualPolynomial::NextIsNoop, &[0, 1, 1, 1])?;
     assert_virtual_values(
         &witness,
@@ -799,6 +801,10 @@ fn lookahead_witnesses_pad_the_final_cycle() {
         crate::witnesses::NextUnexpandedPc::extract(&row, None, &env),
         Ok(crate::witnesses::NextUnexpandedPc(0))
     );
+    // ShouldJump suppresses the jump only for a PRESENT no-op successor: a
+    // missing successor does not count as a no-op here (ADDI has no jump
+    // flag, so both are false; the semantics are pinned by the oracle-table
+    // assertions on real traces).
     assert_eq!(ShouldJump::extract(&row, None, &env), Ok(ShouldJump(false)));
 }
 
@@ -1201,6 +1207,11 @@ fn backend_drops_only_canonical_trailing_padding() {
     );
 }
 
+/// The dense-grid capacity formula: in-range shapes pass through, the
+/// profiling-scale shape that used to abort the process (`ram_K = 4096`,
+/// `log_T = 22`, 32-byte field: a 2^39-byte request) is refused with an
+/// actionable error, and the element/byte products refuse on overflow
+/// instead of wrapping.
 #[test]
 fn dense_grid_len_is_capped_and_overflow_checked() {
     assert_eq!(checked_dense_grid_len::<Fr>(4096, 1 << 10), Ok(4096 << 10));

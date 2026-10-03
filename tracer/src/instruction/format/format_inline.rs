@@ -36,6 +36,7 @@ impl InstructionFormat for FormatInline {
         }
     }
 
+    /// FormatInline maps rd ↔ rs3.
     fn set_rd(&mut self, rd: u8) {
         self.rs3 = rd;
     }
@@ -46,7 +47,7 @@ impl From<NormalizedOperands> for FormatInline {
         Self {
             rs1: operands.rs1.unwrap(),
             rs2: operands.rs2.unwrap(),
-            rs3: operands.rd.unwrap(),
+            rs3: operands.rd.unwrap(), // Map rd field to rs3
         }
     }
 }
@@ -56,7 +57,7 @@ impl From<FormatInline> for NormalizedOperands {
         Self {
             rs1: Some(format.rs1),
             rs2: Some(format.rs2),
-            rd: Some(format.rs3),
+            rd: Some(format.rs3), // Map rs3 back to rd field
             imm: 0,
         }
     }

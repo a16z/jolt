@@ -1,3 +1,6 @@
+//! Non-macOS backend: no device can be constructed, so every other type is
+//! uninhabited and its methods are statically unreachable.
+
 use std::env::consts::OS;
 
 use crate::error::MetalError;

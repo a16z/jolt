@@ -28,6 +28,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// The eight operand/flag tables, in output-claim declaration order:
+/// `[is_rs1, rs1, is_pc, upc, is_rs2, rs2, is_imm, imm]`.
 const NUM_TABLES: usize = 8;
 
 use crate::mem::purge_retained_memory;
@@ -143,6 +145,8 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         })
     }
 
+    /// First-round `q` evaluations over native rows.
+    /// The manual fold permits fallible row extraction.
     fn native_q_evals(
         &self,
         rows: &BundleStore<InstructionInputRow>,
@@ -344,6 +348,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 purge_retained_memory(self.progress.total());
             }
             InputState::Dense(tables) => {
+                // In-place binds avoid eight dead half-size generations.
                 for table in tables.iter_mut() {
                     let _ = table.bind_low_to_high_in_place(challenge);
                 }

@@ -89,6 +89,9 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
+        // Sparse entry construction: one trace pass — the typed rows are
+        // never materialized whole (80 bytes per cycle saved at the stage's
+        // peak moment).
         let CollectRegisterEntries {
             entries,
             rs1_indices,
@@ -103,6 +106,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             rd_inc,
         );
 
+        // Park the rd hot indices for the stage-5 val-evaluation kernel.
         session.park(SharedRdIndices(rd_indices));
 
         Ok(Box::new(ReadWriteKernel {
@@ -170,6 +174,13 @@ impl<F: JoltField> ReadWriteKernel<F> {
         }
     }
 
+    /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the
+    /// two read operands in one walk — the direct MLE of a one-hot `(K × T)`
+    /// grid at the bound point.
+    ///
+    /// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
+    /// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
+    /// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
     fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
         let rs1_indices = &self.rs1_indices;
         let rs2_indices = &self.rs2_indices;

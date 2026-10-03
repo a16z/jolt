@@ -1,3 +1,12 @@
+//! The stage 5 `FieldRegistersValEvaluation` sumcheck instance — the field-inline Twist
+//! val-evaluation member (spec: `field-inline-protocol.md`, "Stage 5 Composition").
+//!
+//! Consumes the `FieldRegistersVal` opening produced by the stage-4 field-inline read/write
+//! checking and opens `FieldRdInc`/`FieldRdWa` at the same field-inline address and this
+//! instance's cycle point, weighted by the `LtCycle` public. Mirrors the ordinary
+//! `RegistersValEvaluation`: `LtCycle = Lt(own cycle sub-point, upstream field-register
+//! read/write cycle sub-point)`.
+
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::field_inline::relations::registers::ValEvaluation;
@@ -16,6 +25,8 @@ use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumch
 use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::VerifierError;
 
+/// Wire the consumed `FieldRegistersVal` opening value from the upstream
+/// field-register read-write checking (stage 4).
 pub fn field_registers_val_evaluation_input_values_from_upstream<F: JoltField>(
     stage4: &Stage4OutputClaims<F>,
 ) -> FieldRegistersValEvaluationInputClaims<F> {
@@ -24,6 +35,8 @@ pub fn field_registers_val_evaluation_input_values_from_upstream<F: JoltField>(
     }
 }
 
+/// Wire the consumed `FieldRegistersVal` opening point from the upstream
+/// field-register read-write checking (stage 4).
 pub fn field_registers_val_evaluation_input_points_from_upstream<F: JoltField>(
     stage4: &Stage4OutputPoints<F>,
 ) -> FieldRegistersValEvaluationInputClaims<Vec<F>> {
@@ -53,6 +66,10 @@ impl<F: JoltField> FieldRegistersValEvaluation<F> {
     }
 }
 
+// Only the point geometry stays hand-written: the symbolic output expression
+// references the opening point and `LtCycle` as opaque `Derived` leaves, so
+// their derivations cannot come from it. Everything else (claim evaluation,
+// struct fill, id projection) is trait defaults + derive-generated code.
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
     type Symbolic = ValEvaluation;
 
@@ -89,6 +106,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         match project_public(id)? {
+            // Own cycle sub-point first, upstream field-register read/write cycle second —
+            // literally the ordinary `RegistersValEvaluation` `LtCycle` derivation at the
+            // field-inline geometry (the spec's `Lt(r_field_val.cycle, r_field_rw.cycle)`).
             FieldRegistersValEvaluationPublic::LtCycle => derivations::lt_at_cycle(
                 output_points.rd_inc(),
                 input_points.registers_val(),
@@ -116,6 +136,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
+    /// The field-register value-evaluation opening point is the upstream field-register
+    /// address prefix followed by this instance's reversed cycle point, and `LtCycle`
+    /// evaluates over exactly the two cycle sub-points (own cycle, upstream field-inline
+    /// read/write cycle).
     #[test]
     fn opening_point_reuses_upstream_address_and_lt_cycle_uses_the_cycle_points() {
         let log_t = 4usize;

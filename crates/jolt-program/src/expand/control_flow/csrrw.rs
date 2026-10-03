@@ -1,5 +1,12 @@
 use super::*;
 
+/// Lowers `CSRRW` to operations on Jolt's CSR virtual registers.
+///
+/// The reserved virtual register for the CSR is the proof-facing source of
+/// truth. The sequence preserves the read-before-write swap rule: `rd`
+/// receives the old CSR value unless `rd = x0`, and the CSR virtual register
+/// receives `rs1`. If `rd == rs1`, a temporary keeps the new CSR value alive
+/// while `rd` is overwritten with the old one.
 pub(in crate::expand) fn expand_csrrw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -11,6 +18,7 @@ pub(in crate::expand) fn expand_csrrw(
         asm.emit_i(Kind::ADDI, reg(virtual_reg), reg(rs1(instruction)?), 0);
         return asm.finalize();
     } else if rd(instruction)? == rs1(instruction)? {
+        // Preserve rs1 before rd is overwritten with the old CSR value.
         let temp = asm.allocate()?;
         asm.emit_i(Kind::ADDI, temp.operand(), reg(rs1(instruction)?), 0);
         asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);

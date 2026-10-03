@@ -16,6 +16,8 @@ declare_riscv_instr!(
 
 impl LWU {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LWU as RISCVInstruction>::RAMAccess) {
+        // The LWU instruction, on the other hand, zero-extends the 32-bit value from memory for
+        // RV64I.
         let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64;
         let value = cpu.mmu.load_word(address);
 

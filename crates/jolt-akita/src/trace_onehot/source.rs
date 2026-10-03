@@ -199,6 +199,9 @@ impl<const D: usize> RootPolyShape<AkitaField, D> for TracePackedOneHot {
     }
 }
 
+/// The packed trace streams hot positions from its rows. The canonical
+/// coefficient table feeds only tensor-style extension openings, which
+/// Jolt's base-field configs (`ExtField = Field`) never schedule.
 impl SourceCoefficients<AkitaField> for TracePackedOneHot {
     fn source_coefficients(&self) -> Result<Cow<'_, [AkitaField]>, AkitaError> {
         Err(AkitaError::InvalidInput(
@@ -221,6 +224,8 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
         )
     }
 
+    /// The packed trace stores hot positions, so every coefficient it commits is
+    /// `0` or `1` and no scan is possible or needed.
     fn committed_centered_reach(
         &self,
         _modulus: u128,

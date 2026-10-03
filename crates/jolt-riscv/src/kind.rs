@@ -1953,24 +1953,33 @@ crate::for_each_instruction_kind!(define_source_instruction_kind);
 crate::for_each_jolt_instruction_kind!(define_jolt_instruction_kind);
 
 impl SourceInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ADVICE: Self = SourceInstruction::VirtualAdvice(VirtualAdvice(()));
 
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
         SourceInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
         SourceInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_NEGATE_IF: Self = SourceInstruction::VirtualNegateIf(VirtualNegateIf(()));
 }
 
 impl JoltInstructionKind {
+    /// Value form of `VirtualAdvice`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ADVICE: Self = JoltInstruction::VirtualAdvice(VirtualAdvice(()));
 
+    /// Value form of `VirtualRev8W`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_REV8_W: Self = JoltInstruction::VirtualRev8W(VirtualRev8W(()));
 
+    /// Value form of `VirtualZeroExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_ZERO_EXTEND_WORD: Self =
         JoltInstruction::VirtualZeroExtendWord(VirtualZeroExtendWord(()));
+    /// Value form of `VirtualSignExtendWord`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_SIGN_EXTEND_WORD: Self =
         JoltInstruction::VirtualSignExtendWord(VirtualSignExtendWord(()));
+    /// Value form of `VirtualNegateIf`; the enum constructor shadows its CamelCase constant.
     pub const VIRTUAL_NEGATE_IF: Self = JoltInstruction::VirtualNegateIf(VirtualNegateIf(()));
 }
 

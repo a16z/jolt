@@ -1,3 +1,9 @@
+//! Solinas backend: pseudo-Mersenne prime fields `p = 2^k − c`.
+//!
+//! `word.rs` stamps the `u32`- and `u64`-backed field types from one fold
+//! algebra; `fp128.rs` is the hand-written two-limb field; this module holds
+//! the family trait, the `2^k − offset` registry, and shared helpers.
+
 mod ext;
 mod fp128;
 mod packed;
@@ -22,13 +28,17 @@ pub use word::{Fp32, Fp64};
 
 use crate::Ring;
 
+/// Maximum supported offset in the `2^k − offset` specialization.
 pub const PRIME_OFFSET_MAX: u128 = 1 << 16;
 
+/// Current active bit-size bound for concrete field aliases.
 pub const PRIME_OFFSET_IMPLEMENTED_MAX_BITS: u32 = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrimeOffsetSpec {
+    /// `k` in `2^k − offset`.
     pub bits: u32,
+    /// `offset` in `2^k − offset`.
     pub offset: u16,
     pub modulus: u128,
 }
@@ -45,6 +55,8 @@ pub const fn pseudo_mersenne_modulus(bits: u32, offset: u128) -> Option<u128> {
     }
 }
 
+/// `2^k − offset` as the storage word for a registered alias; fails at
+/// compile time on invalid parameters.
 #[expect(
     clippy::panic,
     reason = "CTFE-only: all call sites are const registry entries"
@@ -56,6 +68,13 @@ const fn pm(bits: u32, offset: u128) -> u128 {
     }
 }
 
+/// Sample uniformly from `[0, modulus)` with canonical byte consumption.
+///
+/// `modulus_bits` is the significant bit length of `modulus`. Each attempt
+/// reads exactly `ceil(modulus_bits / 8)` little-endian bytes, clears unused
+/// high bits, and rejects candidates greater than or equal to `modulus`. This
+/// byte-consumption contract is deterministic for a fixed
+/// [`rand_core::RngCore`] stream.
 #[inline]
 pub(crate) fn sample_uniform_below<R: rand_core::RngCore>(
     rng: &mut R,
@@ -88,6 +107,7 @@ const fn spec(bits: u32, offset: u16) -> PrimeOffsetSpec {
     }
 }
 
+/// `2^k − offset` profiles currently enabled in-code.
 pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
     spec(24, 3),
     spec(30, 35),
@@ -100,6 +120,7 @@ pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
     spec(128, 275),
 ];
 
+/// Return the registered prime spec for exactly `(bits, offset)`.
 pub const fn registered_prime_offset_spec(bits: u32, offset: u128) -> Option<PrimeOffsetSpec> {
     let mut i = 0;
     while i < PRIME_OFFSET_SPECS.len() {

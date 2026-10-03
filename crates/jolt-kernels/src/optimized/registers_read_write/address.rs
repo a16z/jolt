@@ -18,6 +18,9 @@ pub(crate) struct RegisterAddressState<F: JoltField> {
 }
 
 impl<F: JoltField> RegisterAddressState<F> {
+    /// Address-round message over the K-sized dense arrays. Cheap enough to
+    /// sample all `degree + 1` points directly, so the naive tier's running
+    /// claim self-check is kept.
     pub(crate) fn round_message(
         &self,
         round: usize,
@@ -60,6 +63,7 @@ impl<F: JoltField> RegisterAddressState<F> {
     }
 }
 
+/// Split the joint cycle/address equality table without a K*T allocation.
 pub(crate) struct OperandEq<F> {
     pub(crate) hi: Vec<F>,
     pub(crate) lo: Vec<F>,

@@ -7,6 +7,9 @@ use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
+/// The row-emission seam, re-exported so emitter A/B experiments (benches,
+/// integration tests, the Alternative 11 stencil spike) can build their own
+/// `EmitterSet` and compile with it.
 pub use super::compile::emitter::{EmitOutcome, EmitterSet, RowEmitter};
 pub use super::compile::CompiledProgram;
 use super::memory::MemoryPlane;
@@ -116,6 +119,7 @@ impl Prepared {
         })
     }
 
+    /// Run once from the initial register state; returns the row count.
     pub fn run_once(&mut self) -> Result<u64, TraceError> {
         let mut host = HostContext {
             device: JoltDevice::new(&memory_config()),

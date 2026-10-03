@@ -1,3 +1,12 @@
+//! Serial-vs-parallel equivalence for the `cfg_*!` conditional-parallelism
+//! macros (`solinas::parallel`).
+//!
+//! The macros dispatch on the `parallel` feature at the expansion site, so
+//! this suite exercises the sequential expansions when run without the
+//! feature and the rayon expansions when run with it (`--all-features`);
+//! every assertion compares against an explicitly serial computation, so a
+//! green run in both configurations is the equivalence proof.
+
 #![cfg(feature = "solinas")]
 
 use jolt_field::{Prime64Offset59, Ring, Zero};

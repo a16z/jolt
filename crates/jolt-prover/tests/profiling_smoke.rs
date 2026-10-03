@@ -63,11 +63,20 @@ fn profile_run_emits_conformant_artifacts() {
         "latest link resolves to this run"
     );
 
+    // Both artifacts exist and parse; the summary parses through the strict
+    // (`deny_unknown_fields`) schema structs — the instance-level validation
+    // against the checked-in JSON Schema, which a fixture test keeps in sync
+    // with those structs.
     let trace: Vec<Value> =
         serde_json::from_str(&std::fs::read_to_string(&trace_path).unwrap()).unwrap();
     let summary: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
 
+    // Every always-present current taxonomy label fired, for the mode this
+    // prover was compiled in — the `zk` feature swaps the uni-skip and
+    // stage-8 opening seams for their committed siblings, and the `akita`
+    // feature swaps the commitment seams for the packed set. (The advice
+    // seams are exempt: fibonacci exercises no advice.)
     let mode = if cfg!(feature = "akita") {
         taxonomy::ProverMode::Akita
     } else if cfg!(feature = "zk") {

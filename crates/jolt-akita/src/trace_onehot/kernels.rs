@@ -117,6 +117,9 @@ impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Ak
                 num_positions_per_block,
                 num_digits,
             )?)),
+            // Jolt's one-hot configs delegate to the single-chunk `fp128::OneHot`
+            // witness policy, so no admitted schedule row asks for chunked
+            // responses.
             DecomposeFoldBatchPlan::SparseChunked { .. } => Err(AkitaError::InvalidInput(
                 "trace-packed one-hot sources fold as a single chunk".into(),
             )),

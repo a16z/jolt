@@ -110,6 +110,10 @@ fn honest_proof_passes_oracle_check() {
 
 #[test]
 fn wrong_polynomial_same_sum_fails_oracle_check() {
+    // f and g have the same sum but are different polynomials.
+    // An honest proof for g will pass all round checks when verified against
+    // claimed_sum = sum(g), but the final evaluation will correspond to g(r),
+    // not f(r). The oracle check catches this.
     let f_evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let g_evals: Vec<F> = (1..=8).rev().map(F::from_u64).collect();
 
@@ -189,6 +193,8 @@ fn corrupted_middle_round_detected() {
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
 
+    // Corruption at round 2 may be detected at round 2 (wrong sum) or later
+    // (transcript desync from corrupted absorption). Either way, it must fail.
     assert!(result.is_err(), "corrupted middle round must be rejected");
 }
 
@@ -216,6 +222,9 @@ fn corrupted_last_round_detected() {
 
 #[test]
 fn swapped_round_order_rejected() {
+    // Swap rounds 0 and 1. The proof is no longer internally consistent because
+    // each round's polynomial depends on the previous challenge, and swapping
+    // changes the Fiat-Shamir transcript.
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
@@ -234,6 +243,8 @@ fn swapped_round_order_rejected() {
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
 
+    // Round 0 now has the wrong s(0)+s(1) (it was computed for a different running sum).
+    // Even if by accident s(0)+s(1) matched, the transcript would desync.
     assert!(result.is_err(), "swapped round order must be rejected");
 }
 
@@ -315,6 +326,9 @@ fn all_zero_polynomial_honest_proof_for_zero_sum() {
 
 #[test]
 fn verifier_transcript_desync_rejected() {
+    // If the verifier's transcript has been poisoned with extra data before
+    // verification begins, the Fiat-Shamir challenges will differ from the
+    // prover's, causing the running sum check to fail.
     let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
     let sum = compute_sum(&evals);
 
@@ -333,6 +347,10 @@ fn verifier_transcript_desync_rejected() {
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
 
+    // Round 0's s(0)+s(1) check passes (it doesn't depend on challenges),
+    // but the challenge r_0 will differ, so round 1's running sum will be wrong.
+    // For num_vars == 1 this wouldn't be caught by round checks (only by oracle check),
+    // but for num_vars >= 2, the transcript desync propagates to a round check failure.
     assert!(result.is_err(), "transcript desync must be rejected");
 }
 
@@ -373,10 +391,16 @@ fn num_vars_zero_no_oracle_check_possible() {
     let mut vt = new_transcript();
     let result = SumcheckVerifier::verify(&claim, round_proofs, BooleanHypercube, &mut vt);
 
+    // Passes — the verifier has nothing to check!
+    // Only the oracle check (comparing 999 against the actual constant) catches this.
     assert!(result.is_ok());
     assert_eq!(result.unwrap().value, F::from_u64(999));
 }
 
+/// Honest degree-2 compressed prover for f = g * h (both multilinear,
+/// HighToLow binding), absorbing rounds exactly the way `verify_compressed`
+/// replays them: `LabelWithCount(label, degree)` then the stored
+/// coefficients `[c0, c2]`.
 fn honest_prove_product_compressed(
     g_evals: &[F],
     h_evals: &[F],
@@ -476,6 +500,11 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
                 SUMCHECK_ROUND_TRANSCRIPT_LABEL,
                 &mut vt,
             );
+            // The compressed encoding re-derives each linear coefficient from
+            // the running sum, so s(0)+s(1) == running_sum holds by
+            // construction and the round loop CANNOT reject this tamper.
+            // Soundness rests entirely on the final oracle check, exactly as
+            // for the num_vars == 0 case documented on `verify`.
             assert!(
                 result.is_ok(),
                 "round checks are expected to pass for tampered round {round} \

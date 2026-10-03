@@ -101,8 +101,12 @@ mod canonical_address_tests {
                 "alias for r={r} escapes the predicate"
             );
         }
+        // r = c is the first value whose alias overflows 2^128, i.e. is not
+        // representable as a committed address at all.
         assert!(P.checked_add(C).is_none());
 
+        // (2) surviving addresses are canonical: !U(k) => k < p (see the
+        // compile-time assertion above for the inequality itself).
         assert!(!upper_all_ones(FIRST_ALL_ONES - 1));
         assert!(upper_all_ones(FIRST_ALL_ONES));
 

@@ -47,6 +47,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// Per-cycle `[rd write value, rs1 value, rs2 value]`, kept as raw `u64`s so
+/// the eq folds run on small-scalar fused multiply-adds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RegisterValuesRow([u64; 3]);
@@ -333,6 +335,8 @@ impl<F: JoltField> SumcheckKernel<F> for ClaimReductionKernel<F> {
         })
     }
 
+    /// Pin the regenerated eq table to the verifier's scalar path: its fully
+    /// bound value must equal `derive_output_term(EqSpartan)`.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -418,6 +422,8 @@ mod tests {
 
     #[test]
     fn parity_minimal_single_round() {
+        // log_t = 1: the P·Q phase covers the single round and the dense
+        // phase materializes inside `finish_rounds`.
         let mut fixture = TraceFixture::new();
         fixture.op(Some(6), Some(2), Some(3));
         fixture.op(None, Some(6), Some(6));

@@ -1,3 +1,7 @@
+//! Sparse per-cycle RAM addresses and values shared across RAM kernels.
+//! [`SharedRamAddresses`] survives stages 2–6b; [`RamAccessColumns`] owns the
+//! stage-2-only values.
+
 use core::marker::PhantomData;
 use std::sync::Arc;
 
@@ -19,6 +23,7 @@ const SPLIT_CHUNK: usize = 1 << 16;
 #[cfg(feature = "parallel")]
 const PAR_CHUNK: usize = 1 << 14;
 
+/// `addresses` sentinel for cycles with no (remappable) RAM access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
@@ -32,6 +37,9 @@ struct RamAddressBundle {
     address: RemappedRamAddress,
 }
 
+/// Pack a remapped address. The column is `u32` because it outlives every
+/// other trace-sized RAM array (stages 2–6b); the sparse matrices index it
+/// as `u32` as well.
 fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError<F>> {
     let Some(address) = address else {
         return Ok(NO_ACCESS);
@@ -45,10 +53,12 @@ fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError
     }
 }
 
+/// Session-shared remapped addresses; [`NO_ACCESS`] marks absent accesses.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRamAddresses(pub(crate) Arc<Vec<u32>>);
 
 impl SharedRamAddresses {
+    /// Collect once, then return shared references.
     #[expect(
         clippy::expect_used,
         reason = "the entry is parked by this function right above the read"
@@ -72,6 +82,7 @@ impl SharedRamAddresses {
                 .expect("RAM address column parked above")
                 .0,
         );
+        // Reuse by type must not cross trace domains.
         if addresses.len() != 1usize << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "session-shared RAM address column".to_owned(),
@@ -213,11 +224,20 @@ where
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessColumns {
     pub addresses: Arc<Vec<u32>>,
+    /// Pre-access value, or zero without an access.
     pub pre_values: Vec<u64>,
+    /// Post-access word value per cycle (equals the pre-value for reads).
     pub post_values: Vec<u64>,
 }
 
 impl RamAccessColumns {
+    /// Reuse or create the shared address column, then collect the values.
+    ///
+    /// Two bundle passes instead of one fused pass: the `u32` address column
+    /// outlives the `u64` values by four stages, so it is collected on its
+    /// own. Stage 4 calls this again rather than parking the values from
+    /// stage 2 — re-reading the trace is cheaper than keeping `16·T` bytes
+    /// resident across stages 2–4.
     pub fn collect_full<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
@@ -272,6 +292,7 @@ pub(crate) fn validate_addresses<F: JoltField>(
     Ok(())
 }
 
+/// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
 pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) -> Vec<F> {
     addresses
         .iter()
@@ -287,6 +308,9 @@ pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) 
 
 const FOLD_CYCLES_CHUNK: usize = 1 << 20;
 
+/// Cycle fold of the one-hot `ra` grid:
+/// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
+/// Eq values are generated in chunks from `e_hi ⊗ e_lo`.
 pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k: usize) -> Vec<F> {
     let mid = r_cycle.len() / 2;
     let (r_hi, r_lo) = r_cycle.split_at(mid);

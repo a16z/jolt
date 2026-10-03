@@ -67,6 +67,7 @@ impl LookupBits {
         msb as u8
     }
 
+    /// Number of bits in this bitvector.
     #[inline]
     pub fn len(&self) -> usize {
         self.len as usize

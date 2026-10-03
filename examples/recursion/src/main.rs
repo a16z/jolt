@@ -363,6 +363,7 @@ fn collect_guest_proofs(
 
         let now = Instant::now();
 
+        // Running tracing allows things like JOLT_BACKTRACE=1 to work properly
         info!("  Tracing...");
         let (_, _, _, device_io) = program.trace(&input_bytes, &[], &[]);
         assert!(!device_io.panic, "Guest program panicked during tracing");
@@ -511,6 +512,7 @@ fn run_recursion_proof(
     program.set_memory_config(memory_config);
     program.build(target_dir);
     if run_config == RunConfig::Trace || run_config == RunConfig::TraceToFile {
+        // shorten the max_trace_length for tracing only. Speeds up setup time for tracing purposes.
         max_trace_length = 0;
     }
     let recursion_prover_preprocessing =

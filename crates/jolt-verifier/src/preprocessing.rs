@@ -167,6 +167,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// deployed verifier sees.
 #[cfg(not(feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v2";
+// Field flags use the common circuit columns; preprocessing has no side table.
 #[cfg(feature = "field-inline")]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v5";
 
@@ -245,6 +246,8 @@ where
     }
 }
 
+/// Wire form of [`JoltVerifierPreprocessing`]: everything except the derived
+/// digest.
 #[derive(Serialize, Deserialize)]
 #[serde(bound(
     serialize = "VC::Setup: Serialize",

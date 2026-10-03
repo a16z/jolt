@@ -33,6 +33,9 @@ where
         opening(outer_uniskip_opening()),
     )?;
 
+    // The remainder sumcheck point is opening-derived: for the singleton remainder
+    // batch the committed round challenges are the raw (un-reversed) point that the
+    // clear path obtains from the bound remainder reduction.
     let remainder_challenges = input.stage1.remainder_consistency.challenges();
     let remainder_formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
         tau: &input.stage1.challenges.tau,
@@ -43,10 +46,16 @@ where
         stage: JoltRelationId::SpartanOuter,
         reason: error.to_string(),
     })?;
+    // Under `field-inline` this coefficient table is the COMPOSED one (50 columns): the same
+    // source the clear path's factored check consumes, so the appended field-inline weight
+    // publics bake automatically.
     for (id, value) in remainder_formula.public_coefficients() {
         values.public(VerifierPublicId::SpartanOuter(id), value)?;
     }
 
+    // The composed opening row order: the common value/flag openings in canonical order, then (under
+    // `field-inline`) the five field value/product columns in appended-column order — the clear path's
+    // absorb order exactly.
     let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
 
     #[expect(
@@ -154,6 +163,9 @@ mod tests {
         }
     }
 
+    /// The composed opening row order is the clear absorb order: the common value/flag openings in
+    /// canonical order, then (with field-inline enabled) the five field value/product openings in
+    /// appended-column order, matching the composed jolt-r1cs column count.
     #[test]
     fn stage1_opening_ids_follow_the_composed_column_order() {
         let dimensions = SpartanOuterDimensions::rv64(3);
@@ -184,6 +196,10 @@ mod tests {
         }
     }
 
+    /// The lowered composed output expression evaluates bit-identically to the composed
+    /// factored form `JoltSpartanOuterRemainder::expected_output_claim` over the full selected
+    /// opening vector — the same equation the clear stage-1 path checks (with field-inline
+    /// enabled: 50 openings; with field-inline disabled: the rv64 35).
     #[test]
     fn lowered_output_expr_matches_the_composed_factored_form() {
         let log_t = 3usize;

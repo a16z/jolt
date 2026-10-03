@@ -10,6 +10,11 @@ use jolt_inlines_sdk::host::{
 use jolt_inlines_sdk::jolt_asm;
 use num_bigint::BigInt as NBigInt;
 
+// p = 2^256 - q for base field:
+//   p[0] = 0x0000000000000001  (special: equals 1, w[i]*p[0] = w[i], use ADD)
+//   p[1] = 0xFFFFFFFF00000000  (loaded into p1)
+//   p[2] = 0xFFFFFFFFFFFFFFFF  (loaded into p2; equals -1 mod 2^64, w[i]*p[2] = -w[i] for MUL)
+//   p[3] = 0x00000000FFFFFFFE  (loaded into p3)
 const P256_PQ: [u64; 4] = [
     0x0000000000000001,
     0xFFFFFFFF00000000,
@@ -17,6 +22,11 @@ const P256_PQ: [u64; 4] = [
     0x00000000FFFFFFFE,
 ];
 
+// p = 2^256 - n for scalar field:
+//   p[0] = 0x0C46353D039CDAAF  (loaded into p1)
+//   p[1] = 0x4319055258E8617B  (loaded into p2)
+//   p[2] = 0x0000000000000000  (zero! skip all terms)
+//   p[3] = 0x00000000FFFFFFFF  (loaded into p3)
 const P256_NEG_N: [u64; 4] = [
     0x0C46353D039CDAAF,
     0x4319055258E8617B,
@@ -246,6 +256,8 @@ impl P256Mulq {
                     first = false;
                 }
 
+                // j=2: p[2] = 0, skip
+
                 if k >= 3 && k - 3 < 4 {
                     self.asm.mac_low_conditional(
                         !first,
@@ -281,6 +293,8 @@ impl P256Mulq {
                     );
                     first = false;
                 }
+
+                // j=2: p[2] = 0, skip
 
                 if k >= 4 && k - 4 < 4 {
                     self.asm.mac_high_conditional(
@@ -335,6 +349,9 @@ impl P256Mulq {
                     );
                     first = false;
                 }
+
+                // j=0 (p[0]=1): i = k-1
+                // high(w[k-1] * 1) = 0, skip entirely
 
                 if k >= 2 && k - 2 < 4 {
                     self.asm.mac_high_conditional(
@@ -509,6 +526,7 @@ impl P256Mulq {
         jolt_asm!(self.asm, {
             add *self.r[1], *self.r[1], *self.aux;
             assert_eq *self.r[1], *self.w[3];
+            // ensure no overflow
             assert_lte *self.aux, *self.r[1];
         });
 
@@ -604,6 +622,10 @@ p256_mulq_op!(P256DivQ,    funct3: crate::P256_DIVQ_FUNCT3,    name: crate::P256
 p256_mulq_op!(P256MulR,    funct3: crate::P256_MULR_FUNCT3,    name: crate::P256_MULR_NAME,    mul_type: MulqType::Mul,    is_scalar: true);
 p256_mulq_op!(P256SquareR, funct3: crate::P256_SQUARER_FUNCT3, name: crate::P256_SQUARER_NAME, mul_type: MulqType::Square, is_scalar: true);
 p256_mulq_op!(P256DivR,    funct3: crate::P256_DIVR_FUNCT3,    name: crate::P256_DIVR_NAME,    mul_type: MulqType::Div,    is_scalar: true);
+
+// Fake GLV advice inline: computes s*P and half-GCD decomposition off-circuit,
+// then emits [R.x(4), R.y(4), a_lo, a_hi, a_sign, b_lo, b_hi, b_sign].
+// The guest SDK verifies correctness in-circuit.
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct P256FakeGlvAdvice {

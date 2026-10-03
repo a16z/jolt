@@ -60,6 +60,8 @@ const COLD: u64 = u64::MAX;
 
 const COLLECT_CHUNK: usize = 1 << 12;
 
+/// Minimum per-range work of the parallel scatter/sum drivers; below it the
+/// range split costs more than the loop.
 #[cfg(feature = "parallel")]
 const MIN_RANGE: usize = 1 << 12;
 
@@ -87,6 +89,9 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
             });
         }
 
+        // Chunk selectors for the trace-derived subset — the same family-size
+        // counting and selector math as the commit kernel, so the opened
+        // values are the committed values by construction.
         let trace_ids: Vec<JoltCommittedPolynomial> = polynomials
             .iter()
             .copied()
@@ -160,6 +165,8 @@ impl OpeningColumns {
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
+        // Slice-backed sources fill the five columns index-parallel — the
+        // chunked walk serializes on staging buffers and the consume copy.
         #[cfg(feature = "parallel")]
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
@@ -286,6 +293,16 @@ impl StreamConsumer for CollectOpeningColumns {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Grid placement
+// ---------------------------------------------------------------------------
+
+/// A trace coefficient's grid index: `(k, t) ↦ t · t_stride + k · k_stride`,
+/// dense columns at `k = 0`. Covers both proof orders with one formula:
+/// cycle-major prefix-embeds the flat address-major `(K × T)` matrix
+/// (`t_stride = 1`, `k_stride = 2^log_t`); address-major scatters
+/// cycle-block-strided (`t_stride = cycle_stride`, `k_stride =
+/// one_hot_stride`) — the reference embeddings' index maps verbatim.
 #[derive(Clone, Copy, Debug)]
 struct TracePlacement {
     total_vars: usize,
@@ -601,6 +618,15 @@ impl<F: JoltField> MultilinearPoly<F> for BlockOpeningPoly<F> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Row emission (off the stage-8 path)
+// ---------------------------------------------------------------------------
+
+/// Emit the `(2^{n-σ} × 2^σ)` matrix rows of a sparse entry set. Sorts the
+/// entries and cursor-walks them into one reused row buffer — `O(N log N +
+/// 2^n)` time, `O(N + 2^σ)` space. The batch opening never calls this
+/// (it drives `fold_rows`); it serves the general [`MultilinearPoly`]
+/// contract (`to_dense`, tests).
 fn emit_sorted_rows<F: JoltField>(
     mut entries: Vec<(usize, F)>,
     num_vars: usize,

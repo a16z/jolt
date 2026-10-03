@@ -547,6 +547,9 @@ fn wrong_eval_commitment_rejected_zk() {
     let (mut proof, _eval_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt).unwrap();
 
+    // Replace proof.y_com (the hiding commitment to the evaluation) with a
+    // different valid G1. dory::verify must reject because the Σ₁/Σ₂ sub-proofs
+    // bind y_com cryptographically to the rest of the proof.
     proof.0.y_com = Some(ArkG1::default());
 
     let mut vt = Blake2bTranscript::new(b"zk-tampered-y-com");
@@ -581,6 +584,11 @@ fn zk_wrong_transcript_domain_rejected() {
     );
 }
 
+/// Hints from a shared commitment grid are ragged: a polynomial narrower than
+/// the grid streams fewer rows than a grid-spanning one. `combine_hints` pads
+/// the narrow hint with identity rows (the zero-embedding's missing rows), so
+/// the combined hint must open the RLC of the wide polynomial with the
+/// zero-extended narrow one.
 #[test]
 fn ragged_hint_combination_verifies() {
     let wide_vars = 6;
@@ -594,6 +602,8 @@ fn ragged_hint_combination_verifies() {
 
     let (wide_commit, wide_hint) = DoryScheme::commit(wide.evaluations(), &prover_setup).unwrap();
 
+    // Commit the narrow polynomial at the wide grid's row width, as the
+    // shared-grid witness commitment does — fewer hint rows than the wide.
     let row_width = 1usize << wide_vars.div_ceil(2);
     let mut partial = DoryScheme::begin(&prover_setup);
     for chunk in narrow.evaluations().chunks(row_width) {

@@ -1,3 +1,7 @@
+//! Typed extension inputs for the bytecode address phase and geometry
+//! attached by the prover for its kernel. Verification evaluates the composed
+//! symbolic claim without materializing that geometry.
+
 use jolt_claims::protocols::composed::FieldInlineBytecodeReadRafInputs;
 use jolt_field::JoltField;
 
@@ -10,7 +14,9 @@ use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 /// [`compose_bytecode_geometry`]; the verifier itself never evaluates it in this stage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafGeometry<F> {
+    /// The stage-4 field-register read-write opening point.
     pub read_write_point: Vec<F>,
+    /// The stage-5 field-register value-evaluation opening point.
     pub val_evaluation_point: Vec<F>,
 }
 

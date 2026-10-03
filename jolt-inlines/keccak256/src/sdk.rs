@@ -48,6 +48,7 @@ impl Keccak256 {
         }
     }
 
+    /// Reads hash digest and consumes the hasher.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; HASH_LEN] {
         // Keccak padding is `0x01 .. 0x80`; both markers share a byte when
@@ -62,6 +63,8 @@ impl Keccak256 {
         to_bytes(self.state)
     }
 
+    /// Computes Keccak-256 hash in one call.
+    /// Optimized for virtual cycles by avoiding intermediate buffer for final block.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; HASH_LEN] {
         let mut state = [0u64; 25];
@@ -94,6 +97,7 @@ impl Default for Keccak256 {
     }
 }
 
+/// The first `HASH_LEN` bytes of the state, lanes serialized little-endian.
 #[inline(always)]
 fn to_bytes(state: [u64; 25]) -> [u8; HASH_LEN] {
     let mut hash = [0u8; HASH_LEN];
@@ -136,6 +140,7 @@ fn absorb_full_blocks<'a>(state: &mut [u64; 25], input: &'a [u8]) -> &'a [u8] {
     blocks.remainder()
 }
 
+/// Pads the final partial block (`input.len() < RATE_IN_BYTES`) and absorbs it.
 #[inline(always)]
 fn absorb_final(state: &mut [u64; 25], input: &[u8]) {
     let mut block = [0u64; RATE_IN_U64];

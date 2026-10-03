@@ -21,6 +21,8 @@
 //! Extension rows are `(canonical coefficients, bincode wire hex)`.
 
 #![expect(clippy::unwrap_used, reason = "test code")]
+// The whole file is backend fixture data; without a backend there is nothing
+// to pin and every item would be dead code under -Dwarnings.
 #![cfg(any(feature = "bn254", feature = "solinas"))]
 
 use jolt_field as two;

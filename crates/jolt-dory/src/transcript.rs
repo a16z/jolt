@@ -1,3 +1,9 @@
+//! Bridges the `jolt-transcript` framework into dory-pcs's `DoryTranscript` trait.
+//!
+//! Prover/verifier parity within `jolt-dory` is by construction: both sides
+//! traverse this adapter. The surrounding Jolt transcript is responsible for
+//! matching the core Fiat-Shamir byte layout before this adapter is entered.
+
 use dory::backends::arkworks::BN254;
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::transcript::Transcript as DoryTranscript;
@@ -132,6 +138,8 @@ mod tests {
         wrong_count.append_bytes(&payload);
         assert_ne!(actual.state(), wrong_count.state());
 
+        // Word and payload are separate absorptions, not one concatenated
+        // buffer (the sponge length-prefixes each `append_bytes` call).
         let mut merged = transcript();
         let mut buffer = label_with_count_word(b"dory_bytes", 5).to_vec();
         buffer.extend_from_slice(&payload);
@@ -155,6 +163,7 @@ mod tests {
         expected.append_bytes(&scalar_be);
         assert_eq!(actual.state(), expected.state());
 
+        // Little-endian absorption would be an invisible-to-roundtrip bug.
         let mut little_endian = transcript();
         let mut scalar_le = [0u8; 32];
         scalar_le[..8].copy_from_slice(&0xdead_beefu64.to_le_bytes());
@@ -203,6 +212,8 @@ mod tests {
         assert_eq!(actual.state(), expected.state());
     }
 
+    /// Domain separation comes from the fixed `dory_*` labels; the caller's
+    /// dory-side label is deliberately dropped by the adapter.
     #[test]
     fn caller_labels_do_not_reach_the_transcript() {
         let payload = [1u8, 2, 3];

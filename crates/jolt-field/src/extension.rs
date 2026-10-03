@@ -1,3 +1,13 @@
+//! Extension-field contracts: the tower surface over a base field.
+//!
+//! [`ExtField`] is the degree-`d` extension contract (embedding, coefficient
+//! access in the canonical basis, Frobenius); [`Ext2Config`] configures a
+//! quadratic extension `F[u]/(u^2 − NR)` through a zero-sized type, with the
+//! [`NegOneNr`] and [`TwoNr`] presets.
+//!
+//! [`MulBaseUnreduced`] is the deferred ext×base multiply, stated in terms
+//! of [`Unreduced::Product`].
+
 use crate::{Field, PseudoMersenne, Ring, Unreduced};
 use std::ops::{Add, Mul, Sub};
 
@@ -7,6 +17,7 @@ use std::ops::{Add, Mul, Sub};
 /// elements, coefficient access in the canonical basis `{1, e1, ...}`, and
 /// Frobenius powers `x -> x^(q^power)` for `q = |F|`.
 pub trait ExtField<F: Field>: Field {
+    /// Extension degree `[Self : F]`.
     const DEGREE: usize;
 
     /// Embeds `x ∈ F` as the constant coefficient.
@@ -42,6 +53,7 @@ pub trait ExtField<F: Field>: Field {
         Self::from_base_fn(|index| coeffs[index])
     }
 
+    /// Returns the base-field coefficients in the canonical basis.
     #[inline]
     fn to_base_vec(&self) -> Vec<F> {
         (0..Self::DEGREE)
@@ -71,12 +83,14 @@ pub trait ExtField<F: Field>: Field {
 /// [`Unreduced::mul_unreduced`]) is correct everywhere; extensions whose
 /// product-accumulator layout admits cheaper coordinate scaling override it.
 pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
+    /// Accumulates `self · x` (extension times base scalar) unreduced.
     #[inline]
     fn mul_base_unreduced(self, x: F) -> Self::Product {
         self.mul_unreduced(Self::lift_base(x))
     }
 }
 
+/// A base field is its own degree-1 extension; the default body is exact.
 impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {}
 
 /// Arithmetic form of an [`Ext2Config`] non-residue.
@@ -86,6 +100,7 @@ impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {}
 /// value to select formulas that are valid only for those two constants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ext2NonResidueKind {
+    /// Any non-residue without a dedicated arithmetic formula.
     Generic,
     NegOne,
     Two,

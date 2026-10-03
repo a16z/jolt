@@ -1,3 +1,12 @@
+//! Packed-lane contracts: [`Packed`] (`WIDTH` parallel scalar lanes),
+//! [`WithPacking`] (scalar → packed association), and the [`NoPacking`]
+//! one-lane fallback used on targets without a SIMD backend.
+//!
+//! The extension kernel hooks default to the shared coefficient schedules
+//! (`crate::schedules`), so every backend computes the same field values;
+//! SIMD backends override the degree-4 hooks with fused deferred-reduction
+//! dot products.
+
 use crate::{Ext2Config, Field};
 use num_traits::Zero;
 use std::ops::{Add, Mul, Sub};
@@ -15,6 +24,7 @@ pub trait Packed:
 {
     type Scalar: Field;
 
+    /// Number of scalar lanes.
     const WIDTH: usize;
 
     fn from_fn(f: impl FnMut(usize) -> Self::Scalar) -> Self;
@@ -114,6 +124,7 @@ pub trait WithPacking: Field {
     type Packing: Packed<Scalar = Self>;
 }
 
+/// One-lane fallback with no SIMD path: plain scalar arithmetic per "lane".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct NoPacking<T>(pub [T; 1]);

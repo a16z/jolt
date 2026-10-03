@@ -139,6 +139,7 @@ impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
             .collect()
     }
 
+    /// Returns the suffix challenge vector for an instance with `num_vars`.
     pub fn try_instance_point(&self, num_vars: usize) -> Result<Vec<F>, SumcheckError<F>>
     where
         F: Copy,
@@ -237,6 +238,8 @@ where
         })
     }
 
+    /// Commit one round polynomial, absorb the commitment, and squeeze the
+    /// round challenge.
     pub fn commit_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,

@@ -86,6 +86,8 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
+    // Committed-program mode needs the prover-retained full program + hints;
+    // require presence to agree with the verifier preprocessing's mode.
     if preprocessing.verifier.program.committed().is_some()
         != preprocessing.committed_program.is_some()
     {
@@ -93,6 +95,9 @@ where
             reason: "committed-program prover data presence disagrees with the preprocessing mode",
         });
     }
+    // The chunk commitments bake their trace order in at preprocessing time;
+    // a disagreeing proof config would transpose the rebuilt chunk tables
+    // against the absorbed commitments and fail only at verification.
     if preprocessing
         .committed_program
         .as_ref()
@@ -103,11 +108,21 @@ where
         });
     }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
+    // Trusted-advice presence rides on the external commitment argument;
+    // require it to agree with the advice bytes so a mismatch fails here
+    // rather than as an opaque stage-4 sumcheck error (bytes without a
+    // commitment) or as a nonstandard proof over the zero advice polynomial
+    // (a commitment without bytes).
     if trusted_advice.is_some() == public_io.trusted_advice.is_empty() {
         return Err(ProverError::Unsupported {
             reason: "trusted-advice commitment presence disagrees with the trusted advice bytes",
         });
     }
+    // The verifier's own input validation doubles as the prover's self-check
+    // and produces the normalized `CheckedInputs` the preamble absorbs. The
+    // zk axis is the compiled feature — the co-compiled verifier's
+    // `SELECTED_ZK_CONFIG` flips with the same feature, so both sides always
+    // agree.
     let checked = validate_inputs_from_parts(
         &preprocessing.verifier,
         public_io,
@@ -120,6 +135,11 @@ where
         cfg!(feature = "zk"),
     )?;
 
+    // The dominant-advice regime (an advice grid wider than every other
+    // commitment-grid candidate) has no e2e coverage anywhere; guard it off
+    // until an oracle-backed test exists. Committed-program candidates count
+    // toward the grid width, so advice wider than the main matrix but inside
+    // a committed candidate is fine.
     {
         let mut grid_without_advice =
             config.one_hot_config.committed_chunk_bits() + config.trace_length.ilog2() as usize;
@@ -216,6 +236,10 @@ where
         )
     };
 
+    // The untrusted advice polynomial is committed at prove time in its OWN
+    // balanced grid (its variable count comes from the memory layout's maximum
+    // advice size, independent of the main grid); the trusted commitment
+    // arrived from preprocessing.
     let untrusted_advice_commitment = if untrusted_advice_present {
         let advice_grid = CommitmentGrid {
             total_vars: advice_total_vars(public_io.memory_layout.max_untrusted_advice_size),
@@ -246,6 +270,8 @@ where
     if let Some(trusted) = trusted_advice {
         hints.push((JoltCommittedPolynomial::TrustedAdvice, trusted.hint.clone()));
     }
+    // The committed-program hints ride from preprocessing (the chunk/image
+    // commitments were produced there, before any proving).
     if let Some(committed) = &preprocessing.committed_program {
         let expected_chunks = checked
             .precommitted
@@ -407,6 +433,8 @@ fn assemble_commitments<PCS: CommitmentScheme>(
     ))
 }
 
+// Transparent mode only: the zk streaming finishes blind their commitments,
+// so two independent commits of the same column are not comparable.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_tests {
@@ -441,6 +469,11 @@ mod field_inline_tests {
         finish_streamed::<DoryScheme>(partial, setup).0
     }
 
+    /// The prover attaches the field-inline payload and absorbs it through the
+    /// verifier's own `absorb_transcript_commitments` — pinned by asserting
+    /// the payload is `Some`, that both sides' absorbs agree byte-for-byte
+    /// (equal challenge streams), and that stripping the payload diverges
+    /// (the field-inline commitment is Fiat-Shamir-bound).
     #[test]
     fn stage0_attaches_and_absorbs_the_field_inline_payload() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();

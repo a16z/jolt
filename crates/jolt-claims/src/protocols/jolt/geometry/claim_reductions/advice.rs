@@ -24,6 +24,8 @@ pub struct AdviceClaimReductionLayout {
     cycle_phase_row_rounds: Range<usize>,
 }
 
+/// Total-var counts of the present advice polynomials, in the order core feeds
+/// them to the shared precommitted scheduling reference (trusted first).
 pub fn candidate_total_vars(
     trusted_max_advice_size_bytes: Option<usize>,
     untrusted_max_advice_size_bytes: Option<usize>,

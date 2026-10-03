@@ -44,12 +44,22 @@ pub struct Emulator {
 
     symbol_map: FnvHashMap<String, u64>,
 
+    /// [`riscv-tests`](https://github.com/riscv/riscv-tests) program specific
+    /// properties. Whether the program set by `setup_program()` is
+    /// [`riscv-tests`](https://github.com/riscv/riscv-tests) program.
     is_test: bool,
 
+    /// [`riscv-tests`](https://github.com/riscv/riscv-tests) specific properties.
+    /// The address where data will be sent to terminal
     pub tohost_addr: u64,
 
+    /// In RISC-V testing, signatures are memory-stored execution results. They're
+    /// used to compare a processor's behavior against a trusted reference model
+    /// (like SAIL or Spike) to ensure correct and compliant operation.
+    /// The address where the signature region begins
     pub begin_signature_addr: u64,
 
+    /// The address where the signature region ends
     pub end_signature_addr: u64,
 }
 
@@ -60,6 +70,11 @@ pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
 }
 
 impl Emulator {
+    /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
+    /// is internally used for transferring input/output data to/from `Emulator`.
+    ///
+    /// # Arguments
+    /// * `terminal`
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
         Self {
             cpu: Cpu::new(terminal),
@@ -68,7 +83,7 @@ impl Emulator {
             elf_path: None,
 
             is_test: false,
-            tohost_addr: 0,
+            tohost_addr: 0, // assuming tohost_addr is non-zero if exists
             begin_signature_addr: 0,
             end_signature_addr: 0,
         }
@@ -86,6 +101,7 @@ impl Emulator {
         &mut self.cpu.advice_tape
     }
 
+    /// Take ownership of the advice tape, replacing it with an empty one
     pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
         std::mem::take(&mut self.cpu.advice_tape)
     }
@@ -144,6 +160,7 @@ impl Emulator {
                 // Check if this is a syscall-proxy command (device 0x00)
                 // and if the LSB of payload is set (indicating program done)
                 if device == 0x00 && (payload & 1) == 1 {
+                    // Extract exit code by shifting payload right by 1
                     let endcode = payload >> 1;
                     match endcode {
                         0 => tracing::info!("Test Passed with {endcode:X}\n"),
@@ -159,6 +176,7 @@ impl Emulator {
         self.cpu.tick(trace)
     }
 
+    /// This enables usage of addr2line to find debug info embedded in the binary
     pub fn set_elf_path(&mut self, elf_path: &Path) {
         if elf_path.exists() {
             self.elf_path = Some(elf_path.to_path_buf());
@@ -197,6 +215,7 @@ impl Emulator {
         self.symbol_map
             .extend(analyzer.read_symbol_map(&header, &section_headers));
 
+        // Find tohost, begin_signature, and end_signature addresses from symbol map since they are all global labels
         self.tohost_addr = self.symbol_map.get("tohost").copied().unwrap_or(0);
         self.begin_signature_addr = self.symbol_map.get("begin_signature").copied().unwrap_or(0);
         self.end_signature_addr = self.symbol_map.get("end_signature").copied().unwrap_or(0);
@@ -204,6 +223,10 @@ impl Emulator {
         assert_eq!(header.e_width, 64, "tracer only supports RV64 ELF inputs");
 
         if self.tohost_addr != 0 {
+            // WARNING: a `tohost` symbol is how riscv-tests ELFs are
+            // recognized; a Jolt guest built by a foreign toolchain that
+            // defines one silently loses the layout-derived memory sizing
+            // configured below.
             #[cfg(feature = "std")]
             if self.cpu.get_mut_mmu().jolt_device.is_some() {
                 tracing::warn!(
@@ -238,6 +261,9 @@ impl Emulator {
             }
         }
 
+        // Cover the executable sections with the pre-decoded instruction
+        // cache. (Initialized after the section copy so the setup stores don't
+        // walk the invalidation path.)
         const SHF_EXECINSTR: u64 = 0x4;
         let mut text_base = u64::MAX;
         let mut text_end = 0;
@@ -267,10 +293,23 @@ impl Emulator {
         &mut self.cpu
     }
 
+    /// Returns a virtual address corresponding to symbol strings
+    ///
+    /// # Arguments
+    /// * `s` Symbol strings
     pub fn get_address_of_symbol(&self, s: &String) -> Option<u64> {
         self.symbol_map.get(s).copied()
     }
 
+    /// Writes the signature region to a writer with specified granularity.
+    /// Each word of the signature is written as a hexadecimal string representation.
+    ///
+    /// # Arguments
+    /// * `writer` - Any type that implements Write trait
+    /// * `granularity` - Number of bytes to write per line (must be a power of 2)
+    ///
+    /// # Returns
+    /// * `Result<(), std::io::Error>` - Ok if successful, Err if write operations fail
     pub fn write_signature<W: Write>(
         &mut self,
         writer: &mut W,

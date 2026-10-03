@@ -9,7 +9,7 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use alloc::{string::String, vec::Vec};
 
 pub struct Header {
-    pub e_width: u8,
+    pub e_width: u8, // 32 or 64
     _e_class: u8,
     _e_endian: u8,
     _e_elf_version: u8,
@@ -70,6 +70,10 @@ pub struct ElfAnalyzer {
 }
 
 impl ElfAnalyzer {
+    /// Creates a new `ElfAnalyzer`.
+    ///
+    /// # Arguments
+    /// * `data` ELF file content binary
     pub fn new(data: &[u8]) -> Self {
         ElfAnalyzer {
             data: data.to_vec(),
@@ -592,6 +596,12 @@ impl ElfAnalyzer {
         symbol
     }
 
+    /// Creates a symbol - virtual address mapping from symbol entries
+    /// and a string table section.
+    ///
+    /// # Arguments
+    /// * `entries` Symbol entries
+    /// * `string_table_section_header` The header of the string table section
     pub fn create_symbol_map(
         &self,
         entries: &Vec<SymbolEntry>,
@@ -667,6 +677,9 @@ pub(crate) mod test_elf {
         Lld,
     }
 
+    /// Builds a minimal but well-formed RV64 ELF: `.text` loaded at
+    /// 0x8000_0000 with the given instruction words, plus a symbol table whose
+    /// `sh_link` names `.strtab` in either section order.
     pub(crate) fn build_elf64(text: &[u32], symbols: &[TestSymbol], order: StrtabOrder) -> Vec<u8> {
         const TEXT_ADDR: u64 = 0x8000_0000;
         let text_bytes: Vec<u8> = text.iter().flat_map(|w| w.to_le_bytes()).collect();

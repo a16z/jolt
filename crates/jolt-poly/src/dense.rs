@@ -1,3 +1,5 @@
+//! Polynomial stored as evaluations over the Boolean hypercube.
+
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 use jolt_field::JoltField;
@@ -103,6 +105,7 @@ impl<T> Polynomial<T> {
         self.evals.is_empty()
     }
 
+    /// The raw evaluation table over the Boolean hypercube.
     #[inline]
     pub fn evals(&self) -> &[T] {
         &self.evals
@@ -138,6 +141,7 @@ impl<T: Copy> Polynomial<T> {
 }
 
 impl<F: JoltField> Polynomial<F> {
+    /// Creates a polynomial with random evaluations.
     pub fn random(num_vars: usize, rng: &mut impl RngCore) -> Self {
         let evals = (0..(1 << num_vars)).map(|_| F::random(rng)).collect();
         Self { evals, num_vars }
@@ -214,6 +218,7 @@ impl<F: JoltField> Polynomial<F> {
         {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
+                // Parallel: write into a new buffer to avoid aliasing
                 let coeffs = &self.evals;
                 let new: Vec<F> = (0..half)
                     .into_par_iter()
@@ -732,6 +737,7 @@ mod tests {
 
     #[test]
     fn parallel_bind_matches_bind_to_field() {
+        // n=11 -> 2048 evaluations, above PAR_THRESHOLD=1024
         let mut rng = ChaCha20Rng::seed_from_u64(201);
         let n = 11;
         let poly = Polynomial::<Fr>::random(n, &mut rng);
@@ -1117,7 +1123,11 @@ mod tests {
     #[test]
     fn bind_low_to_high_reusing_scratch_matches_plain_bind_across_rounds() {
         let mut rng = ChaCha20Rng::seed_from_u64(600);
+        // One scratch buffer shared across every polynomial and round,
+        // pre-seeded with junk to prove stale contents cannot leak through.
         let mut scratch: Vec<Fr> = vec![Fr::from_u64(0xbad); 7];
+        // n = 12 crosses PAR_THRESHOLD on the first bind, then successive
+        // rounds shrink below it, covering both the parallel and serial paths.
         for n in [1usize, 2, 5, 12] {
             let poly = Polynomial::<Fr>::random(n, &mut rng);
             let mut with_scratch = poly.clone();
@@ -1182,6 +1192,8 @@ mod tests {
         assert_eq!(hi_to_lo.len(), 1);
         assert_eq!(hi_to_lo.evaluations()[0], poly.evaluate(&point));
 
+        // LowToHigh binds point[n-1] first (LSB), so to get the same
+        // evaluation we must reverse the order of challenges.
         let mut lo_to_hi = poly.clone();
         for &r in point.iter().rev() {
             lo_to_hi.bind_with_order(r, BindingOrder::LowToHigh);

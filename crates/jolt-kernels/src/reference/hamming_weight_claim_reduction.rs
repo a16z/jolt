@@ -91,6 +91,12 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>> for Referenc
             );
         }
 
+        // The packed (lattice) shape extends the reduction with the fused-inc
+        // one-hot columns, their centered little-endian decode, and the
+        // digit-zero recentering publics: serve the extra tables per the
+        // relation's own expression leaves (the base shape references none of
+        // them, so this loop no-ops there — the kernel adapts to the
+        // jolt-claims shape instead of carrying a feature).
         let k = 1u64 << dimensions.log_k_chunk;
         let eq_at_digit_zero =
             |point: &[F]| point.iter().map(|value| F::one() - *value).product::<F>();
@@ -119,6 +125,10 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>> for Referenc
                             continue;
                         }
                         let table = match id {
+                            // The centered chunk-domain value `k ↦ k` for
+                            // `k < K/2`, `k − K` otherwise; LowToHigh binding
+                            // reproduces the verifier's `balanced_inc_value`
+                            // bound evaluation.
                             JoltDerivedId::HammingWeightClaimReduction(
                                 HammingWeightClaimReductionPublic::BalancedIncValueAtAddress,
                             ) => Some(

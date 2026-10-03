@@ -1,3 +1,14 @@
+//! Equality-plus-one polynomial for shift sumcheck.
+//!
+//! The MLE `eq+1(x, y)` evaluates to 1 when `y = x + 1` (as integers in
+//! `[0, 2^l − 2]`) and 0 otherwise. There is no wrap-around: when `x` is all
+//! ones (the maximum), the polynomial outputs 0 for every `y`.
+//!
+//! This is used in the Spartan shift sumcheck to relate polynomial evaluations
+//! at consecutive cycles.
+//!
+//! Both `x` and `y` are in **big-endian** bit ordering (`point[0]` = MSB).
+
 use jolt_field::JoltField;
 
 use crate::EqPolynomial;
@@ -290,6 +301,10 @@ mod tests {
 
     #[test]
     fn eq_plus_one_sum_over_hypercube() {
+        // For random r, sum_y eq+1(r, y) should equal 1 - eq(r, max).
+        // Because eq+1 maps x → x+1 for x in [0, 2^l-2], so it covers
+        // all y in [1, 2^l-1], missing y=0 and hitting y=(2^l-1) only if
+        // x=(2^l-2). The sum should be 1 - Π r_i (the missing all-ones term).
         let mut rng = ChaCha20Rng::seed_from_u64(789);
         let l = 5;
         let r: Vec<Fr> = (0..l).map(|_| Fr::random(&mut rng)).collect();

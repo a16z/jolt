@@ -44,6 +44,10 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for WindowMaskWTable<XLE
     }
 
     fn suffixes(&self) -> &'static [Suffixes] {
+        // The Pow2OffsetW prefix/suffix pair hardcodes the 32-bit lane width,
+        // so any other instantiation is a compile error (materialize_entry
+        // and evaluate_mle are genuinely XLEN-generic; the decomposition is
+        // not).
         const { assert!(XLEN == 64, "Pow2OffsetW hardcodes the 32-bit lane") };
         &[Suffixes::Pow2OffsetW]
     }
@@ -77,6 +81,9 @@ mod tests {
         prefix_suffix_test::<XLEN, Fr, WindowMaskWTable<XLEN>>();
     }
 
+    /// Two-round phases put a phase boundary inside the low three index bits
+    /// (suffix_len hits 2), exercising every placement of bit 2 relative to
+    /// the phase window in the Pow2OffsetW prefix/suffix pair.
     #[test]
     fn prefix_suffix_small_phases() {
         prefix_suffix_materialization_test::<XLEN, Fr, WindowMaskWTable<XLEN>>(2, 3);

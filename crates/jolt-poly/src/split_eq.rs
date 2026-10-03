@@ -647,6 +647,9 @@ mod tests {
         (Fr::one() - w) * (Fr::one() - c) + w * c
     }
 
+    /// The current round's eq factor `l(X) = scalar * ((1-w)(1-X) + wX)`,
+    /// built by hand from the point coordinate and an independently tracked
+    /// scalar, never from the struct's internals.
     fn hand_built_linear(scalar: Fr, w: Fr) -> UnivariatePoly<Fr> {
         UnivariatePoly::new(vec![scalar * (Fr::one() - w), scalar * (w + w - Fr::one())])
     }
@@ -685,6 +688,8 @@ mod tests {
                     })
                     .unwrap();
                 assert_eq!(s.coefficients().len(), 4, "{order:?} round {round}");
+                // s and l*q both have degree <= 3, so agreement on 8 points
+                // plus a random one forces polynomial equality
                 for x in (0..8u64).map(Fr::from_u64).chain([Fr::random(
                     &mut ChaCha20Rng::seed_from_u64(seed + 3 + round as u64),
                 )]) {
@@ -706,6 +711,7 @@ mod tests {
             (BindingOrder::LowToHigh, 2003u64),
             (BindingOrder::HighToLow, 2087),
         ] {
+            // gruen_poly_from_evals requires degree >= 2: q_evals[0] must be q(1)
             for degree in [2usize, 3] {
                 let point = random_point(5, seed + degree as u64);
                 let challenges = random_point(2, seed + 10 + degree as u64);
@@ -721,6 +727,7 @@ mod tests {
 
                 let w = current_round_variable(&split, &point, order);
                 let l = hand_built_linear(hand_scalar, w);
+                // Toom layout: [q(1), ..., q(degree-1), leading coefficient]
                 let mut q_evals: Vec<Fr> = (1..degree as u64)
                     .map(|x| q.evaluate(Fr::from_u64(x)))
                     .collect();

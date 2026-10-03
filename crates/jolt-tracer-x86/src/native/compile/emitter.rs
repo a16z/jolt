@@ -32,6 +32,8 @@ pub enum EmitOutcome {
 }
 
 pub trait RowEmitter {
+    /// Emit code for one row, or report that this emitter does not handle
+    /// the row's kind.
     fn emit_row(
         &self,
         cx: &mut Emitter,
@@ -82,6 +84,8 @@ impl EmitterSet {
         ))
     }
 
+    /// Advice computation is emitted by the first emitter; it is execution
+    /// -model plumbing (a helper call), identical across strategies.
     pub fn emit_advice_compute(
         &self,
         cx: &mut Emitter,
@@ -149,6 +153,8 @@ mod tests {
         assert!(super::super::CompiledProgram::compile_with(&program, &set).is_err());
     }
 
+    /// An emitter that emits bytes and then declines would double-count rows
+    /// once a later emitter claims the kind; the set must reject it.
     struct EmitThenDecline;
 
     impl RowEmitter for EmitThenDecline {

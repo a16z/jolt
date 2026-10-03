@@ -75,6 +75,7 @@ pub mod xkcp_vectors {
         0xEAF1FF7B5CECA249,
     ];
 
+    /// XKCP test vector: Result after two Keccak-f[1600] permutations on all-zero input
     pub const AFTER_TWO_PERMUTATIONS: Keccak256State = [
         0x2D5C954DF96ECB3C,
         0x6A332CD07057B56D,
@@ -132,7 +133,7 @@ pub mod xkcp_vectors {
     ];
 
     pub const EXPECTED_AFTER_ROUND1_CHI: Keccak256State = [
-        0x0000000000000001u64,
+        0x0000000000000001u64, // After chi, before iota
         0x0000100000000000u64,
         0x0000000000008000u64,
         0x0000000000000001u64,

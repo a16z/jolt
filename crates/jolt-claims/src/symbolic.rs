@@ -48,8 +48,10 @@ pub trait SymbolicSumcheck {
         SumcheckDomain::BooleanHypercube
     }
 
+    /// The sumcheck round count, derived from [`Shape`](Self::Shape).
     fn rounds(&self) -> usize;
 
+    /// The per-round degree bound, derived from [`Shape`](Self::Shape).
     fn degree(&self) -> usize;
 
     fn input_expression<F: Ring>(

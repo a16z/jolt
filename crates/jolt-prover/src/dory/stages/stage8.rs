@@ -113,6 +113,8 @@ where
     })?;
     let layout = formula_dimensions.ra_layout;
 
+    // The assembly, exactly as `stage8::verify` performs it before any
+    // transcript operation.
     let hamming_opening_point = stage7
         .output_points
         .hamming_weight_opening_point()
@@ -157,6 +159,8 @@ where
         &precommitted_finals,
         Some((&stage6b.output_values, &stage7.output_values)),
     )?;
+    // The composed plan splice, exactly as `stage8::verify` performs it: the
+    // reduced `FieldRdInc` joins the batch after `RdInc@IncClaimReduction`.
     #[cfg(feature = "field-inline")]
     let entries = {
         let mut entries = entries;
@@ -191,6 +195,8 @@ where
         })
         .collect::<Result<_, ProverError<F>>>()?;
 
+    // Witness materialization (grid-embedded, batch order) and the hints
+    // reordered from stage 0's proof-commitment order.
     let include_trusted = precommitted.trusted_advice.is_some();
     let include_untrusted = precommitted.untrusted_advice.is_some();
     let chunk_count = precommitted
@@ -215,6 +221,8 @@ where
             reason: "commitment grid width disagrees with the unified opening point",
         });
     }
+    // The committed-program polynomials are preprocessing data (not witness
+    // oracles). Let the backend decide whether it needs host coefficient tables.
     let precommitted_tables: PrecommittedOpeningTables<'_, F> = Box::new(|| {
         let mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>> = BTreeMap::new();
         if let Some(bytecode_layout) = &precommitted.bytecode {
@@ -268,6 +276,14 @@ where
         .collect::<Result<_, _>>()?;
     drop(hint_by_id);
 
+    // The witness-side twin of the composed plan splice above: the statement
+    // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and
+    // `batch_entries` emits entries 1:1 with `order`, so the polynomial and
+    // hint join at `order`'s RdInc position + 1. The column is read off the field-inline
+    // oracle rather than through the backend's joint-opening slot (typed over
+    // the base polynomial family) and opened as a lazy grid view placed
+    // exactly as its stage-0 commitment fed it — never the dense
+    // `2^total_vars` embedding.
     #[cfg(feature = "field-inline")]
     let (polynomials, ordered_hints) = {
         let mut polynomials = polynomials;
@@ -300,6 +316,11 @@ where
         (polynomials, ordered_hints)
     };
 
+    // The transcript tails are twins of the verifier's two stage-8 arms:
+    // clear absorbs the scaled claims and opens transparently
+    // (`prove_batch`); ZK squeezes the gamma powers without any claim
+    // absorption and opens in hiding mode (`prove_batch_zk`), retaining the
+    // joint evaluation and blind for BlindFold.
     #[cfg(not(feature = "zk"))]
     {
         let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(

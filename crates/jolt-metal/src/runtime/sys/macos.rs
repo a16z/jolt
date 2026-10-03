@@ -35,6 +35,7 @@ use crate::runtime::sys::RawBatchOutcome;
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {}
 
+/// The Apple GPU families probed, lowest first. Family 7 (M1) is the floor.
 const APPLE_FAMILIES: [(MTLGPUFamily, u32); 4] = [
     (MTLGPUFamily::Apple7, 7),
     (MTLGPUFamily::Apple8, 8),
@@ -141,6 +142,7 @@ impl RawDevice {
         objc("newLibraryWithSource", || {
             let options = MTLCompileOptions::new();
             options.setLanguageVersion(MTLLanguageVersion::Version3_0);
+            // `mathMode` needs macOS 15; the platform floor is macOS 13.
             #[expect(deprecated, reason = "mathMode is unavailable below macOS 15")]
             options.setFastMathEnabled(false);
             self.raw
@@ -248,6 +250,7 @@ pub(crate) struct RawBuffer {
     raw: Retained<ProtocolObject<dyn MTLBuffer>>,
     /// Cached `contents()`; stable for the buffer's lifetime (shared storage).
     contents: NonNull<u8>,
+    /// Allocation size in bytes (at least [`MIN_ALLOCATION`]).
     allocated: usize,
 }
 
@@ -287,6 +290,8 @@ pub(crate) struct RawCommandBatch {
 }
 
 impl RawCommandBatch {
+    /// Encodes one 1-D dispatch. The caller has validated every binding
+    /// against the pipeline's reflection and the grid against its limits.
     pub(crate) fn dispatch(
         &mut self,
         pipeline: &RawPipeline,
@@ -331,6 +336,8 @@ impl RawCommandBatch {
         })
     }
 
+    /// Submits the batch and blocks until the GPU finishes it.
+    ///
     pub(crate) fn commit_and_wait(mut self) -> RawBatchOutcome {
         self.encoding = false;
         match objc("command buffer submission", || {
@@ -378,6 +385,8 @@ impl RawCommandBatch {
 impl Drop for RawCommandBatch {
     fn drop(&mut self) {
         if self.encoding {
+            // Nothing to report from a destructor: a failure here means the
+            // batch was never submitted, which is what dropping it asks for.
             let _ = objc("endEncoding on drop", || self.encoder.endEncoding());
         }
     }

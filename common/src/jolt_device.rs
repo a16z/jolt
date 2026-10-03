@@ -383,6 +383,8 @@ impl MemoryLayout {
             "Untrusted advice size must be a power of two (got {max_untrusted_advice_size})",
         );
 
+        // Adds 16 to account for panic bit and termination bit
+        // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
             .checked_add(max_trusted_advice_size)
             .and_then(|s| s.checked_add(max_untrusted_advice_size))
@@ -390,6 +392,8 @@ impl MemoryLayout {
             .and_then(|s| s.checked_add(16))
             .expect("I/O region size overflow");
 
+        // Padded so that the witness index corresponding to `input_start`
+        // has the form 0b11...100...0
         let io_region_words = (io_region_bytes / 8).next_power_of_two();
 
         let io_bytes = io_region_words
@@ -441,6 +445,7 @@ impl MemoryLayout {
 
         let program_size = config.program_size.unwrap();
 
+        // stack grows downwards (decreasing addresses) from the top of the stack down to stack_end
         let stack_end = RAM_START_ADDRESS
             .checked_add(program_size)
             .expect("stack_end overflow");
@@ -449,6 +454,7 @@ impl MemoryLayout {
             .and_then(|s| s.checked_add(stack_size))
             .expect("stack_start overflow");
 
+        // heap grows *up* (increasing addresses) from the top of the stack
         let heap_end = stack_start
             .checked_add(heap_size)
             .expect("heap_end overflow");
@@ -522,6 +528,8 @@ mod tests {
             ..Default::default()
         };
         let mut device = JoltDevice::new(&memory_config);
+        // Use io_end which bypasses panic/termination early returns
+        // but still lands past the output region in convert_write_address
         let overflow_address = device.memory_layout.io_end;
         device.store(overflow_address, 0x42);
     }
@@ -647,6 +655,8 @@ mod tests {
         assert_eq!(layout.stack_size, 104);
         assert_eq!(layout.heap_size, 16);
 
+        // Stack grows down from stack_start; the canary sits between the
+        // program image and the stack.
         assert_eq!(layout.stack_end, RAM_START_ADDRESS + 1000);
         let stack_start = layout.stack_end + STACK_CANARY_SIZE + 104;
         assert_eq!(layout.heap_end, stack_start + 16);

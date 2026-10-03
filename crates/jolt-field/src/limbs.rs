@@ -1,3 +1,8 @@
+//! Fixed-width limb array for multi-precision arithmetic.
+//!
+//! [`Limbs<N>`] is a `#[repr(transparent)]` newtype over `[u64; N]`.
+//! All truncated arithmetic lives here as inherent methods.
+
 use core::cmp::Ordering;
 
 /// Fixed-width array of `N` 64-bit limbs in little-endian order.
@@ -31,6 +36,7 @@ impl<const N: usize> Limbs<N> {
         self.0.iter().all(|&l| l == 0)
     }
 
+    /// Number of significant bits in the value.
     #[inline]
     pub fn num_bits(&self) -> u32 {
         let mut i = N;
@@ -43,6 +49,7 @@ impl<const N: usize> Limbs<N> {
         0
     }
 
+    /// Constructs from a single `u64`, placed in the lowest limb.
     #[inline]
     pub fn from_u64(val: u64) -> Self {
         let mut limbs = [0u64; N];
@@ -169,6 +176,7 @@ impl<const N: usize> Limbs<N> {
         self.mul_trunc::<N, N>(other)
     }
 
+    /// Zero-extend a narrower `Limbs<M>` into `Limbs<N>`.
     #[inline]
     pub fn zero_extend_from<const M: usize>(smaller: &Limbs<M>) -> Limbs<N> {
         debug_assert!(M <= N, "cannot zero-extend from a wider source");

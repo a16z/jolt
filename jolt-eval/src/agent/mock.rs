@@ -29,6 +29,7 @@ pub struct MockAgent {
 }
 
 impl MockAgent {
+    /// Create a mock that always returns `Ok` with the given text and no diff.
     pub fn always_ok(text: &str) -> Self {
         let text = text.to_string();
         Self {
@@ -37,6 +38,7 @@ impl MockAgent {
         }
     }
 
+    /// Create a mock that always returns `Err`.
     pub fn always_err(message: &str) -> Self {
         Self {
             responses: std::sync::Mutex::new(vec![Err(AgentError::new(message))]),
@@ -53,6 +55,7 @@ impl MockAgent {
         }
     }
 
+    /// Return all prompts that were passed to `invoke`, in order.
     pub fn recorded_prompts(&self) -> Vec<String> {
         self.prompts.lock().unwrap().clone()
     }

@@ -37,6 +37,7 @@ pub type ClaimsAndHints<PCS> = (
     Vec<<PCS as CommitmentScheme>::OpeningHint>,
 );
 
+/// Commits every polynomial and returns same-point opening claims plus hints.
 pub fn clear_claims<PCS: CommitmentScheme<Field = Fr>>(
     polynomials: &[Polynomial<Fr>],
     point: &Point<HIGH_TO_LOW, Fr>,

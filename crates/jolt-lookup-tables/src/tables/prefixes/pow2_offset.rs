@@ -28,7 +28,14 @@ impl<const LOW_BIT: usize, F: JoltField> SparseDensePrefix<F> for Pow2OffsetPref
     }
 
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
+        // Phase-boundary-agnostic split of the index around the low 3 offset
+        // bits: the suffix owns bits [0, suffix_len), this phase's bits `b`
+        // own [suffix_len, suffix_len + b.len()), and everything above is
+        // bound into the checkpoint. The offset factors multiply per bit, so
+        // each side supplies exactly the bits it owns (the suffixes carry
+        // partial factors for offset bits below the boundary).
         if suffix_len >= 3 {
+            // All offset bits are in the suffix, which supplies the factor.
             return F::one();
         }
         let bits: u128 = b.into();

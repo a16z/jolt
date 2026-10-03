@@ -37,6 +37,7 @@ mod tests {
     use crate::emulator::terminal::DummyTerminal;
     use crate::instruction::format::format_assert_align::FormatAssert;
 
+    /// See [`VirtualAssertWordAlignment`] tests for the rationale.
     #[test]
     fn wraps_on_overflow() {
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));

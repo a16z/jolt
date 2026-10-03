@@ -32,6 +32,7 @@ use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumch
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
+/// Wire the consumed field-register value openings from stage 1's composed outer sumcheck.
 pub fn field_registers_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> FieldRegistersClaimReductionInputClaims<F> {
@@ -62,6 +63,10 @@ impl<F: JoltField> FieldRegistersClaimReduction<F> {
     }
 }
 
+// Only the point geometry stays hand-written: the symbolic output expression
+// references the opening point and `EqSpartan` as opaque `Derived` leaves, so
+// their derivations cannot come from it. Everything else (claim evaluation,
+// struct fill, id projection) is trait defaults + derive-generated code.
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
     type Symbolic = ClaimReduction;
 
@@ -109,6 +114,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
         _challenges: &FieldRegistersClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         match project_public(id)? {
+            // The reduced openings share one opening point; bind it against the
+            // low product remainder challenges (`tau_low`) — literally the
+            // instruction claim reduction's `EqSpartan` derivation.
             FieldRegistersClaimReductionPublic::EqSpartan => {
                 derivations::eq_at_point(output_points.rd_value(), &self.tau_low)
                     .map_err(|reason| stage_claim_failed(self.id(), reason))

@@ -10,6 +10,13 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 
 type F = Fr;
 
+/// Prove a sumcheck for the product of `polys` multilinear polynomials.
+///
+/// Given d multilinear polynomials over n variables, proves the claim
+/// `sum_{x in {0,1}^n} prod_j f_j(x) = C`. The round polynomial in
+/// round i is degree d, requiring d+1 evaluation points.
+///
+/// Returns (proof, claimed_sum).
 fn prove_product(
     polys: &[Vec<F>],
     num_vars: usize,
@@ -53,11 +60,13 @@ fn prove_product(
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
+        // Absorb through the same path the unlabelled verifier uses.
         <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
 
         let r: F = transcript.challenge();
         round_polys.push(round_poly);
 
+        // Bind all polynomials (HighToLow)
         for buf in &mut bufs {
             for i in 0..half {
                 buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
@@ -218,6 +227,9 @@ fn large_num_vars_roundtrip() {
 
 #[test]
 fn compressed_round_verifier_roundtrip() {
+    // Full prover-verifier roundtrip where both the prover and the verifier
+    // absorb through `CompressedLabeledRoundPoly` — the wrapper is the
+    // single source of truth for the compressed wire format.
     let num_vars = 3;
     let n = 1 << num_vars;
     let label = SUMCHECK_ROUND_TRANSCRIPT_LABEL;
@@ -300,6 +312,7 @@ fn compressed_round_verifier_roundtrip() {
 
 #[test]
 fn labeled_round_verifier_roundtrip() {
+    // Test the labeled round verifier path (used by jolt-verifier)
     let num_vars = 3;
     let n = 1 << num_vars;
 

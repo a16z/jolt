@@ -154,6 +154,9 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let changed = match mutation {
+        // Legal-but-wrong dimensions: still powers of two, so they pass
+        // `validate_inputs` and must be rejected by the stage round
+        // structure rather than a typed shape guard.
         0 => {
             proof.trace_length *= 2;
             true
@@ -162,6 +165,9 @@ fuzz_target!(|data: &[u8]| {
             proof.ram_K *= 2;
             true
         }
+        // Shape guard, not a soundness probe: clear claims under a BlindFold
+        // header are rejected by `validate_proof_consistency` before any
+        // crypto runs.
         2 => {
             proof.protocol.zk = ZkConfig::BlindFold;
             true

@@ -319,6 +319,8 @@ mod u64_arr_tests {
     use ark_grumpkin::Affine;
     use jolt_inlines_sdk::ec::ECField;
 
+    /// `to_u64_arr`, `from_u64_arr` and `from_u64_arr_unchecked` all use the
+    /// canonical integer limbs, as for the other curves.
     #[test]
     fn field_u64_arr_uses_canonical_limbs() {
         let five = GrumpkinFq::from_u64_arr(&[5, 0, 0, 0]).expect("canonical limbs");

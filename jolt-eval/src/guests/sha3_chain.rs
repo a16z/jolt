@@ -1,5 +1,6 @@
 use super::GuestConfig;
 
+/// SHA-3 chain guest: iteratively hashes input `num_iters` times.
 pub struct Sha3Chain {
     pub input: [u8; 32],
     pub num_iters: u32,

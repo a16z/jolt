@@ -95,6 +95,7 @@ impl<F: Field> MemberRound<'_, F> {
     }
 }
 
+/// One ever-active member and its final bind, for after the round loop.
 pub struct MemberFinish<'a, F: Field> {
     pub bind: F,
     pub member: &'a mut dyn ProveRounds<F>,
@@ -159,6 +160,10 @@ pub struct ProvedBatch<F> {
     pub member_claims: Vec<F>,
 }
 
+/// Drop trailing zero coefficients down to the minimum two (degree 1) the
+/// compressed wire form requires. The batched polynomial is assembled over
+/// `max_degree + 1` slots, so rounds where every active member's degree is
+/// lower carry trailing zeros that must not reach the wire.
 fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F> {
     while coefficients.len() > 2 && coefficients.last().is_some_and(|value| *value == F::zero()) {
         let _ = coefficients.pop();
@@ -221,6 +226,11 @@ where
 
     let two_inv = F::two_inv();
     let coefficient_count = prelude.max_degree + 1;
+    // Each member's running claim, at the dummy-round padding scale: a member
+    // starts at `input_claim * 2^(max - rounds)` and halves once per inactive
+    // round. A tail-aligned member reaches its true input claim exactly when
+    // it activates; a head-aligned member is active from round 0 and its
+    // kernel emits round polynomials at the padded scale.
     let mut member_claims: Vec<F> = prelude
         .members
         .iter()
@@ -228,6 +238,9 @@ where
         .collect();
     let mut running_claim = prelude.claimed_sum;
     let mut challenges = Vec::with_capacity(max_num_vars);
+    // Each active member's not-yet-delivered previous-round challenge: filled
+    // when the round challenge is squeezed, consumed by the member's next
+    // `prove_round` (or, after the loop, by `finish_rounds`).
     let mut pending_binds: Vec<Option<F>> = vec![None; members.len()];
 
     for round in 0..max_num_vars {
@@ -243,6 +256,9 @@ where
         {
             let active = round >= described.offset && round < described.offset + described.rounds;
             if !active {
+                // Inactive: the constant polynomial `claim / 2`, so
+                // `s(0) + s(1)` preserves the member's claim and evaluation at
+                // any challenge halves it.
                 *member_claim *= two_inv;
                 if let Some(constant) = batched_coefficients.first_mut() {
                     *constant += described.coefficient * *member_claim;
@@ -352,6 +368,9 @@ pub struct ProvedUniskipCommitted<F: Field, C> {
     pub output_claim: F,
 }
 
+/// Self-check the uni-skip round polynomial against the verifier's round
+/// checks before anything reaches the transcript: degree bound and
+/// centered-integer-domain round sum.
 fn check_uniskip_round<F: Field + AppendToTranscript>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,

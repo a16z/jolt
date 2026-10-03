@@ -1,3 +1,7 @@
+//! Platform backends. `macos` wraps Metal; `unsupported` has the same
+//! crate-internal surface with uninhabited types, so every public type
+//! compiles everywhere and only `Device::system_default` can be reached.
+
 use crate::error::MetalError;
 
 pub(crate) enum RawBatchOutcome {

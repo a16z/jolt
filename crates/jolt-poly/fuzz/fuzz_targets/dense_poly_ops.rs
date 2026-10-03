@@ -38,6 +38,9 @@ fuzz_target!(|data: &[u8]| {
         "evaluate and evaluate_and_consume disagree"
     );
 
+    // ...and with a naive Σᵢ evals[i]·eq(bits(i), point) reference computed
+    // without the shared eq-table machinery. The first point coordinate
+    // corresponds to the most significant index bit.
     let one = Fr::from_u64(1);
     let mut reference = Fr::from_u64(0);
     for (i, &coeff) in evals.iter().enumerate() {

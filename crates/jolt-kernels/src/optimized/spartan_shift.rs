@@ -435,6 +435,8 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
         })
     }
 
+    /// Pin the regenerated `eq+1` tables to the verifier's scalar path: their
+    /// fully bound values must equal `derive_output_term` at the bound point.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -529,6 +531,9 @@ mod tests {
         let bytecode = vec![plain_a, virtual_first, virtual_last, plain_b];
 
         let script = [plain_a, virtual_first, virtual_last, noop, plain_b, plain_a];
+        // At log_t = 1 both cycles must be real instructions: the summand
+        // weights only cycle 1 (`eq+1` vanishes at 0), and a no-op there
+        // zeroes the input claim.
         let real_rows = if log_t == 1 { 2 } else { (1 << log_t) - 1 };
         let rows: Vec<TraceRow> = script
             .iter()

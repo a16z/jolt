@@ -19,6 +19,13 @@ impl<F: JoltField> SparseDensePrefix<F> for SignExtensionUpperHalfPrefix {
             return F::one();
         }
 
+        // The value is: sign_bit * ((2^half_word_size - 1) << half_word_size)
+        // where sign_bit is the MSB of the lower half-word's x operand.
+        // This is captured in the checkpoint after the first round where it's relevant.
+        // At binary points the sign_bit is either from the current phase or the checkpoint.
+        //
+        // j_start = 2*XLEN - suffix_len - b.len()
+        // The sign bit round is at j = XLEN + half_word_size (the first x bit of lower half).
         let j_start = 2 * XLEN - suffix_len - b.len();
         let sign_bit_round = XLEN + half_word_size;
 

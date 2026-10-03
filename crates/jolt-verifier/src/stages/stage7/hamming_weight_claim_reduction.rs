@@ -38,6 +38,8 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::{Stage6bOutputClaims, Stage6bOutputPoints};
 use crate::VerifierError;
 
+/// Base mode: the slot is a genuine Hamming-weight reduction over fully committed
+/// one-hot columns.
 #[cfg(not(feature = "akita"))]
 mod mode {
     pub use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions as Dimensions;
@@ -47,6 +49,8 @@ mod mode {
     };
 }
 
+/// Akita mode: the slot is the digit-zero reduction, which also carries the
+/// balanced-increment booleanity legs and the fused-increment decode leg.
 #[cfg(feature = "akita")]
 mod mode {
     pub use jolt_claims::protocols::jolt::lattice::relations::digit_zero::{
@@ -57,6 +61,8 @@ mod mode {
     };
 }
 
+/// The active relation's shape. Public because the kernel seam reads it off the
+/// relation (`Self::dimensions`).
 pub use mode::Dimensions as HammingWeightClaimReductionDimensions;
 pub use mode::InputClaims as HammingWeightClaimReductionInputClaims;
 pub use mode::OutputClaims as HammingWeightClaimReductionOutputClaims;
@@ -83,6 +89,9 @@ pub fn hamming_weight_claim_reduction_dimensions(
     }
 }
 
+/// The hamming reduction's consumed opening *values*, wired from the stage-6b
+/// cycle-phase output claims. The relation reads only their values (its produced
+/// points are derived from its own sumcheck point), so no input points are needed.
 pub fn hamming_weight_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> HammingWeightClaimReductionInputClaims<F> {
@@ -150,8 +159,13 @@ pub fn stage7_hamming_virtualization_address_points<F: JoltField>(
 pub struct HammingWeightClaimReduction<F: JoltField> {
     symbolic: HammingWeightClaimReductionSymbolic,
     dimensions: HammingWeightClaimReductionDimensions,
+    /// The shared cycle suffix appended to every produced opening point (the
+    /// stage-6 booleanity cycle point).
     r_cycle: Vec<F>,
+    /// The stage-6 booleanity address point that `EqBooleanity` compares against.
     r_address: Vec<F>,
+    /// The per-RA virtualization address chunks (one per layout polynomial, in
+    /// canonical order) that `EqVirtualization(i)` compares against.
     virtualization_points: Vec<Vec<F>>,
 }
 
@@ -171,6 +185,10 @@ impl<F: JoltField> HammingWeightClaimReduction<F> {
         }
     }
 
+    /// The reduction's address chunk point `rho` in reversed order: the leading
+    /// `log_k_chunk` coordinates of the (shared) produced opening point. Equal to
+    /// the hamming sumcheck point reversed — `opening_point` prepends the reversed
+    /// challenges — so the EQ publics evaluate against it directly.
     fn rho_reversed<'a>(
         &self,
         output_points: &'a HammingWeightClaimReductionOutputClaims<Vec<F>>,
@@ -219,6 +237,9 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+/// `eq(point, 0) = Π (1 − point_j)` — the digit-zero weight of an `eq` leg,
+/// the `w(0)` baseline the input claim folds in under digit-zero
+/// virtualization (`specs/digit-zero-virtualization.md`).
 fn eq_at_digit_zero<F: JoltField>(point: &[F]) -> F {
     point.iter().fold(F::one(), |accumulator, value| {
         accumulator * (F::one() - *value)
@@ -308,6 +329,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         }
     }
 
+    /// The lattice input expression folds each leg's digit-zero baseline into the
+    /// input claim, so the `*AtDigitZero` weights are input publics too. They are
+    /// pure functions of the (transcript-fixed) stage-6 points — no bound point
+    /// is needed.
     fn derive_input_term(
         &self,
         id: &JoltDerivedId,

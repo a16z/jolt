@@ -139,6 +139,7 @@ pub(super) fn commit_packed<const D: usize>(
                     flush_digit_accumulators(&mut accumulators, &mut reduced);
                     budget = 0;
                 } else if rank_tiled_k256 {
+                    // Stream one A rank at a time so its destination accumulators fit in cache.
                     let rings_per_row = source.one_hot_k / D;
                     debug_assert!(matches!(rings_per_row, 1 | 2 | 4));
                     debug_assert_eq!(ring_start % rings_per_row, 0);

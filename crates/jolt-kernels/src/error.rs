@@ -29,6 +29,8 @@ pub enum KernelError<F: Field> {
     #[error(transparent)]
     MissingOpeningValue(#[from] MissingOpeningValue<JoltOpeningId>),
 
+    /// Extraction/self-check failures from the typed kernel seam
+    /// (`SumcheckKernel::{output_claims, validate_derived_tables}`).
     #[error(transparent)]
     SumcheckKernel(#[from] SumcheckKernelError<F>),
 
@@ -38,21 +40,28 @@ pub enum KernelError<F: Field> {
     #[error(transparent)]
     ConstraintMatrix(#[from] jolt_r1cs::constraint::ConstraintMatrixEvalError),
 
+    /// A polynomial's dimensions are incompatible with the commitment grid.
     #[error("invalid commitment geometry: {reason}")]
     InvalidGeometry { reason: String },
 
+    /// A stream produced a chunk the kernel cannot place in the grid.
     #[error("unsupported polynomial chunk: {reason}")]
     UnsupportedChunk { reason: String },
 
+    /// A relation's output expression references an opening with no table.
     #[error("no table for opening {id:?}")]
     MissingOpeningTable { id: ComposedOpeningId },
 
+    /// A relation's output expression references a derived term with no table.
     #[error("no table for derived term {id:?}")]
     MissingDerivedTable { id: VerifierDerivedId },
 
+    /// A relation's output expression references a challenge the drawn
+    /// `Challenges` struct does not carry.
     #[error("no drawn challenge for {id:?}")]
     MissingChallenge { id: VerifierChallengeId },
 
+    /// A leaf table's evaluation count disagrees with the relation's rounds.
     #[error("table for {table} has {got} evaluations, expected {expected}")]
     TableSizeMismatch {
         /// The offending table's opening or derived id, debug-formatted.

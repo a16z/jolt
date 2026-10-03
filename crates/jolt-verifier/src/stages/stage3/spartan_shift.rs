@@ -1,3 +1,9 @@
+//! The stage 3 `SpartanShift` sumcheck instance.
+//!
+//! Owns the shift opening-point derivation and the `EqPlusOne` public-value
+//! computations (against the product uni-skip `tau_low` and the product-remainder
+//! opening point).
+
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     SpartanShiftChallenges, SpartanShiftInputClaims, SpartanShiftOutputClaims,
@@ -14,6 +20,9 @@ use crate::stages::stage1::Stage1BatchOutputClaims;
 use crate::stages::stage2::Stage2BatchOutputClaims;
 use crate::VerifierError;
 
+/// Wire shift's consumed opening *values* from stage 1's outer sumcheck (`Next*`
+/// PC/flag values) and stage 2's product-remainder `next_is_noop`. Takes the
+/// ZK-agnostic upstream output-claims aggregates.
 pub fn spartan_shift_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,

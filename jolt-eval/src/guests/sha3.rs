@@ -1,5 +1,7 @@
 use super::GuestConfig;
 
+/// SHA-3 (Keccak) guest: hashes an input buffer of `self.0` bytes (value 5u8
+/// each, matching `e2e_profiling.rs`).
 pub struct Sha3(pub usize);
 
 impl Default for Sha3 {

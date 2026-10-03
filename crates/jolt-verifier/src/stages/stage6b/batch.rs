@@ -1,3 +1,15 @@
+//! Construction of the stage-6b cycle-phase sumcheck batch.
+//!
+//! `Stage6bSumchecks::build` assembles the batch members ONCE, after
+//! stage 6a and the post-6a draws, directly from the upstream stage outputs. It
+//! derives the mode-agnostic constructor legs (per-stage cycle bindings, reduced
+//! points, the stage-6a address openings) plus the clear-only value aux
+//! (`table_fold`, `address_val_stages`, base advice reference points — each
+//! empty/`None` in ZK, where `expected_output` never runs) as a single contiguous
+//! block before constructing the members. The four `Option` members are present
+//! exactly when their precommitted layout needs a cycle-phase reduction, so the
+//! batch's instance count matches the prover's.
+
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 #[cfg(not(feature = "akita"))]
@@ -60,6 +72,11 @@ use crate::stages::{stage6_checked_split, PrecommittedSchedule};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
+/// The batch legs [`Stage6bSumchecks::build_from_parts`] assembles the members
+/// from: protocol geometry, the precommitted schedule, the carried stage-6a
+/// draws, the mode-agnostic upstream opening points, and the clear-only value
+/// aux (each empty/`None` in ZK, where `input_claim`/`expected_output` never
+/// run). Every field is data both the verifier and the prover hold.
 pub struct Stage6bBuildParts<'a, F: JoltField> {
     pub formula_dimensions: &'a JoltFormulaDimensions,
     pub ram_log_k: usize,
@@ -86,12 +103,21 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
     pub untrusted_advice_reference_point: Option<Vec<F>>,
 }
 
+/// The post-6a Fiat-Shamir draws, sampled before the batch is built (the batch
+/// members carry them as constructor legs). Both fronts call
+/// [`draw`](Self::draw), so the squeeze order is single-sourced.
 pub struct Stage6bDraws<F> {
     pub instruction_ra_gamma: F,
+    /// Base only: the packed batch has no inc claim-reduction member.
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
+    /// The field-register increment-reduction gamma (the spec's `eta`), member-drawn in
+    /// declaration order: after the ordinary inc gamma, before the optional committed-bytecode
+    /// eta.
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_gamma: F,
+    /// The bytecode claim-reduction eta, drawn exactly when the bytecode
+    /// layout is committed.
     pub eta: Option<F>,
 }
 
@@ -135,6 +161,11 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         PCS: CommitmentScheme<Field = F>,
         VC: VectorCommitment<Field = F>,
     {
+        // The pre-/around-6a draws consumed by the legs ride on the stage-6a
+        // output as typed upstream values; the mode-specific value aux (the
+        // staged Val openings, the advice reference points, the full bytecode
+        // rows) feeds only `input_claim` / `expected_output`, which never run
+        // in ZK.
         let committed_program = checked.precommitted.bytecode.is_some();
         let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
         let entry_bytecode_index = preprocessing
@@ -206,6 +237,10 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         })
     }
 
+    /// The leg-assembly core of `Self::build`, over data both sides
+    /// hold: the prove-side stage-6b recipe constructs the batch through this
+    /// same constructor from its clear carriers, so the ten member legs are
+    /// single-sourced.
     pub fn build_from_parts(parts: Stage6bBuildParts<'_, F>) -> Result<Self, VerifierError> {
         let Stage6bBuildParts {
             formula_dimensions,
@@ -239,6 +274,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let program_image_reduction_layout = precommitted.program_image.as_ref();
         let committed_program = bytecode_reduction_layout.is_some();
 
+        // (The verifier's own `build` already rejected at the metadata
+        // requirement; this guards the shared parts-level entry too.)
         #[cfg(feature = "field-inline")]
         super::field_inline::require_full_program(committed_program)?;
 
@@ -249,6 +286,9 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let bytecode_r_address = stage6a_points.bytecode_read_raf.intermediate.clone();
         let booleanity_r_address = stage6a_points.booleanity.intermediate.clone();
 
+        // Cycle-phase constructor legs, wired mode-agnostically off the upstream
+        // outputs; the post-batch opening points are derived against these same
+        // values through the relation objects.
         let stage5_instruction_cycle = stage5_points.instruction_r_cycle();
         let stage_points = bytecode_stage_points(
             &stage1_cycle_binding,
@@ -299,11 +339,19 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         )?;
         let registers_read_write_cycle = stage_points.register_read_write_cycle().to_vec();
         let registers_val_evaluation_cycle = stage_points.register_val_evaluation_cycle().to_vec();
+        // The field-inline opening sub-points: the stage-4/5 field-inline opening points split
+        // past the field-register address prefix. The cycle legs feed both the bytecode
+        // field-inline public fold and the field-register increment reduction's Eq publics.
         #[cfg(feature = "field-inline")]
         let field_inline_legs =
             super::field_inline::bytecode_fold_and_cycles(carried, stage4_points, stage5_points)?;
         #[cfg(not(feature = "akita"))]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = stage_points.stage_cycle_points;
+        // The packed fused-inc consumer points appended to the shared five: the
+        // four inc-producing relations' cycle bindings, in stage order (γ^5..8).
+        // The register cycle vectors move in here (no clones): the akita build
+        // fuses the inc reduction into the read-RAF legs, so no `IncClaimReduction`
+        // member consumes them.
         #[cfg(feature = "akita")]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = {
             let [stage1, stage2, stage3, stage4, stage5] = stage_points.stage_cycle_points;
@@ -319,6 +367,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 registers_val_evaluation_cycle,
             ]
         };
+        // The full-program table fold is expected_output-only (absent rows mean
+        // ZK or committed mode, where it never runs).
         let bytecode_table_fold =
             bytecode_table_rows.map(|bytecode| BytecodeReadRafTableFoldInputs {
                 bytecode,
@@ -326,6 +376,9 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 register_val_evaluation_point: register_val_evaluation_address,
                 stage_gammas: stage_gamma_powers.each_ref().map(Vec::as_slice),
             });
+        // Both fronts draw `eta` exactly when the bytecode layout is committed;
+        // a front that broke the coupling would otherwise surface only as a
+        // downstream transcript mismatch, so reject it here by name.
         let cycle_bytecode_reduction_weights = match (bytecode_reduction_layout, eta) {
             (Some(layout), Some(eta)) => Some(bytecode_reduction_weights(
                 layout,
@@ -383,6 +436,10 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 stage: JoltRelationId::Booleanity,
                 reason: error.to_string(),
             })?;
+        // The little-endian reference cycle is construction geometry (the
+        // reversed stage-5 instruction cycle, no draw of its own), so it is
+        // rederived from the stage-5 point rather than carried with the
+        // stage-6a draws.
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,
@@ -514,6 +571,10 @@ mod tests {
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use jolt_field::Fr;
 
+    /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
+    /// (base) the inc gamma, under `field-inline` the field-inline inc gamma (the spec's `eta`
+    /// draw slot: after the ordinary inc gamma, before the optional committed-bytecode eta),
+    /// then the committed bytecode eta exactly when the bytecode layout is committed.
     #[test]
     fn stage6b_draws_follow_member_declaration_order() {
         for committed_bytecode in [false, true] {

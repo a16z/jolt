@@ -183,6 +183,9 @@ impl ColumnKind {
     }
 }
 
+/// Resolve `ids` to column derivations. Family sizes come from the ids
+/// themselves (the committed order carries whole families); the chunk width
+/// is the grid's.
 pub(crate) fn column_kinds<F: JoltField>(
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,

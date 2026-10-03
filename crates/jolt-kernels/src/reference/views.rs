@@ -9,6 +9,8 @@ use rayon::prelude::*;
 
 use crate::KernelError;
 
+/// Tables at least this large build in parallel; below it rayon dispatch
+/// costs more than the work.
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
@@ -19,10 +21,14 @@ pub(crate) fn dense_view<F: JoltField>(
     Ok(witness.oracle_table(opening.polynomial_id())?)
 }
 
+/// `eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index MSB).
 pub(crate) fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
     EqPolynomial::evals(point, None)
 }
 
+/// Fold the address dimension of an address-major `(K × T)` oracle grid by the
+/// eq weights of `point` (big-endian, `K = 2^point.len()`):
+/// `out[j] = Σ_k eq(point, k) · grid[(k << log_t) | j]`.
 pub(crate) fn address_fold<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
@@ -52,6 +58,9 @@ pub(crate) fn address_fold<F: JoltField>(
     Ok((0..cycles).map(fold).collect())
 }
 
+/// Fold the cycle dimension of an address-major `(K × T)` oracle grid by the
+/// eq weights of `point` (big-endian, `T = 2^point.len()`):
+/// `out[k] = Σ_j eq(point, j) · grid[(k << log_t) | j]`.
 pub(crate) fn cycle_fold<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     opening: JoltOpeningId,
@@ -81,6 +90,9 @@ pub(crate) fn cycle_fold<F: JoltField>(
     Ok((0..addresses).map(fold).collect())
 }
 
+/// Tile `base` `copies` times: the `(address ‖ cycle)`-indexed replication of a
+/// cycle-indexed table across the address dimension (address bits are the high
+/// bits of the joint index).
 pub(crate) fn tile<F: JoltField>(base: &[F], copies: usize) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if !base.is_empty() && base.len() * copies >= PAR_THRESHOLD {
@@ -96,6 +108,8 @@ pub(crate) fn tile<F: JoltField>(base: &[F], copies: usize) -> Vec<F> {
     out
 }
 
+/// Replicate a cycle-indexed table across the stream bit at the index LSB
+/// (`out[(t << 1) | s] = base[t]`).
 pub(crate) fn replicate_stream_lsb<F: JoltField>(base: &[F]) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if base.len() >= PAR_THRESHOLD {
@@ -116,6 +130,8 @@ pub(crate) fn replicate_stream_lsb<F: JoltField>(base: &[F]) -> Vec<F> {
     out
 }
 
+/// A per-stream constant table over the `(cycle ‖ stream)` domain with the
+/// stream bit at the index LSB (`out[(t << 1) | s] = values[s]`).
 pub(crate) fn stream_pair_lsb<F: JoltField>(values: [F; 2], cycles: usize) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if cycles >= PAR_THRESHOLD {

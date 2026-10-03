@@ -20,6 +20,7 @@ pub const ONE_HOT_TRACE_LAYOUT: OneHotTraceLayout = OneHotTraceLayout;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceLayout;
 
+/// Semantic column ranges in the packed selector domain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OneHotTraceColumnRanges {
     pub instruction: Range<usize>,
@@ -29,6 +30,7 @@ pub struct OneHotTraceColumnRanges {
     pub balanced_inc_carry: usize,
 }
 
+/// Canonical column order and packed geometry for one proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OneHotTraceLayoutPlan {
     packing: PrefixPackedLayout<JoltCommittedPolynomial>,

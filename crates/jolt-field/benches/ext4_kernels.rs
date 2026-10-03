@@ -1,3 +1,18 @@
+//! Bench gate for the `Fp32` degree-4 extension kernels. It compares the
+//! generic coefficient schedule with a local port of the
+//! baseline's fused u128-accumulation `Fp32` override, on batched degree-4
+//! muls and squares over `Prime32Offset99`. (The original jolt-field
+//! baseline, which shipped the fused override, timed identically to the
+//! local port while both crates coexisted.)
+//!
+//! Outcome recorded in specs/jolt-field-rebuild.md: the fused port LOST on aarch64/Apple M4
+//! (generic ≈ 2.5x faster on mul, ≈ 1.85x on square; the port reproduces
+//! the baseline override's timing exactly), so the override was dropped
+//! and the crate keeps the generic defaults. This harness stays as the
+//! reproducible evidence; rerun it before reintroducing an override.
+//!
+//! Run: `cargo bench -p jolt-field --features solinas --bench ext4_kernels`
+
 #[cfg(feature = "solinas")]
 #[expect(clippy::print_stdout, reason = "bench harness: stdout is the report")]
 mod harness {

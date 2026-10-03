@@ -178,6 +178,10 @@ fn montgomery_reduce_in_place<const L: usize>(limbs: &mut [u64; L]) -> u64 {
     carry2
 }
 
+/// Montgomery reduce an L-limb integer (L >= 2N) to a field element.
+///
+/// For L > 2N the tail is first folded down via Barrett, then the standard
+/// N-step Montgomery REDC runs.
 #[inline(always)]
 pub(crate) fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> InnerFr {
     debug_assert!(L >= 2 * N, "montgomery_reduce requires L >= 2N");
@@ -305,6 +309,10 @@ pub struct WideAccumulator {
     slots: [u128; 8],
 }
 
+/// BN254 Fr accumulator for signed small-scalar products.
+///
+/// Positive and negative terms are held separately as unreduced five-limb
+/// integers and reduced once at the end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrSmallScalarAccumulator {
     pos: Limbs<5>,
@@ -388,6 +396,8 @@ impl Accumulator for FrSmallScalarAccumulator {
     }
 }
 
+/// BN254 Fr accumulator for field elements multiplied by signed 256-bit
+/// integers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrSignedProductAccumulator {
     pos: [u128; 8],
@@ -573,6 +583,8 @@ impl Accumulator for WideAccumulator {
         }
     }
 
+    /// One Barrett round beats the default's `from_u64` conversion plus a
+    /// full 4×4 limb product.
     #[inline(always)]
     fn fmadd_u64(&mut self, value: Fr, scalar: u64) {
         self.add(Fr(mul_u64(value.0, scalar)));

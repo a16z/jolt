@@ -1,3 +1,12 @@
+//! Boolean flags controlling instruction behavior in R1CS constraints and witness generation.
+//!
+//! [`CircuitFlags`] are embedded in Jolt's R1CS constraints (the "opflags" from the Jolt paper).
+//! [`InstructionFlags`] control witness generation and operand routing but are not
+//! directly constrained.
+//!
+//! Every instruction implements the [`Flags`] trait, returning its static flag
+//! configuration via [`CircuitFlagSet`] and [`InstructionFlagSet`] packed bitfields.
+
 use std::ops::Index;
 
 use strum::EnumCount;
@@ -203,6 +212,8 @@ pub trait Flags {
 /// set explicit operand-combination flags; all others use the default
 /// interleaved-bit layout for lookup indices.
 pub trait InterleavedBitsMarker {
+    /// Returns `true` if neither `AddOperands`, `SubtractOperands`,
+    /// `MultiplyOperands`, nor `Advice` is set.
     fn is_interleaved_operands(&self) -> bool;
 }
 

@@ -1,3 +1,7 @@
+//! Range-check the advised x-register limb through its non-interleaved lookup
+//! operand. The field-inline constraints separately bind the limb and quotient
+//! to the source field value; canonical readout requires a guest range check.
+
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
 use jolt_riscv::instructions::FieldAdviceLimb;

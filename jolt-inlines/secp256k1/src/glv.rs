@@ -1,3 +1,7 @@
+/// GLV decomposition for secp256k1 scalar field.
+///
+/// Given scalar k in Fr, compute k1, k2 such that k = k1 + k2 * lambda (mod r)
+/// with |k1|, |k2| <= 2^128. Based on the algorithm from arkworks ec/src/scalar_mul/glv.rs.
 use num_bigint::BigInt as NBigInt;
 use num_bigint::Sign;
 use num_integer::Integer;

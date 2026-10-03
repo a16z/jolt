@@ -4,6 +4,8 @@ use ark_grumpkin::{Fq, Fr};
 use core::marker::PhantomData;
 use serde::{Deserialize, Serialize};
 
+/// Returns `true` iff `x >= p` (Fq modulus), i.e., `x` is non-canonical.
+/// Manually unrolled for performance.
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
@@ -27,6 +29,8 @@ fn is_fq_non_canonical(x: &[u64; 4]) -> bool {
     }
 }
 
+/// Returns `true` iff `x >= n` (Fr modulus), i.e., `x` is non-canonical.
+/// Manually unrolled for performance.
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
@@ -70,6 +74,8 @@ pub enum GrumpkinError {
     InvalidGlvSignWord(u64),
 }
 
+// Grumpkin GLV endomorphism constants in Montgomery form.
+// The endomorphism is (x, y) -> (beta * x, y), where beta^3 = 1.
 pub(crate) const GRUMPKIN_ENDO_BETA_LIMBS: [u64; 4] = [
     244305545194690131,
     8351807910065594880,

@@ -130,6 +130,8 @@ pub(super) fn merge_soa<F: JoltField>(
 }
 
 pub(super) trait MatrixEntry<F: JoltField>: Cell {
+    /// Accumulate this vertical pair's `[t = 0, t = ∞]` contributions to the
+    /// quadratic inner factor: `ra_t·val_t + wa_t·(val_t + inc_t)`.
     fn accumulate_pair_evals(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -140,6 +142,8 @@ pub(super) trait MatrixEntry<F: JoltField>: Cell {
     );
 }
 
+/// Round-0 entry. `val = F::from_u64(prev_val)` stays implicit until the
+/// first bind, cutting the peak layout from 64 to 24 bytes.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(in crate::optimized::registers_read_write) struct SeedEntry {
@@ -181,6 +185,8 @@ impl Cell for SeedEntry {
 }
 
 impl SeedEntry {
+    /// Bind adjacent rows into the indexed layout (materializing `val`); a
+    /// missing side has zero `ra`/`wa`.
     #[inline]
     pub(super) fn bind<F: JoltField>(
         even: Option<&Self>,
@@ -304,6 +310,7 @@ impl<F: JoltField, C: OneHotCoeff<F>> Cell for SparseEntry<F, C> {
 }
 
 impl<F: JoltField, C: OneHotCoeff<F>> SparseEntry<F, C> {
+    /// Bind adjacent rows; a missing side has zero `ra`/`wa`.
     pub(super) fn bind(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -417,6 +424,7 @@ impl RegisterCycleRow {
         count
     }
 
+    /// Build up to three column-sorted seed entries.
     pub(in crate::optimized::registers_read_write) fn entries(
         &self,
         row: u32,
@@ -477,6 +485,7 @@ impl RegisterCycleRow {
     }
 }
 
+/// Output length of merging two column-sorted rows.
 pub(super) fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
     let mut i = 0;
     let mut j = 0;
@@ -495,6 +504,7 @@ pub(super) fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
     produced + (evens.len() - i) + (odds.len() - j)
 }
 
+/// Merge-bind adjacent column-sorted rows.
 #[inline]
 pub(crate) fn merge_bind<E: Cell, B>(
     evens: &[E],
@@ -533,6 +543,7 @@ pub(crate) fn merge_bind<E: Cell, B>(
     }
 }
 
+/// Split a sorted row-pair group into even and odd rows.
 pub(crate) fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
     let odd_start = group.partition_point(|entry| entry.row() % 2 == 0);
     group.split_at(odd_start)
@@ -542,6 +553,8 @@ pub(crate) fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
 mod tests {
     use super::*;
 
+    /// The counting pass and the write pass must agree on every operand
+    /// pattern, or the parallel collector's second pass overruns its window.
     #[test]
     fn cycle_entry_count_matches_cycle_entries() {
         let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];

@@ -25,7 +25,7 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     block[..remaining.len()].copy_from_slice(remaining);
 
     // Domain separation / padding (Keccak: 0x01 .. 0x80).
-    block[remaining.len()] ^= 0x01;
+    block[remaining.len()] ^= 0x01; // 0x01 delimiter after the message.
     block[RATE_IN_BYTES - 1] ^= 0x80;
 
     for (i, lane_bytes) in block.chunks_exact(8).enumerate() {
@@ -40,6 +40,7 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     hash
 }
 
+/// Executes the 24-round Keccak-f[1600] permutation.
 pub(crate) fn execute_keccak_f(state: &mut Keccak256State) {
     for rc in ROUND_CONSTANTS {
         execute_theta(state);
@@ -49,6 +50,8 @@ pub(crate) fn execute_keccak_f(state: &mut Keccak256State) {
     }
 }
 
+/// The `theta` step of the Keccak-f permutation mixes columns to provide diffusion.
+/// This step XORs each bit in the state with the parities of two columns in the state array.
 pub(crate) fn execute_theta(state: &mut Keccak256State) {
     let mut c = [0u64; 5];
     for x in 0..5 {
@@ -65,6 +68,8 @@ pub(crate) fn execute_theta(state: &mut Keccak256State) {
     }
 }
 
+/// The `rho` and `pi` steps of the Keccak-f permutation shuffles the state to provide diffusion.
+/// `rho` rotates each lane by a different fixed offset. `pi` permutes positions of the lanes.
 pub(crate) fn execute_rho_and_pi(state: &mut Keccak256State) {
     let mut b = [0u64; NUM_LANES];
     for x in 0..5 {
@@ -76,6 +81,7 @@ pub(crate) fn execute_rho_and_pi(state: &mut Keccak256State) {
     state.copy_from_slice(&b);
 }
 
+/// The `chi` step of the Keccak-f permutation introduces non-linearity (relationships between input and output).
 pub(crate) fn execute_chi(state: &mut Keccak256State) {
     for y in 0..5 {
         let mut row = [0u64; 5];
@@ -88,6 +94,7 @@ pub(crate) fn execute_chi(state: &mut Keccak256State) {
     }
 }
 
+/// The `iota` step of Keccak-f breaks the symmetry of the rounds by injecting a round constant into the first lane.
 pub(crate) fn execute_iota(state: &mut Keccak256State, round_constant: u64) {
     state[0] ^= round_constant;
 }

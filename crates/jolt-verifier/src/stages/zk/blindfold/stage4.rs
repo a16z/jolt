@@ -34,6 +34,9 @@ where
         })?;
     let registers_claims = relations::registers::ReadWriteChecking::new(register_dimensions);
     let ram_init = ram_val_check_init(input)?;
+    // Supply the `Val_init` decomposition scalars as `Public` values (formerly
+    // baked as `Term` constants in the expression); the advice / program-image
+    // openings they weight remain hidden witnesses.
     values.public(
         JoltDerivedId::from(RamValCheckPublic::InitEval),
         ram_init.public_eval,
@@ -84,6 +87,9 @@ where
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
 
+    // The field-register read/write member and its baked publics (relation + gamma + EqCycle),
+    // at the same source-values position as before. The upstream reduced point (`r_prod`) —
+    // the field-inline claim reduction's stage-2 opening point — is the fixed cycle.
     #[cfg(feature = "field-inline")]
     let field_registers_claims = super::field_inline::stage4_read_write(
         values,
@@ -181,8 +187,15 @@ fn stage4_output_ids<F: JoltField>(
         }
         .canonical_order(),
     ));
+    // The five field-register read/write rows, spliced after the register openings and before
+    // `ram_ra`/`ram_inc` — the clear absorb order.
     #[cfg(feature = "field-inline")]
     output_ids.extend(super::field_inline::stage4_output_ids());
+    // The advice / program-image openings are produced by the RAM value-check
+    // instance, but the stage-4 commit (flush) order appends them *first* (above),
+    // before the registers; so here, at the tail, only the main `ram_ra`/`ram_inc`
+    // canonical order is emitted (advice / program-image leaves left `None`),
+    // preserving the prover's per-stage opening-id block order.
     output_ids.extend(composite_ids(
         RamValCheckOutputClaims::<F> {
             untrusted_advice: None,
@@ -207,6 +220,11 @@ mod tests {
         Fr::from_u64(value)
     }
 
+    /// The stage-4 committed row order is the clear curated absorb order
+    /// (`Stage4OutputClaims::opening_values`), locked entry-for-entry over sentinel-valued
+    /// claims: every lowered id resolves to the value at its row position (with field-inline
+    /// enabled: the five field-inline rows spliced after the registers, before
+    /// `ram_ra`/`ram_inc`).
     #[test]
     fn stage4_output_ids_match_the_clear_absorb_order() {
         use crate::stages::stage4::outputs::Stage4OutputClaims;

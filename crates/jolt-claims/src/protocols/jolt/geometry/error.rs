@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+// The point error is protocol-neutral (field_inline geometry raises it too), so
+// it lives in the crate's framework half; re-exported here at its historical path.
 pub use crate::formula_error::PointGeometryError;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]

@@ -188,6 +188,8 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     Some((address - lowest) / 8)
 }
 
+/// Read-write checking phase splits: cycle variables in phase 1, address
+/// variables in phase 2 (registers have a fixed 2^7 address space).
 #[expect(non_snake_case)]
 pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
     JoltReadWriteConfig {
@@ -198,6 +200,9 @@ pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWrite
     }
 }
 
+/// Akita uses 4-bit committed chunks at every trace length. Other PCS modes
+/// use 4-bit chunks below `log_T = 25` and 8-bit chunks above it. Virtual-RA
+/// chunks remain 16 bits below that threshold and 32 bits at or above it.
 #[expect(non_snake_case)]
 pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
@@ -213,12 +218,18 @@ pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     }
 }
 
+/// The committed one-hot chunk width [`one_hot_config`] selects for a
+/// `2^log_T`-cycle trace. The committed preprocessing digest and the Dory
+/// setup sizing read it from here so they keep describing the chunking the
+/// prover actually uses.
 #[cfg(not(feature = "akita"))]
 #[expect(non_snake_case)]
 pub(crate) fn committed_log_k_chunk(log_T: usize) -> u8 {
     one_hot_config(log_T).log_k_chunk
 }
 
+/// The committed-program precommitted candidates' variable counts, folded
+/// into the shared commitment grid alongside the advice candidates.
 #[derive(Clone, Copy, Debug)]
 pub struct CommittedProgramCandidates {
     pub bytecode_chunk_vars: usize,
@@ -239,6 +250,7 @@ impl CommittedProgramCandidates {
     }
 }
 
+/// A word-aligned advice buffer's balanced Dory matrix variable count.
 pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
     let words = (max_advice_size_bytes / 8) as usize;
     words.next_power_of_two().max(1).ilog2() as usize

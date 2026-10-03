@@ -54,6 +54,9 @@ where
     pub base: JoltBackend<F, PCS>,
 }
 
+/// The packed path's stand-in for the streaming witness-commit slot: stage 0
+/// commits the native `OneHotTrace` group directly, so this slot is never
+/// reached.
 struct PackedCommitStub;
 
 impl<F, PCS> jolt_kernels::CommitWitness<F, PCS> for PackedCommitStub

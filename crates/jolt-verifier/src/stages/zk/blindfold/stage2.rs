@@ -46,6 +46,8 @@ where
             }
         })?;
 
+    // `product_tau_low` is stage 1's remainder cycle point (low half), computed once
+    // by the stage-2 verifier and carried on the ZK output.
     let product_tau_low = input.stage2.product_tau_low.clone();
 
     let product_uniskip_rounds = 1;
@@ -246,6 +248,11 @@ where
     )
 }
 
+/// The stage-2 committed output row order and alias rows.
+///
+/// With field-inline disabled: the jolt members' canonical orders with the instruction
+/// reduction's aliased ids elided (absorbed once via their product-remainder sources).
+/// Canonical output rows in member order, excluding aliased reduction claims.
 fn stage2_output_ids_and_aliases<F: JoltField>(
 ) -> (Vec<ComposedOpeningId>, Vec<OpeningAlias<ComposedOpeningId>>) {
     let product_order = ProductRemainderOutputClaims::<F> {
@@ -268,6 +275,12 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
     }
     .canonical_order();
 
+    // Single-sourced from the reduction's declared alias pairs
+    // (`ConcreteSumcheck::aliased_output_openings`): the committed output rows
+    // absorb the reduction's canonical openings minus its aliased ids, and the
+    // `OpeningAlias` rows mirror the same `(aliased, source)` pairs — so
+    // BlindFold's row layout cannot drift from the clear path's generated absorb
+    // and `validate_aliases`.
     let alias_pairs =
         <InstructionClaimReduction<F> as ConcreteSumcheck<F>>::aliased_output_openings();
     let aliased_targets: BTreeSet<_> = alias_pairs.iter().map(|(aliased, _)| *aliased).collect();
@@ -396,6 +409,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
+    /// The stage-2 committed row order is the clear curated absorb order,
+    /// locked entry-for-entry: build sentinel-valued claim structs, run the
+    /// batch's `opening_values` curation, and check every lowered id resolves
+    /// to the value at its row position.
     #[test]
     fn stage2_output_ids_match_the_clear_absorb_order() {
         use crate::stages::stage2::outputs::{
@@ -439,6 +456,8 @@ mod tests {
             ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
         };
 
+        // Resolve a lowered composite id against the claim structs (the field-inline appendage
+        // rides beside the batch, so it has its own resolver).
         #[cfg(feature = "field-inline")]
         let appendage = FieldRegistersProductOutputClaims::<Fr> {
             rs1_value: fr(201),
@@ -493,6 +512,10 @@ mod tests {
         );
     }
 
+    /// The lowered composed uni-skip input expression evaluates identically to the clear
+    /// `ProductUniskip::input_claim` composition on synthetic values (with field-inline
+    /// enabled: all five lanes; the field-inline inputs read from the stage-1 field-inline
+    /// carrier rows).
     #[cfg(feature = "field-inline")]
     #[test]
     fn lowered_uniskip_input_matches_the_clear_composed_claim() {
@@ -555,6 +578,10 @@ mod tests {
         assert_eq!(lowered, clear);
     }
 
+    /// The lowered composed remainder output expression evaluates identically to the clear
+    /// `ProductRemainder::expected_output` composition on synthetic values (with field-inline
+    /// enabled: `tau_kernel · (ord_left + field_inline_left) · (ord_right +
+    /// field_inline_right)` with the field-inline factors read from the appendage rows).
     #[cfg(feature = "field-inline")]
     #[test]
     fn lowered_remainder_output_matches_the_clear_composed_claim() {

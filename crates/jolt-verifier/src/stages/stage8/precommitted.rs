@@ -1,3 +1,11 @@
+//! Resolving the final openings of the precommitted polynomials for stage 8.
+//!
+//! Each precommitted claim reduction (advice, committed bytecode, program image)
+//! is completed either by stage 7's address phase or by the stage 6b cycle phase
+//! (whichever ran the last round). Stage 8 consumes the resolved openings as the
+//! anchors and batch members of the final PCS opening, so the resolution happens
+//! here, next to that consumer, before any stage-8 transcript operation.
+
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::{
@@ -99,6 +107,9 @@ pub fn precommitted_final_openings<F: JoltField>(
                 .map(|values| values.chunks.clone())
         });
         let address_phase = resolve_source(is_clear, stage7_points.bytecode_point(), address_value);
+        // The stage-6b cycle phase completes the reduction only when it produced the
+        // final chunk claims (no intermediate remained), so the clear source is Some
+        // only under that guard; the point-only ZK source is unguarded.
         let cycle_value = clear.and_then(|(_, stage6)| {
             stage6
                 .bytecode_reduction
@@ -144,6 +155,10 @@ pub fn precommitted_final_openings<F: JoltField>(
     Ok(openings)
 }
 
+/// Build a completing source from a phase's opening point and (clear-only) value.
+/// In clear mode both the point and the value must be present (the `zip` semantics
+/// the twin clear/zk drivers had); in ZK only the point is read and the claim stays
+/// committed (`None`).
 fn resolve_source<F: JoltField, T>(
     is_clear: bool,
     point: Option<&[F]>,

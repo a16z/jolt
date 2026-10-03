@@ -30,10 +30,12 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
+    /// The field increment polynomial, committed on every packed field-inline proof.
     #[cfg(feature = "field-inline")]
     pub field_inc: FieldIncObject<PCS>,
 }
 
+/// Validate inputs, commit the packed objects, and seed the transcript.
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,

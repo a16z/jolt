@@ -1,3 +1,8 @@
+//! The stage 4 `RegistersReadWriteChecking` sumcheck instance.
+//!
+//! Owns the register read-write point derivation and the `EqCycle` public-value
+//! computation.
+
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::registers::{
     RegistersReadWriteChallenges, RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
@@ -14,6 +19,8 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage3::{Stage3OutputClaims, Stage3OutputPoints};
 use crate::VerifierError;
 
+/// Wire the consumed opening *values* from stage 3's registers claim-reduction
+/// output. Takes the ZK-agnostic stage-3 output-claims aggregate.
 pub fn registers_read_write_input_values_from_upstream<F: JoltField>(
     stage3: &Stage3OutputClaims<F>,
 ) -> RegistersReadWriteInputClaims<F> {
@@ -25,6 +32,9 @@ pub fn registers_read_write_input_values_from_upstream<F: JoltField>(
     }
 }
 
+/// Wire the consumed opening *points* from stage 3's registers claim-reduction
+/// output, all sharing that relation's opening point. Takes the ZK-agnostic
+/// stage-3 output-points aggregate.
 pub fn registers_read_write_input_points_from_upstream<F: JoltField>(
     stage3: &Stage3OutputPoints<F>,
 ) -> RegistersReadWriteInputClaims<Vec<F>> {

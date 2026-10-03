@@ -35,10 +35,16 @@ use crate::{
     JoltInstructionKind, JoltInstructionRow, JoltInstructionTag, NUM_CIRCUIT_FLAGS,
 };
 
+/// Largest register id storable in a register-id byte. `0xFF` is reserved as the
+/// `None` sentinel, so ids must be `<= 254`. Jolt's register file
+/// (`REGISTER_COUNT = 128`) sits well within this bound; the limit is a
+/// storage-format detail, not a protocol fact.
 const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 
 const REGISTER_NONE: u8 = u8::MAX;
 
+/// Field-inline builds use 24 circuit-flag bits; base builds retain the original
+/// 16-bit layout. Six instruction flags and the immediate sign follow them.
 const META_INSTRUCTION_FLAGS_SHIFT: u32 = if cfg!(feature = "field-inline") {
     24
 } else {
@@ -160,8 +166,12 @@ impl CapturedState {
 pub enum TraceRowError {
     #[error("immediate |{imm}| does not fit the u64 magnitude encoding")]
     ImmTooWide { imm: i128 },
+    /// A register id does not fit the compact `u8` storage (with `0xFF`
+    /// reserved as the `None` sentinel).
     #[error("register id {id} exceeds the compact storage bound (max {max})", max = MAX_REGISTER_ID)]
     RegisterIdTooWide { id: u8 },
+    /// The captured-state variant disagrees with the instruction's `Load`/
+    /// `Store` circuit flags.
     #[error("captured-state class does not match {kind:?}: {detail}")]
     StateClassMismatch {
         kind: JoltInstructionKind,
@@ -169,6 +179,9 @@ pub enum TraceRowError {
     },
 }
 
+/// Four aliased 64-bit value slots. Their logical meaning depends on the row's
+/// class (derived from the cached `Load`/`Store` circuit flags); see the
+/// [`JoltTraceRow`] accessors and [`JoltTraceRow::captured_state`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 struct TraceValueSlots {
@@ -178,6 +191,7 @@ struct TraceValueSlots {
     slot3: u64,
 }
 
+/// Compact, copyable proof-facing trace row (balanced packed, 64 bytes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct JoltTraceRow {
@@ -186,6 +200,8 @@ pub struct JoltTraceRow {
     imm_abs: u64,
     bytecode_pc: u32,
     meta: u32,
+    /// Final Jolt instruction tag (stable identity, not a dense index). The
+    /// lookup-table routing is derived from this in `jolt-lookup-tables`.
     jolt_tag: u16,
     rs1_id: u8,
     rs2_id: u8,
@@ -199,6 +215,8 @@ const _: () = assert!(
 );
 
 impl Default for JoltTraceRow {
+    /// The canonical no-op/padding row, whose logical accessors match a
+    /// `NoOp` cycle (in particular `IsNoop` is set).
     fn default() -> Self {
         Self::no_op()
     }
@@ -363,11 +381,13 @@ impl JoltTraceRow {
         }
     }
 
+    /// Expanded PC (local bytecode index) as a raw integer.
     #[inline(always)]
     pub fn pc(&self) -> u64 {
         self.bytecode_pc as u64
     }
 
+    /// Source RV64 instruction address.
     #[inline(always)]
     pub fn unexpanded_pc(&self) -> u64 {
         self.unexpanded_pc
@@ -425,12 +445,17 @@ impl JoltTraceRow {
         self.meta & (1 << (META_INSTRUCTION_FLAGS_SHIFT + InstructionFlags::IsNoop as u32)) != 0
     }
 
+    /// Stable final-row identity, reconstructed from the cached tag.
     #[inline]
     pub fn instruction_kind(&self) -> Option<JoltInstructionKind> {
         JoltInstructionKind::from_tag(JoltInstructionTag(self.jolt_tag))
     }
 }
 
+/// Circuit + instruction flags for a final instruction row.
+///
+/// `TryFrom<JoltInstructionRow>` is exhaustive over `instruction_kind`, so this
+/// never actually fails; the fallback keeps the function total without a panic.
 #[inline]
 fn row_flags(instruction: &JoltInstructionRow) -> (CircuitFlagSet, InstructionFlagSet) {
     JoltInstruction::try_from(*instruction)

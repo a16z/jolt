@@ -114,6 +114,26 @@ fn edge_for_root(root: NodeId) -> Edge {
     }
 }
 
+// =============================================================================
+// Thread-local storage for Transcript trait integration
+// =============================================================================
+//
+// These thread-locals let symbolic transcript adapters tunnel MleAst values
+// through canonical field encoding APIs.
+//
+// Since MleAst implements JoltField but serialize/from_bytes don't make semantic sense
+// for ASTs, we use thread-local storage to tunnel the actual MleAst values through
+// these trait boundaries.
+//
+// This will be used by PoseidonAstTranscript (in transpiler) to build symbolic
+// AST nodes for Poseidon hash operations during verifier transpilation.
+//
+// Note: These are kept here (rather than a separate module) because they're used by
+// MleAst's own trait impls (from_bytes, serialize_with_mode) and form part of MleAst's
+// field implementation machinery. Unlike scalar_ops/ast_bundle, they can't be
+// cleanly decoupled from MleAst without introducing circular dependencies.
+// =============================================================================
+
 thread_local! {
     static PENDING_CHALLENGE: RefCell<Option<MleAst>> = const { RefCell::new(None) };
 }
@@ -160,6 +180,8 @@ pub fn set_pending_commitment_chunks(chunks: Vec<MleAst>) {
     });
 }
 
+/// Take the pending commitment chunks (if any).
+/// Called by PoseidonAstTranscript::append_serializable to get the 12 MleAst chunks.
 pub fn take_pending_commitment_chunks() -> Option<Vec<MleAst>> {
     PENDING_COMMITMENT_CHUNKS.with(|cell| cell.borrow_mut().take())
 }
@@ -187,9 +209,27 @@ pub fn take_pending_point_elements() -> Option<Vec<MleAst>> {
     PENDING_POINT_ELEMENTS.with(|cell| cell.borrow_mut().take())
 }
 
+// =============================================================================
+// Symbolic constraint accumulation for transpilation
+// =============================================================================
+//
+// Note: This section is specific to circuit transpilation and not used by Lean4 extraction.
+//
+// When Jolt's verifier runs `assert_eq!(computed, expected)`, we need to capture
+// that assertion as a circuit constraint `(computed - expected) == 0` rather than
+// actually comparing values (which would fail since MleAst holds symbolic AST nodes,
+// not concrete field elements).
+//
+// Constraint mode makes PartialEq record `(lhs - rhs)` as a constraint and return
+// `true`, allowing symbolic execution to continue through all verification steps.
+
 thread_local! {
+    /// Accumulated constraints during symbolic execution.
+    /// Each constraint is an MleAst that should equal zero.
     static SYMBOLIC_CONSTRAINTS: RefCell<Vec<MleAst>> = const { RefCell::new(Vec::new()) };
 
+    /// Flag to enable constraint accumulation mode.
+    /// When true, PartialEq comparisons register constraints instead of comparing NodeIds.
     static CONSTRAINT_MODE: RefCell<bool> = const { RefCell::new(false) };
 }
 
@@ -215,10 +255,12 @@ pub fn is_constraint_mode() -> bool {
     CONSTRAINT_MODE.with(|cell| *cell.borrow())
 }
 
+/// Return the number of accumulated constraints without taking them.
 pub fn num_constraints() -> usize {
     SYMBOLIC_CONSTRAINTS.with(|cell| cell.borrow().len())
 }
 
+/// Take all accumulated constraints, clearing the list.
 pub fn take_constraints() -> Vec<MleAst> {
     SYMBOLIC_CONSTRAINTS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
 }
@@ -232,6 +274,7 @@ fn add_constraint(constraint: MleAst) {
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Atom {
     Scalar(Scalar),
+    /// A variable, represented by an index into a register of variables
     Var(Index),
     /// A let-bound variable, used for common sub-expression elimination
     NamedVar(LetBinderIndex),
@@ -303,6 +346,13 @@ pub enum Node {
     /// Transcript hash: hash(state, n_rounds, data).
     /// The `TranscriptHashData` variant determines which hash function and arity.
     TranscriptHash(TranscriptHashData, Edge, Edge),
+    // -------------------------------------------------------------------------
+    // Byte-level transcript transforms
+    // -------------------------------------------------------------------------
+    // Note: These are NOT used by Poseidon (which operates on field elements natively).
+    // They are used by Blake2b/Keccak transcripts, which use byte-level serialization
+    // inherited from the original Jolt transcript design (for EVM compatibility).
+    // -------------------------------------------------------------------------
     /// Byte-reverse a field element.
     /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
     /// Used by transcript append_scalar which reverses bytes for EVM compatibility.
@@ -673,6 +723,31 @@ fn node_depth(node: &Node) -> usize {
     }
 }
 
+/// Perform common subexpression elimination on an AST (Lean4 extraction only).
+///
+/// # Note: Two CSE Implementations Exist
+///
+/// This CSE is specifically for **Lean4 extraction** (`format_for_lean()` in lookups.rs).
+/// The transpilation pipeline uses a separate CSE in `ast_bundle.rs` (`run_cse()`).
+///
+/// The two implementations have different requirements:
+///
+/// | Aspect | Lean4 CSE (this) | Transpiler CSE (ast_bundle.rs) |
+/// |--------|------------------|--------------------------------|
+/// | Goal | Reduce Lean type-checker load | Minimize circuit constraints |
+/// | Method | Hash-based structural dedup | Reference counting |
+/// | Threshold | Depth >= 3 only | All multi-ref nodes |
+/// | Output | Transforms AST (NamedVar nodes) | Records NodeIds to hoist |
+/// | Scope | Single expression tree | Per-constraint isolation |
+///
+/// # Returns
+///
+/// A tuple of (bindings, new_root) where:
+/// - bindings: Vec of nodes that should be hoisted as named variables (cse_0, cse_1, ...)
+/// - new_root: The transformed root node with common subexpressions replaced by NamedVar references
+///
+/// The CSE_DEPTH_THRESHOLD controls granularity - subexpressions below this depth
+/// are not hoisted (to avoid excessive small definitions).
 pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
     fn register(bindings: &mut Bindings, nodes: &mut Vec<Node>, node: Node) -> Node {
         let node_hash = compute_hash(&node);
@@ -728,6 +803,8 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
                 let cse_e2 = aux_edge(bindings, nodes, e2);
                 register(bindings, nodes, Node::Div(cse_e1, cse_e2))
             }
+            // Transpilation-only nodes: used by challenge derivation and Blake/Keccak transcripts.
+            // Lean4 extraction never encounters them.
             Node::TranscriptHash(..)
             | Node::ByteReverse(..)
             | Node::Truncate128Reverse(..)
@@ -1067,6 +1144,9 @@ impl<'a> core::iter::Product<&'a Self> for MleAst {
     }
 }
 
+// Note: this instance prints the whole MLE as a single expression.  It can be very large, e.g. for
+// 64-bit.  If you extract for Lean, you might want to use `format_for_lean` to get separate
+// definitions for repeated sub-expressions.
 impl fmt::Display for MleAst {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let fmt_data = FormattingData {
@@ -1320,10 +1400,12 @@ impl CanonicalSerialize for MleAst {
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        // Return 32 bytes (standard field element size) for append_scalar length calculations
         32
     }
 }
 
+/// Required by `JoltField` trait bound but not called during symbolic execution.
 impl CanonicalDeserialize for MleAst {
     fn deserialize_with_mode<R: std::io::Read>(
         _reader: R,
@@ -1334,6 +1416,7 @@ impl CanonicalDeserialize for MleAst {
     }
 }
 
+/// Required by `CanonicalDeserialize` but not called during symbolic execution.
 impl Valid for MleAst {
     fn check(&self) -> Result<(), SerializationError> {
         unimplemented!("MleAst validation not needed")

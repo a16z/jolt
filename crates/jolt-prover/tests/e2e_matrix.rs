@@ -1,3 +1,11 @@
+//! End-to-end acceptance: one guest table per instruction profile, across all modes.
+//!
+//! Every case checks native expected output, proves with the optimized backend,
+//! and verifies through the public verifier API. Field-inline builds select the
+//! active field-ops and inactive muldiv cases; ordinary builds select the general
+//! guest table. Specialized suites retain tampering, reference-backend parity,
+//! committed programs, and other mode-specific checks.
+
 #[cfg(feature = "prover-fixtures")]
 mod support;
 
@@ -43,6 +51,8 @@ mod matrix {
         (0..len).map(|i| i as u8).collect()
     }
 
+    /// Two full Keccak rate blocks as the `sha3_aligned` guest takes them; the
+    /// guest hashes their little-endian bytes.
     #[cfg(not(feature = "field-inline"))]
     fn keccak_blocks() -> [[u64; 17]; 2] {
         let mut blocks = [[0u64; 17]; 2];
@@ -61,6 +71,7 @@ mod matrix {
             .collect()
     }
 
+    /// Native replica of the btreemap guest's workload.
     #[cfg(not(feature = "field-inline"))]
     fn btreemap_reference(n: u32) -> u128 {
         fn wyhash64(mut x: u64) -> u64 {
@@ -107,21 +118,31 @@ mod matrix {
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
                     ..GuestCase::new("fibonacci-guest")
                 };
+                // The guest stores 0x12 and 0x3456 and reloads them signed; the
+                // untouched bytes read back as 0.
                 memory_ops => GuestCase {
                     expected_output: Some(encode(&(0x12i32, 0u32, 0x3456i32, 0u32))),
                     ..GuestCase::new("memory-ops-guest")
                 };
+                // 127 bytes: one full block through the initial compression,
+                // then a 63-byte tail that needs the two-block padding, so both
+                // SHA-256 inline instructions run.
                 sha2 => GuestCase {
                     inputs: encode(&message(127)),
                     expected_output: Some(encode(&sha256(&message(127)))),
                     ..GuestCase::new("sha2-guest")
                 };
+                // 300 bytes behind postcard's length prefix: two full rate
+                // blocks reach the fused absorb through stack staging (the
+                // unaligned path), then the padded final permutation.
                 sha3 => GuestCase {
                     func: Some("sha3"),
                     inputs: encode(&message(300)),
                     expected_output: Some(encode(&keccak256(&message(300)))),
                     ..GuestCase::new("sha3-guest")
                 };
+                // Two aligned rate blocks fed to the fused absorb straight from
+                // the caller's buffer.
                 sha3_aligned => GuestCase {
                     func: Some("sha3_aligned"),
                     inputs: encode(&keccak_blocks()),

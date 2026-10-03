@@ -8,6 +8,7 @@ use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVInstruct
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
 
+/// Generate a cycle together with the register state needed to replay it.
 pub trait RandomLookupCycle: JoltCycle {
     fn random(rng: &mut StdRng) -> Self;
     fn initialize_cpu(&self, cpu: &mut Cpu);
@@ -40,6 +41,10 @@ where
     }
 }
 
+/// Internal helper for [`materialize_entry_test!`]. The macro picks up the
+/// verbose `Foo<RISCVCycle<TracerType>>` / `RISCVCycle<TracerType>` type pair
+/// from a Jolt struct ident and a tracer instruction path, and passes the
+/// tuple-struct constructor as `construct`.
 #[doc(hidden)]
 #[expect(clippy::unwrap_used)]
 pub fn materialize_entry_test_fn<T, C, I>(
@@ -63,6 +68,21 @@ pub fn materialize_entry_test_fn<T, C, I>(
     }
 }
 
+/// Internal helper for [`instruction_inputs_match_constraint_test!`].
+///
+/// Fuzz-checks that an instruction's `LookupQuery::to_instruction_inputs`
+/// agrees with the instruction-input R1CS constraint:
+///
+/// ```text
+/// left_input  = LeftOperandIsRs1Value  · Rs1Value     + LeftOperandIsPC   · UnexpandedPC
+/// right_input = RightOperandIsRs2Value · Rs2Value     + RightOperandIsImm · Imm
+/// ```
+///
+/// A mismatch means the trace witness polynomials `LeftInstructionInput` /
+/// `RightInstructionInput` disagree with what the constraint reconstructs from
+/// `Rs1Value` / `Rs2Value` / `Imm` / `UnexpandedPC` — causing a Stage 3
+/// sumcheck verification failure whenever any high-order bits of a register
+/// value or PC are set.
 #[doc(hidden)]
 pub fn instruction_inputs_match_constraint_fn<C, T, I>(
     cycle_wrapper: impl Fn(C) -> T,
@@ -110,6 +130,16 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
     }
 }
 
+/// Internal helper for [`lookup_output_matches_trace_test!`].
+///
+/// Fuzz-checks that an instruction's `LookupQuery::to_lookup_output` agrees
+/// with the value tracer's CPU emulator writes (to `rd`, or to PC for
+/// `JAL`/`JALR`) after executing the instruction. Catches divergences
+/// between the lookup-table semantics and the RISC-V semantics implemented
+/// by `tracer`.
+///
+/// `C: Copy` lets us print the failing cycle in the assert message after it
+/// has been moved into the wrapper.
 #[doc(hidden)]
 #[expect(
     clippy::panic,
@@ -150,6 +180,13 @@ where
                 assert_eq!(cpu_result, lookup_result, "{raw:?}");
             }
         } else {
+            // Instruction has no `rd` and isn't `JAL`/`JALR`: the oracle
+            // here doesn't apply (e.g. asserts, branches, stores, fence,
+            // ecall/ebreak). Without an explicit panic the loop would run
+            // 10k iterations and silently pass, hiding a coverage gap.
+            // Either restrict the macro's call sites to instructions that
+            // write `rd` or jump, or extend the oracle to handle the new
+            // case (asserts → 1, branches → taken-bit, etc.).
             panic!(
                 "lookup_output_matches_trace_test_fn invoked for an instruction \
                  without `rd` and not `JAL`/`JALR`; extend the oracle or skip \

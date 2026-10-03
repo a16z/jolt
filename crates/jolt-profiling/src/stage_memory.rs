@@ -35,8 +35,13 @@ pub struct StageMemoryRow {
     pub rss_close_bytes: u64,
 }
 
+/// Cap on retained rows: a prove records ~11 rows, so this covers ~90
+/// undrained proves while bounding the global log in a long-lived process
+/// that installs the layer but never calls [`take_stage_memory_rows`].
 const MAX_STAGE_MEMORY_ROWS: usize = 1024;
 
+/// The global row log plus a saturation marker, so overflow warns once per
+/// drain instead of per dropped row.
 struct RowLog {
     rows: Vec<StageMemoryRow>,
     warned_full: bool,

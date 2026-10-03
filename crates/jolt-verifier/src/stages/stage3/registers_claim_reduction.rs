@@ -27,6 +27,8 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1BatchOutputClaims;
 use crate::VerifierError;
 
+/// Wire the consumed opening *values* from stage 1's outer sumcheck register
+/// values. Takes the ZK-agnostic stage-1 output-claims aggregate.
 pub fn registers_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
 ) -> RegistersClaimReductionInputClaims<F> {
@@ -101,6 +103,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
+            // Every reduction output shares the one opening point.
             RegistersClaimReductionPublic::EqSpartan => derivations::eq_at_point(
                 output_points.rd_write_value(),
                 &self.product_uniskip_tau_low,

@@ -13,9 +13,13 @@ const CHANNEL_DEPTH: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct TraceWriterConfig {
+    /// Size of each batch in number of items
     pub batch_size: usize,
+    /// Depth of the channel (number of batches that can be queued)
     pub channel_depth: usize,
+    /// Buffer size for the file writer (in bytes)
     pub write_buffer_size: usize,
+    /// Threshold in milliseconds for logging slow batch sends
     pub slow_batch_threshold_ms: u128,
 }
 
@@ -30,6 +34,7 @@ impl Default for TraceWriterConfig {
     }
 }
 
+/// A generic trace writer that handles batched writing to files
 pub struct TraceWriter<T> {
     sender: Option<SyncSender<Vec<T>>>,
     writer_handle: Option<JoinHandle<std::io::Result<()>>>,
@@ -80,6 +85,8 @@ where
         })
     }
 
+    /// Send a batch to be written
+    /// Returns true if the batch was sent successfully
     pub fn send_batch(&self, batch: Vec<T>) -> bool {
         if let Some(sender) = &self.sender {
             let start = Instant::now();
@@ -98,7 +105,9 @@ where
         false
     }
 
+    /// Finalize the writer and wait for all pending writes to complete
     pub fn finalize(mut self) -> std::io::Result<()> {
+        // Drop the sender to signal the writer thread to finish
         self.sender.take();
 
         let start = Instant::now();
@@ -161,6 +170,7 @@ where
         }
     }
 
+    /// Finalize the collector, flushing any remaining items
     pub fn finalize(mut self) -> std::io::Result<usize> {
         self.flush_batch();
         self.writer.finalize()?;

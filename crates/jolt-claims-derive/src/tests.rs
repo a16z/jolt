@@ -31,6 +31,9 @@ fn representative_output_struct() -> DeriveInput {
     }
 }
 
+/// The macro's core contract: the canonical opening order is single-sourced
+/// from field declaration order. The ids must appear in the expansion in the
+/// same order the fields are declared, for both derives.
 #[test]
 fn canonical_order_follows_field_declaration_order() {
     let tokens = expand_output(representative_output_struct()).expect("expansion should succeed");

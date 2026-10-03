@@ -43,6 +43,9 @@ where
     let trusted_layout = input.checked.precommitted.advice(JoltAdviceKind::Trusted);
     let untrusted_layout = input.checked.precommitted.advice(JoltAdviceKind::Untrusted);
 
+    // The cycle bytecode round count is needed by the shared publics helper; the
+    // committed and uncommitted cycle-phase relations are distinct types, so pick
+    // the active one's rounds here.
     let bytecode_rounds = if bytecode_reduction_layout.is_some() {
         relations::bytecode::ReadRafCyclePhaseCommitted::new((
             formula_dimensions.bytecode_read_raf,
@@ -106,6 +109,9 @@ where
     }
     address_phase_output_ids.push(booleanity::booleanity_address_phase_opening().into());
 
+    // Field op flags use the ordinary stage-1 circuit-flag fold. The composed
+    // claim adds field-register access terms at the extended stage-4/5 powers,
+    // referencing the same committed opening rows as the clear relation.
     let bytecode_claim = relation_claim(&bytecode_address_claims);
 
     add_batched_stage(
@@ -147,6 +153,11 @@ mod field_inline_tests {
         Fr::from_u64(value)
     }
 
+    /// The lowered composed input expression — the jolt symbolic bind plus the field-inline
+    /// gamma-power extension — evaluates identically to the clear composed
+    /// `BytecodeReadRafAddressPhase::input_claim` on synthetic values, over the SAME committed
+    /// rows the stage-1/4/5 lowerings bind (common stage-1 circuit flags and the
+    /// stage-4/5 field-register member rows).
     #[test]
     fn lowered_bytecode_input_extension_matches_the_clear_composed_claim() {
         let relation = BytecodeReadRafAddressPhase::<Fr>::new(

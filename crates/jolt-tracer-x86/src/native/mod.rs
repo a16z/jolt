@@ -187,6 +187,8 @@ impl X86TracerBackend {
         })
     }
 
+    /// Fast pass: run the program to completion without materializing trace
+    /// rows. (Checkpoint logging joins in the chunked-execution slice.)
     pub fn fast_run(
         &mut self,
         program: &JoltProgram,
@@ -339,8 +341,20 @@ impl Observation {
     }
 }
 
+/// A resume point for the chunked contract: the guest state at a group
+/// boundary plus the memory image needed to replay from it.
+///
+/// The spec's preferred design is an access-value log (replay answers reads
+/// from the log, needing no image). This implementation snapshots the memory
+/// plane instead, which is the same tradeoff #1717's parallel machinery
+/// makes: correctness first, and the image is what makes a chunk replayable
+/// with no dependence on any other chunk. The `Checkpoint` associated type
+/// is deliberately opaque, so switching to logs later changes nothing for
+/// consumers.
 pub struct X86Checkpoint {
     compiled: Arc<CompiledProgram>,
+    /// The program's expanded bytecode, shared with every checkpoint: row
+    /// reassembly needs the static half of each row.
     bytecode: Arc<Vec<JoltInstructionRow>>,
     /// The resume state, shared by every chunk that resumes from it. Boundary
     /// images are plane-sized (tens of MB), so sharing is not an optimization
@@ -497,6 +511,9 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             Boundary::capture(&guest, &host, &plane, inputs.memory_config),
         ));
 
+        // Run in increments, capturing a boundary at each pause. Checkpoints
+        // carry a full image, so they are spaced at least this far apart
+        // regardless of how small chunk_size is; `skip_rows` covers the gap.
         let spacing = chunk_size.max(self.min_checkpoint_spacing_rows);
         loop {
             guest.row_limit = (guest.trace_len as usize + spacing) as u64;
@@ -543,6 +560,8 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         })
     }
 
+    /// Replay one chunk in record mode from its checkpoint, discarding the
+    /// leading rows the boundary precedes and keeping exactly this chunk's.
     fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError> {
         let boundary = &checkpoint.boundary;
         let device = boundary.restore_device();
@@ -632,6 +651,8 @@ mod tests {
         )
     }
 
+    /// Same ELF under a different instruction profile expands to different
+    /// bytecode, so it must miss the compile cache and recompile.
     #[test]
     fn cache_recompiles_when_only_the_profile_differs() {
         let base = program_with_profile(RV64IMAC_JOLT);
@@ -654,6 +675,8 @@ mod tests {
         assert!(Arc::ptr_eq(&second, &third));
     }
 
+    /// Hand-assembled programs share an (empty) ELF; the bytecode guards must
+    /// still separate them.
     #[test]
     fn cache_key_separates_programs_sharing_an_elf() {
         let one = program_with_profile(RV64IMAC_JOLT);

@@ -12,6 +12,9 @@ use crate::stages::stage5::Stage5OutputPoints;
 use crate::stages::stage6a::outputs::Stage6aCarriedChallenges;
 use crate::VerifierError;
 
+/// The field-inline extension anchors the field access selectors through the
+/// public bytecode, which committed-program mode cannot supply. Shared with the
+/// BlindFold build, which hits the same wall.
 pub(crate) fn committed_program_rejection() -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::BytecodeReadRaf,
@@ -21,6 +24,8 @@ pub(crate) fn committed_program_rejection() -> VerifierError {
     }
 }
 
+/// Reject committed-program mode before any member construction (see
+/// [`committed_program_rejection`]).
 pub(crate) fn require_full_program(committed_program: bool) -> Result<(), VerifierError> {
     if committed_program {
         return Err(committed_program_rejection());
@@ -28,12 +33,18 @@ pub(crate) fn require_full_program(committed_program: bool) -> Result<(), Verifi
     Ok(())
 }
 
+/// The field-inline legs of the stage-6b batch build, returned by
+/// [`bytecode_fold_and_cycles`]: the bytecode field-register access fold inputs, plus the stage-4/5
+/// field-inline cycle sub-points (past the field-register address prefix) that feed both the
+/// bytecode field-inline public fold and the field-register increment reduction's Eq publics.
 pub(super) struct FieldInlineBatchLegs<F> {
     pub fold: FieldInlineBytecodeFold<F>,
     pub read_write_cycle: Vec<F>,
     pub val_evaluation_cycle: Vec<F>,
 }
 
+/// Split the stage-4/5 field-inline opening points past the field-register address prefix and
+/// assemble the field-register access fold legs.
 pub(super) fn bytecode_fold_and_cycles<F: JoltField>(
     carried: &Stage6aCarriedChallenges<F>,
     stage4_points: &Stage4OutputPoints<F>,
@@ -64,6 +75,10 @@ pub(super) fn bytecode_fold_and_cycles<F: JoltField>(
     })
 }
 
+/// Splice the reduced `FieldRdInc` opening into the stage-6b Fiat-Shamir value
+/// order: at its member position, after the ordinary increment reduction and
+/// before the optional advice cycle phases (the spec's committed output row
+/// order).
 pub(super) fn splice_inc_values<F: JoltField>(
     values: &mut Vec<F>,
     claims: &Stage6bOutputClaims<F>,

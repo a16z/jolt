@@ -24,9 +24,28 @@ impl<F: JoltField> Stage1OutputClaims<F> {
     }
 }
 
+/// Source-of-truth for stage 1's singleton sumcheck batch: the Spartan outer
+/// *remainder* sumcheck (the companion uni-skip first round is a separate
+/// univariate-skip sub-sumcheck, not a batch member — verified inline in
+/// `stage1::verify` against a literal-zero input claim).
+/// `#[derive(SumcheckBatch)]` generates the `Stage1BatchInputClaims<F>` /
+/// `Stage1BatchInputPoints<F>`, `Stage1BatchOutputClaims<F>` /
+/// `Stage1BatchOutputPoints<F>`, and `Stage1BatchChallenges<F>` aggregates — one
+/// field per instance, in this declaration order. With a single instance and no
+/// cross-relation aliasing there is no `no_opening_values` opt-out: the
+/// generated absorb (`opening_values` / `append_output_claims` on this struct)
+/// delegates to the member's typed output claims: base columns followed by
+/// field-inline columns when enabled.
+///
+/// The member's `SpartanOuterPublic` coefficient table depends on the batch's own
+/// bound point, so it completes itself lazily: `derive_opening_points` captures
+/// the point and the first `derive_output_term` call builds the table.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage1BatchSumchecks<F: JoltField> {
+    /// On the prove side the remainder kernel is minted from the state the
+    /// uni-skip slot parked in the proof session, through its regular
+    /// universal backend slot.
     pub outer_remainder: OuterRemainder<F>,
 }
 
@@ -42,6 +61,16 @@ impl<F: JoltField> Stage1BatchOutputClaims<F> {
     }
 }
 
+/// The Fiat-Shamir values the verifier draws during stage 1: the irreducible
+/// Spartan outer `tau` point and the uni-skip reduction challenge. Drawn
+/// path-agnostically before the ZK/clear branch; carried in [`Stage1ZkOutput`]
+/// so BlindFold can source `tau`/`uniskip` from `challenges.<field>` (matching
+/// the `input.stageN.challenges.<field>` idiom used by the sibling stages). The
+/// remainder sumcheck point is opening-derived, so it lives on the produced
+/// reduction (clear: `output_points.outer_remainder`; ZK:
+/// `remainder_consistency`) rather than here; the singleton remainder batching
+/// coefficient is likewise
+/// read from `remainder_consistency` on the ZK path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1Challenges<F: JoltField> {
     pub tau: Vec<F>,
@@ -51,6 +80,9 @@ pub struct Stage1Challenges<F: JoltField> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage1ClearOutput<F: JoltField> {
+    /// The produced remainder opening *values* (wire form). The opening point is
+    /// derived from the remainder's sumcheck point; later stages read values through
+    /// `.outer_remainder.<field>`.
     pub output_values: Stage1BatchOutputClaims<F>,
     /// The produced remainder opening *points*, paired field-for-field with
     /// `output_values`. All composed openings share the single remainder point; the raw
@@ -59,6 +91,7 @@ pub struct Stage1ClearOutput<F: JoltField> {
 }
 
 impl<F: JoltField> Stage1ClearOutput<F> {
+    /// Pair the remainder opening values with their derived points.
     pub fn new(
         output_values: Stage1BatchOutputClaims<F>,
         output_points: Stage1BatchOutputPoints<F>,
@@ -96,6 +129,8 @@ impl<F: JoltField> Stage1ClearOutput<F> {
         Some(cycle.to_vec())
     }
 
+    /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
+    /// point to the consuming `stage`.
     pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
         self.cycle_binding()
             .ok_or_else(|| empty_remainder_point(stage))
@@ -156,6 +191,8 @@ impl<F: JoltField, C> Stage1Output<F, C> {
         Some(cycle.to_vec())
     }
 
+    /// [`cycle_binding`](Self::cycle_binding), attributing an empty remainder
+    /// point to the consuming `stage`.
     pub fn cycle_binding_checked(&self, stage: JoltRelationId) -> Result<Vec<F>, VerifierError> {
         self.cycle_binding()
             .ok_or_else(|| empty_remainder_point(stage))

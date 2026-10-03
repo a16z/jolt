@@ -12,6 +12,7 @@ use crate::objective::Objective;
 pub struct TraceGenSetup {
     pub program: JoltProgram,
     pub inputs: TraceInputs,
+    /// Row count of the resulting trace (for Criterion `Throughput::Elements`).
     pub trace_len: usize,
 }
 
@@ -88,6 +89,7 @@ impl<G: GuestConfig> TraceGenObjective<G> {
         std::hint::black_box(output.trace_len)
     }
 
+    /// One eager trace with the reference interpreter backend.
     pub fn run_reference(&self, setup: &TraceGenSetup) -> usize {
         let mut backend = TracerBackend::new();
         let output = setup

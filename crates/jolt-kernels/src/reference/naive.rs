@@ -91,6 +91,10 @@ where
     ChallengeIdOf<F, R>: Ord + Sync,
 {
     relation: R,
+    /// The expression's `Challenge` leaves pre-resolved to scalars at
+    /// construction, so the round loop reads plain `Sync` data (the typed
+    /// `Challenges` struct is borrowed with a lifetime and stays with the
+    /// caller that drew it).
     challenge_values: BTreeMap<ChallengeIdOf<F, R>, F>,
     opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
     derived_tables: BTreeMap<DerivedIdOf<F, R>, Polynomial<F>>,
@@ -190,6 +194,9 @@ where
         )
     }
 
+    /// Evaluate the supplied relation's summand over compact tables. The
+    /// caller owns placement and multiplicity of omitted inactive rounds;
+    /// this kernel binds only the `table_rounds` variables stored in each table.
     pub(crate) fn new_with_table_rounds(
         inputs: &ProverInputs<'_, F, R>,
         opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
@@ -243,6 +250,11 @@ where
             }
         }
 
+        // The dual-role premise, enforced up front: extraction resolves an
+        // output id from its table when one exists (summand leaves and bound
+        // passenger openings alike) and echoes the consumed input claim
+        // otherwise, so a table keyed by a *consumed* id would shadow the
+        // echo with an evaluation at the wrong point.
         if let Some(id) = inputs
             .claims
             .canonical_order()
@@ -366,6 +378,8 @@ where
     ) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         let opening_tables = &self.opening_tables;
+        // Ids no table serves are the dual-role openings: read the consumed
+        // input claim back (the same cell, exactly as the verifier wires it).
         SumcheckOutputClaims::<F, R>::from_opening_values(|id| {
             opening_tables
                 .get(id)
@@ -451,6 +465,8 @@ mod tests {
     struct ToyInputs<C> {
         #[opening(UnexpandedPC, from = RegistersValEvaluation)]
         total: C,
+        // The dual-role cell: consumed here and re-staged on
+        // `ToyOutputs::untrusted` via the shared-id inference.
         #[opening(untrusted_advice, from = RegistersValEvaluation)]
         untrusted: Option<C>,
     }
@@ -731,6 +747,10 @@ mod tests {
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
 
+    /// A derived table materialized at the wrong point survives the sumcheck
+    /// (the prover's sum is self-consistent) but is caught by the
+    /// `derive_output_term` cross-check — the drift detector that pins
+    /// hand-written table resolvers to the verifier's scalar path.
     #[test]
     fn derived_table_drift_is_detected() {
         let relation = ToyRelation {
@@ -899,6 +919,9 @@ mod tests {
             reference_point: reference_point(),
         };
 
+        // A table keyed by the consumed dual-role advice id — the shadowing
+        // case: extraction would report its bound value instead of echoing
+        // the consumed claim.
         let mut shadowing = opening_tables();
         let _ = shadowing.insert(advice_id, dense(66));
         assert!(matches!(

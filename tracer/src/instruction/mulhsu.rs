@@ -55,6 +55,13 @@ mod tests {
 
         instr.exec(&mut cpu, &mut ());
 
+        // (-1_i128) * (2_u128 treated as 128-bit) = -2_i128
+        // -2 in two's complement 128-bit = 0xFFFF...FFFE
+        // upper 64 bits = 0xFFFFFFFFFFFFFFFF
+        //
+        // Before the fix, the incorrect zero-extension computed:
+        //   0xFFFFFFFFFFFFFFFF_u128 * 2_u128 = 0x1_FFFFFFFFFFFFFFFE
+        //   upper 64 = 1 (WRONG)
         assert_eq!(
             cpu.x[1] as u64, 0xFFFFFFFFFFFFFFFF,
             "MULHSU(-1, 2) upper 64 bits should be all-ones"

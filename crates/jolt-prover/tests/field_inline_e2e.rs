@@ -1,3 +1,11 @@
+//! Field-inline Dory backend parity and tamper rejection.
+//!
+//! Acceptance across protocol modes lives in `e2e_matrix.rs`. These tests use
+//! the same guest cases and preparation, and cover distinct field-inline wire
+//! properties: reference/optimized proof equality in clear mode, field commitment
+//! presence and binding, and rejection of corrupted BlindFold payloads. Claim and
+//! round-polynomial mutations live in the verifier fixture matrix.
+
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",
@@ -34,6 +42,10 @@ mod clear {
         ]
     }
 
+    /// Both backends' proofs must verify AND be equal wire objects — clear
+    /// mode draws nothing outside Fiat-Shamir, so reference/optimized
+    /// divergence anywhere in the composed pipeline shows up here as a proof
+    /// inequality even when both sides individually verify.
     #[test]
     fn field_inline_eqpoly_reference_matches_optimized() {
         let mut proofs = Vec::new();
@@ -55,6 +67,9 @@ mod clear {
         );
     }
 
+    /// The uniform-shape degenerate case: a field-inline guest executing zero
+    /// field-inline instructions still proves under the composed protocol, with an
+    /// all-zero `FieldRdInc` commitment and zero field-inline openings.
     #[test]
     fn field_inline_muldiv_reference_matches_optimized() {
         let mut proofs = Vec::new();
@@ -72,6 +87,8 @@ mod clear {
         );
     }
 
+    /// The verifier fixture matrix covers claim and round-polynomial mutations;
+    /// this checks that the prover's emitted commitment is transcript-bound.
     #[test]
     fn field_inline_tampered_commitment_is_rejected() {
         let (preprocessing, public_io, mut proof) =
@@ -144,6 +161,8 @@ mod zk {
         });
     }
 
+    /// The acceptance matrix uses optimized kernels; retain the reference ZK
+    /// path separately because randomized ZK proofs cannot be compared by bytes.
     #[test]
     fn field_inline_muldiv_reference_proof_is_accepted() {
         support::with_zk_stack(|| {

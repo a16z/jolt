@@ -50,7 +50,7 @@ fn main() {
     };
     info!("Trace length: {}", trace_length);
     info!("Max trace length: {}", max_trace_length);
-    drop(program_summary);
+    drop(program_summary); // Free trace memory before proving
 
     info!("\nProving {} transactions...", tx_count);
     let start = Instant::now();

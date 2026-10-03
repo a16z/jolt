@@ -97,6 +97,7 @@ pub struct SoundnessInput {
 
 impl<'a> Arbitrary<'a> for SoundnessInput {
     fn arbitrary(_u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        // Soundness is RedTeam-only; Arbitrary is not meaningful.
         Err(arbitrary::Error::IncorrectFormat)
     }
 }
@@ -266,6 +267,8 @@ impl Drop for PatchGuard {
     }
 }
 
+/// Apply a filtered patch to `sandbox_dir` in-place. Returns a guard
+/// that reverts the changes on drop (even on panic).
 fn apply_patch(sandbox_dir: &Path, patch: &str) -> Result<PatchGuard, CheckError> {
     let guard = PatchGuard {
         dir: sandbox_dir.to_path_buf(),
@@ -493,6 +496,9 @@ diff --git a/Cargo.toml b/Cargo.toml
             patch: "this is not a valid unified diff\n+garbage".into(),
             ..default_input()
         };
+        // Garbage with no diff headers passes filter_patch unchanged.
+        // git apply --allow-empty treats it as a no-op (no hunks),
+        // so the unpatched sandbox compiles and the check proceeds normally.
         assert!(inv.check(&setup, input).is_ok());
     }
 

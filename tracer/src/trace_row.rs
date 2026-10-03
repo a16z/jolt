@@ -31,6 +31,9 @@ pub enum CycleConversionError {
     },
     #[error("bytecode index {pc} exceeds u32 trace-row storage budget")]
     BytecodePcTooWide { pc: usize },
+    /// The cycle's raw values do not collapse to the final memory-row contract
+    /// for its class (e.g. a load whose RAM read value differs from its written
+    /// register value).
     #[error("memory-row contract violated for {kind:?}: {detail}")]
     MemoryRowContractViolation {
         kind: JoltInstructionKind,
@@ -201,6 +204,7 @@ mod tests {
 
         let base = DRAM_BASE + 0x100;
 
+        // ADD: non-memory row; pc 1 (index 0 is the injected no-op)
         assert_eq!(rows[0].pc(), 1);
         assert_eq!(rows[0].rs1_value(), base);
         assert_eq!(rows[0].rs2_value(), 7);
@@ -222,6 +226,7 @@ mod tests {
 
     #[test]
     fn source_only_cycles_are_rejected_at_the_phase_boundary() {
+        // DIV never appears in final bytecode; its cycle must be refused.
         let div_word: u32 = (0x01 << 25) | (2 << 20) | (1 << 15) | (0b100 << 12) | (3 << 7) | 0x33;
         let instruction = Instruction::decode(div_word, TEXT, false).unwrap();
         let Instruction::DIV(div) = instruction else {

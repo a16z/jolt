@@ -56,16 +56,20 @@ impl BigIntMulSequenceBuilder {
         self.asm.emit_r(Kind::MUL, self.s(0), self.a(0), self.b(0));
         self.asm.emit_s(Kind::SD, self.operands.rs3, self.s(0), 0);
 
+        // 1st limb is 0 and doesn't receive a carry from the 0th limb
+        // so initialize it with the upper half of A[0] * B[0]
         self.asm
             .emit_r(Kind::MULHU, self.s(1), self.a(0), self.b(0));
 
         for k in 1..OUTPUT_LIMBS {
+            // alternate between s0 and s1 for accumulating results and carries to minimize register usage
+            // overwrite carry register on first addition, then accumulate into it for subsequent additions
             let mut overwrite_carry = true;
 
             for i in 0..INPUT_LIMBS {
                 for j in 0..INPUT_LIMBS {
                     if i == 0 && j == 0 {
-                        continue;
+                        continue; // skip the A[0] * B[0] term which is already handled
                     }
                     if i + j == k {
                         self.asm.emit_r(Kind::MUL, self.t(), self.a(i), self.b(j));

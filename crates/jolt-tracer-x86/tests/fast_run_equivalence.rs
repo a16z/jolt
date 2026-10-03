@@ -51,6 +51,10 @@ fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
     );
 }
 
+/// Record mode: the full `TraceRow` stream must be identical to the
+/// reference interpreter's, row for row. This is the strongest equivalence
+/// statement the backend can make (spec invariant 1) and what proof
+/// byte-equality rests on.
 fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
     std::env::remove_var("TRACER_PARALLEL");
     let Some((program, inputs)) = setup(package, func, input) else {

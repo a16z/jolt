@@ -290,6 +290,8 @@ fn hi32_ops_match_bigint() {
         assert_hi32_matches(a160 + b160, &oa.add(&ob));
         assert_hi32_matches(a160 - b160, &oa.sub(&ob));
         assert_eq!(a160.cmp(&b160), oa.cmp(&ob));
+        // The overflow-safe mac chains must stay exact on the full range
+        // (jolt-field's original unrolled S160 kernel wrapped u128 here).
         assert_hi32_matches(a160 * b160, &oa.mul(&ob));
 
         let a224 = two::signed::S224::new(rng.gen(), rng.gen(), rng.gen());

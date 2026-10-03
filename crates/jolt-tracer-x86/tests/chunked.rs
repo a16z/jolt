@@ -15,6 +15,12 @@ use jolt_inlines_sha2 as _;
 mod common;
 use common::setup;
 
+/// Invariant 3: chunks compose to the eager trace, for any chunk size and in
+/// any replay order. With `dense_boundaries`, additionally shrink the
+/// checkpoint spacing to a fraction of the trace and assert every checkpoint
+/// resumes from a nearby boundary — proving the pause/resume machinery
+/// (`Paused` exits, multi-boundary selection, boundary restore) actually ran,
+/// which the production spacing of 2^16 rows never does on guests this small.
 fn assert_chunks_compose_spaced(
     package: &str,
     func: &str,
@@ -34,6 +40,8 @@ fn assert_chunks_compose_spaced(
     let expected = eager.trace.rows();
     assert!(!expected.is_empty());
 
+    // Sized from the measured trace so several pauses are guaranteed
+    // regardless of how many rows the guest's startup contributes.
     let min_spacing = dense_boundaries.then(|| (expected.len() / 8).max(8));
     if let Some(rows) = min_spacing {
         backend.set_min_checkpoint_spacing_rows(rows);
@@ -74,6 +82,7 @@ fn assert_chunks_compose_spaced(
             );
         }
 
+        // Replay in reverse to show order independence.
         let mut chunks: Vec<Vec<TraceRow>> = summary
             .checkpoints
             .iter()
@@ -109,6 +118,8 @@ fn fibonacci_chunks_compose() {
         "fibonacci-guest",
         "fib",
         postcard::to_stdvec(&40u32).expect("postcard"),
+        // Degenerate sizes included: 1 forces boundaries inside multi-row
+        // groups, and a size past the trace length is a single chunk.
         &[1, 7, 100, 1 << 18],
     );
 }
@@ -118,9 +129,15 @@ fn muldiv_chunks_compose() {
     let mut input = postcard::to_stdvec(&7u32).expect("postcard");
     input.extend(postcard::to_stdvec(&11u32).expect("postcard"));
     input.extend(postcard::to_stdvec(&3u32).expect("postcard"));
+    // Exercises the DIV/REM advice groups across chunk boundaries.
     assert_chunks_compose("muldiv-guest", "muldiv", input, &[1, 13, 1000]);
 }
 
+/// The pause/resume machinery under dense checkpoints: a small spacing forces
+/// many `Paused` exits and resumes on a small guest, so replay restores
+/// registers, memory, device state, and the advice cursor from real
+/// mid-program boundaries — the paths production spacing (2^16 rows) only
+/// reaches on million-row traces.
 #[test]
 fn fibonacci_chunks_compose_with_dense_boundaries() {
     assert_chunks_compose_spaced(
@@ -132,6 +149,9 @@ fn fibonacci_chunks_compose_with_dense_boundaries() {
     );
 }
 
+/// Dense boundaries across DIV/REM advice groups: resuming at a group whose
+/// advice computation re-runs from restored registers must reproduce the
+/// eager rows exactly.
 #[test]
 fn muldiv_chunks_compose_with_dense_boundaries() {
     let mut input = postcard::to_stdvec(&1_000_003u32).expect("postcard");

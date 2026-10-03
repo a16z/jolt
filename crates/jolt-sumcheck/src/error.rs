@@ -39,7 +39,9 @@ pub enum SumcheckError<F: Field> {
     BatchMemberRoundsOutOfRange {
         /// Zero-indexed member position (declaration order).
         member: usize,
+        /// Round count declared for this member.
         rounds: usize,
+        /// The batch's total round count.
         max_num_vars: usize,
     },
 
@@ -58,7 +60,9 @@ pub enum SumcheckError<F: Field> {
     BatchMemberWindowOverflow {
         /// Zero-indexed member position (declaration order).
         member: usize,
+        /// The member's activation offset.
         offset: usize,
+        /// The member's round count.
         rounds: usize,
     },
 
@@ -73,6 +77,7 @@ pub enum SumcheckError<F: Field> {
     CompressedPolynomialTooShort {
         /// Zero-indexed round number where the malformed polynomial appeared.
         round: usize,
+        /// Actual number of coefficients received.
         got: usize,
     },
 
@@ -123,6 +128,7 @@ pub enum SumcheckError<F: Field> {
 
     #[error("round polynomial has {coefficients} coefficients, but vector-commitment capacity is {capacity}")]
     RoundExceedsCommitmentCapacity {
+        /// Number of coefficients in the offending round polynomial.
         coefficients: usize,
         /// The vector-commitment setup's capacity.
         capacity: usize,
@@ -145,6 +151,7 @@ pub enum SumcheckError<F: Field> {
         member: usize,
         /// Round count recorded in the batch prelude.
         expected: usize,
+        /// Round count the member reports.
         got: usize,
     },
 
@@ -154,8 +161,11 @@ pub enum SumcheckError<F: Field> {
     BatchMemberWindowOutOfRange {
         /// Zero-indexed member position (declaration order).
         member: usize,
+        /// The member's activation offset.
         offset: usize,
+        /// The member's round count.
         rounds: usize,
+        /// The batch's total round count.
         max_num_vars: usize,
     },
 
@@ -205,7 +215,9 @@ pub enum SumcheckError<F: Field> {
     BatchedPointOutOfRange {
         /// Starting index into the batched challenge vector.
         offset: usize,
+        /// Number of variables in the requested instance.
         num_vars: usize,
+        /// Total number of available batched challenges.
         total: usize,
     },
 }

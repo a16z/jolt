@@ -7,6 +7,7 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{RISCVInstruction, RISCVTrace};
 
+// Note, unlike ROTIW from Zbb extension of RiscV, ROTRIW does not sign extend the result
 declare_riscv_instr!(
     name = VirtualROTRIW,
     mask = 0,

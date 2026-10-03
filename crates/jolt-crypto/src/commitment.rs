@@ -182,6 +182,8 @@ pub trait VectorCommitment:
         ))
     }
 
+    /// Verifies a row-combined opening and returns the evaluation at `entry_point`.
+    ///
     fn verify_committed_rows(
         setup: &Self::Setup,
         row_commitments: &[Self::Output],
@@ -224,6 +226,7 @@ pub trait VectorCommitment:
     }
 }
 
+/// Opening data for a linear combination of committed rows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VectorCommitmentOpening<F> {
     pub combined_vector: Vec<F>,

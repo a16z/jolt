@@ -1,6 +1,7 @@
 use crate::signed::S256;
 use crate::{Accumulator, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Ring, Unreduced};
 
+/// Deferred-reduction accumulator for fp128 products.
 #[derive(Clone, Copy)]
 pub struct Fp128Accumulator<const P: u128>(Fp128ProductAccum);
 
@@ -48,6 +49,7 @@ impl<const P: u128> Accumulator for Fp128Accumulator<P> {
     }
 }
 
+/// Deferred-reduction accumulator for signed scalar products.
 #[derive(Clone, Copy)]
 pub struct Fp128SignedAccumulator<const P: u128> {
     pos: Fp128MulU64Accum,

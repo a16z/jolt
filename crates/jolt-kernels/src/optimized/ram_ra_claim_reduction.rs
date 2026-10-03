@@ -45,6 +45,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// The three consumed claims (RAF, read-write, val-check), in γ-power order.
 const TERMS: usize = 3;
 
 impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
@@ -296,6 +297,7 @@ impl<F: JoltField> RaReductionKernel<F> {
             debug_assert!(false, "transition called outside the prefix phase");
             return;
         };
+        // Low-to-high challenges reversed give the big-endian prefix point.
         let r_prefix: Vec<F> = challenges.iter().rev().copied().collect();
         let eq_prefix = eq_table(&r_prefix);
         let h = gather_h_prime(
@@ -309,6 +311,8 @@ impl<F: JoltField> RaReductionKernel<F> {
         self.phase = Phase::Suffix { h, eq_hi, scales };
     }
 
+    /// `[s(0), s(2)]` of the current round polynomial; `s(1)` comes from the
+    /// engine hint.
     fn message_evals(&self) -> [F; 2] {
         match &self.phase {
             Phase::Prefix { p, q, .. } => {
@@ -390,6 +394,9 @@ impl<F: JoltField> SumcheckKernel<F> for RaReductionKernel<F> {
         Ok(RamRaClaimReductionOutputClaims { ram_ra: h[0] })
     }
 
+    /// Pin the factored eq tables to the verifier's scalar path: for each
+    /// cycle point, `scale_x · eq_hi_x` fully bound must equal
+    /// `derive_output_term` at the bound point.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -543,6 +550,8 @@ mod tests {
 
     #[test]
     fn matches_reference_on_single_round() {
+        // `log_T = 1` has no prefix rounds: the kernel starts in the suffix
+        // phase off the plain address fold.
         run_parity(
             FixtureShape { log_t: 1, ram_k: 8 },
             vec![RamOp::Write { word: 1, post: 4 }],

@@ -769,6 +769,7 @@ impl MacroBuilder {
             max_trusted_advice_size: attributes.max_trusted_advice_size,
             stack_size: attributes.stack_size,
             heap_size: attributes.heap_size,
+            // Not needed for the main function, but we need the io region information from MemoryLayout.
             program_size: Some(0),
         });
         let input_start = memory_layout.input_start;
@@ -855,6 +856,8 @@ impl MacroBuilder {
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
+        // Boot code (_start) is provided by jolt-sdk's boot modules via ZeroOS.
+        // Both std and no-std modes go through __platform_bootstrap before main().
         let custom_start = quote! {};
 
         quote! {

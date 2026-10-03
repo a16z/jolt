@@ -175,6 +175,9 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
         .into_iter()
         .map(ComposedOpeningId::from),
     );
+    // The reduced field-inline `FieldRdInc` row, after the ordinary increment-reduction
+    // outputs and before the optional advice cycle phases — the clear absorb order
+    // (`stage6b_opening_values`).
     #[cfg(feature = "field-inline")]
     output_ids.extend(super::field_inline::stage6b_inc_output_ids());
     if let Some(layout) = trusted_layout {
@@ -341,6 +344,11 @@ mod tests {
         }
     }
 
+    /// The stage-6b committed row order is the clear curated absorb order
+    /// (`stage6b_opening_values`), locked entry-for-entry over sentinel-valued claims — with
+    /// field-inline enabled: the reduced `FieldRdInc` row after the ordinary
+    /// increment-reduction outputs, before the (absent here) advice cycle phases. Empty points
+    /// mean no booleanity dedup fires on either side.
     #[test]
     fn stage6b_output_ids_match_the_clear_absorb_order() {
         use jolt_claims::OutputClaims as _;
@@ -420,6 +428,11 @@ mod field_inline_tests {
         (0..len as u64).map(|i| fr(start + i)).collect()
     }
 
+    /// The lowered stage-6b bytecode output claim — the cycle symbolic output
+    /// expression over the composed `StageValue(i)` publics
+    /// (`composed_bytecode_stage_values` added onto the ordinary monolith
+    /// publics) — evaluates identically to the clear composed
+    /// `BytecodeReadRaf::expected_output` on a synthetic fixture.
     #[test]
     fn lowered_bytecode_output_matches_the_clear_composed_claim() {
         let log_t = 2usize;
@@ -502,6 +515,9 @@ mod field_inline_tests {
             )
             .unwrap();
 
+        // The lowered path: the ordinary monolith publics plus the composed field-inline stage
+        // values (the same helper `add_stage6_publics_and_challenges` bakes), folded through
+        // the lowered cycle symbolic output expression.
         let r_cycle: Vec<Fr> = sumcheck_point.iter().rev().copied().collect();
         let mut publics = bytecode::read_raf_public_values(BytecodeReadRafEvaluationInputs {
             bytecode: &bytecode,
@@ -527,6 +543,7 @@ mod field_inline_tests {
             &challenges,
         )
         .unwrap();
+        // A vanishing field-inline contribution would make this parity vacuous.
         assert!(composed.iter().any(|value| *value != fr(0)));
         for (stage_value, field_inline_value) in publics.stage_values.iter_mut().zip(composed) {
             *stage_value += field_inline_value;

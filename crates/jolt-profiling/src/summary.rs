@@ -250,6 +250,7 @@ fn read_folded_files(prefix: &str) -> BTreeMap<String, String> {
     snapshots
 }
 
+/// Run identity threaded into [`RunMetadata`] by the profile harness.
 #[derive(Clone, Debug)]
 pub struct SummaryContext {
     pub workload: String,
@@ -257,6 +258,7 @@ pub struct SummaryContext {
     pub backend: String,
 }
 
+/// The `memory_gib` counter name both peak-memory metrics sample.
 const MEMORY_COUNTER: &str = "memory_gib";
 
 /// Rewrites every event carrying `counters.*` args into one chrome counter
@@ -300,6 +302,8 @@ fn json_f64(value: &Value) -> Option<f64> {
 
 fn counter_samples(event: &Value) -> Option<Vec<(String, f64)>> {
     let obj = event.as_object()?;
+    // Span begin/end and metadata events never carry counter fields; only
+    // instant events (the monitor's `tracing::debug!` samples) do.
     match obj.get("ph").and_then(Value::as_str) {
         Some("i" | "I") => {}
         _ => return None,
@@ -321,6 +325,7 @@ struct OpenSpan {
     child_us: f64,
 }
 
+/// Half-open microsecond interval of one closed span instance.
 #[derive(Clone, Copy)]
 pub(crate) struct Interval {
     pub(crate) start_us: f64,
@@ -350,9 +355,16 @@ pub(crate) struct TraceAggregate {
     pub(crate) root: Option<(Interval, u64)>,
     pub(crate) stage_intervals: Vec<(String, Interval)>,
     pub(crate) counter_points: BTreeMap<String, Vec<(f64, f64)>>,
+    /// `heap_snapshot` instant events: snapshot label → absolute trace µs.
     pub(crate) snapshot_instants: Vec<(String, f64)>,
 }
 
+/// Replays the chrome events through per-thread span stacks, producing
+/// per-label aggregates, the root/stage intervals, and counter samples.
+///
+/// Accepts both raw (`counters.*` instant events) and converted (`"ph": "C"`)
+/// counter encodings, so it can run before or after
+/// [`convert_counter_events`].
 pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggregate {
     let mut stacks: HashMap<u64, Vec<OpenSpan>> = HashMap::new();
     let mut spans: BTreeMap<String, SpanAggregate> = BTreeMap::new();
@@ -486,6 +498,9 @@ pub fn build_summary(
     let aggregate = aggregate_events(events, taxonomy::ROOT_SPAN);
     let memory_points = aggregate.counter_points.get(MEMORY_COUNTER);
 
+    // Situate the allocative snapshots on the trace clock: join the
+    // driver's `heap_snapshot` instant events by label, as ns since the
+    // root span opened.
     if let Some((root_interval, _)) = aggregate.root {
         for (label, ts_us) in &aggregate.snapshot_instants {
             if let Some(snapshot) = heap.get_mut(label) {
@@ -509,6 +524,8 @@ pub fn build_summary(
         }
     });
 
+    // Pipeline order per the taxonomy, then unknown prove_stage* labels in
+    // first-seen order.
     let mut ordered: Vec<(String, Interval)> = Vec::with_capacity(aggregate.stage_intervals.len());
     for stage in taxonomy::STAGE_SPANS {
         ordered.extend(
@@ -667,6 +684,9 @@ pub fn finalize_trace(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default();
+    // Heap attribution from the allocative lane's mid-stage snapshots, if
+    // the harness opted in (prefix set + .folded twins on disk). The raw
+    // folded text is kept for the memory-timeline viz's icicles.
     #[cfg(feature = "allocative")]
     let folded_files = crate::flamegraph::flamegraph_prefix()
         .map(read_folded_files)

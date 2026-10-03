@@ -58,6 +58,9 @@ fn oracle_sub(a: u128, b: u128, p: u128) -> u128 {
     oracle_add(a, p - b, p)
 }
 
+/// Full oracle sweep for one (field type, modulus) pair. `inverses: false`
+/// skips inverse checks for moduli of unverified primality (used by the
+/// `C = 2^a ± 1` shift-path coverage).
 macro_rules! check_prime128 {
     ($two:ty, $p:expr, $rng:expr) => {
         check_prime128!($two, $p, $rng, inverses: true)
@@ -231,6 +234,9 @@ macro_rules! check_prime128 {
             "i128::MIN vs oracle (2^127 < p, so its negation is p − 2^127)"
         );
 
+        // solinas_reduce across every length dispatch and fold threshold:
+        // all-ones limbs maximize every fold intermediate (t2 hits its bound),
+        // and single-high-limb patterns pin each C-power identity.
         let mut limb_cases: Vec<Vec<u64>> = vec![
             vec![],
             vec![42],
@@ -307,6 +313,10 @@ fn fp128_offset_a7f7_matches() {
     assert!(two::is_registered_prime_offset(128, 275));
 }
 
+/// `C = 2^a ± 1` moduli exercise the shift/add and shift/sub branches of
+/// `mul_c_wide` that no registered prime reaches. Primality of these moduli
+/// is unverified, so inverse checks are skipped (everything else is
+/// ring-level and needs only an odd modulus).
 #[test]
 fn fp128_shift_kind_c_paths_match() {
     let mut rng = rng();

@@ -39,6 +39,8 @@ fn split_commit_output(
     (output.committed_group, output.private_handle)
 }
 
+/// Commits one imported one-hot source group under the setup's K-specific
+/// scheme; `context` names the precommitted groups the row is keyed on.
 fn commit_one_hot_source(
     setup: &AkitaProverSetup,
     backend: &AkitaBackend,
@@ -70,6 +72,7 @@ fn commit_one_hot_source(
     .map(split_commit_output)
 }
 
+/// Prover seam for committing the packed trace directly from selected one-hot rows.
 pub trait TraceOneHotCommitment: CommitmentScheme {
     fn commit_trace_one_hot(
         setup: &Self::ProverSetup,
@@ -79,9 +82,12 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         group_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
+    /// Releases backend state that can be rebuilt before the opening proof.
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
 }
 
+/// Strictly ascending roles make the ordered commitment group list
+/// unambiguous and forbid duplicate or permuted groups.
 pub(crate) fn validate_group_order(
     roles: impl IntoIterator<Item = CommitmentGroupRole>,
 ) -> Result<(), OpeningsError> {
@@ -172,6 +178,9 @@ impl AkitaScheme {
         )
     }
 
+    /// Commits owned one-hot columns without cloning their hot-index buffers
+    /// at the Jolt/Akita boundary. The opening hint retains the backend
+    /// representations needed by the prover.
     pub fn commit_one_hot_group_owned(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
@@ -209,6 +218,8 @@ impl AkitaScheme {
         )
     }
 
+    /// Commits the prefix-packed trace without constructing padded per-column
+    /// index vectors or Akita's generic one-hot block representation.
     pub fn commit_trace_one_hot(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
@@ -267,6 +278,9 @@ impl AkitaScheme {
         .map_err(commit_failed)
     }
 
+    /// Freezes the ordered group profiles the final trace group commits
+    /// against. Order is the caller's canonical role order; the backend keys the
+    /// grouped row on this exact sequence.
     fn group_profiles(
         setup: &AkitaProverSetup,
         group_hints: &[&AkitaProverHint],
@@ -624,6 +638,11 @@ impl CommitmentScheme for AkitaScheme {
         )
     }
 
+    /// Commits a group of row-major one-hot polynomials through the backend's
+    /// one-hot flavor — [`AkitaScheme::commit_one_hot_group`] behind the
+    /// scheme-generic seam (the trait object's `one_hot_indices` accessor
+    /// feeds the same backend representation, so the commitment is
+    /// byte-identical to the inherent paths).
     fn commit_batch(
         polynomials: &[&dyn MultilinearPoly<Self::Field>],
         layout_digest: [u8; 32],
@@ -703,6 +722,10 @@ impl CommitmentScheme for AkitaScheme {
 impl TransparentObjectSetup for AkitaScheme {
     type SetupContext = Arc<AkitaScheduleArtifacts>;
 
+    /// The singleton commitment-object setup convention for advice and direct
+    /// committed-program objects: one polynomial at `num_vars`, seeded by the
+    /// object plan's layout digest. Every bounded-dense object commits through
+    /// the dense flavor, so the costly one-hot backend setup is never built.
     fn transparent_object_setup(
         context: &Self::SetupContext,
         num_vars: usize,
@@ -1041,6 +1064,8 @@ mod tests {
         one_hot_roundtrip(AKITA_ONE_HOT_K256);
     }
 
+    /// A serde roundtrip drops the primed key cache; the transported setup
+    /// must re-derive the same backend key from its shape.
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();

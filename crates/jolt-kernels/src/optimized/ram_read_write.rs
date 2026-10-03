@@ -198,6 +198,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         } else {
             Phase::Cycle { matrix, gruen }
         };
+        // Purge after raw columns, late bind tails, and the cycle matrix.
         if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
             crate::mem::purge_retained_memory(self.log_t);
         }
@@ -362,6 +363,9 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
         })
     }
 
+    /// The hand-maintained cycle-eq factor must equal the verifier's
+    /// `EqCycle` scalar at the bound point — the same cross-check the naive
+    /// tier runs on its tiled eq table.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -606,6 +610,8 @@ mod tests {
 
     #[test]
     fn matches_reference_on_sparse_traffic() {
+        // Long no-access gaps and a single hot address: exercises the
+        // implicit-entry checkpoint paths on both matrix orientations.
         run_parity(
             FixtureShape { log_t: 5, ram_k: 8 },
             vec![
@@ -637,6 +643,12 @@ mod tests {
         }
     }
 
+    /// Nonzero `val_init` with reads BEFORE the first write: the optimized
+    /// `val_init` reconstruction must recover a read-first word's initial
+    /// value from its first access's pre-value, a never-accessed nonzero
+    /// word's from the final state, and stay in parity with the reference
+    /// val grid through both phases. A RAM-silent prefix exercises the initial
+    /// checkpoint in the address-first handoff.
     #[test]
     fn matches_reference_on_read_before_write_with_nonzero_val_init() {
         let shape = FixtureShape {

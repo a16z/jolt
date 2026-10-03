@@ -1,3 +1,19 @@
+//! CSRRW (CSR Read-Write) — Write rs1 to CSR, read old value to rd.
+//!
+//! Encoding: `csr[31:20] | rs1[19:15] | funct3=001[14:12] | rd[11:7] | opcode=1110011[6:0]`
+//!
+//! For ZeroOS: Single-core, no-interrupts, M-mode-only. Supports the following CSRs
+//! mapped to virtual registers for proof verification:
+//!   - mtvec (0x305) → vr34
+//!   - mscratch (0x340) → vr35
+//!   - mepc (0x341) → vr36
+//!   - mcause (0x342) → vr37
+//!   - mtval (0x343) → vr38
+//!   - mstatus (0x300) → vr39
+//!
+//! The `csrw csr, rs` pseudo-instruction is `csrrw x0, csr, rs` (rd=0, discard old value).
+//! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
+
 use crate::instruction::registers::i::RegisterStateI;
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +52,9 @@ impl CSRRW {
 
 impl RISCVTrace for CSRRW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // Don't call self.execute() - the inline sequence handles everything.
+        // Virtual registers are the single source of truth; we don't use cpu.csr[].
+
         super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
     }
 }
@@ -47,8 +66,12 @@ mod tests {
     use crate::instruction::Instruction;
     use crate::instruction::RISCVTrace;
 
+    /// Test decoding of `csrw mtvec, t0` (csrrw x0, mtvec, t0)
+    /// Encoding: csr=0x305, rs1=t0(5), funct3=001, rd=x0(0), opcode=1110011
     #[test]
     fn test_csrrw_mtvec_decode() {
+        // csrw mtvec, t0 = csrrw x0, 0x305, t0
+        // Encoding: 0x305 << 20 | 5 << 15 | 1 << 12 | 0 << 7 | 0x73
         let instr: u32 = 0x30529073;
         let address: u64 = 0x1000;
 
@@ -64,8 +87,13 @@ mod tests {
         }
     }
 
+    /// `decode` must reject unsupported CSRs with a typed error instead of
+    /// letting them reach the inline-sequence path, which would previously
+    /// panic the prover process.
     #[test]
     fn test_csrrw_unsupported_csr_rejected_at_decode() {
+        // satp = 0x180 — valid RISC-V supervisor CSR but not modelled by Jolt.
+        // Encoding: 0x180 << 20 | 5 << 15 | 1 << 12 | 0 << 7 | 0x73
         let instr: u32 = (0x180 << 20) | (5 << 15) | (1 << 12) | 0x73;
         let err = Instruction::decode(instr, 0x1000, false)
             .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
@@ -74,6 +102,8 @@ mod tests {
 
     #[test]
     fn test_csrrw_with_rd() {
+        // csrrw a0, mtvec, t0 (read old mtvec to a0, write t0 to mtvec)
+        // Encoding: 0x305 << 20 | 5 << 15 | 1 << 12 | 10 << 7 | 0x73
         let instr: u32 = 0x30529573;
         let address: u64 = 0x1000;
 
@@ -102,11 +132,14 @@ mod tests {
 
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
 
+        // Choose distinct values so that if the inline sequence accidentally uses
+        // the post-clobber rs1 value, the test will fail.
         let old_vr_val: u64 = 0x2222_3333;
         let write_val: u64 = 0x1111_0000;
 
-        cpu.x[34] = old_vr_val as i64;
-        cpu.x[5] = write_val as i64;
+        // Set up the virtual register (single source of truth)
+        cpu.x[34] = old_vr_val as i64; // vr34 = mtvec
+        cpu.x[5] = write_val as i64; // rs1 = t0 = write_val
 
         let mut trace: Vec<Cycle> = Vec::new();
         csrrw.trace(&mut cpu, Some(&mut trace));

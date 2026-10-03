@@ -70,6 +70,10 @@ pub enum ProverError<F: JoltField> {
     BlindFold(#[from] jolt_blindfold::ProverError<F>),
 }
 
+/// Route the typed kernel seam's extraction/self-check failures through
+/// [`ProverError::Kernel`] — [`KernelError`] already wraps
+/// [`SumcheckKernelError`] transparently, so a dedicated variant would surface
+/// the same failure under two names depending on path.
 impl<F: JoltField> From<SumcheckKernelError<F>> for ProverError<F> {
     fn from(error: SumcheckKernelError<F>) -> Self {
         Self::Kernel(error.into())

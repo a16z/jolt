@@ -125,6 +125,7 @@ mod exec_unit {
 
     #[test]
     fn test_step_by_step_round_1() {
+        // Round-1 step-by-step: compare post-theta/rho+pi/chi states to XKCP expected snapshots.
         let mut state = [0u64; NUM_LANES];
         state[0] = 0x0000000000000001;
         let round = 1;

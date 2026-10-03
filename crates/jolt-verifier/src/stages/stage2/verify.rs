@@ -44,6 +44,10 @@ use crate::{
     VerifierError,
 };
 
+/// The product uni-skip step's outputs: the tau bindings and the uni-skip
+/// reduction challenge are extracted mode-agnostically (clear: the single-entry
+/// reduction point; ZK: the committed round challenge) so the batch relations —
+/// `ProductRemainder::new` in particular — can be built before the mode branch.
 struct ProductUniskipStep<F: JoltField, C> {
     tau_low: Vec<F>,
     tau_high: F,
@@ -56,6 +60,11 @@ enum ProductUniskipVerified<F: JoltField, C> {
     Zk(uniskip::UniskipZk<F, C>),
 }
 
+/// Assemble the stage-2 batch consumed opening *values* from the upstream clear outputs into
+/// the generated `Stage2BatchInputClaims` aggregate. Each per-relation `*_from_upstream`
+/// helper wires which upstream opening feeds which downstream input. The product-remainder
+/// input is the product uni-skip's output claim (a separate stage-2 sub-sumcheck), not an
+/// upstream stage's opening.
 pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
@@ -113,6 +122,9 @@ where
     let uniskip =
         verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
 
+    // Build the batch relations once, pre-branch; each owns its input/output
+    // claim algebra (single-sourced with its jolt-claims formula and the BlindFold
+    // constraint). The product uni-skip stays hand-coded above.
     let lowest_address = checked.public_io.memory_layout.get_lowest_address();
     let public_memory = PublicIoMemory::new(&checked.public_io).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
@@ -151,6 +163,12 @@ where
         ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
 
+    // Draw each relation's challenges in declaration order: the RAM read-write gamma, the
+    // instruction claim-reduction gamma, under `field-inline` the field-inline claim-reduction
+    // gamma (each a single `challenge_scalar`), then the RAM output-check address reference
+    // point (the last member's `draw_challenges` override — one raw `challenge()` per RAM
+    // address variable, landing after the gammas as the inline draw did). The drawn challenges
+    // feed the input/output claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
@@ -162,6 +180,7 @@ where
             });
         };
         let consistency = sumchecks.verify_zk(&proof.stages.stage2_sumcheck_proof, transcript)?;
+        // Both modes omit aliases from the canonical member output rows.
         let output_claim_count = sumchecks.output_claim_count();
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,

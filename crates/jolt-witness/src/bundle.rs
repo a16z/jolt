@@ -38,6 +38,8 @@ mod tests {
     use crate::witnesses::{LookupIndex, LookupOutput, OpFlag, Product, ToField, UnexpandedPc};
     use crate::BundleSource;
 
+    /// Exercises every `#[opening(..)]` form: fact fields (no annotation),
+    /// a bare virtual variant, and the payload-carrying indexed-family form.
     #[derive(Clone, Copy, Debug, WitnessBundle)]
     struct DeriveCoverageBundle {
         lookup_index: LookupIndex,

@@ -1,3 +1,16 @@
+//! Field-inline trace fixtures for the optimized field-registers kernels' parity tests:
+//! register-consistent field-inline executions behind a full `TraceBackend` witness
+//! plane with the field-inline view attached (the
+//! [`super::registers_read_write::test_support::TraceFixture`] discipline at the
+//! field-inline instruction family).
+//!
+//! Reads return the running field register file state and writes advance it, so the
+//! witness view's build-time replay validation holds by construction. Bridge ops
+//! (`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`/`FIELD_ADVICE_LIMB`) are deliberately not modeled — their
+//! payloads couple to the x-register file, and the field-inline kernel surface under
+//! test never distinguishes bridge writes from ordinary ones (the e2e's eq-MLE guest
+//! covers them at the proof level).
+
 #![expect(
     clippy::unwrap_used,
     clippy::panic,
@@ -71,6 +84,8 @@ impl FieldRegisterTraceFixture {
         instruction
     }
 
+    /// A fresh pseudo-random full-width field value (squaring pushes the
+    /// value past the u64 range, exercising real field arithmetic).
     fn fresh_value(&mut self) -> Fr {
         self.counter = self
             .counter
@@ -119,6 +134,8 @@ impl FieldRegisterTraceFixture {
         ));
     }
 
+    /// One field-inline arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
+    /// running state and writes a fresh pseudo-random destination value.
     pub(crate) fn arithmetic(&mut self, op: FieldInlineOp, rd: u8, rs1: u8, rs2: u8) {
         let kind = match op {
             FieldInlineOp::Add => JoltInstructionKind::FIELD_ADD,
@@ -181,6 +198,8 @@ impl FieldRegisterTraceFixture {
         ));
     }
 
+    /// Run `f` against a field-inline trace backend padded to `2^log_t` cycles, with
+    /// the field-inline witness view attached.
     pub(crate) fn with_plane<R>(
         self,
         log_t: usize,
@@ -226,6 +245,9 @@ impl FieldRegisterTraceFixture {
     }
 }
 
+/// A structured field-inline workload: seed loads, add/sub/mul/inv chains, `rs1 == rs2`
+/// and `rd == rs1` aliasing, an assert-eq, repeated writes to one register, high slot
+/// indices, and interleaved inactive field-inline rows. Emits at most `cycles` rows.
 pub(crate) fn structured_field_register_fixture(cycles: usize) -> FieldRegisterTraceFixture {
     let mut fixture = FieldRegisterTraceFixture::new();
     for step in 0..cycles {
@@ -243,6 +265,8 @@ pub(crate) fn structured_field_register_fixture(cycles: usize) -> FieldRegisterT
     fixture
 }
 
+/// A fixture with no field-inline instructions; every extension column is identically
+/// zero (the uniform-shape degenerate case).
 pub(crate) fn inactive_field_register_fixture(cycles: usize) -> FieldRegisterTraceFixture {
     let mut fixture = FieldRegisterTraceFixture::new();
     for _ in 0..cycles {

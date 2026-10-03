@@ -601,6 +601,10 @@ mod tests {
         (value >> lo) & ((1 << (hi - lo + 1)) - 1)
     }
 
+    // Encoding-side assemblers transcribed from the RV64I base instruction
+    // formats (unprivileged spec §2.3); they scatter immediates independently
+    // of the reassembly code under test.
+
     fn b_word(offset: i32, rs2: u32, rs1: u32, funct3: u32) -> u32 {
         let imm = offset as u32;
         (bit(imm, 12) << 31)
@@ -693,6 +697,8 @@ mod tests {
 
     #[test]
     fn format_j_operands_reassembles_scattered_jump_immediate() {
+        // JAL immediates carry the 64-bit two's-complement pattern
+        // zero-extended into i128, not a negative i128
         let operands = format_j_operands(j_word(-2, 1));
         assert_eq!(operands.rd, Some(1));
         assert_eq!(operands.rs1, None);
@@ -767,6 +773,8 @@ mod tests {
     fn decodes_i_format_addi_and_records_row_metadata() {
         let instruction = decode_ok(0xff01_0113, 0x8000_0010, true); // addi sp,sp,-16
         assert_eq!(instruction.kind(), SourceInstructionKind::ADDI);
+        // unlike loads (format_load_operands), plain I-format immediates carry
+        // the zero-extended 64-bit two's-complement pattern in the i128
         assert_eq!(
             instruction.row().operands,
             NormalizedOperands {
@@ -1067,6 +1075,9 @@ mod tests {
         .is_err());
     }
 
+    /// `fence` (`fence iorw, iorw`) decodes as FENCE, the only MISC-MEM
+    /// instruction in RV64IMAC; the other funct3 values are rejected in
+    /// `rejects_invalid_encodings_with_exact_messages`.
     #[test]
     fn decodes_fence() {
         let fence = decode_instruction(0x0ff0_000f, 0x8000_0000, false, RV64IMAC_JOLT);

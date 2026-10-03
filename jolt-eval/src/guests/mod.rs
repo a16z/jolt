@@ -66,6 +66,7 @@ pub fn verify(
     )
 }
 
+/// Verify a proof against claimed (potentially malicious) outputs and panic flag.
 pub fn verify_with_claims(
     verifier_pp: &VerifierPreprocessing,
     proof: Proof,

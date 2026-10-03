@@ -1,3 +1,16 @@
+//! Traits and compositions for multilinear polynomials.
+//!
+//! Three trait tiers with distinct responsibilities:
+//!
+//! - [`MultilinearEvaluation`]: Read-only point evaluation — `num_vars()`, `len()`, `evaluate(point)`
+//! - [`MultilinearBinding`]: In-place variable binding for sumcheck — `bind(scalar)`
+//! - [`MultilinearPoly`]: Streaming matrix-view access for PCS — `for_each_row`, `fold_rows`,
+//!   `is_one_hot`, `for_each_one`
+//!
+//! [`RlcSource`] composes multiple polynomials via random linear combination
+//! without materializing the combined table. Its [`fold_rows`](MultilinearPoly::fold_rows)
+//! distributes across constituents, avoiding allocation of the combined table.
+
 use std::borrow::Cow;
 
 use jolt_field::JoltField;
@@ -54,6 +67,7 @@ pub trait MultilinearPoly<F: JoltField>: Send + Sync {
     /// Number of variables $n$. The polynomial has $2^n$ evaluations.
     fn num_vars(&self) -> usize;
 
+    /// Evaluates $f(r)$ at an arbitrary point $r \in \mathbb{F}^n$.
     fn evaluate(&self, point: &[F]) -> F;
 
     /// Iterates over the evaluation table in row-major order.
@@ -116,6 +130,7 @@ pub trait MultilinearPoly<F: JoltField>: Send + Sync {
         None
     }
 
+    /// Returns the coefficient order used by the sparse one-hot representation.
     fn one_hot_index_order(&self) -> Option<crate::OneHotIndexOrder> {
         None
     }
@@ -410,6 +425,11 @@ impl<F: JoltField, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S>
         }
     }
 
+    /// Distributes fold_rows across constituent sources.
+    ///
+    /// Computes $\sum_i s_i \cdot (v \cdot M_i)$ by having each source
+    /// independently compute its own fold. No evaluation table is
+    /// ever materialized — this is the key streaming win.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
         let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);

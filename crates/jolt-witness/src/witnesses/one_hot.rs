@@ -1,3 +1,8 @@
+//! Committed one-hot RA chunk witnesses: per-cycle hot addresses of one
+//! chunk of an address decomposition. The chunk selector is the
+//! `ExtractIndexed` index binding — which chunk of which decomposition is
+//! bound at the use site.
+
 use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{BytecodePc, Extract, ExtractIndexed, LookupIndex, RemappedRamAddress, WitnessEnv};
@@ -63,6 +68,8 @@ pub struct BytecodeRaChunk(pub usize);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RamRaChunk(pub Option<usize>);
 
+// A chunk witness is its per-cycle hot address; `None` is a cold cycle.
+// Only RAM has one — instruction and bytecode chunks are hot every cycle.
 impl From<InstructionRaChunk> for Option<usize> {
     fn from(chunk: InstructionRaChunk) -> Self {
         Some(chunk.0)

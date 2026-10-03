@@ -34,6 +34,9 @@ type CyclePhaseSymbolic = relations::booleanity::BooleanityCyclePhase;
 #[cfg(feature = "akita")]
 type CyclePhaseSymbolic = lattice_booleanity::LatticeBooleanityCyclePhase;
 
+/// The cycle phase's shape: the base dimensions, plus (akita) the inc
+/// chunking they imply. The driver constructs it, keeping this member's
+/// constructor infallible.
 #[cfg(not(feature = "akita"))]
 pub type BooleanityCycleDimensions = BooleanityDimensions;
 #[cfg(feature = "akita")]
@@ -43,6 +46,7 @@ pub type BooleanityCycleDimensions = lattice_booleanity::LatticeBooleanityDimens
 pub struct Booleanity<F: JoltField> {
     symbolic: CyclePhaseSymbolic,
     dimensions: BooleanityCycleDimensions,
+    /// The address opening prefix from the stage-6a phase.
     r_address: Vec<F>,
     reference_address: Vec<F>,
     reference_cycle: Vec<F>,
@@ -146,6 +150,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
+        // Recover the raw two-phase sumcheck point from a produced opening point
+        // (`r_address ++ r_cycle`): each half is the reverse of its phase's
+        // sumcheck sub-point, and `EqAddressCycle` compares `[6a ++ 6b]` against
+        // `reversed(reference_address) ++ reversed(reference_cycle)`.
         let opening_point = output_points
             .instruction_ra()
             .first()

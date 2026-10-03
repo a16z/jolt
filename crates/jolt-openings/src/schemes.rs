@@ -326,6 +326,7 @@ pub trait ZkOpeningScheme: CommitmentScheme {
 
     type Blind: Clone + Send + Sync;
 
+    /// Commit in the scheme's ZK/hiding mode.
     fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         setup: &Self::ProverSetup,

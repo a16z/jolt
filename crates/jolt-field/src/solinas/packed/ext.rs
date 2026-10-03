@@ -1,10 +1,24 @@
+//! Packed extension towers in transpose layout: coefficient `j` of every
+//! lane lives in packed base vector `j`, so `WIDTH` extension values
+//! multiply in parallel through the [`Packed`] kernel hooks — which consume
+//! the shared coefficient schedules (`crate::schedules`) unless a SIMD
+//! engine overrides them with fused kernels.
+//!
+//! Inversion is lane-wise scalar throughout (the [`Packed::inverse`]
+//! default): the base-field Fermat inversion is lane-serial in any
+//! formulation and dominates the cost.
+
 use crate::solinas::{FpExt2, FpExt4, FpExt8};
 use crate::{Ext2Config, Field, Packed, PseudoMersenne, WithPacking};
 use std::marker::PhantomData;
 use std::ops::{Add, Mul, Sub};
 
+/// Packed [`FpExt2`]: `WIDTH` quadratic-extension lanes as two packed
+/// coefficient vectors.
 pub struct PackedFpExt2<PF: Packed, C: Ext2Config<PF::Scalar>> {
+    /// Packed degree-0 coefficients.
     pub c0: PF,
+    /// Packed degree-1 coefficients.
     pub c1: PF,
     _cfg: PhantomData<fn() -> C>,
 }
@@ -20,6 +34,7 @@ impl<PF: Packed, C: Ext2Config<PF::Scalar>> PackedFpExt2<PF, C> {
     }
 }
 
+// Manual std impls: derives would demand `C: Clone` etc. on the config ZST.
 impl<PF: Packed, C: Ext2Config<PF::Scalar>> Clone for PackedFpExt2<PF, C> {
     #[inline]
     fn clone(&self) -> Self {
@@ -89,6 +104,7 @@ where
 /// vectors in the `[1, e1, e2, e3]` basis.
 #[derive(Clone, Copy)]
 pub struct PackedFpExt4<PF: Packed> {
+    /// Packed coefficients in basis order.
     pub coeffs: [PF; 4],
 }
 
@@ -157,6 +173,7 @@ impl<F: PseudoMersenne + WithPacking> WithPacking for FpExt4<F> {
 /// vectors in the `[1, e1, ..., e7]` basis.
 #[derive(Clone, Copy)]
 pub struct PackedFpExt8<PF: Packed> {
+    /// Packed coefficients in basis order.
     pub coeffs: [PF; 8],
 }
 

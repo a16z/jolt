@@ -100,6 +100,8 @@ impl Extract for RightInstructionInput {
 }
 
 impl ToField for Product {
+    /// The product may exceed `i128`: fall back to the sign/magnitude split
+    /// when the truncated representation does not fit.
     fn to_field<F: JoltField>(self) -> F {
         if let Some(value) = self.0.to_i128() {
             F::from_i128(value)

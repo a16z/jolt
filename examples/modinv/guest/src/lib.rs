@@ -20,6 +20,9 @@ fn modinv(a: u64, m: u64) -> u64 {
 
         let (inv, quo) = *adv;
 
+        // CRITICAL: Verify that the advice is correct!
+        // This uses check_advice! to ensure that a * inv ≡ 1 (mod m)
+        // and that inv < m
         let product = (a as u128) * (inv as u128) - (quo as u128) * (m as u128);
         jolt::check_advice!(product == 1u128 && inv < m);
 
@@ -40,6 +43,11 @@ fn modinv(a: u64, m: u64) -> u64 {
     inv_advice
 }
 
+/// Naive modular inverse implementation that computes directly without runtime advice.
+///
+/// This version performs the Extended Euclidean Algorithm entirely within the guest,
+/// without leveraging the advice system. This allows us to compare the cycle counts
+/// to demonstrate the efficiency gains from using runtime advice.
 fn modinv_naive(a: u64, m: u64) -> u64 {
     if m == 0 {
         return 0;

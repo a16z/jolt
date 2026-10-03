@@ -1,3 +1,8 @@
+//! Compressed univariate polynomial with the linear term omitted.
+//!
+//! Used in sumcheck proofs to save one field element per round polynomial.
+//! The linear term is recoverable from the sumcheck claim `f(0) + f(1)`.
+
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +40,7 @@ impl<F: Field> CompressedPoly<F> {
         }
     }
 
+    /// The stored coefficients `[c0, c2, c3, ...]` (linear term omitted).
     pub fn coeffs_except_linear_term(&self) -> &[F] {
         &self.coeffs_except_linear_term
     }
@@ -45,6 +51,9 @@ impl<F: Field> CompressedPoly<F> {
 
     #[inline]
     fn recover_linear_term(&self, hint: F) -> F {
+        // Deserialized proofs can carry an empty coefficient vector; fail with
+        // a clear contract violation instead of an index panic. Callers on
+        // untrusted data must reject empty polynomials first (`is_empty`).
         assert!(
             !self.coeffs_except_linear_term.is_empty(),
             "cannot evaluate an empty compressed polynomial"

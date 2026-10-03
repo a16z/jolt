@@ -145,6 +145,7 @@ impl RegisteredRows {
     }
 }
 
+/// Freeze base and setup-specific rows into one validated immutable catalog.
 pub fn extend_catalog<Cfg: CommitmentConfig>(
     base: &ValidatedScheduleCatalog,
     extra: &RegisteredRows,
@@ -262,6 +263,7 @@ fn provision_producers<Cfg: CommitmentConfig>(
     Ok(rows)
 }
 
+/// Resolve the frozen profile of an independently committed dense object.
 pub fn dense_group_profile(
     dense_catalog: &ValidatedScheduleCatalog,
     layout: PolynomialGroupLayout,

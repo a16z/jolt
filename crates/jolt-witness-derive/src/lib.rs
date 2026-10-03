@@ -175,6 +175,9 @@ fn parse_opening(attr: &Attribute) -> syn::Result<OpeningId> {
     }
 }
 
+/// The field initializer in `from_row`: a payload-carrying annotation binds
+/// the family member through `ExtractIndexed`; everything else goes through
+/// `Extract`.
 fn from_row_field(field: &BundleField) -> TokenStream2 {
     let name = &field.name;
     let ty = &field.ty;
@@ -213,6 +216,10 @@ fn id_expr(opening: &OpeningId) -> TokenStream2 {
     }
 }
 
+/// One `#[cfg(test)]` test per annotated field: the field's column must
+/// equal the backend's `oracle_table` for the same id on the sample trace.
+/// The column extraction is emitted here, inside the test module, so the
+/// consistency surface exists only in test builds.
 fn consistency_tests(
     name: &Ident,
     annotated: &[&BundleField],
@@ -241,6 +248,8 @@ fn consistency_tests(
     quote! {
         #[cfg(test)]
         mod #module {
+            // Annotation payloads (e.g. `CircuitFlags::..`) resolve at the
+            // bundle's declaring scope.
             use super::*;
 
             #(#tests)*

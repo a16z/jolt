@@ -88,6 +88,8 @@ pub struct ExpansionAllocator {
 }
 
 impl ExpansionAllocator {
+    /// Create an empty allocator with no live virtual registers and no pending
+    /// inline reset rows.
     pub const fn new() -> Self {
         Self {
             allocated: 0,

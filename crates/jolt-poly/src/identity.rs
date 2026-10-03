@@ -1,3 +1,5 @@
+//! Identity polynomial evaluating to the integer index on the Boolean hypercube.
+
 use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 

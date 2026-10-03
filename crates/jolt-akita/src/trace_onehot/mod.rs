@@ -1,3 +1,11 @@
+//! Streaming kernels for Jolt's prefix-packed trace one-hot polynomial.
+//!
+//! A trace row gives the selected one-hot row for each column. Byte zero normally
+//! denotes no stored coefficient; a per-row column mask distinguishes selected row
+//! zero for families such as RAM. Jolt's kernels consume that row-major source
+//! directly and lay the columns out as consecutive `K * T` segments inside one
+//! physical polynomial. Padding selector slots are zero.
+
 #![expect(
     clippy::indexing_slicing,
     reason = "hot kernels index geometry validated by TracePackedOneHot and their plans"

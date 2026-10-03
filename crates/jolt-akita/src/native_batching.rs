@@ -1,3 +1,20 @@
+//! Adapts Akita's native batched opening protocols to Jolt.
+//!
+//! Two kinds of batching meet at this seam:
+//!
+//! - **Jolt-side batching** happens upstream in the PIOP: the opening
+//!   accumulator reduces the claims produced by the sumcheck stages (via RLC
+//!   combination, claim reductions, or prefix packing) down to evaluation
+//!   claims about committed polynomials at a common point.
+//! - **Akita-native batching** is what this module delegates to: the Akita
+//!   backend proves one group at a common point, or a heterogeneous sequence
+//!   of independently committed groups at their group-local points, in one
+//!   backend proof.
+//!
+//! This adapter performs no claim combination of its own — it validates the
+//! statement shape, bridges Jolt's Fiat-Shamir transcript into Akita's
+//! session, and embeds the backend argument bytes wholesale.
+
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_types::{
@@ -278,6 +295,8 @@ impl AkitaNativeBatching {
         }
         validate_grouped_hint("main-trace", &main, &main_hint)?;
 
+        // Group order is canonical: every auxiliary group, then the final
+        // trace group. Claims and backend handles stay index-aligned.
         let mut group_claims = Vec::with_capacity(auxiliary_groups.len() + 1);
         let mut handles = Vec::with_capacity(auxiliary_groups.len() + 1);
         for (entry, hint) in auxiliary_groups {
@@ -555,6 +574,9 @@ fn validate_witness(
     Ok(())
 }
 
+/// Binds the verifier setup and statement into Jolt's transcript, then bridges
+/// a Jolt challenge into the Akita session bytes so the backend argument is
+/// bound to everything Jolt observed.
 fn bind_statement_transcripts<T>(
     transcript: &mut T,
     verifier_setup: &AkitaVerifierSetup,

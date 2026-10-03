@@ -1,3 +1,14 @@
+//! The shared uni-skip first-round verification step.
+//!
+//! Stages 1 and 2 each open with a univariate-skip round — a genuinely
+//! different round type from the batched remainder sumchecks (separate wire
+//! proof, degree-bounded single round over a centered integer domain) — before
+//! their generated batch drivers run. The two stages differ only in their
+//! degree/domain constants, error attribution, and how the input claim is
+//! produced (stage 1: the constant zero; stage 2: the `ProductUniskip`
+//! relation's fold of the stage-1 openings), so the verification core is
+//! shared here.
+
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -101,6 +112,9 @@ where
     transcript.challenge()
 }
 
+/// The ZK uni-skip step's outputs: the committed round consistency and output
+/// claim commitments (carried downstream for BlindFold), plus the reduction
+/// challenge.
 pub struct UniskipZk<F: JoltField, C> {
     pub consistency: CommittedSumcheckConsistency<F, C>,
     pub output_claims: CommittedOutputClaimOutput<C>,
@@ -142,6 +156,9 @@ where
         });
     }
 
+    // Match the prover transcript: the uni-skip output is absorbed as an
+    // opening claim before any post-uni-skip draw (the remainder batch's RLC
+    // coefficient squeeze in particular).
     transcript.append_labeled(b"opening_claim", &output_claim);
 
     let [challenge] = reduction.point.as_slice() else {

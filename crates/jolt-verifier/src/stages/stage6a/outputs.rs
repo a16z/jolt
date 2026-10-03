@@ -6,12 +6,36 @@ use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
+// The per-relation produced-claim structs live in their relation modules
+// (cell-generic, `#[derive(OutputClaims)]`); re-export them so consumers and the
+// generated stage-6a aggregates keep resolving them through `stage6a::outputs`.
 pub use super::booleanity::BooleanityAddressPhaseOutputClaims;
 pub use super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
 
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 
+/// Source-of-truth for stage 6a's two-instance address-phase sumcheck batch
+/// (bytecode read-RAF, booleanity). `#[derive(SumcheckBatch)]` generates the
+/// `Stage6a{Input,Output}{Claims,Points}<F>` and `Stage6aChallenges<F>`
+/// aggregates — one field per instance, in this declaration order — plus the
+/// batched-verify drivers. No alias dedup in the address phase, so the generated
+/// absorb (`append_output_claims`; member order: bytecode read-RAF's
+/// `intermediate` then `val_stages`, then booleanity's `intermediate`) is the
+/// canonical Fiat-Shamir order.
+///
+/// The bytecode read-RAF member's wire set extends its output `Expr` with the
+/// committed-program-only staged `BytecodeValClaim` openings (see its
+/// `wire_output_openings` override), so the generated output-shape
+/// count/validator cover the val-stage presence and count.
+///
+/// The generated `draw_challenges` draws each member in declaration order —
+/// the bytecode member's six gammas (its default per-field draw), then the
+/// booleanity member's `draw_challenges` override (the reference-address pad
+/// draw and the gamma; the reference vectors derive from the stage-5
+/// instruction point the relation carries as construction geometry) —
+/// reproducing the pre-batch draw schedule squeeze-for-squeeze, so both fronts
+/// call it directly.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage6aSumchecks<F: JoltField> {
@@ -20,6 +44,7 @@ pub struct Stage6aSumchecks<F: JoltField> {
 }
 
 impl<F: JoltField> Stage6aOutputClaims<F> {
+    /// Project base-protocol claims into the verifier's selected output shape.
     pub fn from_base(
         bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims<F>,
         booleanity: BooleanityAddressPhaseOutputClaims<F>,
@@ -34,6 +59,12 @@ impl<F: JoltField> Stage6aOutputClaims<F> {
     }
 }
 
+/// The stage-6a Fiat-Shamir draws sampled by the batch's `draw_challenges` but
+/// consumed downstream too. The prover's booleanity subprotocol samples its
+/// gamma (and the reference-address padding) before the 6a batch runs, and the
+/// per-stage folding gammas are drawn with the 6a batch's bytecode fold; stage
+/// 6b's members consume them as well, so 6a carries them downstream as typed
+/// upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage6aCarriedChallenges<F: JoltField> {
@@ -60,8 +91,15 @@ impl<F: JoltField> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage6aClearOutput<F: JoltField> {
+    /// The produced address-phase opening *values* (the staged intermediates
+    /// and, in committed-program mode, the `BytecodeValClaim` claims), read by
+    /// stage 6b as its bytecode/booleanity input claims.
     pub output_values: Stage6aOutputClaims<F>,
+    /// The produced address-phase opening *points*, read by stage 6b to construct
+    /// the cycle-phase batch.
     pub output_points: Stage6aOutputPoints<F>,
+    /// The pre-/around-batch draws carried to stage 6b (see
+    /// [`Stage6aCarriedChallenges`]).
     pub challenges: Stage6aCarriedChallenges<F>,
 }
 
@@ -70,6 +108,8 @@ pub struct Stage6aZkOutput<F: JoltField, C> {
     pub challenges: Stage6aCarriedChallenges<F>,
     pub consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub output_claims: CommittedOutputClaimOutput<C>,
+    /// The produced opening *points*, the ZK counterpart of the clear path's
+    /// `output_points`. Read by stage 6b and BlindFold.
     pub output_points: Stage6aOutputPoints<F>,
 }
 
@@ -80,6 +120,7 @@ pub enum Stage6aOutput<F: JoltField, C> {
 }
 
 impl<F: JoltField, C> Stage6aOutput<F, C> {
+    /// The produced address-phase opening *points*, available regardless of mode.
     pub fn output_points(&self) -> &Stage6aOutputPoints<F> {
         match self {
             Self::Clear(output) => &output.output_points,
@@ -87,6 +128,7 @@ impl<F: JoltField, C> Stage6aOutput<F, C> {
         }
     }
 
+    /// The pre-/around-batch draws carried to stage 6b, available in both modes.
     pub fn challenges(&self) -> &Stage6aCarriedChallenges<F> {
         match self {
             Self::Clear(output) => &output.challenges,

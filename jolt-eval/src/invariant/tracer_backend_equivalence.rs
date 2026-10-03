@@ -31,6 +31,9 @@ use tracer::TracerBackend;
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
+/// Guests in the equivalence corpus. Each is a distinct execution shape:
+/// a tight arithmetic loop, an inline-heavy hash chain, allocator and
+/// pointer-chasing traffic, and the division/remainder advice groups.
 const CORPUS: &[Guest] = &[
     Guest {
         package: "fibonacci-guest",

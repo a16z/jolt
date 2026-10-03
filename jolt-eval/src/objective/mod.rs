@@ -54,10 +54,12 @@ pub trait Objective: Send + Sync {
     /// Per-iteration setup for Criterion benchmarks.
     fn setup(&self) -> Self::Setup;
 
+    /// Override for static-analysis objectives that produce a direct measurement.
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
         Err(MeasurementError::new("not directly measurable"))
     }
 
+    /// Override for performance objectives benchmarked by Criterion.
     fn run(&self, _setup: Self::Setup) {}
 }
 
@@ -131,6 +133,7 @@ impl StaticAnalysisObjective {
     }
 }
 
+/// Criterion-benchmarked performance objectives.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),

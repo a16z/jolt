@@ -43,6 +43,7 @@ pub const WORKLOAD_SCALES: &[(&str, u32)] = &[
     ("btreemap", 20),
 ];
 
+/// The `summary.json` schema version this parser understands.
 const SUPPORTED_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -66,6 +67,7 @@ pub enum TelemetryMetric {
     },
 }
 
+/// One parsed `telemetry:<workload>:<metric>` objective.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TelemetryObjective {
     /// The full verbatim key (also the objective's CLI name).
@@ -227,6 +229,7 @@ impl TelemetryObjective {
         matches!(self.metric, TelemetryMetric::Heap { .. })
     }
 
+    /// The explicit scale `measure` passes to the profile bin.
     pub fn scale(&self) -> u32 {
         WORKLOAD_SCALES
             .iter()
@@ -324,6 +327,8 @@ impl TelemetryObjective {
         Ok(())
     }
 
+    /// Reads the metric from the summary a prior [`Self::run_profile_in`]
+    /// left under `work_dir`.
     pub fn extract_from_dir(&self, work_dir: &Path) -> Result<f64, MeasurementError> {
         let path = self.summary_path(work_dir);
         let data = std::fs::read_to_string(&path)
@@ -333,6 +338,7 @@ impl TelemetryObjective {
         self.extract(&summary)
     }
 
+    /// One-shot measurement: profile run + metric extraction.
     pub fn measure_in(&self, work_dir: &Path) -> Result<f64, MeasurementError> {
         self.run_profile_in(work_dir)?;
         self.extract_from_dir(work_dir)
@@ -478,6 +484,8 @@ mod tests {
         assert!(total.needs_allocative());
         assert_eq!(total.units(), Some("bytes"));
 
+        // The root frame is verbatim after the snapshot's colon — kernel
+        // type names contain `::` and generics.
         let root = TelemetryObjective::parse(
             "telemetry:fibonacci:heap:Stage2Batch_prepared:NaiveSumcheckProver<Fr, RamReadWriteChecking<Fr>>",
         )
@@ -560,6 +568,8 @@ mod tests {
         assert!(obj.extract(&summary).is_err());
     }
 
+    /// The curated consts and the runtime parser must agree — a HashMap
+    /// keyed by the parsed objective must hit the const-keyed entry.
     #[test]
     fn curated_consts_round_trip_through_parser() {
         let curated = [

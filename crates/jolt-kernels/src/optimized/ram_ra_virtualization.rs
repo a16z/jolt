@@ -76,9 +76,13 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         }
 
         let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
+        // Last RAM consumer: release the session's address handle.
         let _ = session.take::<SharedRamAddresses>();
         super::ram_trace::validate_addresses(&addresses, 1usize << ram_reduced_address.len())?;
 
+        // One eq table per committed chunk point (each `2^w` entries); the
+        // point-mass fold stays lazy — one table lookup per accessed cycle —
+        // instead of materializing `N × T` dense selectors up front.
         let chunk_tables: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
@@ -291,6 +295,9 @@ impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         })
     }
 
+    /// The Gruen scalar after full binding is the bound `EqCycle` value; pin
+    /// it to the verifier's `derive_output_term`, exactly as the naive tier's
+    /// materialized eq table is pinned.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -413,6 +420,8 @@ mod tests {
                 },
             )
             .unwrap();
+            // Pre-warm the session so the kernel exercises the shared-columns
+            // reclaim path (the real pipeline parks them in stage 2).
             let mut session = ProofSession::default();
             let _ = SharedRamAddresses::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
             let optimized = PrepareKernel::<Fr, _>::prepare(
@@ -563,6 +572,8 @@ mod tests {
 
     #[test]
     fn parity_padded_chunk_count() {
+        // log_k = 6 with 4-bit chunks: `committed_address_chunks` front-pads
+        // the reduced address, so chunk 0 spans only two real address bits.
         run_parity(
             FixtureShape {
                 log_t: 3,

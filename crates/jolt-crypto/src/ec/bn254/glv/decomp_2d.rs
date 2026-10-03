@@ -1,3 +1,8 @@
+//! 2D GLV scalar decomposition for BN254 G1.
+//!
+//! Decomposes a scalar `k` into `k = k0 + k1 * lambda (mod n)` where `lambda`
+//! is the GLV endomorphism eigenvalue, halving the bit-length of each component.
+
 use ark_bn254::{Fq, Fr, G1Projective};
 use ark_ff::{BigInt as ArkBigInt, BigInteger, MontFp, PrimeField};
 use num_bigint::{BigInt, BigUint, Sign};
@@ -5,6 +10,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed};
 use std::ops::AddAssign;
 
+/// GLV endomorphism coefficient for BN254 G1: `β` such that `[λ]P = (β·x, y)`
 const ENDO_COEFF: Fq =
     MontFp!("21888242871839275220042445260109153167277707414472061641714758635765020556616");
 
@@ -66,6 +72,7 @@ pub fn decompose_scalar_2d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 2], [boo
     (k_bigint, signs)
 }
 
+/// Apply the GLV endomorphism to a G1 point: (x, y) → (β·x, y)
 pub fn glv_endomorphism(point: &G1Projective) -> G1Projective {
     let mut res = *point;
     res.x *= ENDO_COEFF;
@@ -97,6 +104,10 @@ mod tests {
         })
     }
 
+    /// The GLV eigenvalue λ derived from the lattice basis itself: every
+    /// basis row (a, b) lies in {(a, b) : a + b·λ ≡ 0 (mod r)}, so
+    /// λ = -n11/n12. Anchored by the second basis row and the cube-root
+    /// identity before use.
     fn lambda() -> Fr {
         let [n11, n12, n21, n22] = basis_fr();
         let lambda = -n11 * n12.inverse().unwrap();
@@ -127,6 +138,8 @@ mod tests {
         BigUint::from_bytes_be(&value.to_bytes_be())
     }
 
+    // Ties the scalar-field lambda used by the reconstruction check to the
+    // actual curve endomorphism the multiplication routines apply.
     #[test]
     fn lattice_lambda_is_the_endomorphism_eigenvalue_on_g1() {
         let g = G1Affine::generator().into_group();
@@ -138,6 +151,12 @@ mod tests {
         let lambda = lambda();
         let [n11_abs, n12_abs, n21_abs, n22_abs] =
             SCALAR_DECOMP_COEFFS.map(|(_, value)| magnitude(value));
+        // The Babai coefficients round to nearest for positive products but
+        // truncate toward zero for negative ones (the `2*rem > r` round-up
+        // never fires on a negative remainder), so each coefficient error is
+        // below 1 and |k0| <= |n11| + |n21|, |k1| <= |n12| + |n22|, with one
+        // unit of slack. Both sums are ~2^128 — the documented halving of the
+        // 254-bit scalar.
         let bound_0: BigUint = n11_abs.clone() + n21_abs + BigUint::one();
         let bound_1: BigUint = n12_abs + n22_abs.clone() + BigUint::one();
         assert!(

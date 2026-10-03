@@ -562,6 +562,8 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
     let n = values.len();
     assert!(n > 0, "cannot interpolate zero values");
 
+    // Newton's divided differences: dd[i] = f[x_i, ..., x_{i-step}]
+    // For consecutive integer nodes x_k = s+k, the denominator is always `step`.
     let mut dd = values.to_vec();
     for step in 1..n {
         let denom_inv = F::from_i64(step as i64)
@@ -582,6 +584,8 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
         }
         if k < n - 1 {
             let shift = F::from_i64(-(domain_start + k as i64));
+            // basis = basis * (x + shift) = basis * x + basis * shift
+            // Process in reverse to avoid overwriting
             for i in (1..=k + 1).rev() {
                 basis[i] = basis[i - 1] + basis[i] * shift;
             }

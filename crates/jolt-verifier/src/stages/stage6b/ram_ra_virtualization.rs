@@ -23,6 +23,8 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
 
+/// Wire the single reduced `RamRa` opening *value* from the stage-5 RAM RA claim
+/// reduction. Clear-only (the values aggregate exists only in clear mode).
 pub fn ram_ra_virtualization_input_values_from_upstream<F: JoltField>(
     stage5: &Stage5OutputClaims<F>,
 ) -> RamRaVirtualizationInputClaims<F> {
@@ -31,6 +33,8 @@ pub fn ram_ra_virtualization_input_values_from_upstream<F: JoltField>(
     }
 }
 
+/// Wire the single reduced `RamRa` opening *point* from the stage-5 RAM RA claim
+/// reduction. ZK-agnostic: both proving modes expose the stage-5 output points.
 pub fn ram_ra_virtualization_input_points_from_upstream<F: JoltField>(
     stage5: &Stage5OutputPoints<F>,
 ) -> RamRaVirtualizationInputClaims<Vec<F>> {
@@ -43,7 +47,11 @@ pub fn ram_ra_virtualization_input_points_from_upstream<F: JoltField>(
 pub struct RamRaVirtualization<F: JoltField> {
     symbolic: relations::ram::RaVirtualization,
     dimensions: RamRaVirtualizationDimensions,
+    /// The stage-5 reduced address prefix, chunked into the per-chunk committed
+    /// opening points.
     ram_reduced_address: Vec<F>,
+    /// The stage-5 reduced cycle suffix that `EqCycle` compares the produced cycle
+    /// against.
     ram_reduced_cycle: Vec<F>,
     committed_chunk_bits: usize,
 }

@@ -5,6 +5,12 @@
 
 #![cfg_attr(feature = "guest", no_std)]
 
+/// Evaluates eq(r, x) over the `(r_i, x_i)` coordinate pairs in the field-inline
+/// register file and FIELD_ASSERT_EQs it against the expected value, supplied
+/// as canonical little-endian u64 limbs and recomposed in-field by accumulating
+/// the limbs from most significant to least significant. Returns
+/// 42, read out of the field-inline file as `acc − expected + 42` through
+/// AdviceLimb followed by AssertZero on the remaining quotient.
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
 fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     jolt::field_load_imm!(0, 1);
@@ -30,6 +36,8 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
 
     jolt::field_assert_eq!(1, 8);
 
+    // Memory ingress and advice egress round-trip an independently pinned
+    // 128-bit integer, below both supported proof fields' moduli.
     #[cfg(target_arch = "riscv64")]
     {
         let limbs = [0x1234_5678_9abc_def0u64, 9];

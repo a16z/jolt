@@ -1,3 +1,9 @@
+//! Fixture-driven tamper suite for the field-inline path: every field-inline wire cell of the
+//! clear claims is offset by one over a real modular-prover fixture (the eq-MLE field-inline
+//! guest — the field-inline-capable prover is the modular one), and the verifier must reject
+//! each mutation. These are the active coverage behind the field-inline
+//! `TamperCoverage::Active` manifest entries.
+
 #![cfg_attr(
     all(
         feature = "prover-fixtures",

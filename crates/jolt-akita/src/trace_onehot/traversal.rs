@@ -17,6 +17,8 @@ pub(super) fn row_is_committed(selected_row: u8, committed_zero_mask: u64, colum
 pub(super) type AkitaWideRing<const D: usize> =
     WideCyclotomicRing<<AkitaField as Unreduced>::Wide, D>;
 
+// Canonical reduction on every add costs more than tracking 2^128 wraps and
+// applying 2^128 = MODULUS_OFFSET only when the tile is flushed.
 #[derive(Clone)]
 pub(super) struct DeferredFp128Ring<const D: usize> {
     pub(super) lo: [u64; D],
@@ -89,6 +91,9 @@ impl<const D: usize> DeferredFp128Ring<D> {
     }
 }
 
+/// Visits ring elements within one semantic column segment. Each callback
+/// receives the segment-relative ring index and `(column, coefficient)` pairs
+/// contributed by the same trace rows.
 pub(super) fn visit_segment_ring_range<const D: usize>(
     source: &TracePackedOneHot,
     ring_start: usize,
@@ -166,6 +171,9 @@ pub(super) fn visit_segment_ring_range<const D: usize>(
     Ok(())
 }
 
+/// Visits K<D ring elements as row indices for the D/K trace rows packed
+/// into each ring. This avoids expanding the row buffer into contribution
+/// tuples when a kernel can consume the indices directly.
 pub(super) fn visit_segment_ring_row_range<const D: usize>(
     source: &TracePackedOneHot,
     ring_start: usize,
@@ -263,6 +271,10 @@ where
     let position_weights = point.position_weights();
     let packing_weights = point.packing_weights();
 
+    // Segments and blocks are both powers of two, so a ring range inside one
+    // `span` meets exactly one block per column, at consecutive positions.
+    // Summing position weights per `(column, coefficient)` first leaves one
+    // packing-weight multiplication per coefficient instead of per nonzero.
     let span = positions_per_block.min(segment_rings);
     let spans = segment_rings / span;
     let schedule = trace_block_task_schedule::<D>(source.one_hot_k, span, spans);

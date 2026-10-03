@@ -54,6 +54,8 @@ mod gpu {
         (pipeline.thread_execution_width() * 8).min(pipeline.max_total_threads_per_threadgroup())
     }
 
+    /// `2^20 + 3` elements: not a multiple of any threadgroup size, so the
+    /// partial last threadgroup is exercised.
     const LEN: usize = (1 << 20) + 3;
 
     #[test]
@@ -233,6 +235,8 @@ mod gpu {
         assert_eq!(out.read().unwrap(), [2u32; 64]);
     }
 
+    /// Invariant 6: an invalid bit pattern written by a kernel is caught on
+    /// read-back, not handed to the caller.
     #[test]
     fn invalid_readback_is_a_fault() {
         let (_gpu, device) = gpu("invalid_readback_is_a_fault");
@@ -357,6 +361,7 @@ mod gpu {
         unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(0, 1)) }.unwrap();
         batch.commit_and_wait().unwrap();
         assert!(out.read().unwrap().is_empty());
+        // A batch dropped without committing runs nothing and must not raise.
         drop(Batch::new(&device).unwrap());
     }
 }

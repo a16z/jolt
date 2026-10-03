@@ -15,6 +15,7 @@ pub struct CallFrame {
     /// at 24 bytes and the `MAX_CALL_STACK_DEPTH`-deep ring buffer — written on
     /// every call instruction — a few cache lines instead of ~33 KiB.
     pub x: Option<Box<[i64; REGISTER_COUNT as usize]>>,
+    /// cycle count at the time of call
     pub cycle_count: usize,
 }
 

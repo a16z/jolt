@@ -66,6 +66,7 @@ pub enum CommandBufferError {
 }
 
 impl CommandBufferError {
+    /// Decodes an `NSError` code from `MTLCommandBufferErrorDomain`.
     pub(crate) fn from_code(code: isize) -> Self {
         match code {
             1 => Self::Internal,
@@ -192,6 +193,7 @@ impl MetalError {
 mod tests {
     use super::*;
 
+    /// Codes and names from `MTLCommandBuffer.h` (macOS 26 SDK).
     #[test]
     fn command_buffer_codes_match_sdk_header() {
         let header = [

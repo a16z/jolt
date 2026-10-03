@@ -1,3 +1,18 @@
+//! Fixed-width prefix packing for logical multilinear polynomials.
+//!
+//! A layout places `m` logical polynomials with `n` variables into the first
+//! `m` slots of a power-of-two capacity `c`. The physical polynomial has
+//! `n + log2(c)` variables. At a point `(s, x)` its value is
+//!
+//! `sum_i eq(s, i) * P_i(x)`.
+//!
+//! Every logical claim must use the same suffix point `x`. The claims and
+//! their semantic layout digest are absorbed before `s` is sampled. Unused
+//! slots are outside the logical statement; this API does not constrain their
+//! coefficients directly. The reduced opening requires their aggregate
+//! contribution at `s` to vanish. Arbitrary-point claim reduction is not part
+//! of this API.
+
 use std::collections::BTreeMap;
 
 use jolt_field::JoltField;
@@ -96,6 +111,7 @@ where
         self.slot_indices.get(id).copied()
     }
 
+    /// Physical Boolean index of one logical coefficient.
     pub fn packed_index(&self, id: &Id, logical_index: usize) -> Result<usize, OpeningsError> {
         let slot = self.slot_index(id).ok_or_else(|| {
             OpeningsError::InvalidBatch("unknown prefix-packed polynomial id".to_owned())
@@ -135,6 +151,7 @@ where
         Ok(point)
     }
 
+    /// Reduces ordered logical evaluations at one common point.
     pub fn reduce_evaluations<F: JoltField>(
         &self,
         selector_point: &[F],
@@ -230,6 +247,7 @@ impl<F> PrefixPackedClaims<F> {
         &self.layout_digest
     }
 
+    /// Common logical opening point.
     pub fn point(&self) -> &[F] {
         self.point.as_slice()
     }

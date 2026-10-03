@@ -4,6 +4,9 @@ use jolt_poly::Polynomial;
 
 use crate::KernelError;
 
+/// Canonical big-endian table variables mapped to low-to-high binding rounds.
+/// Omitted rounds repeat coefficients, so the naive evaluator independently
+/// accounts for the RAM address relations' unused cycle variables and scaling.
 pub(super) struct ReadWriteTableLayout {
     rounds: usize,
     variables: Vec<usize>,

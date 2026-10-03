@@ -61,6 +61,9 @@ fn median(mut times: Vec<f64>) -> f64 {
 
 fn bench(guest: &str, input: Vec<u8>, runs: usize) {
     let (_, elf_path, _) = support::build_guest(guest);
+    // Each run re-reads and re-decodes the ELF, matching what the legacy
+    // host::Program::trace timed region did — keeps MHz comparable with
+    // numbers measured through that harness.
     let run_trace = |input: &[u8]| {
         let (elf, memory_config) = support::load_guest(&elf_path);
         let (_, trace, _, _, _) =
@@ -88,6 +91,9 @@ fn bench(guest: &str, input: Vec<u8>, runs: usize) {
         "{guest}: {len} cycles, times(s)={times:.3?}, median={serial_median:.3}s => {mhz:.2} MHz"
     );
 
+    // Execute-only pass: same program span, no Cycle construction. Rate is
+    // trace rows over the wall time of the execute-only run — the pass-1
+    // rate of the two-pass parallel tracer.
     let mut exec_times = Vec::new();
     for _ in 0..runs {
         let start = Instant::now();
@@ -114,6 +120,7 @@ fn bench(guest: &str, input: Vec<u8>, runs: usize) {
     let workers = parallel_workers();
     if workers > 1 {
         std::env::set_var("TRACER_PARALLEL", workers.to_string());
+        // Warmup (thread/pool/page state)
         let trace = run_trace(&input);
         assert_eq!(trace.len(), len);
         drop(trace);

@@ -50,6 +50,9 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
+    // The upstream cycle/register points and entry index ride on the relation
+    // (full geometry at construction) for the prover's address-phase kernel;
+    // the verifier itself never evaluates them here.
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
     let entry_bytecode_index = preprocessing
         .program
@@ -66,9 +69,22 @@ where
         stage5_points: stage5.output_points(),
     })?;
 
+    // The generated per-member draw: the bytecode member's six squeezes (the
+    // fold gamma plus the five per-stage folding gammas, each formerly an
+    // inline `challenge_scalar_powers(..)` whose single squeeze's degree-1
+    // power equals the squeezed scalar; byte- and value-equal, test-locked in
+    // `bytecode_read_raf.rs` — stage 6b's folds expand the power vectors via
+    // `stage_gamma_powers`, test-locked below), then the booleanity member's
+    // override (the reference-address pad draw and the gamma; schedule-locked
+    // in the tests below). The booleanity draws feed 6b too: the prover's
+    // booleanity subprotocol samples them before the 6a batch runs, so the
+    // transcript schedule fixes them here and they ride downstream as typed
+    // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
+    // Every member's input points are empty (the address phase reads only
+    // opening values; produced points derive from its own sumcheck point).
     let address_input_points = address_sumchecks.empty_input_points();
 
     if checked.zk {
@@ -92,8 +108,16 @@ where
     }
 
     let claims = &proof.clear_claims()?.stage6a;
+    // Rejects val-stage claims whose presence or count disagrees with the
+    // committed-program mode (the bytecode member's wire set carries the staged
+    // `BytecodeValClaim` ids exactly when the program is committed).
     address_sumchecks.validate_output_claims(claims)?;
 
+    // The bytecode address-phase input claim is the gamma-folded bind of every
+    // prior clear stage opening (plus, under akita, the four reduced `Inc`
+    // claims at the fused-inc consumer stage slots); the relation evaluates it
+    // through its input `Expr` from these wired openings + the per-stage
+    // folding gammas.
     let base_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
         &stage1.clear()?.output_values,
         &stage2.clear()?.output_values,
@@ -134,6 +158,10 @@ where
         6,
     )?;
 
+    // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
+    // then booleanity `intermediate`) is single-sourced from the generated
+    // `append_output_claims` (member declaration order = canonical Fiat-Shamir
+    // order; no alias dedup in the address phase).
     address_sumchecks.append_output_claims(transcript, claims);
 
     Ok(Stage6aOutput::Clear(Stage6aClearOutput {
@@ -207,6 +235,12 @@ mod tests {
         }
     }
 
+    /// Pins the batch's `draw_challenges` to the retired hand pre-batch draw:
+    /// the bytecode member's six gammas, then the booleanity member's override —
+    /// the reference-address pad draw (the reversed stage-5 instruction address
+    /// is narrower than the committed chunk width here) and the booleanity
+    /// gamma. The reference vectors are pure computation (reversal, pad slot)
+    /// off the stage-5 point the relation carries.
     #[test]
     #[expect(clippy::unwrap_used)]
     fn draw_challenges_matches_inline_draw_sequence() {
@@ -250,6 +284,9 @@ mod tests {
         assert_eq!(challenges.booleanity.gamma, inline_gamma);
     }
 
+    /// The truncate branch: a stage-5 instruction address wider than the
+    /// committed chunk width keeps its reversed tail and draws no pad — only
+    /// the booleanity gamma squeeze follows the bytecode member's six.
     #[test]
     #[expect(
         clippy::unwrap_used,
@@ -272,6 +309,10 @@ mod tests {
         assert_eq!(challenges.booleanity.gamma, fr(7));
     }
 
+    /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
+    /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
+    /// booleanity `intermediate`. Single-sourced from the generated
+    /// `append_output_claims`.
     #[test]
     fn stage6a_output_claims_append_follows_canonical_order() {
         let sumchecks = sumchecks(Vec::new(), Vec::new());
@@ -306,6 +347,11 @@ mod tests {
         }
     }
 
+    /// The `stage_gamma_powers` expansion of a drawn scalar must equal
+    /// `challenge_scalar_powers`' output for the same squeezed scalar — the
+    /// value-identity the stage-6a generated draw substitution relies on
+    /// (the prover draws each stage's power vector inline; the verifier stores
+    /// the scalar and expands at the stage-6b folds).
     #[test]
     fn stage_gamma_powers_matches_challenge_scalar_powers() {
         use jolt_claims::protocols::jolt::geometry::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;

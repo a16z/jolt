@@ -87,6 +87,9 @@ where
             })?,
         )?;
     }
+    // The stage-7 ZK output no longer carries each address phase's sumcheck point;
+    // recompute the prefix-aligned point from the committed consistency, matching
+    // `try_instance_point_at(0, rounds)` in the verifier's ZK arm.
     let address_phase_point = |rounds: usize, stage| {
         input
             .stage7

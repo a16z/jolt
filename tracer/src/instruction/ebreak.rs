@@ -1,3 +1,10 @@
+//! EBREAK — Breakpoint / program termination.
+//!
+//! Encoding: 0x00100073 (SYSTEM opcode, funct3=000, imm=1)
+//!
+//! In a zkVM context without a debugger, EBREAK serves as a termination point.
+//! The emulator detects termination when PC doesn't change (prev_pc == pc).
+
 use crate::instruction::registers::i::RegisterStateI;
 
 use serde::{Deserialize, Serialize};

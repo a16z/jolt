@@ -1,3 +1,9 @@
+//! Zeroed vector allocation via `alloc_zeroed`.
+//!
+//! `vec![T::zero(); n]` clone-fills element by element, which at witness-grid
+//! scale is a full serial memory pass. `alloc_zeroed` gets zero pages from
+//! the OS instead.
+
 use std::alloc::Layout;
 
 use num_traits::Zero;

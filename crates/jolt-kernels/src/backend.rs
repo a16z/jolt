@@ -1,3 +1,11 @@
+//! The runtime seam: [`JoltBackend`] is the value `jolt-prover` proves
+//! against — one boxed object-safe slot per kernel entry — and
+//! [`ProofSession`] is the backend-owned state with proof lifetime. Swapping
+//! a kernel implementation, mixing implementations per slot, running two
+//! backends side by side, and choosing a configuration from the hardware are
+//! all value construction, never compilation. See
+//! `specs/clean-slate-prover.md`, "The backend seam".
+
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
@@ -206,6 +214,9 @@ pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
 impl<T: ?Sized> MaybeAllocative for T {}
 
+/// One session entry: the erased value plus, under the `allocative` feature,
+/// a monomorphized visitor captured at insertion — where the concrete type
+/// is still known — so heap flamegraphs can see through the `dyn Any`.
 struct Carry {
     value: Box<dyn Any>,
     #[cfg(feature = "allocative")]
@@ -229,17 +240,32 @@ fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) 
     }
 }
 
+/// Bytes an element table reserved, for element types that own no heap but
+/// carry no `Allocative` impl: the witness rows, selectors, opening ids, and
+/// prefix evaluations owned by jolt-claims, jolt-lookup-tables, and
+/// jolt-witness. Deriving `Allocative` across those crates to reach a handful
+/// of flat tables buys nothing the arithmetic does not.
+///
+/// Scalar tables need none of this — `F: JoltField` implies `F: Allocative`,
+/// so `Vec<F>` renders through the native impl.
 #[cfg(feature = "allocative")]
 pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor<'_>) {
     const { assert!(!std::mem::needs_drop::<T>()) };
     visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
 }
 
+/// [`visit_heap_free_elements`] through an `Arc`: the shared buffer's bytes are
+/// reported by whichever holder the visitor reaches. Used by the session-shared field
+/// register rows.
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
 pub(crate) fn visit_shared_heap_free_elements<T>(values: &Arc<Vec<T>>, visitor: &mut Visitor<'_>) {
     visit_heap_free_elements(values, visitor);
 }
 
+/// [`visit_heap_free_elements`] for a table keyed by a foreign type.
+///
+/// Sized arithmetically from `capacity()`; the key's own bytes ride along
+/// with the tuple spine.
 #[cfg(feature = "allocative")]
 pub(crate) fn visit_keyed_polys<K, T>(
     tables: &Vec<(K, Vec<Polynomial<T>>)>,
@@ -300,6 +326,7 @@ impl ProofSession {
             .expect("ProofSession state entry keyed by its own TypeId")
     }
 
+    /// The calling backend's private state, if any slot created it yet.
     pub fn state<T: Any>(&self) -> Option<&T> {
         self.state
             .get(&TypeId::of::<T>())
@@ -318,6 +345,7 @@ impl ProofSession {
         let _ = self.state.insert(TypeId::of::<T>(), Carry::new(value));
     }
 
+    /// Reclaim (remove and return) a parked carry, if present.
     #[expect(
         clippy::expect_used,
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
@@ -365,6 +393,13 @@ mod kernel_slots_derive_tests {
         }
     }
 
+    // Compiling proves the derive's wiring end to end: the generic bound
+    // resolves (a delegating impl exists for the kernel field) and the
+    // non-kernel fields were skipped (an impl emitted for them would not
+    // type-check). No behavioral probe is needed: the emitted body delegates
+    // to the one field of the matching slot type, and a second slot for the
+    // same relation would be a conflicting-impl error, so a mis-wired
+    // delegation is unrepresentable.
     #[derive(KernelSlots)]
     #[kernel_slots(crate = "crate")]
     struct ToyRegistry<F: JoltField> {

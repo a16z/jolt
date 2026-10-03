@@ -34,6 +34,9 @@ use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
+// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the jolt-claims RV64-only
+// constants without field-inline, the field-inline-extended row/column composition
+// under `field-inline` — the shapes the composed verifier checks.
 use jolt_r1cs::constraints::jolt::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
@@ -110,10 +113,20 @@ pub struct SpartanOuterKernel<F: JoltField> {
     tau: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     matrices: ConstraintMatrices<F>,
+    /// The composed opening-column selection (`spartan_outer_opening_columns`), aligned
+    /// index-for-index with `input_tables`. Not contiguous under `field-inline`: the
+    /// two rv64 product-factor columns sit between the ordinary inputs and the appended
+    /// field-inline columns.
     columns: Vec<usize>,
+    /// Cycle-indexed R1CS input tables (big-endian cycle index), in the composed
+    /// opening-column order: the relation's ordinary variables, then (under `field-inline`)
+    /// the five field-inline columns.
     input_tables: Vec<Vec<F>>,
     az_rows: Vec<Vec<F>>,
     bz_rows: Vec<Vec<F>>,
+    /// eq(τ_low, ·) over the (cycle ∥ stream) index `j = (t << 1) | s`
+    /// (τ_low[0] pairs the index MSB, so the stream bit pairs τ_low's last
+    /// entry — legacy's convention).
     eq_table: Vec<F>,
 }
 
@@ -198,6 +211,13 @@ impl<F: JoltField> SpartanOuterKernel<F> {
         )))
     }
 
+    /// Consume the shared state into the remainder batch member, once the
+    /// uni-skip round's challenge is drawn: a plain naive member over the
+    /// joint `(cycle ‖ stream)` domain, `index = (t << 1) | s`. The
+    /// per-stream `Az`/`Bz` linear forms are single-sourced from the same
+    /// jolt-r1cs functions the verifier's coefficient build uses; each is
+    /// linear in the stream variable, so every derived leaf materializes as
+    /// one multilinear table.
     fn into_remainder(
         self,
         inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
@@ -333,6 +353,12 @@ fn materialize_input_tables<F: JoltField>(
     Ok(tables)
 }
 
+/// Per-constraint-row Az/Bz value tables over the cycle domain:
+/// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]` with `z_t[0] = 1` and
+/// `z_t[columns[k]] = input_tables[k][t]` — the composed opening columns are
+/// not contiguous under `field-inline`, so the matrix column index resolves
+/// through the selection rather than by offset. A constraint referencing a
+/// non-selected, non-constant column is a composition bug, surfaced here.
 #[expect(
     clippy::type_complexity,
     reason = "the Az/Bz row-table pair, now fallible under the composed column selection"

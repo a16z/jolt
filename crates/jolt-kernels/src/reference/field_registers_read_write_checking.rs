@@ -32,6 +32,9 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>> for Refe
                 }))?;
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
+        // The field-inline phase split is pinned by the compile-time protocol config
+        // (phase 1 = log_t, phase 2 = log_k); this kernel's binding order depends on
+        // it, so a drifted config is a bug, not a capability gap.
         if dimensions.phase1_num_rounds() != dimensions.log_t()
             || dimensions.phase2_num_rounds() != dimensions.log_k()
         {

@@ -206,6 +206,9 @@ impl<T: TraceSource> TraceBackend<T> {
                 trace_rows.push(compact);
             }
         }
+        // The field-inline view replays the raw rows (payloads, register file, bridge
+        // facts); share the source's allocation when it offers one, copying only for
+        // sources that cannot.
         #[cfg(feature = "field-inline")]
         let raw_rows = source
             .shared_rows()
@@ -431,11 +434,25 @@ fn invalid_compact_row(row: &TraceRow, reason: &'static str) -> WitnessError {
     }
 }
 
+/// Upper bound, in bytes, on a dense `(K × T)` oracle grid materialized by
+/// the trace backend: the RAM and register read-write grids and the one-hot
+/// RA grids. The request grows linearly with the trace length and reaches
+/// hundreds of GiB at profiling scales (`ram_K = 4096`, `log_T = 22`, 32-byte
+/// field: 2^39 bytes). Past this bound the global allocator aborts the
+/// process with an opaque `memory allocation of N bytes failed`; refusing
+/// with a `WitnessError` keeps the failure actionable. 32 GiB admits every
+/// in-tree test and the fibonacci profiling default (scale 16); the larger
+/// documented profiling defaults are refused by design and belong on the
+/// optimized backend. On narrower targets, the allocation limit is capped
+/// at `isize::MAX` bytes instead.
 pub(crate) const MAX_DENSE_GRID_BYTES: usize = match 1_usize.checked_shl(35) {
     Some(bytes) => bytes,
     None => isize::MAX as usize,
 };
 
+/// The element count of a dense `addresses × cycles` grid of `F`, refused
+/// with an actionable error when the byte size overflows or exceeds
+/// [`MAX_DENSE_GRID_BYTES`].
 pub(crate) fn checked_dense_grid_len<F>(
     addresses: usize,
     cycles: usize,

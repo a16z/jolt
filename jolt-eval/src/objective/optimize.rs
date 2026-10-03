@@ -39,6 +39,7 @@ pub struct OptimizationAttempt {
     pub iteration: usize,
     pub score: f64,
     pub invariants_passed: bool,
+    /// Whether this attempt was accepted by the greedy loop.
     pub accepted: bool,
     /// Score change relative to the best score *at the time this attempt
     /// was evaluated* (negative = improvement).
@@ -65,6 +66,7 @@ pub trait OptimizeEnv {
 
     fn check_invariants(&mut self) -> bool;
 
+    /// Apply an agent-produced diff to the working tree.
     fn apply_diff(&mut self, diff: &str);
 
     /// Called when a change is accepted. `commit_msg` is a suggested

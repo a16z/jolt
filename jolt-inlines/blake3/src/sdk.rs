@@ -222,6 +222,31 @@ pub(crate) fn to_bytes(h: [u32; CHAINING_VALUE_LEN]) -> [u8; OUTPUT_SIZE_IN_BYTE
     }
 }
 
+/// Compress with direct copy to message array (no intermediate buffer).
+/// Low-level BLAKE3 compress function with configurable flags.
+///
+/// This function performs a single BLAKE3 compression operation, suitable for:
+/// - Merkle tree internal nodes (with `PARENT` flag)
+/// - Merkle tree root (with `PARENT | ROOT` flags)
+/// - Leaf CV computation (with `CHUNK_START | CHUNK_END` flags)
+///
+/// # Arguments
+/// * `hash_state` - The chaining value (typically IV for fresh compression)
+/// * `input` - Input data (up to 64 bytes, will be zero-padded)
+/// * `counter` - Block counter (usually 0 for single-block operations)
+/// * `input_bytes_num` - Actual number of input bytes (for padding)
+/// * `flags` - BLAKE3 flags (CHUNK_START, CHUNK_END, PARENT, ROOT, KEYED_HASH, etc.)
+///
+/// # Example
+/// ```ignore
+/// use blake3_inline::{compress_direct, IV, CHAINING_VALUE_LEN};
+///
+/// const PARENT: u32 = 1 << 2;
+///
+/// let mut cv = IV;
+/// let input: [u8; 64] = /* left_cv || right_cv */;
+/// compress_direct(&mut cv, &input, 0, 64, PARENT);
+/// ```
 #[inline(always)]
 pub(crate) fn compress_direct(
     hash_state: &mut [u32; CHAINING_VALUE_LEN],
@@ -287,6 +312,9 @@ pub(crate) fn compress_direct(
 ))]
 pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
     use crate::{BLAKE3_FUNCT3, BLAKE3_FUNCT7, INLINE_OPCODE};
+    // Memory layout for BLAKE3 instruction:
+    // rs1: points to chaining value (32 bytes)
+    // rs2: points to message block (64 bytes) + counter (8 bytes) + block_len (4 bytes) + flags (4 bytes)
 
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",
@@ -306,6 +334,9 @@ pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u
 /// - `message` must be a valid pointer to 64 bytes.
 #[cfg(feature = "host")]
 pub(crate) unsafe fn blake3_compress(chaining_value: *mut u32, message: *const u32) {
+    // Memory layout for BLAKE3 instruction:
+    // message points to: message block (64 bytes / 16 u32s) + counter (8 bytes / 2 u32s) + block_len (4 bytes / 1 u32) + flags (4 bytes / 1 u32)
+
     let message_block = &*(message as *const [u32; 16]);
 
     let counter_ptr = message.add(16);
@@ -334,6 +365,9 @@ pub(crate) unsafe fn blake3_compress(_chaining_value: *mut u32, _message: *const
     panic!("blake3_compress requires RISC-V target or host feature");
 }
 
+/// BLAKE3 Keyed64 - guest implementation (internal).
+/// Hash two child CVs for Merkle tree.
+/// ABI: rs1 = left, rs2 = right, rd = iv (in/out)
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
@@ -354,6 +388,8 @@ unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, iv: *mut 
     );
 }
 
+/// BLAKE3 Keyed64 - host implementation (internal).
+/// Matches blake3::keyed_hash for 64-byte input.
 #[cfg(feature = "host")]
 #[inline(always)]
 unsafe fn blake3_keyed64_compress(left: *const u32, right: *const u32, key: *mut u32) {
@@ -410,6 +446,7 @@ pub fn blake3_keyed64(left: &AlignedHash32, right: &AlignedHash32, key: &mut Ali
     }
 }
 
+/// Standard BLAKE3 IV as AlignedHash32 (for use with blake3_keyed64)
 pub const BLAKE3_IV: AlignedHash32 = AlignedHash32([
     0x67, 0xe6, 0x09, 0x6a, // 0x6a09e667 (little-endian)
     0x85, 0xae, 0x67, 0xbb, // 0xbb67ae85

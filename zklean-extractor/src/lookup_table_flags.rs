@@ -49,6 +49,8 @@ impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
     }
 }
 
+/// This struct contains the list of input chunks, as well as the association between each
+/// lookup table and its corresponding flag opening.
 //
 // NOTE: At the moment, this associates the lookup tables with their flags in the same way as the
 // instruction_read_raf sumcheck: It enumerates all lookup tables and associates them with
@@ -65,7 +67,9 @@ pub struct ZkLeanLookupTableFlags<const XLEN: usize> {
     /// - 0: MLE input is the interleaving of the left and right operands
     /// - 1: MLE input is the concatenation of the left and right operands
     interleaving_flag: ZkLeanVarRef,
+    /// Boolean flags for each lookup table, along with the corresponding lookup-table identifiers
     lookup_table_flags: Vec<ZkLeanLookupTableFlag<XLEN>>,
+    /// Variable to constrain equal to muxed lookups
     lookup_output: ZkLeanVarRef,
 }
 

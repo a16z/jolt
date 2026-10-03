@@ -49,6 +49,11 @@ use jolt_transcript::LabelWithCount;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 #[cfg(not(feature = "akita"))]
+/// One assembled final-opening batch entry. Public because the prover's
+/// stage-8 recipe assembles its PCS batch statement through the same
+/// [`batch_entries`] wiring. The id is the composite [`ComposedOpeningId`] so
+/// the composed plan can carry the field-inline entry alongside the jolt ones
+/// (under `field-inline`, spliced by the stage-8 `field_inline` seam).
 pub struct Stage8BatchEntry<'a, F: JoltField, C> {
     pub id: ComposedOpeningId,
     pub commitment: &'a C,
@@ -87,6 +92,10 @@ where
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
+    // Stage 7's produced opening points, and (clear mode) the stage-7 and stage-6b
+    // output claims. The hamming-weight opening point and precommitted finals are
+    // resolved off these — before any transcript operation — since the finals'
+    // points anchor the unified opening point.
     let (stage7_points, clear) = match (stage6, stage7) {
         (Stage6bOutput::Clear(stage6), Stage7Output::Clear(stage7)) => (
             &stage7.output_points,
@@ -102,6 +111,7 @@ where
     };
     let stage6_points = stage6.output_points();
     let inc_opening_point = stage6_points.inc_opening_point();
+    // `batch_entries` reads the clear claims in (stage6, stage7) order.
     let clear_claims = clear.map(|(stage7_values, stage6_values)| (stage6_values, stage7_values));
     require_commitment_layout(&proof.commitments, layout)?;
 
@@ -268,6 +278,11 @@ where
     reason = "gathers per-polynomial sources from several stages"
 )]
 #[cfg(not(feature = "akita"))]
+/// Assemble the final-opening batch entries in `final_opening_polynomial_order`,
+/// pairing each polynomial's commitment with its opening claim (clear mode) and
+/// its Lagrange embedding scale. Public because the prover's stage-8 recipe
+/// builds its PCS batch statement from the same assembly (passing its own
+/// stage-0 commitments where the verifier passes the proof's).
 pub fn batch_entries<'a, F, PCS, VC>(
     preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
     commitments: &'a JoltCommitments<PCS::Output>,
@@ -335,6 +350,7 @@ where
     }
 
     let mut entries = Vec::with_capacity(order.len());
+    // The prover's final PCS batch order intentionally differs from proof payload order.
     for polynomial in order {
         let id = final_opening_id(polynomial);
         let (commitment, own_point, opening_claim): (&PCS::Output, &[F], Option<F>) =
@@ -415,6 +431,8 @@ where
                 )?,
                 JoltCommittedPolynomial::BalancedIncDigit(_)
                 | JoltCommittedPolynomial::BalancedIncCarry => {
+                    // Lattice-mode polynomials open through the fixed-prefix
+                    // path in `stage8::packed`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(
                             "polynomial {polynomial:?} is not part of the stage 8 prover order"
@@ -464,6 +482,8 @@ fn require_commitment_layout<C>(
     commitments: &JoltCommitments<C>,
     layout: JoltRaPolynomialLayout,
 ) -> Result<(), VerifierError> {
+    // The field-inline commitment payload is part of the expected layout: the composed final
+    // opening cannot assemble without the `FieldRdInc` commitment.
     #[cfg(feature = "field-inline")]
     super::field_inline::require_commitment(commitments)?;
     #[expect(
@@ -546,6 +566,11 @@ mod tests {
         assert_eq!(ids, expected);
     }
 
+    /// With field-inline enabled, the composed plan is exactly the spec's field-inline
+    /// final-opening order — `RamInc@Inc`, `RdInc@Inc`,
+    /// `FieldRdInc@FieldRegistersIncClaimReduction`, then the RA families and the advice
+    /// entries (`specs/field-inline-protocol.md`, "Stage 6 Composition" / the stage-8
+    /// final-opening order block).
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_final_opening_plan_matches_the_spec_order() {
@@ -585,6 +610,8 @@ mod tests {
         ];
         assert_eq!(ids, expected);
 
+        // The spliced entry mirrors RdInc's embedding treatment: the same dense embedding
+        // helper over the field-inline reduction's own point.
         let spliced = entries
             .iter()
             .find(|entry| entry.id == field_rd_inc_reduced().into())

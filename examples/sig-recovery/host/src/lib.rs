@@ -38,6 +38,7 @@ pub fn generate_test_transactions(count: usize) -> Vec<TransactionSigned> {
         .collect()
 }
 
+/// Serialize transactions to postcard format (RLP-encoded bytes)
 pub fn serialize_transactions(txs: &[TransactionSigned]) -> Vec<u8> {
     let rlp_txs: Vec<Vec<u8>> = txs
         .iter()

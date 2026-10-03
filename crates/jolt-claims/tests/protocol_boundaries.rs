@@ -1,3 +1,14 @@
+//! Repo-hygiene boundary checks for the protocol split (dependency-free; reads
+//! the source tree at test time).
+//!
+//! The architectural rule: `protocols/jolt` and `protocols/field_inline` are
+//! separate protocol families. They share algebra through the id-free framework
+//! modules and compose in the sibling `protocols/composed`: neither protocol
+//! family may import the other or its composition. Both families compile
+//! unconditionally. The common Jolt flag carriers
+//! and their geometry mirror the feature-gated ISA flags in `jolt-riscv`; this does
+//! not introduce field-register protocol ids into the Jolt protocol.
+
 #![expect(clippy::expect_used, reason = "test-only source-tree walking")]
 
 use std::fs;
@@ -20,6 +31,9 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// The file's source text with line comments, block comments, and string
+/// literals blanked, so the boundary greps below match code only (doc comments
+/// may legitimately mention the sibling family by name).
 fn code_text(path: &Path) -> String {
     let source = fs::read_to_string(path).expect("source file is readable");
     let mut out = String::with_capacity(source.len());
@@ -86,6 +100,9 @@ fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
+/// Neither protocol module imports (or otherwise names, outside comments and
+/// strings) the other: the only sanctioned sharing is the id-free
+/// `twist` algebra, and composition belongs to the sibling `composed` module.
 #[test]
 fn protocol_modules_are_import_disjoint() {
     let mut violations = Vec::new();
@@ -135,6 +152,8 @@ fn protocol_modules_are_import_disjoint() {
     );
 }
 
+/// The verifier consumes symbolic relations; their definitions and dependencies
+/// must stay below the verifier and R1CS crates.
 #[test]
 fn symbolic_relations_stay_in_claims() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -186,6 +205,9 @@ fn twist_reference_no_protocol_module() {
     );
 }
 
+/// The shared balanced-digit algebra is id-free like `twist`: both packed
+/// protocol families ride it, so it must not reference either protocol
+/// module.
 #[test]
 fn lattice_algebra_references_no_protocol_module() {
     let mut violations = Vec::new();
@@ -203,6 +225,10 @@ fn lattice_algebra_references_no_protocol_module() {
     );
 }
 
+/// Field-register relations and shared algebra remain unconditional. The three
+/// ordinary Jolt flag carriers mirror `jolt-riscv::CircuitFlags`, whose field
+/// instruction variants exist only with the `field-inline` ISA feature. The
+/// sibling composed module selects the active protocol geometry.
 #[test]
 fn field_inline_feature_gates_are_confined_to_flag_carriers_and_composition() {
     let source_dir = src_dir();

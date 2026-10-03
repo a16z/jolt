@@ -1,5 +1,12 @@
 use super::*;
 
+/// Lowers signed `MULH` to unsigned high multiplication plus sign corrections.
+///
+/// `MULHU` gives the high half of the unsigned product. For signed operands,
+/// each negative input contributes a correction term equal to the other
+/// operand. `VirtualMovsign` materializes either all-ones or zero from each
+/// sign bit, so the two extra multiplies add exactly those two's-complement
+/// corrections before writing the signed high 64 bits.
 pub(in crate::expand) fn expand_mulh(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

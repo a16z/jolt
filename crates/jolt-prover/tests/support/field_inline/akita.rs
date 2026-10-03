@@ -1,3 +1,6 @@
+//! Packed field-inline proving shared by the acceptance matrix and the
+//! specialized parity and soundness suite.
+
 use common::jolt_device::JoltDevice;
 use jolt_akita::AkitaProverSetup;
 use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
@@ -19,6 +22,9 @@ pub struct ProveOutput {
     pub proof: Proof,
 }
 
+/// Prepare and prove a guest case with the modular packed prover. The grouped
+/// setup includes the full-width field increment commitment, including all-zero traces.
+/// The callback inspects the attached witness before proving.
 pub fn prove<D>(
     case: &GuestCase,
     backend: JoltAkitaBackend<AkitaField, AkitaScheme>,

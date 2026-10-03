@@ -76,6 +76,8 @@ mod native {
             }
         };
 
+        // Symbol addresses come from the ELF directly; the Jolt program image
+        // discards the symbol table.
         let symbols = symbol_map(&elf);
         let tohost = symbols.get("tohost").copied().unwrap_or(0);
 
@@ -96,6 +98,8 @@ mod native {
         let output = match backend.fast_run(&program, inputs) {
             Ok(output) => output,
             Err(error) => {
+                // Compile-time rejection and runtime faults both surface as
+                // TraceError; distinguish them for the skip-list tooling.
                 let message = format!("{error:?}");
                 eprintln!("{elf_path}: {message}");
                 return ExitCode::from(if message.contains("unsupported instruction kind") {
@@ -106,6 +110,7 @@ mod native {
             }
         };
 
+        // Final memory arrives as nonzero (address, byte) pairs, RAM-relative.
         let memory: HashMap<u64, u8> = output.final_memory.bytes.into_iter().collect();
         let read_byte = |address: u64| -> u8 {
             address

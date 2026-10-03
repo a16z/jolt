@@ -6,6 +6,7 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
+    // An overflowing stack should fail to prove.
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_overflow_stack(target_dir);
     let shared_preprocessing = guest::preprocess_shared_overflow_stack(&mut program).unwrap();

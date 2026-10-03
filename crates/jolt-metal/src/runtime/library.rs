@@ -79,6 +79,7 @@ impl LibrarySpec {
         self
     }
 
+    /// Declares a non-template kernel function.
     pub fn kernel(mut self, name: &str) -> Self {
         self.kernels.push(KernelDecl::Plain(name.to_owned()));
         self
@@ -106,6 +107,7 @@ impl LibrarySpec {
                     "source name {name:?} is not a #line file name"
                 )));
             }
+            // Writing to a `String` cannot fail.
             let _ = writeln!(source, "#line 1 \"{name}\"\n{text}");
         }
         let _ = writeln!(source, "#line 1 \"jolt-metal instantiations\"");
@@ -153,6 +155,7 @@ fn is_identifier(name: &str) -> bool {
 pub(crate) struct ArgumentSlot {
     pub(crate) name: String,
     pub(crate) index: usize,
+    /// Size of the pointee (`device T*`) or referent (`constant T&`).
     pub(crate) data_size: usize,
 }
 
@@ -200,6 +203,8 @@ impl ShaderLibrary {
             let kernel = decl.host_name();
             let (sys, mut info) = library.pipeline(&device.sys, kernel)?;
             info.slots.sort_by_key(|slot| slot.index);
+            // Bindings are positional, so buffer arguments must occupy
+            // indices 0..n with no gaps.
             if let Some((position, slot)) = info
                 .slots
                 .iter()

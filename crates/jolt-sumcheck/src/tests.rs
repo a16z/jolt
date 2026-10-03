@@ -50,6 +50,7 @@ fn honest_prove(
         let c1 = eval_1 - eval_0;
         let round_poly = UnivariatePoly::new(vec![c0, c1]);
 
+        // Absorb through the same path the unlabelled verifier uses.
         <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
 
         let r: F = transcript.challenge();
@@ -459,6 +460,8 @@ fn clear_round_verifier_compressed_matches_manual_absorption() {
 
 #[test]
 fn clear_round_verifier_compressed_rejects_wrong_running_sum() {
+    // Even when the linear term is omitted from absorption, the sum check
+    // (s(0) + s(1) == running_sum) still binds every coefficient.
     let poly = UnivariatePoly::new(vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)]);
     let wrong_running_sum = F::from_u64(999);
     let compressed = CompressedLabeledRoundPoly::new(&poly, b"compressed_test");
@@ -475,6 +478,8 @@ fn clear_round_verifier_compressed_rejects_wrong_running_sum() {
 
 #[test]
 fn clear_round_verifier_compressed_rejects_short_polynomial() {
+    // Compressed encoding omits the linear term; a polynomial with fewer than
+    // two coefficients has no linear term to recover and is malformed.
     let degree_zero = UnivariatePoly::new(vec![F::from_u64(7)]);
     let compressed = CompressedLabeledRoundPoly::new(&degree_zero, b"compressed_test");
 
@@ -680,6 +685,10 @@ fn sumcheck_proof_verify_rejects_committed_encoding() {
 
 #[test]
 fn batched_committed_consistency_accessors() {
+    // `BatchedCommittedSumcheckConsistency` is produced by the generated ZK
+    // verify driver (jolt-verifier-derive) and read back by BlindFold through
+    // these accessors. Exercise the front-loaded suffix arithmetic and its
+    // range errors directly on a hand-built instance.
     let consistency = CommittedSumcheckConsistency {
         rounds: vec![
             VerifiedCommittedRound {
@@ -832,6 +841,9 @@ fn batched_instance_point_at_rejects_windows_past_recorded_challenges() {
 
 #[test]
 fn batched_instance_point_rejects_declared_width_exceeding_recorded_rounds() {
+    // Adversarial mismatch: the batch declares five rounds but the proof only
+    // recorded three. The suffix offset is computed from the declared width,
+    // so the lookup must fail against the recorded challenge count.
     let challenges: Vec<F> = (401..=403).map(F::from_u64).collect();
     let batched = batched_consistency_with_challenges(&challenges, 5);
 
@@ -1136,6 +1148,11 @@ fn sumcheck_statement_new_rejects_degree_zero() {
     let _ = SumcheckStatement::new(3, 0);
 }
 
+/// Drive an honest degree-1 sumcheck through the clear recorder and check the
+/// assembled proof against `verify_compressed_boolean` on a twin transcript:
+/// the recorder's writes (claim absorb, compressed round polys, opening-claim
+/// absorb) must be byte-identical to what the verifier reads back, and the
+/// verifier's reduction must land on the prover's bound value.
 #[test]
 fn clear_recorder_roundtrip_matches_compressed_verifier() {
     use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
@@ -1386,6 +1403,11 @@ fn prove_batch_rejects_zero_max_degree() {
     ));
 }
 
+/// Twin-transcript lock for the batched engine, padding included: a
+/// 3-round and a 1-round member proved through `prove_batch` with the clear
+/// recorder must be byte-identical to the verifier's head-replica +
+/// `verify_compressed_boolean` + opening-claim absorbs, and the reduction must
+/// land on the prover's final claim and challenges.
 #[test]
 fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     use crate::batch::{BatchMember, BatchPrelude};
@@ -1466,6 +1488,11 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
+/// Twin-transcript lock for a head-aligned member: a 1-round member at
+/// `offset: 0` is active in the batch's FIRST round and then halves through
+/// the trailing dummy rounds. Its kernel must emit at the dummy-round padding
+/// scale (the table sums to `2^(max − rounds) · input_claim`), so its final
+/// batch claim is the fully-bound value with the padding halved back out.
 #[test]
 fn prove_batch_clear_twin_head_aligned_member() {
     use crate::batch::{BatchMember, BatchPrelude};
@@ -1541,6 +1568,11 @@ fn prove_batch_clear_twin_head_aligned_member() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
+/// The committed twin of the batched engine: the same members proved through
+/// the committed recorder must be byte-identical to
+/// `verify_committed_consistency_dims` (coefficient draws included — no claim
+/// scalars are absorbed on either side), and the retained witness must open
+/// every round commitment.
 #[test]
 fn prove_batch_committed_twin_matches_committed_consistency() {
     use crate::batch::{BatchMember, BatchPrelude};
@@ -1592,6 +1624,8 @@ fn prove_batch_committed_twin_matches_committed_consistency() {
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
 
+    // Verifier twin: the committed path absorbs no claim scalars — only the
+    // coefficient squeezes and the commitments the proof carries.
     let mut verifier_transcript = Blake2bTranscript::new(b"prove-batch-zk-twin");
     let _coeff_long: F = verifier_transcript.challenge_scalar();
     let _coeff_short: F = verifier_transcript.challenge_scalar();
@@ -1631,6 +1665,10 @@ fn prove_batch_committed_twin_matches_committed_consistency() {
     assert_eq!(witness.output_claim_rows.concat(), proved.member_claims,);
 }
 
+/// Twin-transcript lock for the clear uni-skip prover against the verify
+/// choreography `jolt-verifier`'s `uniskip::verify_clear` performs: full
+/// labeled round poly, challenge, output claim absorbed under
+/// `b"opening_claim"` before any later draw.
 #[test]
 fn prove_uniskip_clear_twin_matches_uniskip_verify() {
     use crate::prover::prove_uniskip_clear;
@@ -1676,6 +1714,10 @@ fn prove_uniskip_clear_twin_matches_uniskip_verify() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
+/// The committed uni-skip twin: `prove_uniskip_committed` must be
+/// byte-identical to `verify_committed_consistency` (the transcript path of
+/// `uniskip::verify_zk` — its commitment-count check is transcript-pure), and
+/// the witness must open the round and output-claim commitments.
 #[test]
 fn prove_uniskip_committed_twin_matches_committed_consistency() {
     use crate::prover::prove_uniskip_committed;

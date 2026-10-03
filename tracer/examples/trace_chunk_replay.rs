@@ -23,6 +23,8 @@ use support::chain_input;
 use tracer::instruction::Cycle;
 use tracer::parallel::{ChunkWorker, PassOne, SnapshotPool};
 
+/// Same (guest, input) pairs as the golden-trace gate, plus per-guest chunk
+/// sizes in ticks (chosen to force multiple chunks; muldiv gets a tiny one).
 fn golden_cases() -> Vec<(&'static str, Vec<u8>, usize)> {
     vec![
         ("sha2-chain-guest", chain_input(300), 5_000),
@@ -75,6 +77,8 @@ fn run_case(guest: &str, input: &[u8], chunk_ticks: usize) -> Result<(usize, usi
             pool.put(image);
             break;
         }
+        // Boundary reference: pass-1 state right after this chunk (its final
+        // state when the program just terminated).
         let boundary = pass1.checkpoint();
 
         let previous = worker.install_chunk(&checkpoint, image);

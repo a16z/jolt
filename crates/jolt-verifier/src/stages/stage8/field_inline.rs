@@ -1,3 +1,7 @@
+//! Stage 8's field-inline seam: the composed final-opening splice and the field-inline
+//! commitment-payload presence check. `verify.rs` interacts with the field-inline protocol
+//! only through the functions here.
+
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     commitment_embedding_scale, CommitmentEmbedding,
@@ -12,6 +16,8 @@ use crate::proof::JoltCommitments;
 use crate::VerifierError;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
+/// The field-inline commitment payload is part of the expected layout: the composed final
+/// opening cannot assemble without the `FieldRdInc` commitment.
 pub(super) fn require_commitment<C>(commitments: &JoltCommitments<C>) -> Result<(), VerifierError> {
     if commitments.field_inline.is_none() {
         return Err(VerifierError::MissingProofPayload {

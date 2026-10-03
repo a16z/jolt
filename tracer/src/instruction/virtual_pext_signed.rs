@@ -22,6 +22,8 @@ impl VirtualPextSigned {
     }
 }
 
+/// `pext(x, y)`: packs `x`'s bits at `y`'s set positions toward bit 0,
+/// preserving order (the window's top bit lands at `popcount(y) − 1`).
 #[inline]
 pub(crate) fn pext(x: u64, y: u64) -> u64 {
     if y == 0 {
@@ -30,6 +32,8 @@ pub(crate) fn pext(x: u64, y: u64) -> u64 {
     let tz = y.trailing_zeros();
     let normalized = y >> tz;
     if normalized & normalized.wrapping_add(1) == 0 {
+        // Contiguous mask (every mask the window-mask instructions produce):
+        // extract is a shift plus truncate.
         return (x >> tz) & normalized;
     }
     let mut bits = y;

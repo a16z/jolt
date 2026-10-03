@@ -48,6 +48,8 @@ pub struct TracingGuards(#[expect(dead_code)] Vec<Box<dyn Any>>);
 ///
 /// Panics if called more than once (the global subscriber can only be set once).
 pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuards {
+    // Legacy pprof default; the run-dir layout below never sees it because
+    // the OnceLock is initialized here first.
     let _ = PPROF_PREFIX.get_or_init(|| {
         std::env::var("PPROF_PREFIX")
             .unwrap_or_else(|_| format!("benchmark-runs/pprof/{trace_name}_"))

@@ -1,5 +1,7 @@
 use super::GuestConfig;
 
+/// SHA-2 guest: hashes an input buffer of `self.0` bytes (value 5u8 each,
+/// matching `e2e_profiling.rs`).
 pub struct Sha2(pub usize);
 
 impl Default for Sha2 {

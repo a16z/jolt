@@ -3,6 +3,14 @@ use std::collections::HashMap;
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
 
+/// Backing storage for guest memory, at doubleword granularity.
+///
+/// `Flat` is the execution backing: one contiguous zero-initialized array
+/// covering the whole guest address range (uninitialized reads are 0, same as
+/// the historical sparse map). `Sparse` backs replay from a checkpoint, whose
+/// memory image is exactly the first-touch values recorded while the chunk
+/// originally executed — materializing those as a flat array per checkpoint
+/// would defeat the point of checkpoints.
 #[derive(Clone, Debug)]
 enum MemoryBacking {
     Flat(Vec<u64>),
@@ -17,6 +25,8 @@ pub struct MemoryData {
     /// `access_u64` on a flat backing. Everything at or beyond this index is
     /// still zero, so memory snapshots only need to copy the prefix below it.
     high_water: usize,
+    /// Checkpoint memory. If this is `Some`, the initial values of all memory accesses will be
+    /// stored.
     checkpoint: Option<HashMap<usize, u64>>,
 }
 
@@ -46,6 +56,8 @@ impl MemoryData {
         self.num_doublewords
     }
 
+    /// Access the values of the doubleword stored at `index` for reading/writing. If the memory is
+    /// set up for checkpointing, this also records the access.
     // NOTE: This is mutable to support inserting into the checkpointing hashmap. Note that we need
     // to do this even when we're not writing.
     #[inline]
@@ -58,6 +70,10 @@ impl MemoryData {
                 if index >= self.high_water {
                     self.high_water = index + 1;
                 }
+                // We store only the initial value of each index accessed (read or written) over
+                // the course of a chunk. If the access is a read, the value is the value read. If
+                // the access is a write, the value is the value stored *prior* to the write. If
+                // the index has already been accessed, we do not modify it.
                 if let Some(checkpoint) = self.checkpoint.as_mut() {
                     checkpoint.entry(index).or_insert(dwords[index]);
                 }
@@ -115,6 +131,9 @@ impl MemoryData {
         self.checkpoint.is_some()
     }
 
+    /// The flat backing and its touched prefix length (everything at or past
+    /// the prefix is zero). Panics if the backing is sparse —
+    /// checkpoint-replay memories are not snapshot sources.
     pub(crate) fn flat_parts(&self) -> (&[u64], usize) {
         match &self.backing {
             MemoryBacking::Flat(dwords) => (dwords, self.high_water.min(dwords.len())),
@@ -124,6 +143,9 @@ impl MemoryData {
         }
     }
 
+    /// Replace the backing with a full flat image — the image *becomes* the
+    /// working memory, no copy — returning the previous flat backing for
+    /// buffer pooling. Panics if the previous backing was sparse.
     pub(crate) fn replace_flat(&mut self, image: Vec<u64>) -> Vec<u64> {
         self.num_doublewords = image.len();
         // Conservative: replay memories are never snapshot sources, so the
@@ -160,6 +182,11 @@ impl Memory {
         }
     }
 
+    /// Initializes memory content.
+    /// This method is expected to be called only once.
+    ///
+    /// # Arguments
+    /// * `capacity`
     pub(crate) fn init(&mut self, capacity: u64) {
         self.data.init_with_capacity(capacity)
     }
@@ -206,6 +233,11 @@ impl Memory {
         }
     }
 
+    /// Reads multiple bytes from memory.
+    ///
+    /// # Arguments
+    /// * `address`
+    /// * `width` up to eight
     pub(crate) fn read_bytes(&mut self, address: u64, width: u64) -> u64 {
         let mut data = 0_u64;
         for i in 0..width {
@@ -259,6 +291,12 @@ impl Memory {
         }
     }
 
+    /// Write multiple bytes to memory.
+    ///
+    /// # Arguments
+    /// * `address`
+    /// * `value`
+    /// * `width` up to eight
     pub(crate) fn write_bytes(&mut self, address: u64, value: u64, width: u64) {
         for i in 0..width {
             self.write_byte(address.wrapping_add(i), (value >> (i * 8)) as u8);
@@ -328,6 +366,11 @@ impl Memory {
         bytes
     }
 
+    /// Reads multiple bytes from memory.
+    ///
+    /// # Arguments
+    /// * `address`
+    /// * `width` up to eight
     pub(crate) fn get_bytes(&self, address: u64, width: u64) -> u64 {
         let mut data = 0_u64;
         for i in 0..width {

@@ -427,6 +427,8 @@ fn plane_accessor_stays_absent_for_profile_without_field_inline() {
     );
 
     assert!(JoltWitnessOracle::<Fr>::field_inline(&backend).is_none());
+    // The view cannot be attached for a guest without field-inline, so the accessor can
+    // never become Some.
     assert!(matches!(
         backend.with_field_inline(),
         Err(WitnessError::UnavailableView {

@@ -3,9 +3,15 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
 const NUM_VIRTUAL_REGISTERS: usize = VIRTUAL_REGISTER_COUNT as usize;
+/// Number of virtual registers available for instruction inline sequences (allocate()).
+/// This is independent of NUM_RESERVED_VIRTUAL_REGISTERS: reserved registers protect
+/// persistent state (reservations, CSRs), while instruction registers are the pool
+/// used by allocate() for temporary values within an inline sequence.
 const NUM_VIRTUAL_INSTRUCTION_REGISTERS: usize = 8;
 const RISCV_REGISTER_BASE: u8 = RISCV_REGISTER_COUNT;
 
+/// CSR addresses for M-mode CSRs supported by the virtual register system.
+/// These are the standard RISC-V CSR addresses.
 pub const CSR_MSTATUS: u16 = 0x300;
 pub const CSR_MTVEC: u16 = 0x305;
 pub const CSR_MSCRATCH: u16 = 0x340;
@@ -13,21 +19,43 @@ pub const CSR_MEPC: u16 = 0x341;
 pub const CSR_MCAUSE: u16 = 0x342;
 pub const CSR_MTVAL: u16 = 0x343;
 
+/// Layout of virtual registers:
+/// - Registers 32-39: Reserved registers (persistent, never allocated)
+///   - 32: Reservation address for LR.W/SC.W
+///   - 33: Reservation address for LR.D/SC.D
+///   - 34: mtvec (trap handler address)
+///   - 35: mscratch (trap scratch register)
+///   - 36: mepc (exception PC)
+///   - 37: mcause (trap cause)
+///   - 38: mtval (trap value)
+///   - 39: mstatus (machine status)
+/// - Registers 40-47: Temporary registers for inline sequences (allocate())
+/// - Registers 48+: Registers for larger inlines (allocate_for_inline())
+///
+/// The reserved registers (32-39) are skipped by allocate() and allocate_for_inline()
+/// to ensure they persist across instructions.
 const RESERVATION_W_REGISTER: u8 = RISCV_REGISTER_BASE;
 const RESERVATION_D_REGISTER: u8 = RISCV_REGISTER_BASE + 1;
 
-const TRAP_HANDLER_REGISTER: u8 = RISCV_REGISTER_BASE + 2;
+/// CSR Virtual Register Mapping (persistent, not allocated):
+const TRAP_HANDLER_REGISTER: u8 = RISCV_REGISTER_BASE + 2; // register 34 (mtvec)
 const MSCRATCH_REGISTER: u8 = RISCV_REGISTER_BASE + 3;
 const MEPC_REGISTER: u8 = RISCV_REGISTER_BASE + 4;
 const MCAUSE_REGISTER: u8 = RISCV_REGISTER_BASE + 5;
 const MTVAL_REGISTER: u8 = RISCV_REGISTER_BASE + 6;
 const MSTATUS_REGISTER: u8 = RISCV_REGISTER_BASE + 7;
 
+/// Number of reserved virtual registers that are NOT allocated.
+/// Includes: reservation_w (32), reservation_d (33), mtvec (34), mscratch (35),
+///           mepc (36), mcause (37), mtval (38), mstatus (39)
+/// allocate() skips these and starts from register 40.
 const NUM_RESERVED_VIRTUAL_REGISTERS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct VirtualRegisterAllocator {
     allocated: Arc<Mutex<[bool; NUM_VIRTUAL_REGISTERS]>>,
+    /// At the end of the inline execution all registers have to be reset to 0
+    /// This variable tracks which registers were allocated during inline execution
     pending_clearing_inline: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -39,38 +67,56 @@ impl VirtualRegisterAllocator {
         }
     }
 
+    /// Get the word-width reservation register (register 32) for LR.W/SC.W.
     pub fn reservation_w_register(&self) -> u8 {
         RESERVATION_W_REGISTER
     }
 
+    /// Get the doubleword-width reservation register (register 33) for LR.D/SC.D.
     pub fn reservation_d_register(&self) -> u8 {
         RESERVATION_D_REGISTER
     }
 
+    /// Get the trap handler register (register 34) - mtvec CSR.
     pub fn trap_handler_register(&self) -> u8 {
         TRAP_HANDLER_REGISTER
     }
 
+    /// Get the mscratch register (register 35) - scratch register for trap handler.
     pub fn mscratch_register(&self) -> u8 {
         MSCRATCH_REGISTER
     }
 
+    /// Get the mepc register (register 36) - exception program counter.
     pub fn mepc_register(&self) -> u8 {
         MEPC_REGISTER
     }
 
+    /// Get the mcause register (register 37) - trap cause.
     pub fn mcause_register(&self) -> u8 {
         MCAUSE_REGISTER
     }
 
+    /// Get the mtval register (register 38) - trap value.
     pub fn mtval_register(&self) -> u8 {
         MTVAL_REGISTER
     }
 
+    /// Get the mstatus register (register 39) - machine status.
     pub fn mstatus_register(&self) -> u8 {
         MSTATUS_REGISTER
     }
 
+    /// Map a CSR address to its corresponding virtual register number.
+    /// Returns Some(register) if the CSR is supported, None otherwise.
+    ///
+    /// Supported CSRs:
+    /// - mstatus (0x300) → vr39
+    /// - mtvec (0x305) → vr34
+    /// - mscratch (0x340) → vr35
+    /// - mepc (0x341) → vr36
+    /// - mcause (0x342) → vr37
+    /// - mtval (0x343) → vr38
     pub fn csr_to_virtual_register(&self, csr_addr: u16) -> Option<u8> {
         match csr_addr {
             CSR_MSTATUS => Some(self.mstatus_register()),
@@ -100,6 +146,8 @@ impl VirtualRegisterAllocator {
                 .is_empty()
     }
 
+    /// Allocate virtual register that can be used in the inline sequence of
+    /// an instruction. Skips reserved registers (32-39) and uses registers 40-47.
     #[cfg(test)]
     pub(crate) fn allocate(&self) -> VirtualRegisterGuard {
         for (i, allocated) in self
@@ -158,6 +206,10 @@ impl VirtualRegisterAllocator {
     }
 
     pub fn get_registers_for_reset(&self) -> Vec<u8> {
+        // Assert that all inline registers (48+) have been dropped.
+        // This function only returns inline registers from pending_clearing_inline,
+        // so we only need to verify those are deallocated.
+        // Skip reserved (32-39) and instruction (40-47) registers.
         assert!(
             self.allocated
                 .lock()

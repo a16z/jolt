@@ -23,6 +23,7 @@ impl JALR {
             as u64)
             & !1;
         if self.operands.rd != 0 {
+            // Skip returns (rd=0) and non-standard link registers
             if self.operands.rd == 1 {
                 cpu.track_call(self.address);
             }

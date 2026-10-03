@@ -1,3 +1,12 @@
+//! Inline instruction support for RISC-V.
+//!
+//! The inline system uses the RISC-V custom-0 (0x0B) and custom-1 (0x2B) opcodes
+//! with the Inline-format instruction encoding. Inlines are uniquely identified by their
+//! opcode, funct3, and funct7 fields.
+//!
+//! Inline implementations register themselves at link time via `inventory::submit!`.
+//! The INLINE instruction iterates these registrations to find the matching builder.
+
 use crate::instruction::registers::inline::RegisterStateInline;
 
 use super::{
@@ -39,6 +48,7 @@ pub type AdviceFn = fn(
 /// execution backends surface it as a trace error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InlineAdviceError {
+    /// Reading a doubleword at this guest address failed.
     #[error("invalid guest load at address {address:#x}")]
     InvalidLoad { address: u64 },
 }
@@ -51,6 +61,7 @@ pub enum InlineAdviceError {
 /// advice (sha2, bigint, secp256k1, …) is computed by the same Rust code
 /// under all backends.
 pub trait InlineAdviceContext {
+    /// Read guest register `x[index]` as an unsigned value.
     fn register(&self, index: usize) -> u64;
 
     /// Read a doubleword from guest memory; `None` on an invalid access.
@@ -119,6 +130,10 @@ fn build_registered_sequence(
     (registration.build_sequence)(InlineExpansionBuilder::new(source), operands)
 }
 
+/// Return all linked inline registration keys and names.
+///
+/// This is intended for diagnostics and tests; expansion itself uses exact
+/// opcode/funct3/funct7 lookup through the provider.
 pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
     inventory::iter::<InlineRegistration>
         .into_iter()
@@ -126,6 +141,10 @@ pub fn list_registered_inlines() -> Vec<((u32, u32, u32), String)> {
         .collect()
 }
 
+/// Look up a linked inline registration by its encoded key.
+///
+/// Execution backends need the registration itself (not just its existence)
+/// to run `build_advice` over their own state.
 pub fn find_inline_registration(
     opcode: u32,
     funct3: u32,
@@ -197,11 +216,16 @@ impl InlineExpansionProvider for TracerInlineExpansionProvider {
 /// funct7 fields.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub struct INLINE {
+    /// 7-bit opcode (bits 6:0 of instruction)
     pub opcode: u32,
+    /// 3-bit function selector (bits 14:12 of instruction)
     pub funct3: u32,
+    /// 7-bit function selector (bits 31:25 of instruction)
     pub funct7: u32,
+    /// Memory address of this instruction
     pub address: u64,
     pub operands: FormatInline,
+    /// Tracks remaining virtual instructions (used by tracer)
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
     pub is_compressed: bool,
@@ -300,6 +324,9 @@ impl INLINE {
         sequence: &[Instruction],
     ) {
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
+        // The reference tracer has no error channel at instruction level, so
+        // an advice fault (invalid guest pointer in an operand register)
+        // panics here, with the faulting address from the error.
         let advice = (reg.build_advice)(self.operands, cpu).unwrap_or_else(|e| {
             panic!(
                 "Inline advice for opcode={:#04x}, funct3={:#03b}, funct7={:#09b} failed: {e}",
@@ -307,6 +334,8 @@ impl INLINE {
             )
         });
         if let Some(mut advice) = advice {
+            // Advice values are patched into per-execution copies of the
+            // rows; the (cached) sequence itself is never mutated.
             let mut trace = trace;
             for instr in sequence {
                 let mut instr = *instr;
@@ -340,6 +369,12 @@ impl INLINE {
 }
 
 impl RISCVTrace for INLINE {
+    /// Trace the materialized inline sequence and populate runtime advice.
+    ///
+    /// Advice generation remains tracer-owned because it can inspect `Cpu`.
+    /// Static recipe construction only determines where `VirtualAdvice` rows
+    /// occur; this method writes the concrete advice values into those rows
+    /// immediately before executing them.
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
             self.trace_sequence(cpu, trace, rows);

@@ -1,3 +1,10 @@
+//! The typed prove-side seam of a batch member: [`SumcheckKernel`] (the
+//! execution object the generated stage drivers run), its extraction error
+//! vocabulary, and [`ProverInputs`] (the prepare-time protocol bundle).
+//! Homed here — with the driver generated into `jolt-prover`, nothing in
+//! `jolt-verifier` needs to name them, and the verifier crate stays
+//! prover-free.
+
 use std::fmt::Debug;
 
 use jolt_claims::protocols::composed::ComposedOpeningId;
@@ -65,6 +72,11 @@ pub enum SumcheckKernelError<F: Field> {
 /// retained-memory peak. Implement it with size arithmetic
 /// (`Vec` capacity × element size; see the reference kernels) so `F` stays
 /// unbounded.
+// No claim-trait where-clauses: `Relation: ConcreteSumcheck<F>` already
+// implies them (the ConcreteSumcheck where-clauses are elaborated at every use
+// site), and spelling them with the relation's own id families — required for
+// non-jolt protocol families — would name `Self` in a bound's type arguments,
+// which breaks dyn compatibility.
 pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + MaybeAllocative {
     type Relation: ConcreteSumcheck<F>;
 

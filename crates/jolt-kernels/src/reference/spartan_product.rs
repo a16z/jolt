@@ -59,6 +59,9 @@ use jolt_witness::JoltWitnessPlane;
 impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
     for ReferenceBackend
 {
+    /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
+    /// the slot as the single `late_tau` entry of
+    /// [`first_round_poly`](UniskipKernel::first_round_poly).
     // The backend-neutral `SpartanProductUniskip::*` spans live at the
     // stage-2 call boundary (`crates/jolt-prover/src/stages/stage2.rs`), so
     // every `UniskipKernel` implementation inherits them — see the
@@ -129,6 +132,9 @@ pub struct SpartanProductKernel<F: JoltField> {
     next_is_noop: Vec<F>,
     write_lookup_output_to_rd: Vec<F>,
     virtual_instruction: Vec<F>,
+    /// The field-inline lane factor columns (`FieldRs1Value`, `FieldRs2Value`,
+    /// `FieldRdValue`), cycle-indexed — the composed lanes' left/right factors per
+    /// `FieldRegistersProductLane::factor_openings`.
     #[cfg(feature = "field-inline")]
     field_rs1_value: Vec<F>,
     #[cfg(feature = "field-inline")]
@@ -174,6 +180,11 @@ impl<F: JoltField> SpartanProductKernel<F> {
         })
     }
 
+    /// The composed left/right factor values at cycle `j` under `weights` (the
+    /// centered-Lagrange weights over the composed lane domain): the three ordinary
+    /// lanes, plus (under `field-inline`) the field-inline lanes via the jolt-claims
+    /// composed-lane helper — the same helper the verifier's composed checks fold with,
+    /// so the lane order cannot drift.
     fn composed_lane_factors(&self, weights: &[F], j: usize) -> Result<(F, F), KernelError<F>> {
         let left = weights[0] * self.left_instruction_input[j]
             + weights[1] * self.lookup_output[j]

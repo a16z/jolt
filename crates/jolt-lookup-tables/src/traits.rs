@@ -133,6 +133,7 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
+// Only limb advice uses `RangeCheck`; other field-inline ops have no lookup.
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,
@@ -260,6 +261,8 @@ mod tests {
         }
     }
 
+    // `JoltInstructionRowData` requires `TryFrom<JoltInstructionRow>`; the blanket
+    // impl over `Into` supplies it.
     impl From<JoltInstructionRow> for TestCycle {
         fn from(instruction: JoltInstructionRow) -> Self {
             Self {
@@ -330,6 +333,9 @@ mod tests {
                 let mut rng = StdRng::seed_from_u64(0xA11A5);
                 let mut checked = 0usize;
                 for _ in 0..256 {
+                    // Immediates are drawn from `[0, 2^64)`: every format feeding a
+                    // non-interleaved lookup (I / U / J / Assert) stores `imm` as a
+                    // `u64`, so a negative normalized immediate is unreachable.
                     let operands = NormalizedOperands {
                         rd: Some(1),
                         rs1: Some(2),

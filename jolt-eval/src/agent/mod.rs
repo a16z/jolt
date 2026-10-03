@@ -41,7 +41,9 @@ impl AgentError {
 /// captured diff after an agent run.
 pub enum DiffScope {
     All,
+    /// Only include changes under these paths.
     Include(Vec<String>),
+    /// Include everything except changes under these paths.
     Exclude(Vec<String>),
 }
 
@@ -73,6 +75,7 @@ pub trait AgentHarness: Send + Sync {
     }
 }
 
+/// Apply a unified diff to `repo_dir`.
 pub fn apply_diff(repo_dir: &Path, diff: &str) -> Result<(), AgentError> {
     use std::process::Command;
 

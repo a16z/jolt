@@ -30,6 +30,7 @@ impl Sha256 {
     #[inline(always)]
     pub fn new() -> Self {
         Self {
+            // We these uninitialized as a cycle optimization
             state: [MaybeUninit::uninit(); 8],
             buffer: [MaybeUninit::uninit(); 16],
             buffer_len: 0,
@@ -118,6 +119,7 @@ impl Sha256 {
         }
     }
 
+    /// Reads hash digest and consumes the hasher.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; 32] {
         let bit_len = self.total_len << 3;
@@ -160,6 +162,8 @@ impl Sha256 {
                 self.sha256_compress();
             }
 
+            // Second block: all zeros except length at the end
+            // Unroll the loop for cycle optimization
             self.buffer[0].write(0);
             self.buffer[1].write(0);
             self.buffer[2].write(0);
@@ -189,6 +193,7 @@ impl Sha256 {
         // SAFETY: state is fully initialized (a compression ran above).
         let state = unsafe { self.state_as_u32() };
 
+        // Unrolled for cycle optimization
         #[cfg(target_endian = "little")]
         let words: [u32; 8] = [
             swap_bytes(state[0]),
@@ -357,6 +362,7 @@ pub(crate) unsafe fn sha256_compression_initial(_input: *const u32, _state: *mut
     panic!("sha256_compression_initial requires RISC-V target or host feature");
 }
 
+/// Swap bytes of a u32 - uses virtual instruction on RISC-V, fallback on host
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")

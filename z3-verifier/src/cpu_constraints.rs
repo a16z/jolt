@@ -296,6 +296,7 @@ impl JoltState {
         *solver += self.unexpanded_pc.eq(&other.unexpanded_pc);
         *solver += self.next_is_noop.eq(&other.next_is_noop);
 
+        // for now we don't emulate the lookup table, just use addition arbitrarily for everything
         *solver += self
             .lookup_output
             .eq(&self.left_lookup + &self.right_lookup);

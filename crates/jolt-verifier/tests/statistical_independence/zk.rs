@@ -400,6 +400,8 @@ fn collect_dory_opening_statistics(proof: &jolt_dory::DoryProof, tracker: &mut B
         tracker.record_canonical(format!("{prefix}.e2_plus"), &message.e2_plus);
         tracker.record_canonical(format!("{prefix}.e2_minus"), &message.e2_minus);
     }
+    // A ZK proof carries no clear final message (it would reveal the folded
+    // witness); the hiding scalar-product Σ-proof recorded below replaces it.
     assert!(
         proof.final_message.is_none(),
         "ZK proof must not carry a clear final message"
@@ -474,6 +476,9 @@ fn collect_blindfold_statistics(
         "blindfold.folded_eval.blinding",
         &proof.folded_eval_blindings,
     );
+    // These openings are fixed-coordinate checks; the rows intentionally contain
+    // structural zero slots, so the hiding component to sample is the opening
+    // blinding.
     for index in selected_positions(proof.folded_eval_output_openings.len()) {
         tracker.record_vector_opening_blinding(
             &format!("blindfold.folded_eval.output_opening.{index}"),

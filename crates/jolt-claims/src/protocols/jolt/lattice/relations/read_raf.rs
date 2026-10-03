@@ -44,6 +44,8 @@ use crate::protocols::jolt::{
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
+/// Total lattice read-raf val stages: the five base flag stages plus the four
+/// fused-inc consumer stages.
 pub const LATTICE_READ_RAF_STAGES: usize =
     BYTECODE_STAGE_GAMMA_COUNTS.len() + LATTICE_FUSED_INC_STAGES;
 
@@ -71,6 +73,7 @@ impl<F: JoltField> InputClaims<F> for LatticeReadRafAddressPhaseInputClaims<F> {
     }
 }
 
+/// The four consumed inc claims in stage order (`γ^5..8`).
 fn fused_inc_stage_claims<F: Ring>() -> Vec<JoltExpr<F>> {
     vec![
         opening(ram_inc()),

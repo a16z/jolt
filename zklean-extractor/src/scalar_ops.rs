@@ -51,6 +51,7 @@ pub fn scalar_sub_mod(a: Scalar, b: Scalar) -> Scalar {
     scalar_add_mod(a, neg_b)
 }
 
+/// Negate a scalar: -a mod p = p - a.
 pub fn scalar_neg_mod(a: Scalar) -> Scalar {
     if a == SCALAR_ZERO {
         return SCALAR_ZERO;
@@ -58,12 +59,19 @@ pub fn scalar_neg_mod(a: Scalar) -> Scalar {
     scalar_sub_assuming_ge(&BN254_MODULUS, &a)
 }
 
+/// Multiply two 256-bit numbers with modular reduction.
+///
+/// Computes (a * b) mod p where p is the BN254 scalar field modulus.
+///
+/// Note: This uses BigUint for simplicity. For performance-critical code,
+/// Montgomery multiplication would be more efficient.
 pub fn scalar_mul_mod(a: Scalar, b: Scalar) -> Scalar {
     let result =
         (scalar_to_biguint(&a) * scalar_to_biguint(&b)) % scalar_to_biguint(&BN254_MODULUS);
     biguint_to_scalar(result)
 }
 
+/// Convert a `[u64; 4]` scalar to BigUint (little-endian limb order).
 fn scalar_to_biguint(s: &Scalar) -> BigUint {
     BigUint::from_slice(&[
         s[0] as u32,
@@ -77,6 +85,7 @@ fn scalar_to_biguint(s: &Scalar) -> BigUint {
     ])
 }
 
+/// Convert a BigUint to `[u64; 4]` scalar (little-endian limb order).
 fn biguint_to_scalar(n: BigUint) -> Scalar {
     let digits = n.to_u64_digits();
     let mut out = [0u64; 4];
@@ -98,6 +107,7 @@ pub(crate) fn scalar_ge(a: &Scalar, b: &Scalar) -> bool {
     true
 }
 
+/// Subtract b from a, assuming a >= b (no modular wrap).
 pub(crate) fn scalar_sub_assuming_ge(a: &Scalar, b: &Scalar) -> Scalar {
     let mut result = [0u64; 4];
     let mut borrow = 0i128;

@@ -12,7 +12,7 @@ use super::{normalize_register_value, InstructionRegisterState, RegisterSnapshot
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateLoad {
-    pub rd: (u64, u64),
+    pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
 }
 

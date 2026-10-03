@@ -85,6 +85,8 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
     }
 }
 
+/// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
+/// hot), off the stage-5 shared rows.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct LookupIndexChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
@@ -113,8 +115,15 @@ impl ChunkIndexSource for LookupIndexChunks {
 pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     num_committed_per_virtual: usize,
+    /// Inverse batch weights for active columns, and one for disabled columns
+    /// retained unscaled so their final opening values remain available.
     opening_unscale: Vec<F>,
     active_virtuals: usize,
+    /// Address-folded committed RA selectors, one per committed chunk:
+    /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
+    /// batch's first table pre-scaled by `γ^v` so the round loop needs no
+    /// batching multiplies — served lazily off the shared rows for the
+    /// first four binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
@@ -172,6 +181,10 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             power_inv *= gamma_inv;
         }
 
+        // One eq table per committed chunk point (each `2^w` entries); the
+        // point-mass fold stays lazy — one table lookup per gathered cycle —
+        // instead of materializing `N × T` dense selectors up front. Each
+        // virtual batch's `γ^v` weight rides in the batch's first table.
         let chunk_tables: Vec<Vec<F>> = map_indices(chunks.len(), |i| {
             let mut table = eq_table(&chunks[i]);
             if i % num_committed_per_virtual == 0 {
@@ -206,6 +219,14 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         })
     }
 
+    /// `s(t) = ℓ(t) · q(t)` with
+    /// `q(t) = Σ_y E(y) · Σ_v γ^v Π_{i<N} ra_{N·v+i}(t, y)` (the `γ^v` live
+    /// in the pre-scaled tables): `q` is evaluated on the grid
+    /// `[1, …, N−1, ∞]` with deferred-reduction accumulation at every level
+    /// (per-row product lanes, per-block `e_in` folds, cross-block `e_out`
+    /// folds), `q(0)` is recovered from `s(0) + s(1) = previous_claim`, and
+    /// [`GruenSplitEqPolynomial::gruen_poly_from_evals`] recomposes the
+    /// unique degree-`(N+1)` coefficient vector.
     fn message(
         &self,
         round: usize,
@@ -301,6 +322,9 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             })
     }
 
+    /// Degenerate `N = 1` geometry (virtual = committed): the grid recovery
+    /// assumes `q(1)` is sampled, so fall back to explicit `t = 0..=2`
+    /// sampling of the quadratic summand.
     fn message_single_factor(
         &self,
         round: usize,
@@ -391,6 +415,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         })
     }
 
+    /// The Gruen scalar after full binding is the bound `EqCycle` value; pin
+    /// it to the verifier's `derive_output_term`, exactly as the naive tier's
+    /// materialized eq table is pinned.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -498,6 +525,9 @@ mod tests {
             .collect()
     }
 
+    /// Builds the committed one-hot `(K × T)` grid for chunk `i` exactly as
+    /// the trace backend serves it: address-major, hot at that chunk of the
+    /// cycle's lookup index, every cycle hot.
     fn one_hot_grid(
         rows: &[InstructionReadRafWitness],
         chunk_index: usize,
@@ -516,6 +546,14 @@ mod tests {
         grid
     }
 
+    /// Reference (naive prover over address-folded oracle grids, exactly as
+    /// the reference `prepare` assembles it) vs the optimized kernel, same
+    /// challenges: byte-equal round polynomials and output claims, and the
+    /// optimized eq-scalar passes the derived-table cross-check.
+    ///
+    /// `with_session` builds the optimized kernel through the `prepare` slot
+    /// with pre-parked stage-5 rows instead of direct construction,
+    /// exercising the session take/park-back carry.
     fn assert_parity(
         log_t: usize,
         num_virtual: usize,
@@ -639,6 +677,9 @@ mod tests {
 
         let mut optimized: Box<dyn SumcheckKernel<Fr, Relation = InstructionRaVirtualization<Fr>>> =
             if with_session {
+                // The witness plane comes from an unrelated trace fixture: a
+                // missed take of the parked rows would stream that trace's
+                // lookup indices instead and fail the parity loop loudly.
                 let shape = FixtureShape { log_t, ram_k: 16 };
                 with_ram_fixture(shape, Vec::new(), |witness| {
                     let mut session = ProofSession::default();
@@ -741,6 +782,8 @@ mod tests {
             .unwrap();
     }
 
+    /// Production shape: 8 virtuals × 4 committed each, 4-bit chunks (the
+    /// 128-bit instruction address).
     #[test]
     fn parity_production_geometry() {
         assert_parity(4, 8, 4, 4, 42, false);
@@ -758,6 +801,8 @@ mod tests {
 
     #[test]
     fn parity_past_lazy_materialization() {
+        // log_t = 6: three lazy binds, dense materialization at the fourth
+        // (`T/16` = 4 entries), then two plain multilinear binds.
         assert_parity(6, 2, 2, 4, 7, false);
     }
 
@@ -767,6 +812,9 @@ mod tests {
         assert_parity_with_gamma(3, 3, 1, 2, 1337, false, fr(0));
     }
 
+    /// Through the `prepare` slot with pre-parked stage-5 rows: the session
+    /// take/park-back carry serves this kernel the same rows and parks them
+    /// back for the stage-6a/6b booleanity consumers.
     #[test]
     fn parity_with_carried_session_rows() {
         assert_parity(4, 8, 4, 4, 42, true);

@@ -1,3 +1,10 @@
+//! Background system metrics monitor.
+//!
+//! Spawns a thread that periodically samples CPU usage, memory, active cores,
+//! and thread count. Metrics are emitted as `tracing::debug!` events with
+//! structured `counters.*` fields, compatible with the Perfetto postprocessing
+//! script (`scripts/postprocess_trace.py`).
+
 use memory_stats::memory_stats;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

@@ -226,6 +226,7 @@ const RHO_PI_FIRST_SOURCE: (usize, usize) = (1, 0);
 /// The lane whose ρ/π result lives in `pi_temp` rather than its own register.
 const PI_TEMP_LANE: (usize, usize) = pi_destination(RHO_PI_FIRST_SOURCE);
 
+/// π moves lane `(x, y)` to `(y, 2x + 3y mod 5)`.
 pub(crate) const fn pi_destination((x, y): (usize, usize)) -> (usize, usize) {
     (y, (2 * x + 3 * y) % 5)
 }

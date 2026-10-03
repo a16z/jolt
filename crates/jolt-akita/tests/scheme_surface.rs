@@ -15,7 +15,9 @@ use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial, setup_for};
 
+/// The smallest dense dimension the checked-in catalog schedules.
 const DENSE_VARS: usize = 14;
+/// The smallest K=16 one-hot dimension (`log2(K) + 8`).
 const ONE_HOT_VARS: usize = 12;
 
 fn one_hot_indices() -> Vec<Option<u8>> {

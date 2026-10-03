@@ -1,6 +1,10 @@
 mod cpu_constraints;
 mod virtual_sequences;
 
+/// Bounds a single `Solver::check`. Every obligation in this crate discharges in
+/// milliseconds, so a call that hits this is a blowup rather than a slow proof.
+/// Surfacing it as `SatResult::Unknown` keeps the failure attributable to a named
+/// test instead of hanging the run.
 #[cfg(test)]
 pub(crate) const Z3_TIMEOUT_MS: u32 = 30_000;
 

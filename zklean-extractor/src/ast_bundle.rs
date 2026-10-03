@@ -1,3 +1,10 @@
+//! AST Bundle and Commitment types for transpilation.
+//!
+//! This module contains the serializable Intermediate Representation types used for transpilation:
+//! - `AstBundle`: Complete AST data for code generation
+//! - `AstCommitment`: Symbolic representation of PCS commitments
+//!
+
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError, Valid};
 use ark_std::Zero;
 use serde::{Deserialize, Serialize};
@@ -55,6 +62,7 @@ pub enum TargetField {
 }
 
 impl TargetField {
+    /// Human-readable name for error messages and debugging.
     #[inline]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -79,7 +87,9 @@ impl TargetField {
 pub struct InputVar {
     /// The index into the vars register (matches `Atom::Var(index)`).
     pub index: u16,
+    /// Human-readable name for debugging and codegen (e.g., "r_sumcheck_0", "claimed_output").
     pub name: String,
+    /// Whether this is a public statement or proof data.
     pub witness_type: WitnessType,
     /// The target field for this variable (Fr or Fq).
     /// Defaults to Fr for backward compatibility with existing serialized bundles.
@@ -174,10 +184,20 @@ impl AstBundle {
         }
     }
 
+    /// Add an input variable description with default target field (Fr).
     pub fn add_input(&mut self, index: u16, name: impl Into<String>, witness_type: WitnessType) {
         self.add_input_with_field(index, name, witness_type, TargetField::default())
     }
 
+    /// Add an input variable description with explicit target field.
+    ///
+    /// Use this when the variable's field differs from the default (native) field.
+    ///
+    /// # Arguments
+    /// * `index`: Variable index matching `Atom::Var(index)`
+    /// * `name`: Human-readable name for codegen
+    /// * `witness_type`: Public statement or proof data
+    /// * `target_field`: Which field this variable belongs to
     pub fn add_input_with_field(
         &mut self,
         index: u16,
@@ -193,12 +213,19 @@ impl AstBundle {
         });
     }
 
+    /// Iterate over inputs for a specific target field.
+    ///
+    /// Useful for codegen to separate native vs non-native variables.
     pub fn inputs_for_field(&self, target_field: TargetField) -> impl Iterator<Item = &InputVar> {
         self.inputs
             .iter()
             .filter(move |i| i.target_field == target_field)
     }
 
+    /// Check if any inputs use the specified target field.
+    ///
+    /// Use `has_inputs_for_field(TargetField::Fq)` to check if non-native
+    /// arithmetic support is needed.
     pub fn has_inputs_for_field(&self, field: TargetField) -> bool {
         self.inputs.iter().any(|i| i.target_field == field)
     }
@@ -218,6 +245,7 @@ impl AstBundle {
         });
     }
 
+    /// Add a constraint that asserts an expression equals a public input.
     pub fn add_constraint_eq_public(
         &mut self,
         name: impl Into<String>,
@@ -308,6 +336,9 @@ impl AstBundle {
             }
         }
 
+        // Phase 4: Topological sort (post-order) of the expanded set
+        // We need a post-order that respects dependencies within the global set.
+        // Use a multi-root post-order traversal restricted to the expanded set.
         let bindings = self.topological_sort_subset(&expanded);
 
         self.global_cse = GlobalCse { bindings };
@@ -375,6 +406,10 @@ impl AstBundle {
             .collect();
     }
 
+    /// Compute CSE bindings for a single constraint.
+    ///
+    /// Uses ref-counting: nodes with ref_count > 1 are hoisted.
+    /// Nodes in `global_set` are excluded (already hoisted globally).
     fn compute_cse_for_constraint(
         &self,
         root: NodeId,
@@ -389,6 +424,7 @@ impl AstBundle {
         for node_id in post_order {
             let ref_count = ref_counts.get(&node_id).copied().unwrap_or(1);
 
+            // Skip atoms, since they're always inlined
             if matches!(self.nodes[node_id], Node::Atom(_)) {
                 continue;
             }
@@ -565,6 +601,7 @@ pub struct AstCommitment {
     pub chunks: Vec<MleAst>,
 }
 
+/// Number of bytes per chunk (one BN254 field element)
 const BYTES_PER_CHUNK: usize = 32;
 
 impl AstCommitment {
@@ -583,6 +620,7 @@ impl AstCommitment {
         Self { chunks }
     }
 
+    /// Returns the serialized size in bytes (chunks × 32).
     #[inline]
     pub fn serialized_byte_len(&self) -> usize {
         self.chunks.len() * BYTES_PER_CHUNK
@@ -595,6 +633,7 @@ impl CanonicalSerialize for AstCommitment {
         _writer: W,
         _compress: ark_serialize::Compress,
     ) -> Result<(), SerializationError> {
+        // Store chunks in thread-local for PoseidonAstTranscript::append_serializable to retrieve
         set_pending_commitment_chunks(self.chunks.clone());
         Ok(())
     }
@@ -622,6 +661,8 @@ impl Valid for AstCommitment {
 
 impl Default for AstCommitment {
     fn default() -> Self {
+        // Create a single zero chunk (minimal valid commitment).
+        // Real commitments will have chunk count derived from serialized_size().
         Self {
             chunks: vec![MleAst::zero()],
         }

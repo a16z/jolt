@@ -56,6 +56,7 @@ impl Device {
         self.limits
     }
 
+    /// Refuses an allocation of `bytes` that exceeds a device limit.
     pub(crate) fn admit_allocation(&self, bytes: usize) -> Result<(), MetalError> {
         let exceeded = |limit, requested: usize, available| MetalError::CapacityExceeded {
             limit,

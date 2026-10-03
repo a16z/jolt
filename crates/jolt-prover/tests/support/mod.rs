@@ -25,6 +25,9 @@ type GuestTrace = Arc<Vec<JoltTraceRow>>;
 #[cfg(feature = "field-inline")]
 type GuestTrace = OwnedTrace;
 
+/// One guest execution to prove: the example crate, its entry point, memory
+/// overrides, the postcard-encoded inputs and advice, and the postcard-encoded
+/// output the guest must produce.
 #[derive(Clone)]
 pub struct GuestCase {
     pub name: &'static str,
@@ -34,7 +37,10 @@ pub struct GuestCase {
     pub inputs: Vec<u8>,
     pub untrusted_advice: Vec<u8>,
     pub trusted_advice: Vec<u8>,
+    /// Checked against the guest's output buffer before proving, so a wrong
+    /// result fails as a broken guest rather than proving a wrong claim.
     pub expected_output: Option<Vec<u8>>,
+    /// Padded trace bound baked into preprocessing.
     pub max_padded_trace_length: usize,
     #[cfg(feature = "field-inline")]
     pub field_inline_active: bool,
@@ -92,6 +98,9 @@ fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
     }
 }
 
+/// Builds, sizes, preprocesses, and traces `case`. A guest panic, a wrong
+/// output, or a trace over the padded bound is a broken case rather than a
+/// prover result, so all three fail here before any proving starts.
 pub fn prepare(case: &GuestCase) -> PreparedGuest {
     let mut source = Program::new(case.name);
     #[cfg(feature = "field-inline")]
@@ -136,6 +145,7 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
     let trace = TracerBackend::new()
         .trace_compact(&program, inputs, &preprocessing.bytecode)
         .expect("modular trace");
+    // Field witnesses still consume the field-register payloads on rich rows.
     #[cfg(feature = "field-inline")]
     let trace = TracerBackend::new()
         .trace(&program, inputs)

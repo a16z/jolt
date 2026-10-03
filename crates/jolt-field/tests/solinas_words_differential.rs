@@ -22,6 +22,10 @@ fn bytes_mod(bytes: &[u8], p: u128) -> u128 {
     v[0] as u128 | (v[1] as u128) << 64
 }
 
+/// Full oracle sweep for one (field type, modulus) pair. All expected
+/// values come from u128/bigint modular arithmetic; wire and transcript
+/// bytes are checked structurally against the canonical LE encoding
+/// (absolute bytes are pinned by the golden fixtures in golden_bytes.rs).
 macro_rules! check_prime {
     ($two:ty, $p:expr, $bytes:expr, $rng:expr) => {{
         let p: u128 = $p;
@@ -55,6 +59,8 @@ macro_rules! check_prime {
             assert_eq!(Ring::square(&ta).to_u128_checked(), Some((va * va) % p));
             let half = if va % 2 == 0 { va / 2 } else { (va + p) / 2 };
             assert_eq!(ta.half().to_u128_checked(), Some(half));
+            // Inverse is unique given the oracle-verified multiply, so
+            // `ti * ta == 1` pins the value; None only at zero (p prime).
             match ta.inverse() {
                 Some(ti) => assert_eq!((ti * ta).to_u128_checked(), Some(1)),
                 None => assert_eq!(va, 0, "inverse must exist for nonzero"),
@@ -204,6 +210,8 @@ fn fp64_offsets_match() {
     check_prime!(two::Prime56Offset27, (1 << 56) - 27, 8, &mut rng);
     check_prime!(two::Prime64Offset59, (1 << 64) - 59, 8, &mut rng);
     check_prime!(two::Fp64<{ (1 << 61) - 1 }>, (1 << 61) - 1, 8, &mut rng);
+    // Test-only 63-bit primes exercise the carry-preserving wide sub-word
+    // reducer with two distinct offsets.
     check_prime!(two::Fp64<{ (1 << 63) - 259 }>, (1 << 63) - 259, 8, &mut rng);
     check_prime!(two::Fp64<{ (1 << 63) - 25 }>, (1 << 63) - 25, 8, &mut rng);
 }

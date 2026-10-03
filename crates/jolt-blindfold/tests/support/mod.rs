@@ -776,6 +776,8 @@ pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBacked
     build_protocol_backed_instance_with_bindings(rng, 1)
 }
 
+/// Like [`build_protocol_backed_instance`], with `binding_count` (1 or 2)
+/// final-opening bindings: the second opens stage 2's first output claim.
 pub fn build_protocol_backed_instance_with_bindings<R: RngCore>(
     rng: &mut R,
     binding_count: usize,

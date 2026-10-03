@@ -31,6 +31,9 @@ pub(crate) fn challenge_sequence(len: usize, seed: u64) -> Vec<Fr> {
         .collect()
 }
 
+/// A register-consistent trace builder: reads return the current register
+/// state, writes advance it, so every witness identity the sumchecks
+/// assume holds by construction.
 pub(crate) struct TraceFixture {
     rows: Vec<TraceRow>,
     state: [u64; 128],
@@ -50,6 +53,8 @@ impl TraceFixture {
         self.rows.push(TraceRow::default());
     }
 
+    /// One cycle touching the given operands; the write value is a fresh
+    /// pseudo-random u64.
     pub(crate) fn op(&mut self, rd: Option<u8>, rs1: Option<u8>, rs2: Option<u8>) {
         let read = |state: &[u64; 128], register: Option<u8>| {
             register.map(|register| RegisterRead {
@@ -92,6 +97,7 @@ impl TraceFixture {
             .push(TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap());
     }
 
+    /// Run `f` against a trace backend padded to `2^log_t` cycles.
     pub(crate) fn with_plane<R>(
         self,
         log_t: usize,
@@ -131,6 +137,10 @@ impl TraceFixture {
     }
 }
 
+/// A structured register workload: write-then-read chains, `rs1 == rs2`,
+/// `rd == rs1` in one cycle, `rs1 == rs2 == rd` in one cycle, repeated
+/// writes, high register indices, and interleaved no-ops. Emits exactly
+/// `cycles` rows.
 pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
     let mut fixture = TraceFixture::new();
     for step in 0..cycles {
@@ -149,6 +159,10 @@ pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
     fixture
 }
 
+/// Prepare the reference and optimized kernels from identical inputs,
+/// drive both through the full round sequence asserting byte-identical
+/// round polynomials, then assert equal typed output claims and run both
+/// kernels' derived-table validation against the relation.
 #[expect(
     clippy::too_many_arguments,
     reason = "mirrors the seam's input decomposition"
@@ -182,6 +196,8 @@ pub(crate) fn assert_kernel_parity<R>(
     );
 }
 
+/// [`assert_kernel_parity`] with a caller-supplied session for the
+/// optimized kernel — exercises cross-member session carries.
 #[expect(
     clippy::too_many_arguments,
     reason = "mirrors the seam's input decomposition"
@@ -276,6 +292,8 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
     );
 }
 
+/// A fixture guard: an all-zero witness would make parity vacuous, so the
+/// input claim must be a nontrivial field element.
 pub(crate) fn assert_nontrivial(claim: Fr) {
     assert_ne!(
         claim,

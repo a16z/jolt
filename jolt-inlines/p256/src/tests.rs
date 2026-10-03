@@ -41,6 +41,7 @@ mod p256_tests {
         let a_big = limbs_to_biguint(a);
         let b_big = limbs_to_biguint(b);
         let m_big = limbs_to_biguint(modulus);
+        // b^{-1} = b^{m-2} mod m  (Fermat's little theorem)
         let exp = &m_big - BigUint::from(2u64);
         let b_inv = b_big.modpow(&exp, &m_big);
         let result = (a_big * b_inv) % m_big;
@@ -106,6 +107,7 @@ mod p256_tests {
     /// result against itself and any value would be accepted.
     fn assert_div_trace_equiv_aliased(funct3: u32, a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) {
         let expected = bigint_divmod(a, b, modulus);
+        // rs1 == rs3: dividend and result share one 32-byte region
         let layout = InlineMemoryLayout {
             output_base: DRAM_BASE,
             ..InlineMemoryLayout::two_inputs(32, 32, 32)
@@ -490,6 +492,7 @@ mod p256_tests {
         let gx = limbs_to_biguint(&P256_GENERATOR_X);
         let gy = limbs_to_biguint(&P256_GENERATOR_Y);
 
+        // a = p - 3 (P-256 uses a = -3)
         let a_coeff = &p - BigUint::from(3u64);
 
         let x2 = gx.modpow(&BigUint::from(2u64), &p);
@@ -631,6 +634,8 @@ mod p256_tests {
             (rx, ry)
         };
 
+        // Known test vector (derived from RFC 6979, P-256):
+        // Private key d:
         let d_bytes: [u8; 32] = [
             0xC9, 0xAF, 0xA9, 0xD8, 0x45, 0xBA, 0x75, 0x16, 0x6B, 0x5C, 0x21, 0x57, 0x67, 0xB1,
             0xD6, 0x93, 0x4E, 0x50, 0xC3, 0xDB, 0x36, 0xE8, 0x9B, 0x12, 0x7B, 0x8A, 0x62, 0x2B,
@@ -679,6 +684,8 @@ mod p256_tests {
         assert_eq!(rx_mod_n, r, "ECDSA verification failed: R'.x mod n != r");
     }
 
+    /// Test the actual `ecdsa_verify()` function from sdk.rs (with Fake GLV).
+    /// Uses the same test vector derived from the RFC 6979 private key as above.
     #[test]
     fn test_p256_ecdsa_verify_sdk() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
@@ -787,6 +794,7 @@ mod p256_tests {
         assert!(result.is_ok(), "ecdsa_verify failed: {:?}", result.err());
     }
 
+    /// Test double_and_add when 2P + Q = O (the infinity edge case fix).
     #[test]
     fn test_double_and_add_infinity() {
         use crate::sdk::P256Point;
@@ -871,6 +879,9 @@ mod p256_tests {
         assert!(matches!(result, Err(P256Error::NotOnCurve)));
     }
 
+    /// Verify a signature produced by the RustCrypto `p256` crate.
+    /// This is the critical interop test — ensures our inline ECDSA
+    /// verifier accepts real-world P-256 signatures.
     #[test]
     fn test_interop_with_p256_crate() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
@@ -889,18 +900,22 @@ mod p256_tests {
         let message = b"test message for p256 interop";
         let signature: Signature = signing_key.sign(message);
 
+        // Extract r, s as big-endian bytes
         let r_bytes = signature.r().to_bytes();
         let s_bytes = signature.s().to_bytes();
 
+        // Get public key as uncompressed point (0x04 || x || y)
         use p256::ecdsa::VerifyingKey;
         let verifying_key = VerifyingKey::from(&signing_key);
         let pubkey_point = verifying_key.to_encoded_point(false);
         let qx_bytes = pubkey_point.x().unwrap();
         let qy_bytes = pubkey_point.y().unwrap();
 
+        // Hash the message with SHA-256 (what the p256 crate does internally)
         use sha2::{Digest, Sha256};
         let z_bytes: [u8; 32] = Sha256::digest(message).into();
 
+        // Convert from big-endian bytes to little-endian u64 limbs
         let be_to_limbs = |bytes: &[u8]| -> [u64; 4] {
             let mut padded = [0u8; 32];
             let start = 32 - bytes.len().min(32);

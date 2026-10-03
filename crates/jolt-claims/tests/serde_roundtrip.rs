@@ -1,3 +1,9 @@
+//! Wire-format guarantees for the output-claim structs that cross the
+//! prover-verifier boundary: bincode round-trips, the field-declaration-order
+//! byte layout, and pinned golden vectors so a silent wire-format change (a
+//! reordered field, an added prefix, a serde impl swap) fails loudly instead
+//! of round-tripping.
+
 #![expect(
     clippy::expect_used,
     reason = "tests unwrap infallible serialization of well-formed values"
@@ -51,6 +57,11 @@ fn output_claim_structs_roundtrip_bincode_exactly() {
     assert_roundtrip(&random_claims::<SpartanShiftOutputClaims<Fr>>(&mut rng));
 }
 
+/// The wire encoding of an output-claim struct is exactly the canonical
+/// (field-declaration) order concatenation of 32-byte little-endian scalars —
+/// no length prefixes, no per-field framing. Fills the struct with the
+/// counter values 1..=N so any reordering or duplication shows up in the
+/// byte stream.
 #[test]
 fn outer_remainder_wire_layout_is_declaration_order_le_scalars() {
     let mut counter = 0u64;
@@ -75,6 +86,10 @@ fn outer_remainder_wire_layout_is_declaration_order_le_scalars() {
     }
 }
 
+/// Pinned golden vector: `ProductUniskipOutputClaims` with a known scalar is
+/// exactly the scalar's 32 canonical little-endian bytes. A change to Fr's
+/// serde form, to bincode framing, or to the struct shape breaks this even
+/// though a round-trip would still pass.
 #[test]
 fn product_uniskip_output_claims_match_pinned_golden_bytes() {
     let claims = ProductUniskipOutputClaims {
@@ -88,6 +103,9 @@ fn product_uniskip_output_claims_match_pinned_golden_bytes() {
     assert_roundtrip(&claims);
 }
 
+/// Pinned golden vectors for `SumcheckDomain`: variant tag then payload, one
+/// varint byte each under bincode's standard config. Reordering the enum's
+/// variants silently changes the wire format — this pins it.
 #[test]
 fn sumcheck_domain_matches_pinned_golden_bytes() {
     assert_eq!(encode(&SumcheckDomain::BooleanHypercube), [0]);

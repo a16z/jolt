@@ -1,3 +1,15 @@
+//! The stage 6a bytecode read-RAF address-phase sumcheck instance.
+//!
+//! The **address phase** binds the `log_k` address variables. Its input claim is
+//! the gamma-folded bind of the entire prior proof (every stage-1..5 opening plus
+//! the two PC claims), wired by
+//! [`bytecode_read_raf_address_phase_input_values_from_upstream`]. Its output is
+//! the staged `BytecodeReadRafAddrClaim` intermediate (consumed by the stage-6b
+//! cycle phase) followed, in committed mode, by the `BytecodeValClaim` openings.
+//!
+//! Under the `akita` feature the symbolic swaps to the lattice address phase,
+//! whose input fold additionally consumes the four reduced `Inc` claims
+
 use crate::stages::relations::SumcheckOutputPoints;
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 use jolt_claims::protocols::composed::ComposedClaims;
@@ -54,10 +66,12 @@ pub struct BytecodeStagePoints<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeStagePoints<F> {
+    /// The stage-4 register read-write cycle leg (`stage_cycle_points[3]`).
     pub fn register_read_write_cycle(&self) -> &[F] {
         &self.stage_cycle_points[3]
     }
 
+    /// The stage-5 register value-evaluation cycle leg (`stage_cycle_points[4]`).
     pub fn register_val_evaluation_cycle(&self) -> &[F] {
         &self.stage_cycle_points[4]
     }
@@ -101,6 +115,9 @@ pub fn bytecode_stage_points<F: JoltField>(
     let fused_inc_cycle_points = Vec::new();
     #[cfg(feature = "akita")]
     let fused_inc_cycle_points = {
+        // The RAM legs' recorded points are `(address ‖ cycle)`; the fused
+        // pushforwards bind their `log_t` cycle suffixes (the register legs
+        // are the already-split stage 4/5 cycle legs).
         let log_t = register_read_write_cycle.len();
         let cycle_suffix = |label: &'static str, point: &[F]| {
             stage6_checked_split(
@@ -146,6 +163,12 @@ type AddressPhaseSymbolic = ComposedReadRafAddressPhase<BaseAddressPhaseSymbolic
 #[cfg(not(feature = "field-inline"))]
 type AddressPhaseSymbolic = BaseAddressPhaseSymbolic;
 
+/// Wire the prior-proof opening *values* the address-phase input claim binds
+/// (every stage-1..5 opening folded by the `read_raf_address_phase` input `Expr`,
+/// plus the two PC claims). Each Spartan-outer circuit flag is a direct
+/// field-for-field read from the stage-1 outer remainder; the input claim reads
+/// only values, so the consumed input *points* are the generated all-empty
+/// `empty_input_points`.
 pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
@@ -225,8 +248,17 @@ pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     symbolic: AddressPhaseSymbolic,
     dimensions: BytecodeReadRafDimensions,
     committed_program: bool,
+    /// The upstream cycle points and register opening points the address-phase
+    /// kernel's PC pushforwards and stage-value folds bind against (the same
+    /// [`BytecodeStagePoints`] wiring the stage-6b cycle phase carries). The
+    /// verifier constructs the relation with full geometry; only the prover's
+    /// kernel reads these.
     stage_points: BytecodeStagePoints<F>,
     entry_bytecode_index: usize,
+    /// The field-register opening points the address-phase kernel folds over,
+    /// composed in by both fronts right after the batch build
+    /// ([`with_field_inline_geometry`](Self::with_field_inline_geometry)). See
+    /// [`field_inline::FieldInlineBytecodeReadRafGeometry`](super::field_inline::FieldInlineBytecodeReadRafGeometry).
     #[cfg(feature = "field-inline")]
     field_inline_geometry: Option<FieldInlineBytecodeReadRafGeometry<F>>,
 }
@@ -258,6 +290,8 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         self
     }
 
+    /// The composed field-inline kernel geometry, fail-closed when the front never composed
+    /// one.
     #[cfg(feature = "field-inline")]
     pub fn field_inline_geometry(
         &self,
@@ -282,6 +316,8 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         &self.stage_points.stage_cycle_points
     }
 
+    /// The packed fused-inc consumer cycle points (`γ^5..8` stage order);
+    /// empty on the base build. See [`BytecodeStagePoints`].
     pub fn fused_inc_cycle_points(&self) -> &[Vec<F>] {
         &self.stage_points.fused_inc_cycle_points
     }
@@ -346,6 +382,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
         sumcheck_point: &[F],
         _input_points: &SumcheckInputPoints<F, Self>,
     ) -> Result<SumcheckOutputPoints<F, Self>, VerifierError> {
+        // `bytecode_r_address` is the reversed address sumcheck point; the
+        // intermediate and every staged Val column open there.
         let r_address = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         Ok(BytecodeReadRafAddressPhaseOutputClaims {
             intermediate: r_address.clone(),
@@ -369,6 +407,13 @@ mod tests {
     use jolt_riscv::NUM_CIRCUIT_FLAGS;
     use jolt_transcript::Transcript;
 
+    // The address phase has the only multi-field `Challenges` (gamma + five stage
+    // gammas), so it exercises that the default draws one `challenge_scalar` per
+    // field in declaration order. Each inline draw is a `challenge_scalar_powers(..)`
+    // whose single squeeze's degree-1 power equals that squeezed scalar, so the
+    // default's six `challenge_scalar` squeezes reproduce the inline byte stream
+    // (six squeezes) and the six stored values. The cycle and committed variants are
+    // single-field and use the same default path.
     #[test]
     fn default_draw_challenges_matches_inline_bytecode_address_gammas() {
         let relation = BytecodeReadRafAddressPhase::<Fr>::new(
@@ -414,6 +459,9 @@ mod tests {
     }
 }
 
+// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
+// composition is covered by the prover's field-inline stage round-trips and the packed e2e
+// suite.
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(
     clippy::unwrap_used,

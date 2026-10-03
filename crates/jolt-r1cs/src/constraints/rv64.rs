@@ -20,6 +20,7 @@
 
 use jolt_riscv::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 
+/// Constant-1 wire.
 pub const V_CONST: usize = 0;
 
 pub const V_LEFT_INSTRUCTION_INPUT: usize = 1;
@@ -445,6 +446,12 @@ mod tests {
     use jolt_riscv::CIRCUIT_FLAGS;
     use num_traits::Zero;
 
+    /// A no-op cycle: const=1, all else zero. All eq-conditional guards
+    /// evaluate to 0 (Load=0, Store=0, etc.) except constraint 16
+    /// (NextUnexpPCUpdateOtherwise) whose guard = 1−0−0 = 1.
+    /// Constraint 16 requires: NextUnexpPC = UnexpPC + 4 − 4·DoNotUpdate − 2·IsCompressed.
+    /// For the no-op (DoNotUpdate=1): NextUnexpPC = UnexpPC + 4 − 4 = UnexpPC.
+    /// With both at 0 this holds.
     fn noop_witness() -> Vec<Fr> {
         let mut w = vec![Fr::zero(); NUM_VARS_PER_CYCLE];
         w[V_CONST] = Fr::from_u64(1);
@@ -549,6 +556,8 @@ mod execution_witness_tests {
     use jolt_field::{Fr, Ring};
     use num_traits::Zero;
 
+    // Constraint row indices, matching the push order in
+    // `rv64_eq_constraint_rows` and `append_product_constraints`.
     const RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE: usize = 0;
     const RAM_READ_EQ_RAM_WRITE_IF_LOAD: usize = 2;
     const RAM_READ_EQ_RD_WRITE_IF_LOAD: usize = 3;
@@ -593,6 +602,7 @@ mod execution_witness_tests {
         let mut w = cycle_witness();
         w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(RS1);
         w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(RS2);
+        // (2^64 − 2)·5 = 5·2^64 − 10, committed unconditionally (row 19).
         w[V_PRODUCT] = Fr::from_u128(5 * ((1u128 << 64) - 2));
         w[V_PC] = Fr::from_u64(7);
         w[V_NEXT_PC] = Fr::from_u64(8);
@@ -812,6 +822,7 @@ mod execution_witness_tests {
 
     #[test]
     fn compressed_add_execution_witness_satisfies_constraints() {
+        // C.ADD occupies 2 bytes, so the unexpanded PC advances by 2.
         let mut w = add_witness();
         w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0010 + 2);
@@ -822,6 +833,7 @@ mod execution_witness_tests {
     fn compressed_add_rejects_full_width_pc_increment() {
         let mut w = add_witness();
         w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
+        // +4 is only correct for uncompressed instructions.
         assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
     }
 
@@ -910,6 +922,8 @@ mod execution_witness_tests {
 
     #[test]
     fn beq_taken_rejects_denied_should_branch() {
+        // Zeroing ShouldBranch shifts the PC obligation to the fall-through
+        // constraint, which the branch-target next PC then violates.
         let w = with_cell(&beq_taken_witness(), V_SHOULD_BRANCH, Fr::from_u64(0));
         assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
     }
@@ -937,6 +951,8 @@ mod execution_witness_tests {
 
     #[test]
     fn beq_not_taken_rejects_forced_branch() {
+        // Forcing ShouldBranch = 1 with a consistent branch-target next PC
+        // still fails: the lookup output is 0, so 0·Branch ≠ ShouldBranch.
         let mut w = beq_not_taken_witness();
         w[V_SHOULD_BRANCH] = Fr::from_u64(1);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0030);
@@ -977,6 +993,8 @@ mod execution_witness_tests {
 
     #[test]
     fn mul_rejects_truncated_right_lookup_operand() {
+        // The lookup operand must carry the full 65-bit product, not the
+        // RV64-truncated low 64 bits.
         let w = with_cell(
             &mul_witness(),
             V_RIGHT_LOOKUP_OPERAND,
@@ -987,6 +1005,8 @@ mod execution_witness_tests {
 
     #[test]
     fn mul_rejects_truncated_product() {
+        // Truncating both Product and the lookup operand keeps them mutually
+        // consistent but breaks Product = Left·Right over the field.
         let mut w = mul_witness();
         w[V_PRODUCT] = Fr::from_u64(0x8000_0000_0000_0003);
         w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(0x8000_0000_0000_0003);
@@ -1016,6 +1036,9 @@ mod execution_witness_tests {
 
     #[test]
     fn virtual_inline_step_rejects_entering_sequence_mid_way() {
+        // Pretending the expansion ended (normal +4 advance) while the next
+        // row is a non-first virtual step means control would enter the
+        // middle of a virtual sequence.
         let mut w = virtual_inline_step_witness();
         w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(0);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0050 + 4);

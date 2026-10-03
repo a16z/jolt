@@ -34,8 +34,11 @@ use support::chain_input;
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 struct TraceDigest {
     row_count: usize,
+    /// blake3 over the postcard bytes of every Cycle, in stream order.
     trace_hash: String,
+    /// blake3 over postcard of `Memory::materialized_nonzero_bytes()` (address-sorted).
     memory_hash: String,
+    /// blake3 over postcard of the final `JoltDevice` (inputs, outputs, panic, layout).
     io_hash: String,
 }
 
@@ -79,12 +82,16 @@ const CONFIGS: &[Config] = &[
     },
 ];
 
+/// Fixed (guest, input) pairs. Sizes target ~1M cycles except muldiv, which is
+/// a tiny guest covering M-extension mul/div and compressed instructions.
 fn cases() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         ("sha2-chain-guest", chain_input(300)),
         ("sha3-chain-guest", chain_input(235)),
         ("fibonacci-guest", postcard::to_stdvec(&84_000u32).unwrap()),
+        // ~1550 cycles/op; alloc-heavy, exercises rem via wyhash indexing
         ("btreemap-guest", postcard::to_stdvec(&650u32).unwrap()),
+        // M-extension mul/div, compressed instructions
         (
             "muldiv-guest",
             postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap(),

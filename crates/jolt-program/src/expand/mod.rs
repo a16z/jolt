@@ -187,6 +187,14 @@ fn final_rows_to_instructions(
         .collect()
 }
 
+/// Dispatches one source-only instruction to the recipe that explains its
+/// final bytecode semantics.
+///
+/// Each callee returns a symbolic sequence, not concrete rows. During
+/// materialization, target instructions become final bytecode directly while
+/// source-only instructions are routed back through this dispatcher. That
+/// recursive route lets common substeps such as narrow loads, word shifts, and
+/// virtual assertions keep one lowering contract.
 #[expect(
     clippy::wildcard_enum_match_arm,
     reason = "fail-closed: instructions without a registered expansion error out rather than silently passing through"

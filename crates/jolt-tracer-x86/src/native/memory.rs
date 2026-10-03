@@ -19,6 +19,7 @@ pub struct MemoryPlane {
 unsafe impl Send for MemoryPlane {}
 
 impl MemoryPlane {
+    /// Map a zeroed plane of `size` bytes.
     pub fn new(size: usize) -> Result<Self, TraceError> {
         // SAFETY: anonymous private mapping with no file backing; length is
         // nonzero and page-rounded by the kernel. The pointer is checked
@@ -42,6 +43,7 @@ impl MemoryPlane {
         })
     }
 
+    /// Write the program image (`(guest_address, byte)` pairs) into the plane.
     pub fn init_from_image(&mut self, memory_init: &[(u64, u8)]) -> Result<(), TraceError> {
         for &(address, byte) in memory_init {
             let offset = address
@@ -64,6 +66,7 @@ impl MemoryPlane {
         self.size
     }
 
+    /// Copy the whole plane out, for a chunk checkpoint.
     pub fn to_vec(&self) -> Vec<u8> {
         // SAFETY: the whole range [base, base+size) is mapped and readable.
         unsafe { core::slice::from_raw_parts(self.base, self.size) }.to_vec()

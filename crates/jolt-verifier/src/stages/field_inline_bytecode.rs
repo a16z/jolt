@@ -67,6 +67,8 @@ pub struct FieldInlineBytecodeFold<F> {
     pub gammas: FieldInlineBytecodeStageGammas<F>,
 }
 
+/// [`crate::stages::stage6_checked_split`] for field-inline opening points, attributing the
+/// failure to the field-inline relation consuming the split.
 pub(crate) fn field_inline_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],

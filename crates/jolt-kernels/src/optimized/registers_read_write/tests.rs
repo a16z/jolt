@@ -115,6 +115,8 @@ fn parity_structured_even_log_t() {
 
 #[test]
 fn parity_past_lut_saturation() {
+    // log_t = 6 runs three LUT-mode binds, the deref at the fourth, and
+    // two more cycle binds on direct field coefficients.
     run_parity(structured_fixture(60), 6, 29);
 }
 

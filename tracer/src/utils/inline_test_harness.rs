@@ -26,6 +26,8 @@ pub struct InlineMemoryLayout {
 }
 
 impl InlineMemoryLayout {
+    /// Single input, single output with default mapping (rs1=output, rs2=input)
+    /// Used by Sha2, Blake2, Blake3, Keccak256
     pub fn single_input(input_size: usize, output_size: usize) -> Self {
         Self {
             input_base: DRAM_BASE,
@@ -40,6 +42,7 @@ impl InlineMemoryLayout {
         }
     }
 
+    /// Two inputs, single output for BigInt (rs1=input, rs2=input2, rs3=output)
     pub fn two_inputs(input_size: usize, input2_size: usize, output_size: usize) -> Self {
         Self {
             input_base: DRAM_BASE,

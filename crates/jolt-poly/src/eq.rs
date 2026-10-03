@@ -54,6 +54,9 @@ impl<F: JoltField> EqPolynomial<F> {
 
             table.resize(prev_len * 2, F::zero());
 
+            // Process in reverse to avoid overwriting entries we still need.
+            // After this loop, table[2*j] = old[j] * (1 - r_i) and
+            // table[2*j+1] = old[j] * r_i.
             #[cfg(feature = "parallel")]
             {
                 if prev_len >= PAR_THRESHOLD {
@@ -350,6 +353,10 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
+    /// Parallel eq table construction with optional scaling.
+    ///
+    /// Uses rayon to build large layers in parallel. Low-to-high construction:
+    /// processes `r` in reverse so that the first coordinate ends up as the MSB.
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_parallel")]
     #[inline]
     pub(crate) fn evals_parallel<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
@@ -693,6 +700,8 @@ mod tests {
 
     #[test]
     fn parallel_evaluations_pointwise_correctness() {
+        // Verifies that the parallel path in evaluations() produces the correct
+        // entry at every index — catches layout mismatches (blocked vs interleaved).
         let mut rng = ChaCha20Rng::seed_from_u64(500);
         let n = 12;
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();

@@ -1,3 +1,11 @@
+//! Twin-transcript engine locks: toy members driven through
+//! `jolt_sumcheck::prove_batch` (and `prove_uniskip_clear`) against the
+//! GENERATED `verify_clear` / `verify_zk` drivers and the shared uni-skip
+//! `verify_clear` core, asserting byte-identical transcript states. This pins
+//! the prove-side engine to the verifier independently of any real stage.
+//! Protocol-agnostic: the locks exercise the shared engine/driver seam and
+//! run under both the Dory and Akita builds.
+
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
 use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -23,6 +31,9 @@ struct TwinFixtureSumchecks<F: JoltField> {
     registers_val_evaluation: RegistersValEvaluation<F>,
 }
 
+/// Small geometry so a dense toy prover is feasible: the instruction
+/// member gets 8 rounds (6 address + 2 cycle), the registers member 3 —
+/// so the generated-driver twins also exercise front-loaded padding.
 fn fixture() -> TwinFixtureSumchecks<Fr> {
     TwinFixtureSumchecks {
         instruction_read_raf: InstructionReadRaf::new(
@@ -46,6 +57,9 @@ fn inputs() -> TwinFixtureInputClaims<Fr> {
     }
 }
 
+/// A dense multilinear toy batch member with a prescribed total sum
+/// (HighToLow binding) — degree 1, which every relation's degree bound
+/// admits.
 struct DenseMember {
     evals: Vec<Fr>,
     num_rounds: usize,
@@ -163,6 +177,8 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         .finish(&output_values, &mut prover_transcript)
         .unwrap();
 
+    // Verifier: draw → begin_batch → verify_compressed_boolean → output-claim
+    // absorbs (the low-level clear path the composed `verify_clear` wraps).
     let mut verifier_transcript = Blake2bTranscript::new(b"engine-twin");
     let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
     let mut verifier_recorder = ClearSumcheckRecorder::<Fr, Bn254G1>::new();
@@ -198,6 +214,8 @@ fn committed_engine_twin_matches_generated_verify_zk() {
     type VC = Pedersen<Bn254G1>;
     let setup = pedersen_setup(8);
 
+    // Prover: draw → sums → begin_batch(committed; claim absorbs no-op) →
+    // prove_batch → finish (output-claim row commitments absorbed).
     let sumchecks = fixture();
     let inputs = inputs();
     let mut prover_transcript = Blake2bTranscript::new(b"engine-zk-twin");
@@ -269,6 +287,10 @@ fn committed_engine_twin_matches_generated_verify_zk() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
+/// Twin-transcript lock for the shared uni-skip verification core: a clear
+/// uni-skip round proved through `jolt_sumcheck::prove_uniskip_clear` must be
+/// accepted by `jolt-verifier`'s `uniskip::verify_clear` with byte-identical
+/// transcript states (round proof, output-claim absorb, reduction challenge).
 #[test]
 fn uniskip_prover_twin_matches_uniskip_verify_clear() {
     let params = UniskipParams::spartan_outer();

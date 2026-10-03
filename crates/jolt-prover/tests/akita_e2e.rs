@@ -1,3 +1,7 @@
+//! End-to-end coverage for the modular Akita prover and verifier: the
+//! mode-specific checks (tampering, forced one-hot sizes, committed programs,
+//! trace-order rejection). Plain acceptance across guests is `e2e_matrix.rs`.
+
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "akita",

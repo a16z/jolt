@@ -8,6 +8,7 @@ use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
 
+/// (divisor, quotient)
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ValidDiv0Table<const XLEN: usize>;
 

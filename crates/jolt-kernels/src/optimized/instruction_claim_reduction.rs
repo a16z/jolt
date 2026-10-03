@@ -26,8 +26,12 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// The five reduced tables, in output-claim declaration order.
 const NUM_TABLES: usize = 5;
 
+/// One cycle's five reduced instruction operands as native scalars — the
+/// compact backing of the γ-combined table build and the post-hoc
+/// output-claim walk.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 pub struct InstructionOperandRow {
     pub lookup_output: LookupOutput,
@@ -38,6 +42,8 @@ pub struct InstructionOperandRow {
 }
 
 impl InstructionOperandRow {
+    /// The row's five operand values as field elements, in output-claim
+    /// declaration order — the exact entries the dense reduced tables hold.
     #[inline]
     fn field_values<F: JoltField>(&self) -> [F; NUM_TABLES] {
         [
@@ -220,6 +226,9 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         }
     }
 
+    /// `s(t) = ℓ(t) · Σ_y E(y) · combo(t, y)` at `t ∈ {0, 1, 2}`, with the
+    /// γ-combination folded before the point interpolation (exact by
+    /// linearity of binding).
     fn message(
         &self,
         round: usize,
@@ -310,6 +319,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
         })
     }
 
+    /// Pin the fully-bound Gruen scalar to the verifier's
+    /// `derive_output_term(EqSpartan)`, exactly as the naive tier's
+    /// materialized eq table is pinned.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,

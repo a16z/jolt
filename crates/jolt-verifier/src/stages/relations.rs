@@ -1,3 +1,18 @@
+//! Shared per-relation opening-claim plumbing.
+//!
+//! The claim data model (the `OutputClaims`/`InputClaims` resolvers) lives in
+//! `jolt-claims` and is re-exported here so existing
+//! `crate::stages::relations::{..}` paths keep resolving. Those traits are
+//! implemented by `#[derive(OutputClaims)]` / `#[derive(InputClaims)]` (crate
+//! `jolt-claims-derive`) on each relation's cell-generic claim struct: the value
+//! resolver on the `F` cell and the opening-point accessors on the `Vec<F>` cell.
+//! This makes the canonical opening **order** and **count** a single-sourced
+//! consequence of a struct's field declaration order.
+//!
+//! Transcript I/O stays here: [`OutputAppend::append_openings`] is a thin
+//! verifier-side consumer of [`OutputClaims::opening_values`], so `jolt-claims`
+//! stays transcript-free while the Fiat-Shamir order remains single-sourced.
+
 pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// `#[derive(SumcheckBatch)]` generates a stage's aggregate claim types from a
@@ -15,6 +30,9 @@ use jolt_transcript::Transcript;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
 
+/// Re-exported for the `#[derive(SumcheckBatch)]`-generated batch-wide alias
+/// resolver, whose closure is typed at the composite id so members from any
+/// protocol family can chain into it.
 pub use jolt_claims::protocols::composed::ComposedOpeningId;
 
 /// Transcript-side companion to [`OutputClaims`]: append a relation's produced
@@ -364,6 +382,9 @@ where
     F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    // The diagnostic formats the relation id, so the helper spans every
+    // protocol family a batch mixes (the derive's own presence errors use the
+    // same string-typed variant).
     <SymbolicOf<F, I> as SymbolicSumcheck>::RelationId: Debug,
 {
     match (member, claims) {
@@ -411,6 +432,11 @@ where
 pub fn validate_member_aliases<F, I>(
     member: &I,
     claims: &SumcheckOutputClaims<F, I>,
+    // The resolver is keyed by the composite id so a mixed-family batch can
+    // serve every member through one closure; alias PAIRS stay within the
+    // declaring member's own family (`aliased_output_openings` returns its
+    // family's ids on both sides), so cross-family aliasing remains
+    // unrepresentable at the declaration level.
     resolve_source: impl Fn(&ComposedOpeningId) -> Option<F>,
 ) -> Result<(), VerifierError>
 where
@@ -478,6 +504,11 @@ where
     Ok(())
 }
 
+/// Project a composite-family derived id onto one relation's own public enum —
+/// the typed destructure every `derive_output_term` starts with, driven by the
+/// id family's generated `TryFrom` inverses of its `From` embeddings. A foreign
+/// relation's id is the same `MissingStageClaimDerived` miss the hand-written
+/// destructures returned. Family-generic: no protocol ids appear here.
 pub fn project_public<D, P>(id: &D) -> Result<P, VerifierError>
 where
     D: Copy + Into<VerifierDerivedId>,
@@ -486,6 +517,10 @@ where
     P::try_from(*id).map_err(|_| VerifierError::MissingStageClaimDerived { id: (*id).into() })
 }
 
+/// Wrap a point-geometry failure in the uniform stage error, keyed by the
+/// relation's Debug-formatted id. Shared by the relations whose
+/// `derive_opening_points` / `derive_output_term` residue is point geometry, so
+/// none carries its own error-wrapping helper.
 pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimSumcheckFailed {
         stage: format!("{stage:?}"),
@@ -493,6 +528,16 @@ pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierE
     }
 }
 
+/// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
+/// reproduces a stage's inline Fiat-Shamir draw exactly.
+///
+/// Unlike the `append_openings` recorder, challenge *squeezes*
+/// (`challenge`/`challenge_scalar`/`challenge_scalar_powers`) append no bytes, so a
+/// byte-chunk recorder cannot observe them. This double instead records an ordered
+/// event log that distinguishes a squeeze from a byte-append (e.g. the
+/// `ram_val_check` gamma domain separator), and returns a *distinct sequential*
+/// scalar from each squeeze so a relation's stored challenge can be checked against
+/// the squeeze that produced it.
 #[cfg(test)]
 #[expect(
     clippy::arithmetic_side_effects,
@@ -504,10 +549,18 @@ pub(crate) mod draw_recording {
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(crate) enum DrawEvent {
+        /// A challenge squeeze (`challenge`/`challenge_scalar`/the single squeeze
+        /// inside `challenge_scalar_powers`). Carries the 1-based squeeze index so
+        /// the value a relation kept can be matched to its squeeze.
         Squeeze(u64),
+        /// A raw byte append (a domain separator preceding a squeeze).
         Append(Vec<u8>),
     }
 
+    /// A `Transcript` that logs every squeeze and byte-append in order. Each
+    /// squeeze returns `Fr(index)` for the 1-based squeeze counter, so the powers
+    /// `challenge_scalar_powers` derives are distinct and a stored `gamma` can be
+    /// asserted to equal the squeezed value.
     #[derive(Clone, Default)]
     pub(crate) struct DrawRecordingTranscript {
         pub(crate) events: Vec<DrawEvent>,
@@ -536,6 +589,12 @@ pub(crate) mod draw_recording {
         }
     }
 
+    /// Run `draw` against a fresh recorder, returning its ordered event log and the
+    /// draw's result. A `draw_challenges` and a hand-written replica of the inline
+    /// draw, each passed through this, are directly comparable: equal event logs
+    /// prove the same squeeze/append sequence, and the recorder's distinct
+    /// sequential squeeze values let the returned challenge be checked against the
+    /// replica's captured value.
     pub(crate) fn record<R>(
         draw: impl FnOnce(&mut DrawRecordingTranscript) -> R,
     ) -> (Vec<DrawEvent>, R) {
@@ -545,11 +604,15 @@ pub(crate) mod draw_recording {
     }
 }
 
+/// The append-order recorder shared by the stage `append_output_claims` ordering
+/// locks: unlike the challenge recorder, it observes only byte appends.
 #[cfg(test)]
 pub(crate) mod append_recording {
     use jolt_field::{Fr, Ring};
     use jolt_transcript::Transcript;
 
+    /// A minimal `Transcript` double that records each appended byte chunk, so
+    /// that append order can be compared without depending on the digest.
     #[derive(Clone, Default)]
     pub(crate) struct RecordingTranscript {
         pub(crate) chunks: Vec<Vec<u8>>,
@@ -606,6 +669,8 @@ mod tests {
 
     use super::append_recording::RecordingTranscript;
 
+    /// The chunk stream produced by appending `opening_values()` one-by-one is
+    /// the reference Fiat-Shamir order; `append_openings` must reproduce it.
     fn assert_append_matches_values<C: OutputClaims<Fr>>(claims: &C) {
         let mut via_append = RecordingTranscript::default();
         claims.append_openings(&mut via_append);
@@ -1147,6 +1212,9 @@ mod sumcheck_batch_derive_tests {
         );
     }
 
+    /// Wire claims supplied for an `Option` member whose instance did not run are
+    /// rejected by the generated `validate_output_claims` (attributed to the first
+    /// supplied opening id), and the well-formed absent case still validates.
     #[test]
     fn validate_output_claims_rejects_claims_for_absent_member() {
         use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
@@ -1158,6 +1226,8 @@ mod sumcheck_batch_derive_tests {
             registers_val_evaluation: None,
         };
 
+        // Shape-correct instruction claims (sized from the geometry), so the absent
+        // member's supplied claims are the only defect.
         let openings = read_raf_output_openings(dimensions);
         let instruction = || InstructionReadRafOutputClaims {
             lookup_table_flags: vec![fr(0); openings.lookup_table_flags.len()],
@@ -1184,6 +1254,12 @@ mod sumcheck_batch_derive_tests {
         assert!(sumchecks.validate_output_claims(&well_formed).is_ok());
     }
 
+    // The opt-out fixture: `#[sumcheck_batch(no_opening_values)]` must still
+    // generate the five aggregate structs but emit NO `opening_values` /
+    // `append_output_claims` on the source struct. The inherent `opening_values`
+    // below would collide with a generated one (the compiler rejects two inherent
+    // methods of the same name), so this module compiling at all proves the
+    // opt-out suppressed it.
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(no_opening_values, crate = "crate")]
     #[expect(dead_code)]
@@ -1193,6 +1269,9 @@ mod sumcheck_batch_derive_tests {
     }
 
     impl FixtureCustomSumchecks<Fr> {
+        /// A curated order distinct from the generated declaration order, to prove
+        /// this is the one in effect (the generated method would chain instruction
+        /// then registers; this reverses them).
         #[expect(
             clippy::unused_self,
             reason = "the signature mirrors the generated method it collides with"
@@ -1233,6 +1312,13 @@ mod sumcheck_batch_derive_tests {
         );
     }
 
+    // The draw opt-out fixture: `#[sumcheck_batch(no_draw_challenges)]` must emit
+    // NO `draw_challenges` on the source struct (a stage whose member challenges
+    // have stage-level provenance hand-assembles its aggregate; the generated draw
+    // would squeeze at the wrong transcript position if it existed). The inherent
+    // `draw_challenges` below — with a deliberately incompatible signature — would
+    // collide with a generated one, so this module compiling at all proves the
+    // opt-out suppressed it.
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(no_draw_challenges, crate = "crate")]
     #[expect(dead_code)]
@@ -1287,6 +1373,11 @@ mod begin_batch_tests {
         }
     }
 
+    /// `begin_batch` with a clear recorder must reproduce the exact head
+    /// Fiat-Shamir sequence `verify_clear` performed before the factoring —
+    /// per-member `input_claim` absorbed under `b"sumcheck_claim"` in
+    /// declaration order, then one coefficient squeeze per member — and pack
+    /// the prelude's engine and named views consistently.
     #[test]
     fn begin_batch_matches_head_replica_and_packs_prelude() {
         let sumchecks = fixture(true);
@@ -1305,6 +1396,8 @@ mod begin_batch_tests {
         });
         let (batch, coefficients) = head.unwrap();
 
+        // The replica head: input_claim is transcript-pure, so only the absorbs
+        // and coefficient squeezes are observable events.
         let instruction_sum = sumchecks
             .instruction_read_raf
             .input_claim(

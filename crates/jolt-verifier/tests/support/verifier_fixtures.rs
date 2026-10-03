@@ -30,6 +30,8 @@ use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError}
 use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
+// Program digests derive from the serde encoding (`ProgramPreprocessing::digest`);
+// fixtures carrying the legacy digest layout must regenerate.
 const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0005";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";

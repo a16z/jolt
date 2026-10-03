@@ -157,6 +157,12 @@ impl StreamingCommitment for crate::DoryScheme {
             .push(ark_to_jolt_g1(ArkG1(row_commitment)));
     }
 
+    /// The parallel batch counterpart of [`feed_i128`](Self::feed_i128):
+    /// windows materialize their own `row_width` values on the worker (a
+    /// transient hundreds of KiB each) and commit in parallel (each MSM
+    /// serial to avoid nested-pool oversubscription), appended in window
+    /// order — the same row-commitment sequence as serial feeding, without
+    /// ever staging the batch.
     #[tracing::instrument(
         skip_all,
         name = "DoryScheme::stream_feed_i128_rows_with",
@@ -228,6 +234,12 @@ impl StreamingCommitment for crate::DoryScheme {
         one_hot_chunk_commitments(context, setup, one_hot_k, chunk)
     }
 
+    /// The parallel batch counterpart of
+    /// [`process_one_hot_chunk`](Self::process_one_hot_chunk): windows
+    /// materialize their own `chunk_width` hot addresses on the worker,
+    /// share the cached affine bases read-only, and commit in parallel,
+    /// collected in window order — the same chunk-commitment sequence as
+    /// serial calls, without ever staging the batch.
     #[tracing::instrument(
         skip_all,
         name = "DoryScheme::stream_process_one_hot_chunks_with",
@@ -415,6 +427,9 @@ fn validate_row_count(num_rows: usize, setup: &DoryProverSetup) {
     );
 }
 
+/// Fill and borrow the partial commitment's affine-base cache. Takes the
+/// cache field (not the whole partial) so callers can hold the bases while
+/// appending to the sibling `row_commitments` field.
 fn scalar_affine_bases<'a>(
     cache: &'a mut Option<Vec<G1Affine>>,
     row_width: usize,

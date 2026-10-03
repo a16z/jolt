@@ -1,5 +1,11 @@
 use jolt::{end_cycle_tracking, start_cycle_tracking, AdviceTapeIO, JoltPod};
 
+/// Factors u8 n into two u8 factors (a, b)
+/// With a <= b such that a * b = n
+/// Uses runtime advice to compute the factors outside the proof
+/// And then ingest them via the advice tape
+/// If the number is prime (or zero), returns (1, n)
+/// Unoptimized, but that is fine because this runs outside the proof
 #[jolt::advice]
 fn factor_u8(n: u8) -> jolt::UntrustedAdvice<(u8, u8)> {
     let mut a = 1u8;
@@ -17,6 +23,9 @@ fn factor_u8(n: u8) -> jolt::UntrustedAdvice<(u8, u8)> {
 fn verify_composite_u8(n: u8) {
     let adv = factor_u8(n);
     let (a, b) = *adv;
+    // CRITICAL: Verify that the advice is correct!
+    // Here we demonstrate both check_advice_eq! and check_advice!
+    // With custom error messages (removed when compiled on guest but useful for debugging)
     jolt::check_advice_eq!(
         (a as u16) * (b as u16),
         n as u16,
@@ -84,6 +93,8 @@ fn factor_u64(n: u64) -> jolt::UntrustedAdvice<[u64; 2]> {
 fn verify_composite_u64(n: u64) {
     let adv = factor_u64(n);
     let [a, b] = *adv;
+    // CRITICAL: Verify that the advice is correct!
+    // note that jolt::check_advice_eq! doesn't work for u128, so we use jolt::check_advice! here
     jolt::check_advice!((a as u128) * (b as u128) == (n as u128) && 1 < a && a <= b && b < n);
 }
 

@@ -14,6 +14,8 @@ use super::super::error::PointGeometryError;
 
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
 
+/// Round counts of a two-phase precommitted claim reduction, shared by the
+/// advice, committed-bytecode, and program-image reductions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PrecommittedReductionDimensions {
     cycle_phase_total_rounds: usize,
@@ -54,6 +56,9 @@ impl PrecommittedReductionDimensions {
     }
 }
 
+/// Common two-phase schedule surface of the per-reduction layout types
+/// (advice, committed bytecode, program image), forwarding to the shared
+/// [`PrecommittedClaimReduction`].
 pub trait PrecommittedReductionLayout {
     fn precommitted(&self) -> &PrecommittedClaimReduction;
 
@@ -86,6 +91,8 @@ pub trait PrecommittedReductionLayout {
     }
 }
 
+/// Shared scheduling dimensions derived from the main trace domain and all
+/// precommitted candidate domains.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrecommittedSchedulingReference {
     pub main_total_vars: usize,
@@ -106,6 +113,14 @@ pub struct PrecommittedClaimReduction {
 }
 
 impl PrecommittedClaimReduction {
+    /// Compute shared scheduling dimensions from the main trace domain and
+    /// precommitted candidate total-var counts.
+    ///
+    /// `joint_col_vars` mirrors core's
+    /// `max(configured_main_num_columns().log_2(), reference_sigma)`: after the
+    /// stage 6 Dory re-embedding the main matrix is balanced over
+    /// `reference_total_vars`, so both operands equal
+    /// `ceil(reference_total_vars / 2)`.
     pub fn scheduling_reference(
         main_total_vars: usize,
         candidates: &[usize],
@@ -561,6 +576,10 @@ mod tests {
 
     #[test]
     fn cycle_phase_permuted_recovers_from_opening_point() {
+        // A precommitted-dominant, cycle-completed schedule: the Dory permutation
+        // reorders the cycle rounds, so the permuted opening point differs from
+        // the produced (reverse-ordered) cycle opening point — exercising the
+        // recovery rather than a trivial reverse.
         let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(2, &[5], 0);
         let precommitted = PrecommittedClaimReduction::new(
             2,
@@ -581,6 +600,7 @@ mod tests {
         let from_challenges = precommitted
             .cycle_phase_permuted_opening_point(&challenges)
             .unwrap_or_else(|error| panic!("permuted from challenges: {error}"));
+        // Guard against a vacuous test: the permutation is not just the reverse.
         assert_ne!(from_challenges, opening_point);
         assert_eq!(
             precommitted

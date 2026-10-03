@@ -71,6 +71,8 @@ pub trait Extract<R = TraceRow>: Sized {
     fn extract(row: &R, next: Option<&R>, env: &WitnessEnv<'_>) -> Result<Self, WitnessError>;
 }
 
+/// [`Extract`] for indexed witness families ([`OpFlag`], [`InstructionFlag`],
+/// [`LookupTableFlag`]): which member is extracted is bound at the use site.
 pub trait ExtractIndexed<I, R = TraceRow>: Sized {
     fn extract_indexed(
         index: I,

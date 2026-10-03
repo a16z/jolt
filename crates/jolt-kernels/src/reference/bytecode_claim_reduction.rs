@@ -109,6 +109,8 @@ fn bytecode_reduction_kernel<F: JoltField>(
     CycleReductionKernel::new(reduction, value, eq, permuted.collect())
 }
 
+/// The final per-chunk opening ids, in chunk order — the wire order of the
+/// reduction's produced claims.
 pub fn bytecode_chunk_ids(chunk_count: usize) -> Vec<JoltCommittedPolynomial> {
     (0..chunk_count)
         .map(JoltCommittedPolynomial::BytecodeChunk)

@@ -1,3 +1,8 @@
+//! Exit functionality for Jolt guests
+//!
+//! Provides clean program termination that the Jolt emulator can detect,
+//! and panic/abort handling for ZeroOS integration.
+
 cfg_if::cfg_if! {
     if #[cfg(any(target_os = "linux", target_os = "none"))] {
         extern "C" {
@@ -28,7 +33,9 @@ cfg_if::cfg_if! {
         #[no_mangle]
         pub extern "C" fn __platform_abort(sig: i32) -> ! {
             unsafe {
+                // Set the panic bit consumed by the prover.
                 jolt_panic();
+                // Terminate with Linux signal exit code convention: 128 + signal_number
                 __platform_exit(128 + sig);
             }
         }

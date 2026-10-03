@@ -1,3 +1,8 @@
+//! Differential tests: jolt-field's BN254 backend against exact
+//! num-bigint modular arithmetic. The canonical value of an element is read
+//! through `to_bytes_le`, whose faithfulness is pinned by the golden
+//! fixtures in golden_bytes.rs.
+
 #![cfg(feature = "bn254")]
 #![expect(clippy::unwrap_used, reason = "test code")]
 
@@ -99,6 +104,7 @@ fn integer_conversions_match() {
             &imod(&BigInt::from(v_i128), &p),
         );
     };
+    // Boundary values, including both sides of the Montgomery precomp table.
     for v in [0u64, 1, 2, 16383, 16384, 16385, u64::MAX] {
         check(v, v as i64, v as u128, v as i128);
     }
@@ -130,6 +136,7 @@ fn scalar_mul_fast_paths_match() {
             &t.mul_i128(si128),
             &imod(&(BigInt::from_biguint(Sign::Plus, v.clone()) * si128), &p),
         );
+        // Low-limb-only u128 exercises the single-round Barrett path.
         assert_val(&t.mul_u128(s64 as u128), &(&v * s64 % &p));
         for edge in [0u64, 1, 2] {
             assert_val(&t.mul_u64(edge), &(&v * edge % &p));
@@ -145,6 +152,8 @@ fn serde_bytes_match() {
     for _ in 0..100 {
         let (t, v) = sample_fr(&mut rng, &p);
         let t_bytes = bincode::serde::encode_to_vec(t, cfg).unwrap();
+        // Wire format is the canonical 32-byte LE encoding (absolute bytes
+        // pinned by the golden fixtures).
         assert_eq!(t_bytes, t.to_bytes_le_vec(), "wire = transcript bytes");
         let (t_back, read): (two::Fr, usize) =
             bincode::serde::decode_from_slice(&t_bytes, cfg).unwrap();

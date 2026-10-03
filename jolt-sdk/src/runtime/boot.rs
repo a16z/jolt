@@ -21,6 +21,8 @@ extern "C" {
     static __stack_bottom: u8;
 }
 
+/// Install the trap vector (mtvec = _trap_handler).
+/// This is called during platform bootstrap when os-linux feature is enabled.
 #[inline(always)]
 #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
 fn install_trap_vector() {

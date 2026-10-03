@@ -1,3 +1,10 @@
+//! Output-stationary commit accumulation for K<D trace one-hot rings.
+//!
+//! A K<D ring packs `D/K` trace rows, so each column adds several shifts of
+//! the same `A` entry into one destination. Loading the entry once as
+//! negacyclic windows lets each destination tile sum all of its shifts in
+//! registers and touch memory once, instead of once per shift.
+
 use akita_algebra::CyclotomicRing;
 use jolt_field::{Fp128x8i32, Unreduced};
 
@@ -38,6 +45,7 @@ impl<const D: usize> DigitWindows<D> {
         }
     }
 
+    /// `dst += a · Σ_k X^k` over `shifts`, each `< D`.
     pub(super) fn accumulate(&self, dst: &mut DigitAccumulator<D>, shifts: &[usize]) {
         debug_assert!(shifts.iter().all(|&shift| shift < D));
         if shifts.is_empty() {
@@ -66,6 +74,7 @@ fn canonical_digits(value: AkitaField) -> [u16; 8] {
     Fp128x8i32::from(value).0.map(|lane| lane as u16)
 }
 
+/// Adds every accumulator into its reduced ring element and clears it.
 pub(super) fn flush_digit_accumulators<const D: usize>(
     accumulators: &mut [DigitAccumulator<D>],
     reduced: &mut [CyclotomicRing<AkitaField, D>],

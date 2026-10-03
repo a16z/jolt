@@ -1,3 +1,14 @@
+//! Deferred-reduction contracts: the unreduced value algebra around a field
+//! ([`Unreduced`]) and the per-element multilinear-bind hook ([`Fold`]).
+//!
+//! The CPU prover's hot loops sum hundreds of products per output slot.
+//! Reducing every product is wasted work when the products can be widened
+//! into integer accumulators, summed with plain (carry-free or wrapping)
+//! adds, and reduced once at the end. [`Unreduced`] is the single surface
+//! for that pattern: it names the accumulator types and routes every
+//! reduction back through the field type, so a backend's unreduced algebra
+//! is enumerable from one `impl`.
+
 use crate::{AdditiveGroup, Field};
 
 /// The deferred-reduction companion surface of a field.

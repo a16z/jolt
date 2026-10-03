@@ -49,6 +49,8 @@ fn memory_ops() -> (i32, u32, i32, u32) {
             val = out(reg) val_lhu,
         );
 
+        // Return these values so that the load instructions
+        // don't get optimized away
         (val_lb, val_lbu, val_lh, val_lhu)
     }
 }

@@ -42,6 +42,9 @@ impl ReadWriteOrder {
     }
 }
 
+/// Keeps address tables compact while the relation sums over unused cycles.
+/// The canonical opening indices locate active rounds; each inactive bind
+/// removes one factor of two without touching a table or an opening point.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),

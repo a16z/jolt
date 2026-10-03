@@ -67,6 +67,10 @@ impl Emitter {
         }
     }
 
+    /// Apply a binary op with the guest register `reg` as the second operand,
+    /// reading it straight from the state plane (`op rax, [state+off]`) instead
+    /// of loading it into a scratch register first. Saves one instruction and one
+    /// register per ALU row, the most frequent shape in the bytecode.
     fn alu_reg_operand(&mut self, op: AluRR, dst: Rq, reg: Option<u8>) {
         let Some(r) = reg.filter(|r| *r != 0) else {
             match op {
@@ -170,6 +174,7 @@ impl Emitter {
         entry
     }
 
+    /// If the row budget is spent, publish the resumable group address and leave.
     pub(super) fn emit_group_pause_check(&mut self, address: u64) {
         dynasm!(self.ops
             ; .arch x64
@@ -183,6 +188,7 @@ impl Emitter {
         );
     }
 
+    /// Falling off the end of the compiled program is a bad jump.
     pub(super) fn emit_jump_to_bad_jump(&mut self) {
         dynasm!(self.ops ; .arch x64 ; jmp ->bad_jump);
     }
@@ -229,6 +235,7 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
+    /// Word (RV64 `*W`) variant: the 64-bit op's low 32 bits, sign-extended.
     fn emit_alu_rr_w(e: &mut Emitter, row: &JoltInstructionRow, op: AluRR) {
         e.load_reg(RAX, row.operands.rs1);
         e.alu_reg_operand(op, RAX, row.operands.rs2);
@@ -250,6 +257,7 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
+    /// Word (RV64 `*W`) variant: the 64-bit op's low 32 bits, sign-extended.
     fn emit_alu_ri_w(e: &mut Emitter, row: &JoltInstructionRow, op: AluRR) {
         e.load_reg(RAX, row.operands.rs1);
         e.load_imm(RCX, row.operands.imm as i64);
@@ -281,6 +289,8 @@ impl DynasmEmitter {
         e.load_reg(RAX, row.operands.rs1);
         e.cmp_reg_operand(RAX, row.operands.rs2);
         if target == address {
+            // Taken branch to itself terminates (PC-stall). Invert: skip the
+            // terminal sequence when not taken.
             match cc {
                 Cc::Eq => dynasm!(e.ops ; .arch x64 ; jne >fall),
                 Cc::Ne => dynasm!(e.ops ; .arch x64 ; je >fall),
@@ -405,6 +415,7 @@ impl DynasmEmitter {
             ; jmp >done
             ; slow:
             ; mov rsi, rax
+            // value already in rdx (helper arg 3)
         );
         e.call_helper(helpers::slow_store_doubleword as *const () as usize);
         dynasm!(e.ops ; .arch x64 ; done:);
@@ -428,6 +439,7 @@ impl DynasmEmitter {
 }
 
 impl Emitter {
+    /// Load the low 32 bits of a guest register, zero-extended (32-bit mov).
     fn load_reg32(&mut self, gpr: Rq, reg: Option<u8>) {
         match reg {
             None | Some(0) => dynasm!(self.ops ; .arch x64 ; xor Rd(gpr), Rd(gpr)),
@@ -444,6 +456,7 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
+    /// `((x[rs1] as u32) ^ (x[rs2] as u32)).rotate_right(n)`, zero-extended.
     fn emit_xor_rotw(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
         e.load_reg32(RAX, row.operands.rs1);
         e.load_reg32(RCX, row.operands.rs2);
@@ -819,6 +832,8 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::Pext(_) => {
+                // rd = pext(x[rs1], x[rs2]), zero-extended. Requires BMI2
+                // (checked once).
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops ; .arch x64 ; pext rax, rax, rcx);
@@ -1032,6 +1047,8 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; ok:);
             }
             K::AssertMulUNoOverflow(_) => {
+                // (x[rs1] as u64) * (x[rs2] as u64) must not overflow: unsigned
+                // mul leaves the high half in rdx.
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops
@@ -1097,6 +1114,9 @@ impl DynasmEmitter {
                 e.call_helper(helpers::host_io as *const () as usize);
             }
 
+            // Every other final kind is implemented above; `Noop` never appears
+            // in executable bytecode and was declined before any emission (the
+            // early return above), so this arm only completes the match.
             K::Noop(_) => return Ok(EmitOutcome::Unsupported),
         }
         if record && !transfers_control {

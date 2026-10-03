@@ -14,12 +14,24 @@ use super::instruction_read_raf::{
 use super::ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionOutputClaims};
 use super::registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationOutputClaims};
 
+/// Source-of-truth for stage 5's sumcheck batch, in Fiat-Shamir batch order (instruction
+/// read-RAF, RAM-RA reduction, register value-evaluation, the field-inline field-register
+/// value-evaluation when composed). `#[derive(SumcheckBatch)]` generates the
+/// `Stage5{Input,Output}{Claims,Points}<F>` and `Stage5Challenges<F>` aggregates — one field
+/// per instance, in this declaration order — plus the Fiat-Shamir absorb plumbing
+/// (`opening_values` / `append_output_claims` on this struct). The field order is
+/// load-bearing: it fixes the canonical opening order absorbed into the transcript, which must
+/// match the prover's commitment order.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage5Sumchecks<F: JoltField> {
     pub instruction_read_raf: InstructionReadRaf<F>,
     pub ram_ra_claim_reduction: RamRaClaimReduction<F>,
     pub registers_val_evaluation: RegistersValEvaluation<F>,
+    /// The field-inline Twist val-evaluation instance. Declaration position (last) is the
+    /// spec's stage-5 batch order (`specs/field-inline-protocol.md`, "Stage 5 Composition"):
+    /// its two openings absorb after the ordinary register value-evaluation ones, and it draws
+    /// no instance challenge (`NoChallenges`), so the stage's gamma draw order is unchanged.
     #[cfg(feature = "field-inline")]
     pub field_registers_val_evaluation: FieldRegistersValEvaluation<F>,
 }
@@ -79,8 +91,17 @@ impl<F: JoltField> Stage5OutputPoints<F> {
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage5ClearOutput<F: JoltField> {
     pub challenges: Stage5Challenges<F>,
+    /// The produced stage-5 opening *values* (wire form); read by later stages and
+    /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage5OutputClaims<F>,
+    /// The produced stage-5 opening *points*, paired field-for-field with
+    /// `output_values`. Later stages read each opening's point off these cells.
     pub output_points: Stage5OutputPoints<F>,
+    /// The instruction read-RAF address point, materialized contiguously from the
+    /// virtual-RA opening points (which tile it as `chunk ++ r_cycle`). Stored
+    /// because stage 6 re-chunks it by the committed-chunk width — a different
+    /// split than the virtual-RA cells carry — so it needs a contiguous copy that
+    /// downstream code can borrow.
     pub instruction_r_address: Vec<F>,
 }
 
@@ -89,10 +110,19 @@ pub struct Stage5ZkOutput<F: JoltField, C> {
     pub challenges: Stage5Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    /// The produced opening points, the ZK counterpart of the clear path's
+    /// `output_points`. Read through the same `*_point()` accessors.
     pub output_points: Stage5OutputPoints<F>,
+    /// The contiguous instruction address point, stored (rather than reconstructed
+    /// from `output_points` on demand) so stage 6 can borrow it — the per-chunk
+    /// virtual-RA cells don't hold it contiguously. Mirrors `Stage5ClearOutput`.
     pub instruction_r_address: Vec<F>,
 }
 
+// The clear variant carries the located opening claims (point + value) that
+// later stages read on the hot path; the ZK variant carries the committed
+// consistency and output-claim commitments. Boxing the common clear variant to
+// shrink the rarer ZK one would add indirection to every clear-path access.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage5Output<F: JoltField, C> {
     Clear(Stage5ClearOutput<F>),
@@ -100,6 +130,7 @@ pub enum Stage5Output<F: JoltField, C> {
 }
 
 impl<F: JoltField, C> Stage5Output<F, C> {
+    /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage5OutputPoints<F> {
         match self {
             Self::Clear(output) => &output.output_points,
@@ -107,6 +138,8 @@ impl<F: JoltField, C> Stage5Output<F, C> {
         }
     }
 
+    /// The contiguous stage-5 instruction address point, stored on both output
+    /// variants because the per-chunk virtual-RA cells don't hold it contiguously.
     pub fn instruction_r_address(&self) -> &[F] {
         match self {
             Self::Clear(output) => &output.instruction_r_address,
@@ -183,6 +216,12 @@ mod tests {
         }
     }
 
+    /// Locks the stage-5 Fiat-Shamir append order against silent drift: the instruction
+    /// read-RAF openings, then the RAM-RA reduced opening, then the register value-evaluation
+    /// openings, under `field-inline` the field-inline value-evaluation openings last (the
+    /// spec's committed row order: `FieldRdInc`, `FieldRdWa`), each member single-sourcing its
+    /// own per-field order from its `OutputClaims` derive. A wrong batch order here silently
+    /// breaks soundness, so it is pinned with distinct sentinels.
     #[test]
     fn opening_values_follow_canonical_order() {
         #[cfg(not(feature = "field-inline"))]
@@ -192,6 +231,10 @@ mod tests {
         assert_eq!(sumchecks().opening_values(&claims()), expected);
     }
 
+    /// Pins the batch's `draw_challenges` to the inline draw: the instruction gamma, then the
+    /// RAM-RA gamma. The register value-evaluation member draws nothing, and so does the
+    /// `field-inline` field-register value-evaluation member (`NoChallenges`) — composing it
+    /// changes no stage-5 draw.
     #[test]
     fn draw_challenges_matches_inline_draw_sequence() {
         let sumchecks = sumchecks();
@@ -213,6 +256,9 @@ mod tests {
         );
     }
 
+    /// The field-register value-evaluation member's wire set is exactly the two spec outputs
+    /// (`FieldRdInc`, `FieldRdWa` at `FieldRegistersValEvaluation`), so composing it grows the
+    /// stage-5 absorbed/committed opening count by two.
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_registers_val_evaluation_wire_set_is_the_two_spec_outputs() {

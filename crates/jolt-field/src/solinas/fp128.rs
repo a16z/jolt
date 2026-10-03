@@ -86,8 +86,12 @@ impl<const P: u128> Fp128<P> {
         c
     };
 
+    /// Low 64 bits of `C` (always equals `C` since `C < 2^32`).
     pub const C_LO: u64 = Self::C as u64;
 
+    /// `+1` means `C = 2^a + 1`, `-1` means `C = 2^a − 1`, `0` means generic.
+    /// (`C < 2^32` is const-asserted, so `C + 1` cannot overflow and the
+    /// shift is at most 32.)
     const C_SHIFT_KIND: i8 = {
         let c = Self::C_LO;
         if c > 1 && (c - 1).is_power_of_two() {
@@ -315,6 +319,9 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
+    /// Portable multiply: schoolbook 2×2 widening product, then the two
+    /// Solinas folds. Assembly builds retain it for tests and fuzzing as the
+    /// differential oracle for the architecture kernel.
     #[cfg(any(
         test,
         feature = "fuzzing",
@@ -472,6 +479,8 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
+    /// Portable squaring (see [`mul_raw_portable`](Self::mul_raw_portable)
+    /// for the AArch64 `cfg(test)` role).
     #[cfg(any(
         test,
         feature = "fuzzing",
@@ -552,6 +561,7 @@ impl<const P: u128> Fp128<P> {
                 "adds   {p00h}, {p00h}, {p01l}",
                 "adc    {p11h}, {p11l}, {t0}",
 
+                // Fold-2 + canonicalize via ccmp (C < 2^32 ⇒ C·t2 fits in 64 bits)
                 "mul    {t0}, {p11h}, {c}",
                 "adds   {p00l}, {p00l}, {t0}",
                 "adcs   {p00h}, {p00h}, xzr",
@@ -606,11 +616,13 @@ impl<const P: u128> Fp128<P> {
         Self(split(x))
     }
 
+    /// Return the canonical representative in `[0, P)`.
     #[inline]
     pub fn to_canonical_u128(self) -> u128 {
         join(self.0)
     }
 
+    /// Extract the canonical `[lo, hi]` limb representation.
     #[inline(always)]
     pub fn to_limbs(self) -> [u64; 2] {
         self.0
@@ -858,7 +870,9 @@ impl<const P: u128> Fp128<P> {
             0 => Self(pack(0, 0)),
             // A single limb is always canonical: 2^64 < p.
             1 => Self(pack(limbs[0], 0)),
+            // Any u128 < 2^128 = p + C needs at most one subtraction of p.
             2 => Self::from_u128_reduced(join([limbs[0], limbs[1]])),
+            // fold2_canonicalize accepts any u64 third limb (see its bounds).
             3 => Self(Self::fold2_canonicalize(limbs[0], limbs[1], limbs[2])),
             4 => Self(Self::reduce_4(limbs[0], limbs[1], limbs[2], limbs[3])),
             5 => {
@@ -932,6 +946,8 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
+    /// Cross-checks every architecture-specific kernel against its portable
+    /// implementation. This is public only for the out-of-crate fuzz target.
     #[cfg(all(
         feature = "fuzzing",
         any(target_arch = "aarch64", target_arch = "x86_64")
@@ -1049,6 +1065,9 @@ impl<const P: u128> Field for Fp128<P> {
         Self(split(join(candidate.0) & mask))
     }
 
+    /// Canonical rejection sampling: each attempt reads exactly 16
+    /// little-endian bytes and rejects non-canonical candidates (probability
+    /// `C / 2^128 < 2^-96` per draw).
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self(split(super::sample_uniform_below(rng, P, u128::BITS)))

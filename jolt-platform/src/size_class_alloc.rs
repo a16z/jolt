@@ -34,6 +34,7 @@ const NUM_CLASSES: usize = 31;
 struct Arena {
     cursor: usize,
     end: usize,
+    /// Head of the free list per class; freed blocks store `next` in word 0.
     free: [usize; NUM_CLASSES],
 }
 
@@ -52,6 +53,7 @@ fn class_of(layout: Layout) -> u32 {
     shift - MIN_SHIFT
 }
 
+/// Initialize the arena over `[heap_start, heap_start + heap_size)`.
 pub fn init(heap_start: usize, heap_size: usize) {
     unsafe {
         let a = &mut *ptr::addr_of_mut!(ARENA);
@@ -61,6 +63,7 @@ pub fn init(heap_start: usize, heap_size: usize) {
     }
 }
 
+/// O(1): pop the class free list, else bump the cursor. Null on exhaustion.
 pub fn alloc(layout: Layout) -> *mut u8 {
     let class = class_of(layout) as usize;
     if class >= NUM_CLASSES {

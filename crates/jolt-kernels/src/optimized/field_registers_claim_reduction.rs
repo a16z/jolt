@@ -108,6 +108,10 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
             })?;
         let gamma_sq = gamma * gamma;
 
+        // The per-cycle `[rd, rs1, rs2]` value triples of the active field-inline
+        // cycles (the oracle's `FieldRdValue`/`FieldRs1Value`/`FieldRs2Value`
+        // extractions: write post-value, read values, zero when absent), and their
+        // γ-combination as the sparse round column.
         let cells = map_indices(rows.len(), |index| {
             let (row, access) = &rows[index];
             let rd = access.rd.map_or_else(F::zero, |write| write.post_value);
@@ -267,6 +271,9 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
         })
     }
 
+    /// The `EqSpartan` cross-check: the fully bound Gruen scalar must equal
+    /// the verifier's `derive_output_term` at the bound point (the reference
+    /// kernel's tie-down on the table it materializes).
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,

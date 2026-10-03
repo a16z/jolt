@@ -51,6 +51,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// Low cycle rounds proved from block patterns before `H` is materialized
+/// (a block of `2^STARTUP_ROUNDS` cycles packs into one `u16`).
 const STARTUP_ROUNDS: usize = 4;
 const _: () = assert!(STARTUP_ROUNDS <= 4);
 
@@ -132,6 +134,12 @@ enum HammingState<F: JoltField> {
     Dense(Polynomial<F>),
 }
 
+/// `H` during the first `depth` rounds. Block `z` covers cycles
+/// `2^depth·z + u`; bit `u` of `patterns[z]` is `H` there. `histogram[p]`
+/// sums the tail weight `eq(c_{depth..}, z)` over the blocks whose pattern
+/// is `p` or its complement `!p` — both give the same defect, so bins are
+/// keyed by the representative with the top bit clear, and bin 0 (constant
+/// blocks, zero defect) stays empty.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct HammingStartup<F: JoltField> {
     depth: usize,
@@ -227,6 +235,10 @@ impl<F: JoltField> HammingStartup<F> {
         }
     }
 
+    /// Round `j = challenges.len()`: `s(t) = l(t)·Q(t)` with `l` the split-eq
+    /// linear factor and `Q(t) = Σ_p M[p] Σ_v eq(c_{j+1..depth}, v)·(P² − P)`
+    /// at `P = P_p(s_{..j}, t, v)`, the pattern's multilinear extension —
+    /// quadratic in `t`, so the coefficients come out exactly.
     fn round_poly(
         &self,
         eq: &GruenSplitEqPolynomial<F>,
@@ -427,6 +439,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
         })
     }
 
+    /// The split-eq scalar (fully bound `EqCycle`) against the verifier's
+    /// `derive_output_term` — the same drift detector the naive tier runs on
+    /// its hand-materialized derived table.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -517,6 +532,10 @@ mod tests {
             .unwrap();
     }
 
+    /// Rows whose Hamming indicator is `bits`, alternating the RAM shapes
+    /// that realize each value: nonzero-address loads and stores for ones,
+    /// no-ops and address-0 loads (a RAM access, but no Hamming weight) for
+    /// zeros.
     fn hamming_rows(bits: &[bool]) -> Vec<TraceRow> {
         bits.iter()
             .enumerate()
@@ -642,6 +661,9 @@ mod tests {
         hamming_parity(log_t, &bits, generic_binding(log_t));
     }
 
+    /// Startup rounds never divide by the cycle coordinate, so `0` and `1`
+    /// coordinates there are fine (the dense Gruen rounds would invert a
+    /// zero one); later coordinates stay generic.
     #[test]
     fn boolean_startup_coordinates() {
         let bits: Vec<bool> = (0..40).map(|cycle| cycle % 3 != 1).collect();
@@ -691,6 +713,9 @@ mod tests {
         let log_t = STARTUP_ROUNDS + 3;
         let bits: Vec<bool> = (0..1 << log_t).map(|row| row % 5 < 2).collect();
         for case in ExceptionalEq::ALL {
+            // `case.point` is the eq table's big-endian point, whose last
+            // coordinate binds first; the kernel reverses the stage-1 binding
+            // to get it.
             let eq_point = case.point(log_t, test_challenge(0));
             if matches!(case, ExceptionalEq::ZeroPrefix) {
                 let mut eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);

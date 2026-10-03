@@ -1,3 +1,10 @@
+//! CSRRS (CSR Read-Set) — Read CSR to rd, set bits from rs1.
+//!
+//! Encoding: `csr[31:20] | rs1[19:15] | funct3=010[14:12] | rd[11:7] | opcode=1110011[6:0]`
+//!
+//! The `csrr rd, csr` pseudo-instruction is `csrrs rd, csr, x0` (read only, no bits set).
+//! The `csrs csr, rs` pseudo-instruction is `csrrs x0, csr, rs` (set only, discard old value).
+
 use crate::instruction::registers::i::RegisterStateI;
 
 use serde::{Deserialize, Serialize};
@@ -38,6 +45,7 @@ impl CSRRS {
 
 impl RISCVTrace for CSRRS {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // Don't call self.execute() - the inline sequence handles all register writes.
         super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
     }
 }
@@ -49,6 +57,8 @@ mod tests {
 
     #[test]
     fn test_csrr_mtvec_decode() {
+        // csrr t0, mtvec = csrrs t0, 0x305, x0
+        // Encoding: 0x305 << 20 | 0 << 15 | 2 << 12 | 5 << 7 | 0x73
         let instr: u32 = 0x305022f3;
         let address: u64 = 0x1000;
 
@@ -66,6 +76,8 @@ mod tests {
 
     #[test]
     fn test_csrrs_unsupported_csr_rejected_at_decode() {
+        // satp = 0x180 — valid RISC-V supervisor CSR but not modelled by Jolt.
+        // Encoding: 0x180 << 20 | 0 << 15 | 2 << 12 | 5 << 7 | 0x73
         let instr: u32 = (0x180 << 20) | (2 << 12) | (5 << 7) | 0x73;
         let err = Instruction::decode(instr, 0x1000, false)
             .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
@@ -74,6 +86,8 @@ mod tests {
 
     #[test]
     fn test_csrrs_with_rs1() {
+        // csrrs a0, mtvec, t0 (read mtvec to a0, set bits from t0)
+        // Encoding: 0x305 << 20 | 5 << 15 | 2 << 12 | 10 << 7 | 0x73
         let instr: u32 = 0x3052a573;
         let address: u64 = 0x1000;
 

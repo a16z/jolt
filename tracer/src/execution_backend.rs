@@ -178,6 +178,8 @@ where
 /// relative to that boundary.
 pub struct TracerChunkCheckpoint {
     boundary: Arc<ChunkCheckpoint>,
+    /// Full-size flat-memory image at the same boundary (SnapshotPool
+    /// layout).
     image: Arc<Vec<u64>>,
     seed: Arc<WorkerSeed>,
     skip_rows: usize,
@@ -189,9 +191,18 @@ struct WorkerSeed {
     decode: DecodeCache,
 }
 
+/// Boundary checkpoints are captured at chunk-mark crossings, but at most
+/// one per this many rows: each carries a full-size memory image, so denser
+/// capture (e.g. a small chunk size over a long trace) would blow up
+/// memory. `skip_rows` absorbs the gap; per-chunk replay cost stays bounded
+/// by spacing + chunk_size + one tick's rows.
 const MIN_BOUNDARY_SPACING_ROWS: usize = 1 << 16;
 
 impl TracerBackend {
+    /// [`ChunkedExecutionBackend::execute`] with an explicit boundary
+    /// spacing floor. The trait method passes [`MIN_BOUNDARY_SPACING_ROWS`];
+    /// tests pass a tighter floor to exercise multi-boundary selection on
+    /// guests whose whole trace is shorter than the production floor.
     fn execute_chunked(
         &mut self,
         program: &JoltProgram,
@@ -449,6 +460,10 @@ mod chunked_tests {
         let eager_rows = eager.trace.rows();
         assert!(!eager_rows.is_empty());
 
+        // Chunk size 1 forces checkpoint marks inside multi-row expansions.
+        // Spacing = chunk_size keeps boundary checkpoints dense enough to
+        // exercise multi-boundary selection on a trace shorter than the
+        // production floor (the floor itself is covered below).
         for chunk_size in [1usize, 100, 1 << 18, eager_rows.len() + 1] {
             let mut backend = TracerBackend::new();
             let summary = backend
@@ -475,6 +490,7 @@ mod chunked_tests {
                 "chunk_size {chunk_size}"
             );
 
+            // Replay in reverse order to exercise order-independence.
             let mut replayed: Vec<Vec<TraceRow>> = summary
                 .checkpoints
                 .iter()
@@ -499,6 +515,10 @@ mod chunked_tests {
         }
     }
 
+    /// The public trait method applies the production spacing floor: the
+    /// muldiv trace is shorter than [`MIN_BOUNDARY_SPACING_ROWS`], so every
+    /// chunk resumes from the single initial checkpoint and `skip_rows`
+    /// grows to nearly the whole trace for the last chunk.
     #[test]
     fn default_spacing_floor_replays_through_large_skips() {
         let (program, inputs) = muldiv_setup();
@@ -534,6 +554,10 @@ mod chunked_tests {
         assert_eq!(last.as_slice(), &eager_rows[last_mark..]);
     }
 
+    /// Advice-tape plumbing: a seeded tape reaches the emulator and the
+    /// populated tape is captured on output, for both the eager and the
+    /// chunked path (muldiv never consumes the tape, so it round-trips
+    /// unchanged).
     #[test]
     fn advice_tape_seeds_and_captures() {
         let (program, inputs) = muldiv_setup();

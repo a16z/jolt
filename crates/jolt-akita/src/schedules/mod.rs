@@ -9,6 +9,7 @@
 //! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules dense-full
 //! ```
 
+/// Emit-spec construction shared by the generator and drift tests.
 pub mod emit {
     use std::path::PathBuf;
 
@@ -26,6 +27,8 @@ pub mod emit {
     };
     use crate::planning::plan_schedule;
 
+    /// Prefix packing produces one physical polynomial; two-polynomial rows
+    /// cover adapter and tamper-test shapes.
     pub const ONE_HOT_TRACE_NUM_POLYS: &[usize] = &[1, 2];
     /// K=16 adds six selector variables to column arity `4 + log_T`;
     /// the catalog covers logical traces through `2^30`.
@@ -35,6 +38,14 @@ pub mod emit {
     /// Dense advice, committed-program, and field-register increment objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
 
+    /// First Jolt trace exponent whose one-hot row uses setup offloading.
+    ///
+    /// K=16 has ten packing variables (`4 + log_T` column arity plus six
+    /// selectors), while K=256 has thirteen (`8 + log_T` plus five). Keeping
+    /// the cutover in logical trace space makes the two artifact families
+    /// describe the same deployment policy. In the crossover sweep, `log_T=20`
+    /// missed the 2x single-thread verifier gate and its proof-only phase
+    /// exceeded 10% overhead; `log_T=21` was the first size to clear both.
     pub const RECURSIVE_TRACE_LOG_T_CUTOVER: usize = 21;
     /// Physical one-hot arity added to the logical trace exponent for K=16.
     pub const K16_PACKING_VARIABLES: usize = 10;

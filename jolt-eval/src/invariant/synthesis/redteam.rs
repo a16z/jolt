@@ -181,8 +181,11 @@ pub fn auto_redteam<I: Invariant>(
             }
         };
 
+        // Let the invariant fill in fields from the agent's worktree diff
+        // (e.g. SoundnessInvariant uses it to populate the patch field).
         let input = invariant.enrich_input(input, response.diff.as_deref());
 
+        // Serialize the enriched input so we persist exactly what was checked.
         let normalized_input =
             serde_json::to_string_pretty(&input).unwrap_or_else(|_| counterexample_json.clone());
 

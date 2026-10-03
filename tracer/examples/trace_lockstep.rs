@@ -20,6 +20,7 @@ mod support;
 use support::chain_input;
 use tracer::instruction::Cycle;
 
+/// Same (guest, input) pairs as the golden-trace gate.
 fn golden_cases() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         ("sha2-chain-guest", chain_input(300)),

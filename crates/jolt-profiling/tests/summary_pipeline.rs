@@ -206,6 +206,8 @@ fn fixture_labels_conform_to_taxonomy() {
         .all(|l| zk.contains(l) && !clear.contains(l)));
 }
 
+/// Repeated stage labels pair with their rows by occurrence index (both are
+/// recorded in span-close order), never all with the first matching row.
 #[test]
 fn repeated_stage_labels_pair_rows_by_occurrence() {
     let events: Vec<Value> = serde_json::from_str(
@@ -287,6 +289,8 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Deserializing the summary through the strict serde structs is the
+/// instance-level schema validation used by the smoke test.
 #[test]
 fn summary_round_trips_through_strict_schema_structs() {
     let summary = fixture_summary(&fixture_events());
@@ -306,6 +310,9 @@ fn heap_snapshots_join_their_instant_events() {
     );
 }
 
+/// Drift lock between the serde structs (normative) and the checked-in JSON
+/// Schema. Regenerate with:
+/// `JOLT_UPDATE_SUMMARY_SCHEMA=1 cargo nextest run -p jolt-profiling schema`
 #[test]
 fn checked_in_schema_matches_structs() {
     let generated = serde_json::to_string_pretty(&schemars::schema_for!(ProfileSummary)).unwrap();

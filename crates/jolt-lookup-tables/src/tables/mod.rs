@@ -316,6 +316,7 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
 
     fn suffixes(&self) -> &'static [Suffixes];
 
+    /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F;
 
     /// Generate a random lookup index inside the table's valid input domain,

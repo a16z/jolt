@@ -1,3 +1,12 @@
+//! The stage 5 `InstructionReadRaf` sumcheck instance.
+//!
+//! The most intricate stage 5 relation: its output `Expr` references indexed
+//! opening families (lookup-table flags, virtual RA chunks) and point-derived
+//! *publics* (`EqTableValue`, `EqRafConstant`, `EqRafFlag`) computed from the
+//! instruction address/cycle points and the upstream claim-reduction point. The
+//! full instruction address is split across the virtual-RA opening points, so
+//! `derive_output_term` reconstructs it from the output opening cells.
+
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::instruction::{
     InstructionReadRafChallenges, InstructionReadRafInputClaims, InstructionReadRafOutputClaims,
@@ -36,6 +45,8 @@ pub fn instruction_read_raf_input_values_from_upstream<F: JoltField>(
     }
 }
 
+/// Wire the consumed opening *points* from the upstream instruction claim-reduction
+/// (stage 2). All three share the claim-reduction opening point.
 pub fn instruction_read_raf_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
 ) -> InstructionReadRafInputClaims<Vec<F>> {
@@ -71,6 +82,9 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+/// Reconstruct the instruction address point from the virtual-RA opening points:
+/// each RA opening point is `chunk ++ r_cycle`, and the chunks tile the address
+/// in order, so stripping the trailing cycle and concatenating recovers it.
 pub(crate) fn reconstruct_r_address<F: JoltField>(
     output_points: &InstructionReadRafOutputClaims<Vec<F>>,
     cycle_len: usize,
@@ -149,6 +163,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         };
         let r_cycle = output_points.instruction_raf_flag();
         let r_address = reconstruct_r_address(output_points, r_cycle.len());
+        // eq over the upstream instruction claim-reduction cycle point; all three
+        // consumed openings share that point, so the lookup-output input carries it.
         let eq_reduction =
             try_eq_mle(input_points.lookup_output(), r_cycle).map_err(public_input_failed)?;
         let address_bits = self.dimensions.instruction_address_bits();
@@ -206,6 +222,11 @@ mod tests {
     use jolt_claims::SymbolicSumcheck;
     use jolt_field::{Fr, Ring as _};
 
+    /// Locks the `expected_output_openings` invariant for the one stage-5 relation
+    /// with a size-parameter-dependent shape: the openings the read-RAF output `Expr`
+    /// references (looping over every lookup table and RA chunk) must be exactly the
+    /// geometry's `read_raf_output_openings` set. If they drift, the ZK
+    /// commitment-count and clear shape-check derived from the `Expr` would be wrong.
     #[test]
     #[expect(clippy::unwrap_used)]
     fn expected_output_openings_matches_geometry_shape() {
@@ -227,6 +248,14 @@ mod tests {
         );
     }
 
+    /// Pins the canonical-address term inside `EqRafFlag`.
+    ///
+    /// The term is what forces `Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0`, and it is
+    /// invisible in the symbolic relation — it rides inside a derived public. A
+    /// refactor that dropped it would still typecheck, still produce a
+    /// well-formed proof, and silently reopen the fp128 alias. Asserting the
+    /// closed form (rather than just "nonzero") also pins the γ *power* and the
+    /// leading-half slice, the two transposition traps.
     #[test]
     #[expect(
         clippy::unwrap_used,
@@ -242,6 +271,7 @@ mod tests {
         let dimensions = InstructionReadRafDimensions::try_from((LOG_T, ADDRESS_BITS, 4)).unwrap();
         let relation = InstructionReadRaf::<Fr>::new(dimensions);
 
+        // Distinct non-Boolean coordinates, so no factor can vanish by accident.
         let sumcheck_point: Vec<Fr> = (0..ADDRESS_BITS + LOG_T)
             .map(|i| Fr::from_u64(i as u64 + 2))
             .collect();
@@ -284,6 +314,8 @@ mod tests {
             "test point must exercise a nonzero canonical term"
         );
 
+        // Note `eq(x, x) != 1` at a non-Boolean point, so the shared reduction
+        // point still contributes a factor.
         let eq_reduction = try_eq_mle(&opening.r_cycle, &opening.r_cycle).unwrap();
         if CANONICAL_INSTRUCTION_ADDRESS {
             assert_eq!(

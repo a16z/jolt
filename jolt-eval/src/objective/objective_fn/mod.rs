@@ -47,10 +47,12 @@ impl ObjectiveFunction {
         ]
     }
 
+    /// Look up an objective function by CLI name.
     pub fn by_name(name: &str) -> Option<&'static ObjectiveFunction> {
         Self::all().iter().find(|f| f.name == name)
     }
 
+    /// Derive a [`DiffScope`] from the union of all input objectives' diff paths.
     pub fn diff_scope(&self) -> DiffScope {
         let mut paths = Vec::new();
         for input in self.inputs {
@@ -128,6 +130,11 @@ pub const MINIMIZE_MUL_I128: ObjectiveFunction = ObjectiveFunction {
     inputs: &[MUL_I128],
     evaluate: |m, _| m.get(&MUL_I128).copied().unwrap_or(f64::INFINITY),
 };
+
+// Curated telemetry wrappers over the modular prover's summary.json
+// (fibonacci workload — the cheapest, sensible for optimizer loops). Any
+// other span/workload is reachable via the raw key grammar; see
+// `objective::telemetry`.
 
 pub const MINIMIZE_MODULAR_PROVER_TIME: ObjectiveFunction = ObjectiveFunction {
     name: "minimize_modular_prover_time",

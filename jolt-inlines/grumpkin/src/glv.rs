@@ -1,3 +1,7 @@
+/// GLV decomposition for the Grumpkin scalar field.
+///
+/// Given scalar k in Fr, compute k1, k2 such that k = k1 + k2 * lambda (mod r)
+/// with |k1|, |k2| <= 2^128. Based on arkworks' GLV decomposition.
 use ark_ff::{BigInteger, PrimeField};
 use ark_grumpkin::Fr;
 use num_bigint::BigInt as NBigInt;

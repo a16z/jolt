@@ -39,6 +39,11 @@ use crate::emulator::{
     Emulator,
 };
 
+/// Initial trace capacity, in rows (`JOLT_TRACER_CAPACITY_ROWS` overrides —
+/// the same knob the parallel path uses): the default covers the standard
+/// 2^23-cycle proving scale without Vec regrowth (each doubling past the
+/// hundreds of MB memcpys the whole trace). Reserved address space is only
+/// faulted in as rows are pushed.
 fn trace_capacity_reserve() -> usize {
     env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS)
 }
@@ -128,6 +133,9 @@ pub fn trace(
     )
 }
 
+/// Shared teardown for every execution path (eager [`trace`], execute-only
+/// [`execute`], and the chunked fast pass): report a guest panic (log +
+/// backtrace), then extract the advice tape, final memory, and device.
 #[expect(clippy::expect_used)]
 pub(crate) fn finish_emulator(mut emulator: Emulator) -> (cpu::AdviceTape, Memory, JoltDevice) {
     if emulator
@@ -405,6 +413,7 @@ pub trait LazyTracer {
     /// instruction or return the next [`Cycle`] in the last executed instruction.
     fn at_tick_boundary(&self) -> bool;
 
+    /// Print a backtrace, assuming the program has panicked.
     fn print_panic_log(&self);
 
     /// Get the next [`Cycle`] in the program execution. If the program is at a tick boundary, this
@@ -601,6 +610,8 @@ impl CheckpointingTracer {
         Self::new(emulator_state)
     }
 
+    /// Start recording memory accesses so that checkpoints can be saved using
+    /// [`CheckpointingTracer::save_checkpoint`].
     pub fn start_saving_checkpoints(&mut self) {
         self.saved_processor_state = Some(Checkpoint::new_with_empty_memory(
             &self.emulator_state,
@@ -655,6 +666,7 @@ impl CheckpointingTracer {
         new_processor_state
     }
 
+    /// Take ownership of the advice tape from the emulator, replacing it with an empty one
     pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
         self.emulator_state.take_advice_tape()
     }
@@ -788,6 +800,8 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
+    /// Build the muldiv guest and return the ELF bytes.
+    /// Mirrors the pattern used by `jolt_host::Program::build()`.
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";
@@ -980,6 +994,9 @@ mod tests {
     }
 
     #[test]
+    /// Execute-mode CPU state must be bit-identical to trace-mode state at
+    /// every tick boundary (foundation of two-pass parallel tracing: pass-1
+    /// runs execute-mode and its checkpoints seed trace-mode chunk replays).
     fn test_execute_trace_state_lockstep() {
         let elf = build_muldiv_guest();
         let memory_config = MemoryConfig {
@@ -1009,6 +1026,8 @@ mod tests {
             tick_idx += 1;
         }
         assert!(tick_idx > 0, "program did not execute");
+        // trace_len is row-uniform across modes (execute mode counts
+        // suppressed rows).
         assert_eq!(em_trace.get_cpu().trace_len, em_exec.get_cpu().trace_len);
         assert_eq!(
             em_trace
@@ -1159,6 +1178,8 @@ mod tests {
         };
         let (serial_rows, _) = serial_reference(&elf, &memory_config);
 
+        // capacity_rows=100 forces the overflow fallback path on muldiv's
+        // 473 rows (windowed prefix, then copy-assembled suffix).
         for (workers, chunk_rows, capacity_rows) in [
             (1usize, 64usize, 1usize << 24),
             (4, 64, 1 << 24),
@@ -1227,6 +1248,10 @@ mod tests {
         }
     }
 
+    /// A count-preserving replay divergence must trip the boundary-state
+    /// verification. Fault injection corrupts one worker register after
+    /// replay (row counts stay equal), so only the boundary check can catch
+    /// it; without it the trace would be assembled silently.
     fn boundary_divergence_panics(workers: usize) {
         use crate::parallel::{run_two_pass, TwoPassConfig, TEST_CORRUPT_BOUNDARY_STATE};
         use std::sync::atomic::Ordering;

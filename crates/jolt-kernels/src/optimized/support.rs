@@ -21,6 +21,8 @@ use rayon::prelude::*;
 
 use crate::SumcheckKernelError;
 
+/// A kernel's bound-round count against its total — the one home of the
+/// "claims only after every round is bound" invariant.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RoundProgress {
     bound: usize,
@@ -32,6 +34,7 @@ impl RoundProgress {
         Self { bound: 0, total }
     }
 
+    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
     pub(crate) fn total(&self) -> usize {
         self.total
     }
@@ -44,6 +47,7 @@ impl RoundProgress {
         self.bound += 1;
     }
 
+    /// Gate for every output-claim / derived-table entry point.
     pub(crate) fn require_complete<F: JoltField>(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.bound == self.total {
             Ok(())
@@ -55,6 +59,10 @@ impl RoundProgress {
     }
 }
 
+/// The streaming chunk of [`collect_rows`]: large enough that the per-chunk
+/// rayon extraction dispatch amortizes (the stock bundle pass uses 2^12-row
+/// chunks — at 2^23 cycles the two thousand dispatches rival the extraction
+/// itself).
 const COLLECT_ROWS_CHUNK: usize = 1 << 16;
 
 pub(crate) fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
@@ -69,6 +77,11 @@ pub(crate) fn collect_par_map<B: WitnessBundle, V: Copy + Send>(
     (0..cycles).map(window).collect()
 }
 
+/// `jolt_witness::collect_bundles` with a wider streaming chunk and a
+/// pre-sized destination (the stock pass also grows its vector realloc by
+/// realloc). Chunk size never changes the collected bundles — the pass
+/// carries the lookahead row across chunk boundaries — so this is walk-shape
+/// only.
 pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
@@ -95,6 +108,8 @@ pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     Ok(consumers.0.rows)
 }
 
+/// Accumulates `Π factors` into `lane`, fusing the last multiply into the
+/// deferred-reduction accumulator. Requires at least two factors.
 #[inline]
 pub(crate) fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accumulator) {
     debug_assert!(factors.len() >= 2);
@@ -106,6 +121,11 @@ pub(crate) fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accu
     lane.fmadd(product, factors[last]);
 }
 
+/// Walk one row's product grid: with `evals` seeded at the `t = 1` factor
+/// values and `steps` their per-factor linear steps, accumulate the factor
+/// product `Π evals` into `lanes[t − 1]` for `t = 1, …, n − 1` (advancing
+/// every factor by its step between points) and the leading coefficient
+/// `Π steps` into `lanes[n − 1]`, where `n = lanes.len()`.
 #[inline]
 pub(crate) fn accumulate_product_grid<F: JoltField>(
     evals: &mut [F],
@@ -237,20 +257,27 @@ pub(crate) fn gamma_powers<F: JoltField>(gamma: F, count: usize) -> Vec<F> {
     powers
 }
 
+/// `scale · eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index
+/// MSB) — the scaled variant of the reference tier's `eq_table`.
 pub(crate) fn scaled_eq_table<F: JoltField>(point: &[F], scale: F) -> Vec<F> {
     EqPolynomial::<F>::evals(point, Some(scale))
 }
 
+/// `eq(point, ·)` evaluations, big-endian.
 pub(crate) fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
     EqPolynomial::<F>::evals(point, None)
 }
 
+/// The `(lo, hi)` sumcheck pair of a low-to-high-bound table at group `y`:
+/// the two evaluations whose linear extension `lo + t·(hi − lo)` is the
+/// table's per-round univariate restriction.
 #[inline(always)]
 pub(crate) fn pair<F: JoltField>(table: &Polynomial<F>, y: usize) -> (F, F) {
     let evals = table.evals();
     (evals[2 * y], evals[2 * y + 1])
 }
 
+/// Bind every table one round low-to-high, in place.
 pub(crate) fn bind_all<'a, F: JoltField>(
     tables: impl IntoIterator<Item = &'a mut Polynomial<F>>,
     challenge: F,
@@ -260,6 +287,8 @@ pub(crate) fn bind_all<'a, F: JoltField>(
     }
 }
 
+/// In-place low-to-high bind of a raw table:
+/// `t[y] ← t[2y] + r·(t[2y+1] − t[2y])`.
 pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     let half = table.len() / 2;
     for y in 0..half {
@@ -269,6 +298,10 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     table.truncate(half);
 }
 
+/// The drawn challenges of a kernel's bound rounds, tracked against the
+/// round total — one authority for both the challenge history and the
+/// bound-rounds invariant. Kernels that never revisit their challenges use
+/// [`RoundProgress`] instead.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RoundChallenges<F> {
     challenges: Vec<F>,
@@ -283,6 +316,7 @@ impl<F: JoltField> RoundChallenges<F> {
         }
     }
 
+    /// Total rounds — the kernel's `ProveRounds::num_rounds`.
     pub(crate) fn total(&self) -> usize {
         self.total
     }
@@ -295,10 +329,12 @@ impl<F: JoltField> RoundChallenges<F> {
         self.challenges.push(challenge);
     }
 
+    /// The challenges bound so far, in binding order.
     pub(crate) fn as_slice(&self) -> &[F] {
         &self.challenges
     }
 
+    /// Gate for every output-claim / derived-table entry point.
     pub(crate) fn require_complete(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.challenges.len() == self.total {
             Ok(())
@@ -310,6 +346,10 @@ impl<F: JoltField> RoundChallenges<F> {
     }
 }
 
+/// Pin a kernel-maintained derived value (typically its fully bound split-eq
+/// scalar) against the verifier's own `derive_output_term` — the optimized
+/// tier's drift detector for tables it never materializes, mirroring the
+/// naive tier's check on its hand-materialized derived tables.
 pub(crate) fn pin_derived_term<F: JoltField, R: ConcreteSumcheck<F>>(
     relation: &R,
     id: DerivedIdOf<F, R>,
@@ -329,6 +369,8 @@ pub(crate) fn pin_derived_term<F: JoltField, R: ConcreteSumcheck<F>>(
     Ok(())
 }
 
+/// [`pin_derived_term`], passing vacuously when the relation does not derive
+/// the term under this proof shape (`MissingStageClaimDerived`).
 pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
     relation: &R,
     id: DerivedIdOf<F, R>,
@@ -349,6 +391,15 @@ pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
 }
 
 pub(crate) trait GruenRoundMessage<F: JoltField> {
+    /// `s(t) = ℓ(t) · q(t)` at `t = 0, 1, …, q_evals.len() − 1`, checked
+    /// against `s(0) + s(1) = previous_claim` (the reference tier's round
+    /// consistency pin) and interpolated through `UnivariatePoly::from_evals`.
+    /// `q_evals` is scaled into the `s` evaluations in place.
+    ///
+    /// This is the assembly half of the Gruen trick: the split-eq factor
+    /// contributes only its per-round linear term `ℓ`, so kernels sample the
+    /// remaining summand `q` alone and the product is restored per point —
+    /// never a full-domain eq-weighted sweep.
     fn checked_round_poly(
         &self,
         q_evals: &mut [F],
@@ -384,6 +435,10 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
 
     fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F;
 
+    /// `(q(0), q(∞))` of the two-table product summand
+    /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
+    /// pairs — the endpoints `gruen_poly_deg_3` completes into the cubic
+    /// round message with the running claim.
     fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F);
 }
 
@@ -495,6 +550,8 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
     }
 }
 
+/// Sum `task(0), …, task(tasks − 1)` elementwise (each yields a `len`-sized
+/// vector), failing fast on the first error.
 pub(crate) fn try_par_sum_vecs<F: JoltField, E: Send>(
     tasks: usize,
     len: usize,
@@ -523,6 +580,12 @@ pub(crate) fn try_par_sum_vecs<F: JoltField, E: Send>(
     }
 }
 
+/// Assemble a round message from evaluations at `{0, 2, 3, .., degree}`,
+/// recovering `s(1) = previous_claim − s(0)` — exactly the evaluation vector
+/// the reference tier computes directly (its own round check pins
+/// `s(0) + s(1) = previous_claim`), interpolated through the same
+/// `UnivariatePoly::from_evals` path, so the coefficient vectors are
+/// byte-identical on honest inputs.
 pub(crate) fn round_poly_from_skipped_evals<F: JoltField>(
     evals_without_one: &[F],
     previous_claim: F,
@@ -542,6 +605,10 @@ pub(crate) fn merge_evals<F: JoltField>(mut left: Vec<F>, right: Vec<F>) -> Vec<
     left
 }
 
+/// `s(t)` samples at `t ∈ {0, 2, 3}` of the cubic triple-product summand
+/// `Σ_y a(y) · b(y) · c(y)` over the remaining low-to-high `(lo, hi)` pairs,
+/// through the deferred-reduction accumulator; `s(1)` comes from the engine's
+/// `from_evals_and_hint` recovery.
 pub(crate) fn triple_product_round_evals<F: JoltField>(
     half: usize,
     a: impl Fn(usize) -> (F, F) + Send + Sync,
@@ -594,6 +661,9 @@ pub(crate) fn par_sum_pair_groups<F: JoltField>(
     par_sum_pair_groups_reusing(groups, slots, || (), |acc, (), y| accumulate(acc, y))
 }
 
+/// [`par_sum_pair_groups`] with a per-thread scratch buffer, for kernels
+/// whose group walk reuses an allocation across groups (the scratch is
+/// fully overwritten per group).
 pub(crate) fn par_sum_pair_groups_reusing<F: JoltField, S: Send>(
     groups: usize,
     slots: usize,
@@ -692,6 +762,18 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
     }
 }
 
+/// `LT(·, r) + constant` served from split tables and bound low-to-high
+/// (legacy `LtPolynomial` port).
+///
+/// Big-endian index `j = j_hi ‖ j_lo` with `r = r_hi ‖ r_lo`:
+/// `LT(j, r) = LT(j_hi, r_hi) + eq(j_hi, r_hi) · LT(j_lo, r_lo)`, so an
+/// additive constant folds into the `~√T` hi table and low-to-high binding
+/// touches only `lt_lo`; once the lo variables are exhausted the lo scalar
+/// folds into `lt_hi` and binding continues densely. Values equal the dense
+/// `LtPolynomial::evaluations(r)` table (plus the constant) bound identically
+/// — binding acts linearly on the `j_lo` tensor factor. (jolt-poly's
+/// `LtPolynomial` binds high-to-low only, so the low-to-high variant lives
+/// here.)
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) enum SplitLt<F> {
     Split {
@@ -707,6 +789,7 @@ impl<F: JoltField> SplitLt<F> {
         Self::new_plus_constant(r_cycle, F::zero())
     }
 
+    /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
     pub(crate) fn new_plus_constant(r_cycle: &[F], constant: F) -> Self {
         let mid = r_cycle.len() / 2;
         let (r_hi, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
@@ -728,6 +811,7 @@ impl<F: JoltField> SplitLt<F> {
         }
     }
 
+    /// `(LT[2y], LT[2y + 1])` under low-to-high pairing.
     #[inline]
     pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {
@@ -784,12 +868,18 @@ impl<F: JoltField> SplitLt<F> {
     }
 }
 
+/// Where a kernel's typed rows live: a slice-backed witness serves an
+/// owning handle and every pass re-extracts its windows on the fly — the
+/// materialized row vector never exists; re-emulating sources retain the
+/// collected rows. The generic twin of the spartan-outer kernel's store,
+/// for every carry-style typed-row consumer.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
     allocative(bound = "B")
 )]
 pub(crate) enum BundleStore<B> {
+    /// The witness plane owns these rows; it reports them itself.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     Owned(RandomAccessRows),
     Retained(
@@ -799,6 +889,9 @@ pub(crate) enum BundleStore<B> {
 }
 
 impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
+    /// Resolve for a witness plane: the owning handle when the source is
+    /// slice-backed (and covers the cycle domain), a materialized collect
+    /// otherwise.
     pub(crate) fn resolve<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
@@ -823,6 +916,8 @@ pub(crate) enum BundleAccess<'a, B> {
 }
 
 impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
+    /// The typed row at cycle `t` — an extraction window over a slice-backed
+    /// source, an indexed copy from a retained vector. Pure per index.
     #[inline]
     pub(crate) fn row(&self, t: usize) -> Result<B, WitnessError> {
         match self {
@@ -848,6 +943,8 @@ pub(crate) fn bound_pair<F: JoltField>(raw: impl Fn(usize) -> F, r1: F, y: usize
     lo + mul_0_optimized(r1, hi - lo)
 }
 
+/// Two LSB binds of a raw `len`-entry column materialized directly at
+/// `len / 4`, skipping the half-size intermediate.
 pub(crate) fn bind_raw_twice<F: JoltField>(
     raw: impl Fn(usize) -> F + Sync,
     len: usize,

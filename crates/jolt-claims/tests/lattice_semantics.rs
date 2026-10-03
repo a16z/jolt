@@ -10,6 +10,8 @@ fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
+/// MLE evaluation via the library's own (msb-first) convention — the same one
+/// production code uses, so the tests pin the packing against it.
 fn eval_mle(evals: &[Fr], point: &[Fr]) -> Fr {
     Polynomial::new(evals.to_vec()).evaluate(point)
 }

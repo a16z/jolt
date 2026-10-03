@@ -67,6 +67,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// Address variables bound per phase — identical to the reference kernel (and
+/// to the legacy prover below its 2^24-cycle threshold).
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
@@ -245,13 +247,27 @@ impl InstructionCycleRow {
     }
 }
 
+/// The collected stage-5 rows, parked in the [`ProofSession`] for the
+/// stage-6b instruction RA virtualization kernel (its committed one-hot
+/// chunks are chunks of the same per-cycle lookup index) and the
+/// stage-6a/6b booleanity kernels (all three one-hot chunk families).
+///
+/// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
+/// carry back for the later stages.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
+/// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
+/// so same-stage co-consumers share one collection but the 40 B × T rows
+/// never outlive their stage — later stages re-derive them index-parallel
+/// instead of carrying them across the prover's peak window.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
 
 impl InstructionCycleRow {
+    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
+    /// impossible to consume) or collect them fresh, and park the carry back
+    /// for later consumers.
     pub(crate) fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
@@ -331,6 +347,9 @@ impl<F: JoltField> RafDecomposition<F> {
         }
     }
 
+    /// WARNING: the canonical-address decomposition is an AND over address
+    /// bits, so its bound-prefix accumulator is a *product* and its empty
+    /// value is one (see the reference kernel).
     fn empty_product() -> Self {
         Self {
             checkpoint: F::one(),
@@ -370,6 +389,14 @@ struct CycleState<F: JoltField> {
     bind_scratch: Vec<F>,
 }
 
+/// The cycle tables' lifecycle. The address/cycle handoff leaves them
+/// *pending*: the first cycle round's message evaluates the bases on the
+/// fly (a packed-byte lookup for the combined value, `v_table` products
+/// for the ra decomposition), and the first cycle bind materializes the
+/// half-domain tables directly under that challenge — the full-T dense
+/// tables ((1 + ra_count) × 32 B × T, the stage-5 peak allocation) never
+/// exist. Values are identical to materialize-then-bind: the bases are the
+/// same, and `lo + r·(hi − lo)` is the binding formula either way.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CycleTables<F: JoltField> {
     Pending(PendingCycleTables<F>),
@@ -474,12 +501,17 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     gamma: F,
     r_reduction: Vec<F>,
     rows: Arc<Vec<InstructionCycleRow>>,
+    /// Per-table cycle buckets (`u32` cycle indices), by
+    /// `LookupTableKind::index()`.
     buckets: Vec<Vec<u32>>,
+    /// Condensed per-cycle eq weights (see the reference kernel).
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
     prefix_indices: Vec<usize>,
     prefix_tables: Vec<Polynomial<F>>,
+    /// Per present table: enum value + suffix `Q` polynomials in
+    /// `table.suffixes()` order.
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_keyed_polys))]
     suffix_tables: Vec<(LookupTableKind<RISCV_XLEN>, Vec<Polynomial<F>>)>,
     raf_left: RafDecomposition<F>,
@@ -490,6 +522,10 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
     cycle: Option<CycleState<F>>,
+    /// Packed per-cycle output-claim facts (bits 0..=6: `table_index + 1`,
+    /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
+    /// handoff so the full 40 B rows can free — the final flag walk needs
+    /// only this byte per cycle.
     claim_columns: Vec<u8>,
     progress: RoundProgress,
 }
@@ -901,6 +937,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.suffix_tables = new_tables;
     }
 
+    /// The address-round quadratic, evaluated at `c ∈ {0, 2}` with
+    /// `s(1) = previous_claim − s(0)` (the engine-checked hint), emitted
+    /// through the same `from_evals` constructor as the reference.
     fn address_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let half = self.raf_left.prefix.evals().len() / 2;
         let sums = map_reduce_chunks(
@@ -908,6 +947,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             (half / 8).max(8),
             |range| {
                 let mut sums = [F::zero(); 10];
+                // Per-thread scratch: full prefix eval rows (indexed by the
+                // `Prefixes` discriminant, as `combine` expects) plus suffix
+                // eval rows reused across tables.
                 let mut p0 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
                 let mut p2 = vec![PrefixEval::from(F::zero()); self.prefix_checkpoints.len()];
                 let mut s0: Vec<SuffixEval<F>> = Vec::new();
@@ -966,6 +1008,16 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         UnivariatePoly::from_evals(&[eval_0, eval_1, eval_2])
     }
 
+    /// The cycle-round polynomial via the Gruen factorization: the true
+    /// degree-`(ra_count + 2)` polynomial is `s(t) = ℓ(t) · q(t)` with `ℓ`
+    /// the current linear eq factor and `q(t) = Σ_y E(y) · (Val · Π ra)(t,
+    /// y)`. `q` is evaluated on the grid `[1, …, F−1, ∞]` (`F = 1 +
+    /// ra_count` linear factors): `e_in` folds into the `Val` pair so the
+    /// per-point products accumulate unreduced across the whole inner block
+    /// with no per-row reductions (legacy `eval_linear_prod_accumulate`).
+    /// `q(0)` is recovered from `s(0) + s(1) = previous_claim` and the
+    /// unique degree-`(F+1)` coefficient vector recomposed — byte-identical
+    /// to explicit-point interpolation.
     fn cycle_message(
         &self,
         round: usize,
@@ -1087,6 +1139,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .collect();
         let raf_interleaved =
             self.gamma * self.raf_left.checkpoint + gamma_sqr * self.raf_right.checkpoint;
+        // The identity branch is selected by `raf_flag`, so folding
+        // γ³·U(r_address) in here applies the mask without a separate
+        // cycle-indexed polynomial.
         let mut raf_identity = gamma_sqr * self.raf_identity.checkpoint;
         if CANONICAL_INSTRUCTION_ADDRESS {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
@@ -1115,6 +1170,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             bind_scratch: Vec::new(),
         });
 
+        // The address-phase state is dead past this point — except the
+        // bound-challenge eq tables, which the pending ra bases read until
+        // the first cycle bind materializes the dense tables.
         self.u_evals = Vec::new();
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
@@ -1469,6 +1527,11 @@ mod tests {
         assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
     }
 
+    /// The sumcheck input claim from first principles:
+    /// `Σ_j eq(r_reduction, j) · (Val_j(k_j) + γ·RafVal_j(k_j))` with the
+    /// point-mass `ra` collapsed at each cycle's lookup index. Pins both
+    /// kernels to the protocol, not merely to each other (each kernel's own
+    /// `s(0) + s(1) = claim` self-check would reject a drifted round 0).
     fn input_claim(rows: &[InstructionReadRafWitness], r_reduction: &[Fr], gamma: Fr) -> Fr {
         let tables: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::iter().collect();
         let gamma_sqr = gamma * gamma;

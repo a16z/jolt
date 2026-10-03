@@ -67,12 +67,22 @@ where
         proof.one_hot_config.committed_chunk_bits(),
     )?;
 
+    // The clear-only reference geometry each address phase's expected-output term
+    // reads (advice / program-image RAM address points, bytecode cycle-phase
+    // weights) lives in the stage 4/6 clear outputs, absent in ZK where those
+    // terms are proved by BlindFold and the relations' `derive_output_term` never
+    // runs.
     let clear = if checked.zk {
         None
     } else {
         Some((stage4.clear()?, stage6.clear()?))
     };
 
+    // One construction serves both paths: the hamming reduction from the stage-6
+    // booleanity point split and the per-RA virtualization points, and each
+    // address phase from its layout + `has_address_phase` presence flag + stage-6b
+    // cycle-phase variables + clear-only reference aux. All point/challenge data is
+    // read mode-agnostically off `stage6.output_points()`.
     let sumchecks = build_stage7_sumchecks(
         hamming_dimensions,
         &checked.precommitted,
@@ -80,6 +90,11 @@ where
         clear,
     )?;
 
+    // Draw the hamming-weight reduction's batching gamma (a single `challenge_scalar`,
+    // matching the relation's default `draw_challenges`) path-agnostically before the
+    // ZK/clear branch; the advice and committed-program address phases draw nothing
+    // (`NoChallenges`). BlindFold sources the gamma from
+    // `challenges.hamming_weight_claim_reduction.gamma`.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk {
@@ -92,6 +107,10 @@ where
             JoltRelationId::HammingWeightClaimReduction,
         )?;
 
+        // The produced opening points, derived off the committed batch consistency;
+        // stage 8 reads the hamming point and resolves the precommitted finals off
+        // them. BlindFold recomputes each relation's sumcheck point and publics
+        // independently from `batch_consistency`.
         let input_points = sumchecks.empty_input_points();
         let output_points =
             sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
@@ -107,6 +126,9 @@ where
     let stage6 = stage6.clear()?;
     let claims = &proof.clear_claims()?.stage7;
 
+    // Also rejects claims supplied for phases that did not run, with the same
+    // `UnexpectedOpeningClaim` ids the former hand-written guards used (the id is
+    // derived from the supplied claims' canonical order).
     sumchecks.validate_output_claims(claims)?;
 
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
@@ -130,6 +152,12 @@ where
     }))
 }
 
+/// Build the stage-7 sumcheck batch once, for both proving paths. The hamming
+/// reduction and reduction-backed address phases are constructed from the stage-6
+/// output points (mode-agnostic) and the clear-only stage 4/6 references (`None`
+/// in ZK, where the address phases' `FinalScale` term is proved by BlindFold and
+/// `derive_output_term` never runs). Advice reductions are skipped on Akita: the
+/// final grouped opening checks their direct stage-4 claims.
 pub fn build_stage7_sumchecks<F: JoltField>(
     hamming_dimensions: HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
@@ -160,6 +188,8 @@ pub fn build_stage7_sumchecks<F: JoltField>(
         stage7_hamming_virtualization_address_points(hamming_dimensions, stage6_points)?,
     );
 
+    // The staged advice RAM address point from stage 4's RAM value-check (`None`
+    // in ZK), the clear-only reference the advice `FinalScale` term reads.
     #[cfg(not(feature = "akita"))]
     let advice_reference = |kind| {
         clear.and_then(|(stage4, _)| {
@@ -228,6 +258,10 @@ pub fn build_stage7_sumchecks<F: JoltField>(
     })
 }
 
+/// Construct a present address-phase member: gate on the layout being committed
+/// with active address rounds first (an absent layout yields `Ok(None)`, matching
+/// the member's presence flag), then lift missing stage-6b cycle-phase variables
+/// to `MissingOpeningClaim` before building the instance.
 fn address_phase_member<F: JoltField, L: PrecommittedReductionLayout, M>(
     layout: Option<&L>,
     cycle_phase_variables: Option<Vec<F>>,
@@ -244,6 +278,12 @@ fn address_phase_member<F: JoltField, L: PrecommittedReductionLayout, M>(
     Ok(Some(build(layout, cycle_phase_variables)))
 }
 
+/// Assemble the stage-7 consumed opening *values* from the upstream stage-6 clear
+/// output into the generated `Stage7InputClaims` aggregate. The two advice members
+/// and the two committed-program members are `Some` exactly when their address
+/// phase runs (tracking each `Stage7Sumchecks` member's presence), so a present
+/// member always has its input cell populated. Public because the prover's
+/// stage-7 recipe builds its batch inputs through the same wiring.
 pub fn stage7_input_values_from_upstream<F: JoltField>(
     sumchecks: &Stage7Sumchecks<F>,
     stage6: &Stage6bClearOutput<F>,

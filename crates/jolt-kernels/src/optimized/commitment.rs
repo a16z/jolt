@@ -41,9 +41,13 @@ use crate::commitment::{
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 
+/// Superchunk ceiling — the measured 64-thread optimum.
 #[cfg(feature = "parallel")]
 const SUPERCHUNK_CYCLES_MAX: usize = 1 << 21;
 
+/// Cycles per superchunk, scaled to the pool. The extracted bundle is 80
+/// bytes per cycle and the pipeline retains two buffers, so applying the
+/// 64-thread optimum to every host needlessly reserves about 320 MiB.
 fn superchunk_cycles() -> usize {
     #[cfg(feature = "parallel")]
     {
@@ -80,6 +84,8 @@ where
         let row_width = grid.num_columns();
 
         if grid.order != TracePolynomialOrder::CycleMajor || row_width > cycles {
+            // Materializing modes are off the streaming hot path; the
+            // reference kernel's one-table-per-column passes serve them.
             return ReferenceBackend.commit_witness(session, source, ids, grid, setup);
         }
 
@@ -95,6 +101,8 @@ where
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        // One dense trace-domain column today; the reference pass is already
+        // the right shape, and sharing it keeps the tiers byte-identical.
         ReferenceBackend.commit_field_inline_witness(session, source, ids, grid, setup)
     }
 
@@ -106,6 +114,8 @@ where
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        // Advice grids are small single-column commits; the reference pass
+        // is already the right shape.
         ReferenceBackend.commit_advice(session, witness, id, grid, setup)
     }
 }

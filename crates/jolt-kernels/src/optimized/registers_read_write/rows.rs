@@ -16,14 +16,20 @@ use rayon::prelude::*;
 use super::sparse::SeedEntry;
 use crate::KernelError;
 
+/// Operand indices and raw values for one cycle.
+/// Manual because atomic witness types do not expose operand indices.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RegisterCycleRow {
+    /// `(register, read value)`.
     pub rs1: Option<(u8, u64)>,
+    /// `(register, read value)`.
     pub rs2: Option<(u8, u64)>,
+    /// `(register, pre-write value, post-write value)`.
     pub rd: Option<(u8, u64, u64)>,
 }
 
 impl WitnessBundle for RegisterCycleRow {
+    // The hidden re-export avoids a jolt-program dependency.
     fn from_row(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -36,6 +42,7 @@ impl WitnessBundle for RegisterCycleRow {
                 .rd_index()
                 .map(|register| (register, row.rd_pre_value(), row.rd_write_value())),
         };
+        // Match the trace oracle's register-domain check.
         for register in [
             cycle.rs1.map(|(register, _)| register),
             cycle.rs2.map(|(register, _)| register),
@@ -61,11 +68,13 @@ impl WitnessBundle for RegisterCycleRow {
     }
 }
 
+/// Per-cycle `rd` indices shared with stage 5.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
 
 const COLLECT_CHUNK: usize = 1 << 16;
 
+/// Signed rd write delta, or zero without an rd operand.
 #[inline]
 pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
     match cycle.rd {
@@ -125,6 +134,8 @@ impl CollectRegisterEntries {
         Ok(consumers.0)
     }
 
+    /// Two-pass parallel build: count and fill columns, then scatter entries.
+    /// Exclusive offsets avoid a second entry-sized allocation.
     #[cfg(feature = "parallel")]
     fn collect_par<F: JoltField>(
         access: &RandomAccessRows,

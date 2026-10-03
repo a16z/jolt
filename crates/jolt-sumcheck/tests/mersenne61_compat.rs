@@ -1,5 +1,12 @@
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
+//! Compatibility test for non-BN254 sumcheck verifier plumbing.
+//!
+//! `Mersenne61` is intentionally small and exists here only to prove that the
+//! transcript and verifier APIs no longer depend on BN254-specific helper
+//! surface. It is not a production proving field. Real sumcheck soundness with
+//! this base field would require an adequately large extension field.
+
 use std::{
     fmt::{Debug, Display},
     hash::Hash,

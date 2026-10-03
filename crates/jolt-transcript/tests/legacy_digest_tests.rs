@@ -24,6 +24,7 @@ const KAT_LABEL: &[u8] = b"jolt transcript kat";
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     bytes.iter().fold(String::new(), |mut out, byte| {
+        // writing to a String is infallible
         let _ = write!(out, "{byte:02x}");
         out
     })

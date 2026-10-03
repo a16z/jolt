@@ -23,6 +23,7 @@ impl VirtualRev8W {
 
 impl RISCVTrace for VirtualRev8W {}
 
+/// Reverses the bytes in each 32-bit word.
 #[inline]
 pub fn rev8w(v: u64) -> u64 {
     let lo = (v as u32).swap_bytes();

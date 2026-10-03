@@ -139,6 +139,8 @@ pub fn spartan_outer_row_weights<F: JoltField>(
     stream: F,
 ) -> Result<Vec<F>, CenteredIntegerDomainError> {
     let lagrange_weights = centered_lagrange_evals(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, uniskip)?;
+    // The row-group arrays are typed to the domain size, so only a short
+    // weight vector could make the zips below drop rows silently.
     debug_assert_eq!(lagrange_weights.len(), SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE);
     let mut weights = vec![F::zero(); SPARTAN_OUTER_ROW_COUNT];
 
@@ -303,6 +305,7 @@ fn spartan_outer_tau_kernel<F: JoltField>(
         });
     }
 
+    // `tau` is non-empty: `tau.len() == expected >= 1` is checked above.
     let Some((&tau_high, tau_low)) = tau.split_last() else {
         return Err(JoltSpartanOuterRemainderError::ChallengeLengthMismatch { expected, got: 0 });
     };
@@ -570,6 +573,12 @@ mod tests {
         assert_eq!(composed.check_witness(&witness), Ok(()));
     }
 
+    /// Pins the `jolt-claims` composed-lane helpers against this crate's
+    /// field-inline product constraint rows — the R1CS source of truth for the
+    /// two field-inline lanes. Per lane, the helper's left/right factor and input values
+    /// must reproduce the row's `A`/`B`/`C` linear forms on a witness with
+    /// distinct (and deliberately non-satisfying) column values, weighted at
+    /// the composed lane indices following the ordinary lanes.
     #[cfg(feature = "field-inline")]
     #[test]
     #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]

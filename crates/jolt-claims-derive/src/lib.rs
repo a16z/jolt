@@ -143,6 +143,9 @@ pub fn derive_sumcheck_challenges(input: TokenStream) -> TokenStream {
         .into()
 }
 
+/// The protocol id namespace the emitted impls resolve against. Each namespace
+/// names the id-family types of one `jolt_claims::protocols::*` module; the
+/// derives stay a single implementation instantiated per namespace.
 struct Namespace {
     opening_id: TokenStream2,
     relation_id: TokenStream2,
@@ -220,6 +223,9 @@ struct OpeningSpec {
     from: Option<Ident>,
 }
 
+/// A leaf opening field: its identifier, arity, kind, and owning relation. Every
+/// field of a claim struct must be a leaf `#[opening(..)]` — nested aggregates are
+/// not supported (aggregate structs hand-write their encoders).
 struct FieldPlan {
     ident: Ident,
     is_option: bool,
@@ -244,6 +250,11 @@ fn named_fields(data: &Data, span: Span) -> Result<Vec<Field>> {
     }
 }
 
+/// A claim struct must have exactly one generic type parameter (the opening
+/// *cell*, conventionally `C`) and no lifetimes, consts, or where-clause: the
+/// derive instantiates it at `F` (value form) and `Vec<F>` (point form), so any
+/// other shape would make those instantiations ill-formed. Errors clearly rather
+/// than emitting a wrongly instantiated impl.
 fn ensure_single_cell_generic(generics: &Generics) -> Result<()> {
     let type_params = generics
         .params
@@ -447,6 +458,8 @@ fn id_expr(
     match kind {
         LeafKind::Virtual { variant, payload } => {
             let polynomial = match (index, payload) {
+                // A payload-carrying variant is always scalar; the `Vec`+payload
+                // combination is rejected in `plan_field`.
                 (Some(_), Some(_)) => {
                     unreachable!("Vec fields with payload annotations are rejected in plan_field")
                 }
@@ -481,6 +494,10 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         .collect::<Result<Vec<_>>>()?;
 
     let id_ty = namespace.opening_id.clone();
+    // `order_chains` lists each leaf's id (per `Vec` element, per `Some` `Option`) in
+    // field-declaration order, so it lists exactly the ids `resolve_output` hits.
+    // `OutputClaims::opening_values` reconstructs the values from this order via
+    // `resolve_output`, so the canonical order is single-sourced here.
     let mut order_chains = Vec::new();
     let mut resolve_arms = Vec::new();
     let mut construct_fields = Vec::new();
@@ -550,6 +567,8 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     }
 
     let point_accessors = plans.iter().map(point_accessor);
+    // The shared-point constructor exists only for the all-scalar shape: a `Vec`
+    // family or `Option` leaf has no single "every opening at one point" form.
     let from_shared_point = (!plans.is_empty()
         && plans.iter().all(|plan| !plan.is_many && !plan.is_option))
     .then(|| {
@@ -640,6 +659,9 @@ fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
 
     let id_ty = namespace.opening_id.clone();
     let mut resolve_arms = Vec::new();
+    // Mirrors the resolve iteration (id per leaf, per `Vec` element, per `Some`
+    // `Option`), so `canonical_order()` lists exactly the ids `resolve_input`
+    // would hit, in field-declaration order.
     let mut order_chains = Vec::new();
     for plan in &plans {
         let FieldPlan {

@@ -50,6 +50,7 @@ impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
         LookupTableKind::<XLEN>::iter().map(Self::from)
     }
 
+    /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
     pub fn zklean_pretty_print<F: ZkLeanReprField>(
         &self,
         f: &mut impl std::io::Write,

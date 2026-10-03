@@ -1,3 +1,13 @@
+//! The compile-time proof-mode seam: one constructor per mode-divergent
+//! object, with the mode carried entirely in `#[cfg(feature = "zk")]` types.
+//!
+//! Stage recipes stay mode-agnostic: they call [`ProofMode::recorder`] for
+//! the batch recorder and [`ProofMode::prove_uniskip`] for the uni-skip arm,
+//! and both return the clear or committed flavor depending on how the crate
+//! was compiled. There is no runtime flag to drift — the recorder type *is*
+//! the mode, exactly as the stage drivers were designed around
+//! (`specs/prover-stage-drivers.md`).
+
 #[cfg(not(feature = "zk"))]
 use core::marker::PhantomData;
 
@@ -133,6 +143,8 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
     }
 }
 
+/// Split a recorded sumcheck into its wire proof and the ZK-retained
+/// witness; an absent witness is a recorder-contract violation in a ZK build.
 #[cfg(feature = "zk")]
 #[expect(
     clippy::type_complexity,

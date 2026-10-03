@@ -7,6 +7,9 @@ use jolt_verifier::ProgramPreprocessing;
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::{self, tamper_manifest, verifier_fixtures::standard_muldiv_case};
 
+/// A preprocessing whose entry address differs from the proven program's must
+/// reject the honest proof: the entry address is a transcript input and the
+/// initial PC constraint.
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn entry_address_mismatch_rejects_now() {

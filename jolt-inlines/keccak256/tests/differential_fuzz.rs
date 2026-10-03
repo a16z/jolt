@@ -120,6 +120,8 @@ fn fuzz_digest_vs_tiny_keccak() {
             2 => (rng.next_u32() % 600) as usize,
             _ => (rng.next_u32() % 4096) as usize,
         };
+        // Odd iterations hash from a 1-byte offset into the (8-aligned) heap
+        // buffer so the unaligned absorb paths run as often as the aligned ones.
         let offset = i % 2;
         let mut buffer = vec![0u8; len + offset];
         rng.fill_bytes(&mut buffer);
@@ -161,12 +163,16 @@ fn fuzz_chunked_update_vs_tiny_keccak() {
                 .map(|_| (rng.next_u32() % 300) as usize)
                 .collect()
         };
+        // Every fourth iteration finalizes right after a boundary schedule with
+        // nothing buffered (or one byte, or the 0x81 combined-padding case).
         let tail = if i % 4 == 0 {
             0
         } else {
             (rng.next_u32() % 200) as usize
         };
         let len = chunks.iter().sum::<usize>() + tail;
+        // Odd iterations feed chunks from a 1-byte offset so `update` absorbs
+        // full blocks through both its aligned and unaligned paths.
         let offset = i % 2;
         let mut buffer = vec![0u8; len + offset];
         rng.fill_bytes(&mut buffer);

@@ -152,6 +152,10 @@ fn extended_products(
     }
     out
 }
+/// The field twin of [`extended_products`] for active field-inline cycles: the composed
+/// left/right factor forms with the field-inline lane contributions from the pinned
+/// jolt-claims composed-lane helper (the same fold the verifier's composed checks
+/// perform).
 #[cfg(feature = "field-inline")]
 fn field_extended_products<F: JoltField>(
     row: &SpartanProductRow,
@@ -381,6 +385,8 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
     }
 }
 
+/// The stage-2 product remainder slot: reclaims the uni-skip carry and builds
+/// the linear-time round kernel.
 pub struct OptimizedProductRemainder;
 
 impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemainder {
@@ -632,6 +638,9 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         try_par_sum_vecs(blocks, 8, block)
     }
 
+    /// The three field-inline factor opening values at the bound cycle point
+    /// (`selected_product_remainder_output_openings` order: rs1, rs2, rd) — one
+    /// eq-weighted walk over the sparse field-inline rows.
     #[cfg(feature = "field-inline")]
     fn field_claimed_inputs(&self, weights: &[F]) -> [F; 3] {
         map_reduce_chunks(
@@ -794,6 +803,7 @@ mod tests {
     use crate::reference::spartan_product::{ReferenceProductRemainder, SpartanProductKernel};
     use crate::ReferenceBackend;
 
+    /// The eight product columns in the output claims' canonical order.
     const COLUMNS: [JoltVirtualPolynomial; 8] = [
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltVirtualPolynomial::RightInstructionInput,
@@ -1196,6 +1206,12 @@ mod tests {
         u64::from_le_bytes(bytes_le[24..].try_into().unwrap()) >= 0x2200_0000_0000_0000
     }
 
+    /// Round-0 materialization at the small-scalar accumulator's Barrett
+    /// boundary: both full-u64 left lanes at `u64::MAX` under uni-skip
+    /// weights whose canonical values exceed `0.7·p`, where two
+    /// `fmadd_u64` terms reach ~2^318.6 and leave the `reduce_nplus1`
+    /// window (2^318). The wide accumulator path must still match the
+    /// reference kernel's straight field arithmetic round for round.
     #[test]
     fn full_range_left_lanes_under_heavy_uniskip_weights_match_reference() {
         let log_t = 2;
@@ -1209,6 +1225,10 @@ mod tests {
                 ..row
             })
             .collect();
+        // At integer points the centered Lagrange weights are small (signed)
+        // integers, and small-integer points keep the low-degree weights
+        // structured, so walk a squaring iteration (full-field after two
+        // steps) until both full-u64 lane weights are heavy.
         let mut r0 = Fr::from_u64(0x9E37_79B9_7F4A_7C15);
         let r0 = (1u64..=4096)
             .map(|k| {
@@ -1237,6 +1257,9 @@ mod tests {
         });
     }
 
+    /// The trait-path parity body over a real trace backend, with the
+    /// remainder driven by the true joint-domain sum (the trace fixtures are
+    /// not constraint-satisfying; see the outer module's twin test).
     fn sample_case(backend: &TraceBackend<OwnedTrace>, log_t: usize) {
         {
             let tau_low: Vec<Fr> = (0..log_t)
@@ -1357,6 +1380,10 @@ mod tests {
         }
     }
 
+    /// Full trait-path parity: without field-inline on the canned sample trace; with
+    /// field-inline enabled over a field-inline fixture trace (the sample backend
+    /// carries no field-inline view), exercising the trace-backed sparse field-inline
+    /// row seam.
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
         #[cfg(not(feature = "field-inline"))]

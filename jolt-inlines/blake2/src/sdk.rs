@@ -140,6 +140,8 @@ impl Blake2b {
         }
     }
 
+    /// Computes BLAKE2b hash in one call.
+    /// Optimized for virtual cycles by avoiding intermediate buffers for small inputs.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
         Self::digest_from_state(INITIAL_STATE, input)
@@ -343,6 +345,8 @@ fn compress(hash_state: &mut [u64; STATE_VECTOR_LEN], block: &[u8], counter: u64
     }
 }
 
+/// Compress with direct copy to message array (no intermediate buffer).
+/// Optimized for virtual cycles by avoiding double-copy for small inputs.
 #[inline(always)]
 fn compress_direct(
     hash_state: &mut [u64; STATE_VECTOR_LEN],
@@ -350,6 +354,7 @@ fn compress_direct(
     counter: u64,
     is_final: bool,
 ) {
+    // Use MaybeUninit to avoid zeroing the full array
     let mut message: core::mem::MaybeUninit<[u64; MSG_BLOCK_LEN + 2]> =
         core::mem::MaybeUninit::uninit();
     let len = input.len();
@@ -425,6 +430,9 @@ impl Default for Blake2b {
 ))]
 pub(crate) unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
     use crate::{BLAKE2_FUNCT3, BLAKE2_FUNCT7, INLINE_OPCODE};
+    // Memory layout for Blake2 instruction:
+    // rs1: points to state (64 bytes)
+    // rs2: points to message block (128 bytes) + counter (8 bytes) + final flag (8 bytes)
 
     core::arch::asm!(
         ".insn r {opcode}, {funct3}, {funct7}, x0, {rs1}, {rs2}",

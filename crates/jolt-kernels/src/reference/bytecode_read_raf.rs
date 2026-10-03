@@ -109,6 +109,9 @@ pub struct BytecodeReadRafWitness {
     pub bytecode_pc: BytecodePc,
 }
 
+/// One stage's raw-value source: a raw table by index, or its pointwise
+/// complement (the fused register legs read `1 − store`; the extension of
+/// `1 − f` is `1 − ext(f)`, so no second table binds).
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum StageVal {
@@ -125,6 +128,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
         let relation = inputs.relation;
+        // The per-row stage-value tables: the verifier's own fold over the
+        // padded bytecode (carrying the lattice store stage as its last
+        // element on the packed shape).
         let program = witness.program_preprocessing();
         let stage_gammas = inputs.challenges.stage_gamma_powers();
         let bytecode_rows = &program.bytecode.bytecode;
@@ -173,6 +179,9 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     entry_weight: F,
     raf_weights: Vec<F>,
     pushforwards: Vec<Polynomial<F>>,
+    /// The RAW distinct value tables (no RAF fold — see the module doc); the
+    /// staged `BytecodeValClaim` wire set on the packed shape includes the
+    /// store column the fused stages read.
     values: Vec<Polynomial<F>>,
     stage_vals: Vec<StageVal>,
     int_table: Polynomial<F>,
@@ -183,6 +192,8 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     rounds_bound: usize,
 }
 
+/// The two field-register access terms at the stage-4/5 cycle points and γ³/γ⁴
+/// weights, sharing the ordinary bytecode address domain.
 #[cfg(feature = "field-inline")]
 #[cfg_attr(
     feature = "allocative",
@@ -192,6 +203,8 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
 struct FieldInlineAddressLegs<F: JoltField> {
     weights: [F; 2],
     pushforwards: [Polynomial<F>; 2],
+    /// The field-register row values under the extended per-stage gamma powers
+    /// (the jolt-claims field-inline `read_raf_stage_values` columns 3/4).
     values: [Polynomial<F>; 2],
 }
 
@@ -317,6 +330,9 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
             )
             .collect();
 
+        // The field-inline legs: the field-register row values under the extended gamma
+        // powers (the composed jolt-claims fold), each leg over its own cycle binding.
+        // Reject malformed field-register opening points.
         #[cfg(feature = "field-inline")]
         let field_inline = {
             let geometry = relation.field_inline_geometry()?;
@@ -360,12 +376,17 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
             }
         };
 
+        // The RAW stage-value tables; the RAF identity `Int(k) = k` binds as
+        // its own table with the within-stage weights `γ^S` (stage 1) and
+        // `γ^{S-1}` (stage 3) applied at message time.
         let mut raf_weights = vec![F::zero(); num_stages];
         raf_weights[0] = gamma_powers[num_stages];
         raf_weights[2] = gamma_powers[num_stages - 1];
         let values: Vec<Polynomial<F>> = (0..NUM_BYTECODE_VAL_STAGES)
             .map(|s| Polynomial::new(stage_values.iter().map(|row| row[s]).collect()))
             .collect();
+        // The fused RAM legs read the staged store column, the register legs
+        // its complement.
         let mut stage_vals: Vec<StageVal> = (0..BASE_STAGES).map(StageVal::Table).collect();
         if lattice {
             stage_vals.extend([
@@ -517,6 +538,8 @@ impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
         {
             intermediate += self.field_inline.bound_term();
         }
+        // Committed mode stages the RAW bound `Val_s` values (the distinct
+        // tables — the fused stages dedup through the store column).
         let val_stages = if self.committed_program {
             self.values.iter().map(|table| table.evals()[0]).collect()
         } else {
@@ -546,6 +569,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
         #[cfg(not(feature = "field-inline"))]
         let entry_bytecode_index = relation.entry_bytecode_index();
         let committed_chunk_bits = relation.committed_chunk_bits();
+        // The address-only stage-value fold, off the relation: full mode
+        // computed it at construction; committed mode's constants ARE the
+        // stage-6a staged raw values.
         #[cfg(not(feature = "field-inline"))]
         let stage_values_at_r_address = relation.stage_values_at_r_address()?;
         let cycles = 1usize << dimensions.log_t();
@@ -630,6 +656,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
             )?))
         }
 
+        // The anchor Expr omits composed publics. Sample the verifier's complete
+        // relation on Boolean cycles instead of reproducing the optimized gamma
+        // fold. The result is a multilinear coefficient for the RA product.
         #[cfg(feature = "field-inline")]
         {
             let mut coefficient = Vec::with_capacity(cycles);
@@ -688,6 +717,11 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
     }
 }
 
+/// The cycle-phase kernel with field-inline enabled: `Σ_j C(j) · Π_i BytecodeRa_i(j)`
+/// with the composed coefficient multilinear `C` (see the module doc and the prepare
+/// arm above); the packed shape adds `C_fused(j) · FusedInc(j)` to `C(j)`. Samples the
+/// anchor relation's `degree() + 1` points per round — with the coefficients pre-folded
+/// the true degree is exactly the anchor degree (`num_ra + 1`, or `num_ra + 2` packed).
 #[cfg(feature = "field-inline")]
 #[cfg_attr(
     feature = "allocative",
@@ -704,6 +738,9 @@ struct ComposedBytecodeReadRafCycleKernel<F: JoltField> {
     rounds_bound: usize,
 }
 
+/// The packed fused-inc leg of the composed cycle kernel: the four consumer
+/// stages' scalar-folded coefficient and the `FusedInc` trace column it
+/// multiplies (also the source of the lattice `fused_inc` output claim).
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 #[cfg_attr(
     feature = "allocative",

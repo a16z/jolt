@@ -1,3 +1,11 @@
+//! The per-stage [`StageProver`](crate::driver::StageProver) /
+//! [`KernelSource`](crate::driver::KernelSource) impl expansions: one
+//! member-list callback invocation per stage batch, each in a module that
+//! imports the batch's relation and aggregate names so the derive-emitted
+//! tokens resolve. This file is the prove side's complete stage-driver
+//! surface — no stage's member list, order, or presence appears anywhere
+//! else in this crate.
+
 mod stage1 {
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage1::outputs::{
@@ -52,6 +60,10 @@ mod stage4 {
 
     use crate::driver::impl_stage_prover;
 
+    // Stage 4's `no_opening_values` replacement keeps the generated
+    // signature (the claims aggregate's hand-ordered `opening_values`, which
+    // splices the field-inline openings under `field-inline`), so the driver's default
+    // curation serves both feature arms unchanged.
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }
 
@@ -97,6 +109,8 @@ mod stage6b {
     };
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
+    // The packed batch has no inc member — the fused-inc read-raf stages
+    // discharge the reduced inc claims instead.
     #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -111,6 +125,9 @@ mod stage6b {
 
     use crate::driver::impl_stage_prover;
 
+    // The stage's `no_opening_values` curation: the promoted verifier
+    // helper's canonical order, including the runtime dedup of booleanity's
+    // `BytecodeRa` claims against the bytecode read-RAF points.
     jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover
         curate = |_batch, claims, points| {
             let booleanity_opening_point =
@@ -148,6 +165,18 @@ mod stage7 {
     jolt_verifier::stage7_sumchecks_members!(impl_stage_prover);
 }
 
+/// Twin locks for the macro-expanded [`StageProver`](crate::driver::StageProver)
+/// driver against a hand-rolled toy stage: three self-consistent dense
+/// relations — a plain member, an `Option` member (exercised absent and
+/// present), and a session-carried member whose kernel is reclaimed from a
+/// [`ProofSession`](jolt_kernels::ProofSession) carry (the uni-skip-remainder
+/// / precommitted-span pattern) — driven end to end (head → prepare → round
+/// loop → typed extraction → per-member `park_residue` → shape validation →
+/// final-claim self-check → finish) and byte-compared against the generated
+/// `verify_clear` on a twin transcript. A second toy batch pairs a
+/// full-window member with a head-aligned shorter member (`offset = 0`,
+/// trailing dummy rounds), locking the engine's delayed `finish_rounds`
+/// bookkeeping through the generated driver.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::panic)]
 mod twin_tests {
@@ -199,6 +228,9 @@ mod twin_tests {
                 serde::Serialize,
                 serde::Deserialize,
             )]
+            // The SumcheckBatch derive's aggregates require Allocative of
+            // every member's outputs under the expanding crate's
+            // `allocative` feature (the profile harness's flamegraphs).
             #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
             #[relation($rel)]
             struct $outputs<C> {
@@ -292,6 +324,10 @@ mod twin_tests {
                         Ok(0)
                     }
 
+                    /// The engine halves an inactive member's claim once per
+                    /// round, so the head-aligned member's final batch claim
+                    /// is the fully bound (padded-scale) table value with the
+                    /// trailing dummy rounds halved back out.
                     fn expected_output(
                         &self,
                         _input_points: &$inputs<Vec<F>>,
@@ -352,6 +388,9 @@ mod twin_tests {
         gamma: ToyGamma<F>,
     }
 
+    /// The head-aligned twin batch: a full-window member plus a shorter
+    /// member active from round 0, whose final bind the engine delivers only
+    /// after the trailing dummy rounds (the delayed `finish_rounds` path).
     #[derive(SumcheckBatch)]
     struct ToyHeadSumchecks<F: JoltField> {
         alpha: ToyAlpha<F>,
@@ -427,6 +466,8 @@ mod twin_tests {
         jolt_verifier::stages::relations::SumcheckInputClaims<Fr, R>: jolt_claims::InputClaims<Fr>,
         jolt_verifier::stages::relations::ConcreteSumcheckChallenges<Fr, R>:
             jolt_claims::SumcheckChallenges<Fr, jolt_claims::protocols::jolt::JoltChallengeId>,
+        // `log_residue` records a typed `JoltRelationId`, so the toy kernel is
+        // pinned to jolt-family relations.
         R::Symbolic: SymbolicSumcheck<RelationId = JoltRelationId>,
     {
         type Relation = R;
@@ -447,6 +488,9 @@ mod twin_tests {
         }
     }
 
+    /// The prepare call order, recorded through the proof session (the
+    /// universal `prepare` takes `&self`, so the log rides on the session's
+    /// backend-private state instead of preparer mutability).
     #[derive(Default)]
     struct PrepareCallLog(Vec<&'static str>);
 
@@ -457,6 +501,9 @@ mod twin_tests {
             .push(member);
     }
 
+    /// The `park_residue` call order — the toy kernels' residue is a log
+    /// entry, pinning that the driver consumes every present member into the
+    /// session hook after extraction.
     #[derive(Default)]
     struct ResidueCallLog(Vec<JoltRelationId>);
 
@@ -497,6 +544,10 @@ mod twin_tests {
 
     impl_dense_prepare!(ToyAlpha, ToyBeta);
 
+    /// Mints the head-aligned member's kernel at the dummy-round padding
+    /// scale: a head-aligned member is active from round 0 at
+    /// `input_claim · 2^(max − rounds)`, so its table must sum to the padded
+    /// claim (see `BatchPrelude::new`).
     struct HeadDensePrepare {
         seed: u64,
     }
@@ -517,8 +568,13 @@ mod twin_tests {
         }
     }
 
+    /// The gamma kernel is a `ProofSession` carry, parked by the toy front
+    /// before `prove` — the uni-skip-remainder / precommitted-span pattern. A
+    /// missing carry is a proof-time `KernelError`.
     struct ParkedToyGamma(DenseKernel<ToyGamma<Fr>>);
 
+    // Session-inserted test state must be `MaybeAllocative`; self-sized
+    // visitation is plenty for twin-lock scaffolding.
     #[cfg(feature = "allocative")]
     mod carry_visitation {
         use super::*;
@@ -534,6 +590,8 @@ mod twin_tests {
         }
         impl_self_sized_allocative!(PrepareCallLog, ResidueCallLog, ParkedToyGamma);
 
+        // The toy kernel is a `SumcheckKernel`, so the mid-stage snapshot's
+        // `MaybeAllocative` supertrait reaches it too.
         impl<R> allocative::Allocative for DenseKernel<R> {
             fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
                 let mut visitor = visitor.enter_self_sized::<Self>();
@@ -715,6 +773,9 @@ mod twin_tests {
             )
             .unwrap();
 
+        // Verifier twin: generated draw + composed verify_clear (which runs the
+        // derive-opening-points and expected-final-claim checks internally) +
+        // output-claim absorbs.
         let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let _ = sumchecks
@@ -768,6 +829,12 @@ mod twin_tests {
         );
     }
 
+    /// The head-aligned driver path: a shorter member active from the batch's
+    /// FIRST round alongside a full-window member. Its final bind arrives only
+    /// through the engine's delayed `finish_rounds` delivery — after the
+    /// trailing dummy rounds — yet typed extraction and `park_residue` see the
+    /// kernel fully bound, and the twin `verify_clear` reproduces the
+    /// transcript byte for byte.
     #[test]
     fn driver_twin_with_head_aligned_member() {
         let sumchecks = ToyHeadSumchecks {

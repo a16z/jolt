@@ -161,7 +161,9 @@ pub fn peak_footprint_bytes() -> Option<u64> {
 /// Sample once, right after the workload.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PeakMemory {
+    /// [`peak_rss_bytes`].
     pub rss_bytes: Option<u64>,
+    /// [`peak_footprint_bytes`].
     pub footprint_bytes: Option<u64>,
 }
 

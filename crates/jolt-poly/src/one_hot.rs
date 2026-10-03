@@ -1,3 +1,12 @@
+//! One-hot multilinear polynomial — sparse representation where each row has
+//! at most one nonzero entry with value 1.
+//!
+//! Used for Jolt's RA (random access) lookup index polynomials, where each
+//! cycle selects exactly one of `k` possible values. Storing the hot index
+//! per row instead of a dense `T × k` evaluation table reduces memory by
+//! a factor of `k` and enables ~254× faster commitment via generator lookup
+//! instead of full MSM.
+
 use jolt_field::JoltField;
 
 use crate::multilinear::MultilinearPoly;
@@ -61,6 +70,10 @@ impl OneHotPolynomial {
             k <= u8::MAX as usize + 1,
             "k exceeds u8 index range ({k} > 256)"
         );
+        // WARNING: hot indices >= k address positions outside the declared
+        // (T × k) grid, silently corrupting fold/commitment results. Debug-only:
+        // production witness generation masks indices below k, and a release
+        // scan would add an O(T) pass per committed polynomial.
         debug_assert!(
             indices.iter().flatten().all(|&col| (col as usize) < k),
             "one-hot column index out of range (must be < k = {k})"
@@ -91,6 +104,7 @@ impl OneHotPolynomial {
         &self.indices
     }
 
+    /// Consumes the polynomial and returns its row-wise hot indices.
     #[inline]
     pub fn into_indices(self) -> Vec<Option<u8>> {
         self.indices
@@ -101,6 +115,10 @@ impl OneHotPolynomial {
         self.indices.len()
     }
 
+    /// Number of variables $n$. The polynomial has $2^n$ evaluations.
+    ///
+    /// Inherent method avoids trait disambiguation since [`MultilinearPoly`]
+    /// is generic over `F`.
     #[inline]
     pub fn num_vars(&self) -> usize {
         self.num_vars
@@ -161,6 +179,8 @@ impl<F: JoltField> MultilinearPoly<F> for OneHotPolynomial {
         }
     }
 
+    /// O(T) sparse fold — accumulates `left[row]` into `result[col]` only at
+    /// nonzero positions, avoiding the O(T × K) dense iteration.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
         let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);

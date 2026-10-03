@@ -77,3 +77,6 @@ impl Invariant for BoundsCheckInvariant {
         ]
     }
 }
+
+// The #[test] functions `seed_corpus` and `random_inputs` inside the
+// generated `*_synthesized` modules are auto-discovered by nextest.

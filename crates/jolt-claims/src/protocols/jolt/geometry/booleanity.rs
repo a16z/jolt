@@ -36,6 +36,9 @@ where
     booleanity_output(booleanity_output_openings(dimensions.layout))
 }
 
+/// The booleanity fold `eq · Σ_i γ^{2i} (x_i² − x_i)` over any boolean-checked
+/// opening list; shared by the base and lattice-mode variants of the relation
+/// so the formula has one owner.
 pub(crate) fn booleanity_output<F>(openings: impl IntoIterator<Item = JoltOpeningId>) -> JoltExpr<F>
 where
     F: Ring,

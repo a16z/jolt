@@ -13,6 +13,7 @@ use super::{
     CoeffLut, CycleState, LutIndex, OneHotCoeff,
 };
 
+/// Block boundaries advanced so no `row >> pair_bits` group is split.
 pub(crate) fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
     const BLOCK_TARGET: usize = 1 << 14;
     let len = entries.len();
@@ -36,6 +37,10 @@ pub(crate) fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec
     bounds
 }
 
+/// Bind and compact entries within pair-aligned blocks.
+///
+/// Writes stay behind unread groups because merging never grows a group.
+/// A group uses scratch until its output fits entirely in the vacated prefix.
 pub(crate) fn bind_sparse_entries_in_place<E>(
     entries: &mut Vec<E>,
     bind: impl Fn(Option<&E>, Option<&E>) -> E + Sync,
@@ -99,6 +104,7 @@ pub(crate) fn bind_sparse_entries_in_place<E>(
             .collect()
     };
 
+    // Each compacted run stays within its original block.
     let mut total = counts[0];
     for block in 1..blocks {
         let src = bounds[block];
@@ -110,6 +116,7 @@ pub(crate) fn bind_sparse_entries_in_place<E>(
     entries.truncate(total);
 }
 
+/// [`bind_sparse_entries_in_place`] for index-parallel SoA columns.
 pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
     vals: &mut Vec<F>,
     metas: &mut Vec<IndexedMeta>,
@@ -351,6 +358,7 @@ fn accumulate_pair_group<F, E>(
     }
 }
 
+/// Cycle-round `[q(0), leading coefficient]` over sparse entries.
 pub(super) fn sparse_quadratic<F, E>(
     entries: &[E],
     ra_lut: &CoeffLut<F>,
@@ -411,6 +419,7 @@ where
     }
 }
 
+/// [`sparse_quadratic`] for indexed SoA columns.
 pub(super) fn sparse_quadratic_soa<F: JoltField>(
     vals: &[F],
     metas: &[IndexedMeta],
@@ -518,6 +527,7 @@ pub(super) fn fused_intermediates<F: JoltField>(
     merge_bind(evens, odds, &bind, |entry| scratch.1.push(entry));
 }
 
+/// Round-1 quadratic with first-bind rows rebuilt in per-thread scratch.
 #[expect(
     clippy::too_many_arguments,
     reason = "mirrors sparse_quadratic plus the two table generations"
@@ -587,6 +597,7 @@ pub(super) fn sparse_quadratic_fused<F: JoltField>(
     }
 }
 
+/// Fuse two seed binds into quarter-domain indexed SoA columns.
 pub(super) fn bind_seed_entries_fused<F: JoltField>(
     entries: &[SeedEntry],
     seed_ra_lut: &CoeffLut<F>,

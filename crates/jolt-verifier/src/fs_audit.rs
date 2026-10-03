@@ -1,18 +1,24 @@
 use std::cell::Cell;
 
+/// Verifier region active when a transcript challenge is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FsScope {
+    /// Input validation and transcript preamble.
     #[default]
     Preamble,
+    /// Proof and preprocessing commitments.
     Commitments,
     Stage1,
     Stage2,
     Stage3,
     Stage4,
     Stage5,
+    /// Stage 6 address phase.
     Stage6a,
+    /// Stage 6 cycle phase.
     Stage6b,
     Stage7,
+    /// Final opening checks.
     Stage8,
     BlindFold,
 }
@@ -21,6 +27,7 @@ thread_local! {
     static CURRENT_SCOPE: Cell<FsScope> = const { Cell::new(FsScope::Preamble) };
 }
 
+/// Restores the previous verifier scope on drop.
 pub struct FsScopeGuard {
     previous: FsScope,
 }
@@ -31,12 +38,14 @@ impl Drop for FsScopeGuard {
     }
 }
 
+/// Marks subsequent transcript operations as belonging to `scope`.
 #[must_use]
 pub fn enter(scope: FsScope) -> FsScopeGuard {
     let previous = CURRENT_SCOPE.replace(scope);
     FsScopeGuard { previous }
 }
 
+/// Returns the verifier scope active on this thread.
 pub fn current() -> FsScope {
     CURRENT_SCOPE.get()
 }

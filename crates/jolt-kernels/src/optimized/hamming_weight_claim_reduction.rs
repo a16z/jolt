@@ -246,6 +246,9 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
             })
             .collect::<Result<_, _>>()?;
 
+        // Instruction and bytecode use the paper's digit-zero recentering;
+        // RAM keeps the base three-leg reduction. Increment columns are
+        // recentered and followed by the fused decode power.
         #[cfg(feature = "akita")]
         let weight_tables: Vec<Polynomial<F>> = {
             let chunk_count = dimensions.chunking().chunk_count();

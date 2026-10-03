@@ -1,3 +1,17 @@
+//! The stage 4 `FieldRegistersReadWriteChecking` sumcheck instance — the field-inline Twist
+//! read/write member (spec: `field-inline-protocol.md`, "Stage 4 Composition").
+//!
+//! Relates the three field-register value openings reduced at `r_prod` by the stage-2
+//! field-inline claim reduction (`FieldRdValue`, `FieldRs1Value`, `FieldRs2Value`, batched by
+//! gamma) to the field-register memory openings (`FieldRegistersVal`, `FieldRs1Ra`,
+//! `FieldRs2Ra`, `FieldRdWa`, `FieldRdInc`) at the field-register read/write point, weighted
+//! by the `EqCycle` public.
+//!
+//! Owns the field-register read/write opening-point derivation (the
+//! `FieldRegistersReadWriteDimensions` phase split into `[address ‖ cycle]`) and the `EqCycle`
+//! public-value computation, mirroring the ordinary `RegistersReadWriteChecking`: `EqCycle =
+//! Eq(upstream reduced cycle point, this instance's cycle sub-point)`.
+
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::field_inline::relations::registers::ReadWriteChecking;
@@ -16,6 +30,7 @@ use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumch
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::VerifierError;
 
+/// Wire the consumed field-register value openings from stage 2's claim reduction.
 pub fn field_registers_read_write_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> FieldRegistersReadWriteInputClaims<F> {
@@ -27,6 +42,8 @@ pub fn field_registers_read_write_input_values_from_upstream<F: JoltField>(
     }
 }
 
+/// Wire the consumed field-register opening points from stage 2's claim reduction,
+/// all sharing that relation's reduced opening point (`r_prod`).
 pub fn field_registers_read_write_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
 ) -> FieldRegistersReadWriteInputClaims<Vec<F>> {
@@ -59,6 +76,10 @@ impl<F: JoltField> FieldRegistersReadWriteChecking<F> {
     }
 }
 
+// Only the point geometry stays hand-written: the symbolic output expression
+// references the opening point and `EqCycle` as opaque `Derived` leaves, so
+// their derivations cannot come from it. Everything else (claim evaluation,
+// struct fill, id projection) is trait defaults + derive-generated code.
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
     type Symbolic = ReadWriteChecking;
 
@@ -89,6 +110,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersReadWriteChecking<F> {
         _challenges: &FieldRegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         match project_public(id)? {
+            // The upstream reduced point (`r_prod`) is the fixed cycle; this instance's cycle
+            // sub-point is the opening point past the field-inline address prefix — literally
+            // the ordinary `RegistersReadWriteChecking` derivation at the field-inline
+            // geometry.
             FieldRegistersReadWritePublic::EqCycle => derivations::eq_at_cycle(
                 input_points.rd_value(),
                 output_points.registers_val(),
@@ -116,6 +141,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
+    /// The config-pinned field-register read/write point derivation: with `phase1 = log_t` and
+    /// `phase2 = log_k` (no phase-3 rounds), the opening point is `[address ‖ cycle]` where
+    /// the cycle is the reversed phase-1 slice and the address the reversed phase-2 slice —
+    /// the `FieldRegistersReadWriteDimensions::read_write_opening_point` split.
     #[test]
     fn opening_point_splits_into_address_and_cycle_phases() {
         let log_t = 5usize;

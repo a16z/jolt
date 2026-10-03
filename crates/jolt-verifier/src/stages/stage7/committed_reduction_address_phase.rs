@@ -1,3 +1,18 @@
+//! The stage 7 committed-program claim-reduction address phases.
+//!
+//! In committed-program mode the bytecode value columns and the initial-RAM
+//! program image are committed polynomials. Their two-phase reductions begin in
+//! stage 6b (cycle phase) and, when active address-phase rounds remain, finish
+//! here in stage 7. Each is a self-contained relation object: the bytecode
+//! reduction opens the per-chunk `BytecodeChunk(i)` commitments under the
+//! `ChunkOutputWeight(i)` publics, and the program-image reduction opens
+//! `ProgramImageInit` under a single `FinalScale` public.
+//!
+//! Both publics are functions of the reduction's final opening point — the same
+//! point `derive_opening_points` produces — so `derive_output_term` recovers that
+//! point from the output claims and asks the layout for the scale/weights at it,
+//! exactly as stage 4's `RamValCheck` recovers the cycle from its output point.
+
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
     BytecodeReductionAddressPhaseInputClaims, BytecodeReductionAddressPhaseOutputClaims,
@@ -22,10 +37,17 @@ pub struct BytecodeReductionAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::bytecode::AddressPhase,
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
+    /// The stage-6b bytecode cycle-phase output weights, consumed only by the
+    /// clear-only `derive_output_term` (`ChunkOutputWeight`). `None` in ZK (BlindFold
+    /// recomputes the weights), where this relation's `derive_output_term` never runs.
     weights: Option<BytecodeReductionWeights<F>>,
 }
 
 impl<F: JoltField> BytecodeReductionAddressPhase<F> {
+    /// `weights` are the stage-6b bytecode cycle-phase outputs (`None` in ZK,
+    /// clear-only aux); `cycle_phase_variables` and the layout are known before the
+    /// stage-7 sumcheck, so a single construction serves both the input claim and
+    /// the output check.
     pub fn new(
         layout: &BytecodeClaimReductionLayout,
         weights: Option<BytecodeReductionWeights<F>>,
@@ -128,10 +150,18 @@ pub struct ProgramImageReductionAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::program_image::AddressPhase,
     layout: ProgramImageClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
+    /// The RAM address point of the staged `ProgramImageInitContributionRw` opening
+    /// (from stage 4). Consumed only by the clear-only `derive_output_term`
+    /// (`FinalScale`), so it is `None` in ZK — where BlindFold recomputes the scale
+    /// and this relation's `derive_output_term` never runs.
     reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: JoltField> ProgramImageReductionAddressPhase<F> {
+    /// `reference_opening_point` is the RAM address point of the staged
+    /// `ProgramImageInitContributionRw` opening (from stage 4), `None` in ZK
+    /// (clear-only aux). It and the cycle-phase variables are known before the
+    /// stage-7 sumcheck.
     pub fn new(
         layout: &ProgramImageClaimReductionLayout,
         reference_opening_point: Option<Vec<F>>,

@@ -15,8 +15,12 @@ const DEFAULT_ALIGN: usize = if cfg!(target_pointer_width = "64") {
     8
 };
 
+/// Magic value used to validate that a pointer passed to free/realloc
+/// was actually allocated by this shim.
 const HEADER_MAGIC: usize = 0x4A4F_4C54;
 
+/// Allocation metadata stored before each allocated block.
+/// Size must be a multiple of `DEFAULT_ALIGN` to keep payload properly aligned.
 #[repr(C)]
 #[cfg_attr(target_pointer_width = "64", repr(align(16)))]
 #[cfg_attr(target_pointer_width = "32", repr(align(8)))]
@@ -30,6 +34,8 @@ const _: () = {
     ["AllocHeader size must be multiple of DEFAULT_ALIGN"][!header_aligned as usize];
 };
 
+/// Creates memory layout for allocation: [AllocHeader][payload]
+/// Both header and payload are aligned to C ABI requirements.
 #[inline]
 fn alloc_layout(payload_size: usize) -> Option<Layout> {
     let total_size = mem::size_of::<AllocHeader>().checked_add(payload_size)?;
@@ -115,6 +121,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
         return core::ptr::null_mut();
     }
 
+    // Record the new payload size so free/realloc reconstruct the right layout.
     (new_block_ptr as *mut AllocHeader).write(AllocHeader {
         magic: HEADER_MAGIC,
         payload_size: new_size,
@@ -123,6 +130,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
     new_block_ptr.add(mem::size_of::<AllocHeader>()) as *mut c_void
 }
 
+/// Standard C calloc - allocate zero-initialized memory for array.
 #[no_mangle]
 pub unsafe extern "C" fn calloc(elem_count: usize, elem_size: usize) -> *mut c_void {
     match elem_count.checked_mul(elem_size) {

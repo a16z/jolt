@@ -17,7 +17,7 @@ pub const FUNCT7_ADVICE_LW: u32 = 0x02;
 #[doc(hidden)]
 pub const FUNCT7_ADVICE_LD: u32 = 0x03;
 #[doc(hidden)]
-pub const FUNCT7_ADVICE_LEN: u32 = 0x04;
+pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get number of remaining bytes in advice tape
 
 #[doc(hidden)]
 pub const FIELD_INLINE_OPCODE: u32 = 0x7b;
@@ -256,6 +256,7 @@ pub use postcard;
 use bytemuck::Pod;
 use serde::{Deserialize, Serialize};
 
+/// A wrapper type to mark guest program inputs as trusted_advice.
 #[derive(Debug, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct TrustedAdvice<T> {
@@ -282,6 +283,7 @@ impl<T> core::ops::Deref for TrustedAdvice<T> {
     }
 }
 
+/// A wrapper type to mark guest program inputs as untrusted_advice.
 #[derive(Debug, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct UntrustedAdvice<T> {
@@ -512,6 +514,8 @@ impl AdviceReader {
     pub fn read_u32(&mut self) -> u32 {
         panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
+    // Load a doubleword (8 bytes) from the advice tape and return it
+    // on 32-bit targets, this is performed via two 4-byte reads
     #[cfg(target_arch = "riscv32")]
     pub fn read_u64(&mut self) -> u64 {
         let low = self.read_u32() as u64;
@@ -556,6 +560,10 @@ impl AdviceReader {
     pub fn bytes_remaining(&mut self) -> u64 {
         panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
+    // Fill the provided buffer with advice data read from the advice tape
+    // Attempts to read as much data as possible per instruction
+    // As with the instructions above, reading beyond the end of the advice tape
+    // will result in a runtime error during proof generation
     #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
     fn read_slice(&mut self, buf: &mut [u8]) {
         let mut ptr = buf.as_mut_ptr();

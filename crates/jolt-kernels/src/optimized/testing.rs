@@ -1,3 +1,12 @@
+//! Synthetic-trace fixtures and the reference/optimized lockstep parity
+//! harness shared by the optimized RAM kernel tests.
+//!
+//! The fixture replays a small RAM op script into a real [`TraceBackend`]
+//! (state-consistent pre/post values, a tiny synthetic memory layout, and
+//! the guest-style trailing termination write that keeps `RamValFinal`
+//! consistent with the initial state on untouched words — the invariant the
+//! optimized kernels' `val_init` reconstruction relies on).
+
 #![expect(
     clippy::unwrap_used,
     clippy::panic,
@@ -23,10 +32,14 @@ use rand_core::SeedableRng;
 
 use crate::{ProverInputs, SumcheckKernel};
 
+/// Word addresses below this index are reserved for the layout's panic (0)
+/// and termination (1) words; scripts should use words `>= 2`.
 pub(crate) const TERMINATION_WORD: u64 = 1;
 
 const BASE_ADDRESS: u64 = 0x1000;
 
+/// The fixture layout's lowest mapped address (word 0), as the RAF
+/// relation's `lowest_address` expects it.
 pub(crate) fn fixture_lowest_address() -> u64 {
     BASE_ADDRESS
 }
@@ -44,6 +57,8 @@ impl FixtureShape {
     }
 }
 
+/// One scripted cycle. Pre-values are replayed from the running RAM state,
+/// so scripts stay trace-consistent by construction.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum RamOp {
     Read { word: u64 },
@@ -51,6 +66,8 @@ pub(crate) enum RamOp {
     None,
 }
 
+/// Run `f` against a trace backend replaying `ops` (plus the trailing
+/// termination write), padded to `2^log_t` cycles.
 pub(crate) fn with_ram_fixture<R>(
     shape: FixtureShape,
     ops: Vec<RamOp>,
@@ -59,6 +76,16 @@ pub(crate) fn with_ram_fixture<R>(
     with_ram_fixture_init(shape, Vec::new(), ops, f)
 }
 
+/// [`with_ram_fixture`] with nonzero initial RAM values: `init_words[i]`
+/// seeds word `2 + i` (the reserved panic/termination words stay zero). The
+/// values ride in as trusted-advice bytes, which the witness backend
+/// populates into BOTH the initial and the final RAM state — so untouched
+/// nonzero words keep `RamValFinal` consistent with `val_init` without a
+/// final-memory image. WARNING: the final-state advice populate also masks
+/// script WRITES to seeded words in `RamValFinal`; only the never-accessed
+/// fallback of the optimized `val_init` reconstruction reads those slots, so
+/// read-write parity is unaffected, but scripts feeding a val-final-anchored
+/// kernel must not write seeded words.
 pub(crate) fn with_ram_fixture_init<R>(
     shape: FixtureShape,
     init_words: Vec<u64>,
@@ -121,6 +148,8 @@ pub(crate) fn with_ram_fixture_init<R>(
     let trusted_advice: Vec<u8> = if init_words.is_empty() {
         Vec::new()
     } else {
+        // Two zero words keep the reserved panic/termination words zero in
+        // the advice populate.
         let mut bytes = vec![0u8; 16];
         for (i, &value) in init_words.iter().enumerate() {
             state[2 + i] = value;
@@ -219,6 +248,9 @@ pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
     (0..count).map(|_| Fr::random(&mut rng)).collect()
 }
 
+/// Trailing-zero-insensitive round-polynomial coefficients: the engine sums
+/// members into `max_degree + 1` slots and trims the batched polynomial, so
+/// a member's trailing zeros never reach the wire.
 pub(crate) fn trimmed(poly: &UnivariatePoly<Fr>) -> Vec<Fr> {
     let mut coefficients = poly.coefficients().to_vec();
     while coefficients.last() == Some(&Fr::from_u64(0)) {
@@ -227,6 +259,10 @@ pub(crate) fn trimmed(poly: &UnivariatePoly<Fr>) -> Vec<Fr> {
     coefficients
 }
 
+/// Drive both kernels through the fused round loop in lockstep with the
+/// same deterministic challenges, asserting per-round polynomial equality
+/// (up to trailing zeros) and output-claim equality; returns the drawn
+/// challenges for the caller's post-loop checks.
 pub(crate) fn drive_parity_rounds<R>(
     reference: &mut dyn SumcheckKernel<Fr, Relation = R>,
     optimized: &mut dyn SumcheckKernel<Fr, Relation = R>,
@@ -250,6 +286,8 @@ where
     let mut challenges = Vec::with_capacity(rounds);
     let mut bind = None;
     for round in 0..rounds {
+        // The reference (naive) member self-checks s(0) + s(1) against the
+        // running claim, so a drifting optimized claim fails loudly here.
         let reference_poly = reference
             .prove_round(bind, round, reference_claim)
             .unwrap_or_else(|error| panic!("reference round {round}: {error}"));
@@ -281,6 +319,7 @@ where
     challenges
 }
 
+/// [`drive_parity_rounds`] plus both kernels' derived-table self-checks.
 pub(crate) fn assert_parity<R>(
     mut reference: Box<dyn SumcheckKernel<Fr, Relation = R>>,
     mut optimized: Box<dyn SumcheckKernel<Fr, Relation = R>>,

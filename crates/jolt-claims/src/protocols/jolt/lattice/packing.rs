@@ -68,6 +68,7 @@ pub struct PrecommittedPackingPlan {
     program_image: Option<PrefixPackedObjectPlan>,
 }
 
+/// Returns the canonical ordered one-hot columns of `OneHotTrace`.
 pub fn one_hot_trace_columns(
     shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
@@ -93,6 +94,7 @@ pub fn one_hot_trace_columns(
     Ok(polynomials)
 }
 
+/// Number of selector slots in the packed `OneHotTrace`.
 pub const fn one_hot_trace_column_capacity(
     log_k_chunk: usize,
 ) -> Result<usize, LatticeGeometryError> {

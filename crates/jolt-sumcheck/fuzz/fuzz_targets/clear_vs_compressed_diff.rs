@@ -1,5 +1,15 @@
 #![no_main]
 
+//! Differential check of `verify_compressed` against an in-harness reference
+//! verifier that decompresses each wire round and evaluates it in full.
+//!
+//! The compressed wire format omits every round's linear coefficient; the
+//! verifier recovers it from the running sum. This harness replays the same
+//! wire rounds through (a) `SumcheckVerifier::verify_compressed` and (b) an
+//! explicit decompress-then-evaluate loop with identical transcript framing,
+//! and requires identical challenges and final claims. A divergence means
+//! the c₁-recovery arithmetic disagrees with the polynomial it defines.
+
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::CompressedPoly;
 use jolt_sumcheck::{
@@ -22,6 +32,7 @@ fuzz_target!(|data: &[u8]| {
     let claimed_sum = read_scalar(&data[2..2 + SCALAR_BYTES]);
     let claim = SumcheckClaim::new(num_vars, degree, claimed_sum);
 
+    // Wire rounds: `degree` stored coefficients each (c₁ omitted).
     let mut cursor = 2 + SCALAR_BYTES;
     let mut wire_rounds: Vec<CompressedPoly<Fr>> = Vec::with_capacity(num_vars);
     for _ in 0..num_vars {
@@ -48,6 +59,8 @@ fuzz_target!(|data: &[u8]| {
         &mut transcript,
     );
 
+    // Reference: decompress each round with the running-sum hint, evaluate
+    // the full polynomial, and mirror the wire transcript framing exactly.
     let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-diff-fuzz");
     let mut running_sum = claimed_sum;
     let mut challenges: Vec<Fr> = Vec::with_capacity(num_vars);

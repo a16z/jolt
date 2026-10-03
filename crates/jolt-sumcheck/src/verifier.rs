@@ -127,6 +127,7 @@ impl SumcheckVerifier {
         Ok(EvaluationClaim::new(challenges, running_sum))
     }
 
+    /// Checks committed sumcheck rounds and returns the transcript-derived data.
     #[tracing::instrument(
         skip_all,
         name = "SumcheckVerifier::verify_committed_round_consistency"

@@ -1,3 +1,7 @@
+//! Cross-process lock serializing dory-pcs's URS disk-cache critical section.
+//!
+//! Every Dory caller shares this lock through `jolt-dory`.
+
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 

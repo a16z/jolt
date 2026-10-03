@@ -1,3 +1,15 @@
+//! Per-instruction differential tests: for every implemented row kind, run
+//! ≥1000 random operand/state instances through the AOT backend and the
+//! reference interpreter `Cpu`, comparing full register state, PC, scratch
+//! memory, and the advice tape (modeled on the tracer's execute-vs-trace
+//! harness).
+//!
+//! Coverage is exhaustive by construction: `classify` matches every
+//! `JoltInstructionKind` variant without a wildcard, so a new kind in
+//! jolt-riscv fails to compile here until it is classified, and
+//! `classification_matches_compiler` asserts the classification agrees with
+//! what the transpiler actually accepts.
+
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -20,6 +32,9 @@ const REGS: usize = REGISTER_COUNT as usize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Class {
     Supported,
+    /// Implemented, but only legal inside a source group that computes
+    /// advice; a bare row must be a compile-time error (never a stale
+    /// advice-slot read), so the single-row harness cannot drive it.
     RequiresAdviceGroup,
     NotYetSupported,
 }
@@ -116,6 +131,9 @@ const SUPPORTED: &[&str] = &[
 ];
 
 fn class_by_marker(marker: &str) -> Class {
+    // Slice 3b: VirtualAdvice reads the group's advice slots, filled by the
+    // group's advice computation; whole-guest gates cover it (muldiv's
+    // DIV/REM groups, the inline guests).
     if marker == "VirtualAdvice" {
         Class::RequiresAdviceGroup
     } else if SUPPORTED.contains(&marker) {
@@ -174,6 +192,10 @@ fn classification_matches_compiler() {
     }
 }
 
+/// Regression: a `VirtualAdvice` row in a group without an advice
+/// computation must be refused at compile time with the advice-specific
+/// error, not compiled into a stale-slot read (and not rejected as merely
+/// unsupported).
 #[test]
 fn bare_virtual_advice_is_a_compile_error() {
     let mut row = default_row(kind_by_name("VirtualAdvice"));
@@ -284,7 +306,7 @@ fn shift_imm_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
 fn shift_reg_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     let mut i = base_instance(rng, kind);
     let rs1 = reg(rng);
-    let rs2 = rd(rng);
+    let rs2 = rd(rng); // nonzero: x0 would make tz(0) = 64, outside the W domain
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
     i.row.operands.rd = Some(rd(rng));
@@ -314,6 +336,7 @@ fn branch(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
     i.row.operands.imm = if rng.gen() { 8 } else { -8 };
+    // Half the time force equality so both outcomes are exercised.
     if rng.gen() && rs1 != 0 && rs2 != 0 {
         i.pre_regs[rs2 as usize] = i.pre_regs[rs1 as usize];
     }
@@ -331,7 +354,7 @@ fn jalr(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, JoltInstructionKind::JALR);
     let rs1 = rd(rng);
     i.row.operands.rs1 = Some(rs1);
-    i.row.operands.rd = Some(rd(rng));
+    i.row.operands.rd = Some(rd(rng)); // may alias rs1 (ordering test)
     let imm = (rng.gen_range(-8i64..8) * 2) as i128;
     i.row.operands.imm = imm;
     let target = if rng.gen() {

@@ -75,6 +75,7 @@ fn large_alloc_roundtrip() -> u64 {
         assert_eq!(libc::munmap(base.cast(), 16 * PAGE), 0);
     }
 
+    // The heap must still serve large allocations after the raw unmaps.
     let tail = vec![7u8; 512 << 10];
     acc = acc.wrapping_add(tail.iter().map(|&byte| u64::from(byte)).sum::<u64>());
     acc

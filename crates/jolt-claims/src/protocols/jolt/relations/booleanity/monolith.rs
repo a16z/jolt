@@ -29,6 +29,10 @@ pub struct BooleanityInputClaims<C> {
     pub address_phase: C,
 }
 
+/// Fiat-Shamir challenge drawn by the full booleanity sumcheck. The `gamma`
+/// folding the RA family is built inside the `booleanity_cycle_output` geometry
+/// helper rather than appearing as a literal `challenge(..)` here, so this set is
+/// derived from `required_challenges()`, not a textual scan of the expressions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BooleanityChallenges<F> {
@@ -164,6 +168,10 @@ mod tests {
         assert_eq!(relation.degree(), 3);
     }
 
+    /// The `gamma` is folded inside `booleanity_cycle_output`, so it never appears
+    /// as a literal `challenge(..)` in this file. This guards that the
+    /// `Challenges` struct's field set still matches the challenge the relation
+    /// actually draws (per `required_challenges`).
     #[test]
     fn challenges_resolve_helper_built_gamma() {
         let challenges = BooleanityChallenges {

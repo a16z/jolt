@@ -1,3 +1,14 @@
+//! Differential tests for the packed SIMD backends.
+//!
+//! Packed-vs-scalar equivalence on the native ISA for every width
+//! (32/64/128) and every packed extension type, over random inputs and
+//! boundary lane patterns (all-max lanes, mixed canonical extremes,
+//! single-lane-nonzero); lane-access and slice-helper laws;
+//! `WithPacking` associated-type sanity for every field type; `NoPacking`
+//! equivalence; and, on aarch64/NEON, the expected lane widths. Scalar
+//! arithmetic is verified against independent oracles in the other suites,
+//! so packed-vs-scalar equivalence transitively pins the packed kernels.
+
 #![cfg(feature = "solinas")]
 #![expect(clippy::unwrap_used, reason = "test code")]
 
@@ -226,6 +237,7 @@ fn packed_ext2_matches_scalar() {
     type F32 = two::Prime32Offset99;
     type E2 = two::Ext2<F32>;
     check_ext_field::<<E2 as WithPacking>::Packing, F32>(pm(32, 99), 0xE201);
+    // NegOneNr is a genuine field over p ≡ 3 (mod 4).
     type F251 = two::Fp32<251>;
     type E2Neg = two::FpExt2<F251, two::NegOneNr>;
     check_ext_field::<<E2Neg as WithPacking>::Packing, F251>(251, 0xE202);
@@ -234,6 +246,9 @@ fn packed_ext2_matches_scalar() {
     type F128 = two::Prime128Offset275;
     check_ext_field::<<two::Ext2<F128> as WithPacking>::Packing, F128>(pm(128, 275), 0xE204);
 
+    // Fused NR=2 paths: a wide 63-bit base product, a narrow base reducer
+    // whose three-product coefficient needs the wide fold, and a large
+    // offset that exercises the full-low-word SIMD correction multiply.
     type Wide = two::Fp64<{ (1u64 << 63) - 259 }>;
     check_ext_field::<<two::Ext2<Wide> as WithPacking>::Packing, Wide>((1u128 << 63) - 259, 0xE205);
     type NarrowBase = two::Fp64<{ (1u64 << 58) - 27 }>;
@@ -303,6 +318,8 @@ fn no_packing_equivalence() {
     assert_eq!(PF::WIDTH, 1);
 }
 
+/// Expected NEON lane widths on aarch64 (previously asserted against
+/// jolt-field's packed types; the widths are part of the layout contract).
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 #[test]
 fn neon_lane_widths() {

@@ -109,6 +109,8 @@ where
 
     let tau_high: F = draw_spartan_product_tau_high(transcript);
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+    // The field-inline lane inputs enter the composed input claim exactly as on the
+    // verifier — composed through the shared seam, before `input_claim`.
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
         uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
@@ -118,6 +120,7 @@ where
                 .spartan_product_uniskip
                 .first_round_poly(session, &[tau_high], &uniskip_inputs)
         })?;
+    // The canonical composed lane domain also determines the verifier's uni-skip check.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         uniskip_input_claim,
@@ -160,9 +163,14 @@ where
         ),
         ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
+    // Both batch gammas, then the RAM output-check address reference point (the
+    // last member's `draw_challenges` override) — the verifier's exact schedule.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
+    // Under `field-inline` the field-inline claim-reduction inputs wire from the
+    // stage-1 field-inline carrier through the same shared
+    // assembly the verifier runs.
     let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);
 
     let mut scheduler = backend.round_scheduler.build(session);
@@ -199,6 +207,15 @@ where
     })
 }
 
+/// Clear round-trips with field-inline enabled of the stage-2 recipe against the verifier's own
+/// public constituents — `stage2::verify`'s clear body step for step (the
+/// `τ_high` draw, the composed uni-skip via the seam attach and
+/// `uniskip::verify_clear`, the six-member batch with the field-inline claim-reduction
+/// member, the field-inline product appendage composition with its alias equality, and the
+/// curated absorb) on a twin transcript. The full `stage2::verify` entrypoint
+/// needs an assembled `JoltProof` (no test constructor for the joint-opening
+/// slot), so this is the closest public seam; the 32-byte transcript-state
+/// equality pins the absorb order end to end.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -328,6 +345,8 @@ mod field_inline_zk {
             .collect();
         assert_eq!(values.len(), 18);
 
+        // The replay (stage2::verify's zk body over its public constituents),
+        // mirroring blindfold.rs's transcript hard check at stage scope.
         let checked = CheckedInputs {
             public_io: JoltDevice::default(),
             zk: true,

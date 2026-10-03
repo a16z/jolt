@@ -50,6 +50,8 @@ pub trait ConsumerSet {
     ) -> Result<(), WitnessError>;
 }
 
+/// Buffers below this size extract serially — rayon dispatch would cost more
+/// than the extraction itself.
 #[cfg(feature = "parallel")]
 const PAR_EXTRACT_THRESHOLD: usize = 128;
 
@@ -62,6 +64,8 @@ fn deliver<C: StreamConsumer>(
     if !consumer.is_active() {
         return Ok(());
     }
+    // Extraction is pure per cycle window, so buffers extract in parallel;
+    // chunk order (the consumer's contract) is unchanged.
     let extract = |(index, row): (usize, &TraceRow)| {
         C::Witness::from_row(row, rows.get(index + 1).or(next_after), env)
     };
@@ -218,6 +222,7 @@ pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
+    // Out-of-range requests fall through to the validated chunk walk.
     if let Some(access) = source.random_access() {
         if cycles <= access.cycles() {
             let window = |index| access.window::<B>(index);

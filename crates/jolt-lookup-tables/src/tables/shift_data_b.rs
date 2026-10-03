@@ -90,6 +90,9 @@ mod tests {
         prefix_suffix_test::<XLEN, Fr, ShiftDataBTable<XLEN>>();
     }
 
+    /// Two-round phases put boundaries inside the low six index bits,
+    /// exercising every placement of the lane and offset bits relative to
+    /// the phase window in the ShiftData/OffsetScale prefix/suffix pairs.
     #[test]
     fn prefix_suffix_small_phases() {
         prefix_suffix_materialization_test::<XLEN, Fr, ShiftDataBTable<XLEN>>(2, 3);

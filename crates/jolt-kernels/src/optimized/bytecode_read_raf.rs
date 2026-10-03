@@ -112,10 +112,16 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
         .map(|point| eq_table(&point[hi_bits..]))
         .collect::<Vec<_>>();
 
+    // Routing and every worker accumulator are bounded independently of the bytecode
+    // domain. Splitting a high-eq block is valid: its multiplier distributes over
+    // the low-eq sums from each batch and fragment.
     const TILE_ADDRESSES: usize = 1024;
     const BATCH_ROWS: usize = 1 << 18;
     const FRAGMENT_ROWS: usize = 4096;
 
+    // Small domains avoid routing overhead. Their direct accumulators share a
+    // fixed per-call budget, so adding Rayon workers cannot multiply scratch
+    // without bound even when the whole domain fits in one direct tile.
     const DIRECT_ADDRESSES: usize = 1 << 16;
     const SCRATCH_BYTES: usize = 256 << 20;
     let scratch_per_job = num_stages
@@ -399,6 +405,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let num_stages = base_stages + fused_cycle_points.len();
         let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
 
+        // The field-inline extension's fold geometry: the field-register row values under
+        // the extended per-stage gamma powers, each leg over its own cycle binding (see
+        // the reference kernel's `FieldInlineAddressLegs`).
         #[cfg(feature = "field-inline")]
         let (field_inline_values, field_read_write_cycle, field_val_evaluation_cycle) = {
             use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
@@ -604,6 +613,8 @@ struct AddressKernel<F: JoltField> {
     entry_weight: F,
     raf_weights: Vec<F>,
     pushforwards: Vec<Polynomial<F>>,
+    /// RAW stage-value tables — the RAF identity binds separately so
+    /// committed mode can stage the raw bound `Val_s` wire claims.
     values: Vec<Polynomial<F>>,
     stage_values: Vec<StageVal>,
     int_table: Polynomial<F>,
@@ -749,6 +760,9 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
     }
 }
 
+/// The packed fused-increment cycle column, bound lazily while the bytecode
+/// RA factors still retain their shared compact rows. The fourth bind
+/// materializes only `T / 16` field elements and releases this handle.
 #[cfg(feature = "akita")]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum LazyFusedInc<F: JoltField> {
@@ -849,6 +863,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         }
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
 
+        // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
+        // one-hot grid, served lazily off the sparse per-cycle indices for
+        // the first four binds instead of `d × T` dense.
         let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let selectors = (0..num_ra)
             .map(|index| {
@@ -860,6 +877,13 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         let fused_inc = LazyFusedInc::new(Arc::clone(&rows));
         let ra = LazyFoldedRa::new(chunk_eqs, BytecodePcChunks { rows, selectors });
 
+        // The combined coefficient table: every non-RA factor of the summand is linear
+        // in one cycle table, so   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) +
+        // γ⁷·entry·[j = 0] with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf
+        // rides the stage-1 cycle point, SpartanShiftRaf the stage-3 one). With
+        // field-inline enabled, the stage-4/5 field-register legs ride the
+        // field-register read-write / val-evaluation cycle sub-points at γ³/γ⁴ (the
+        // reference kernel's composed pre-fold, term for term).
         let stage_values = relation.stage_values_at_r_address()?;
         let num_stages = stage_cycle_points.len();
         let base_stages = bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len();
@@ -1024,6 +1048,8 @@ struct CycleKernel<F: JoltField> {
     fused_inc: LazyFusedInc<F>,
     #[cfg(feature = "akita")]
     fused_combined: Polynomial<F>,
+    /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
+    /// order (index-aligned with `ra`).
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,
 }
@@ -1300,6 +1326,16 @@ mod stage_pushforward_tests {
     }
 }
 
+/// Byte-parity of both phases against the reference kernels, run as a PAIR
+/// through one shared [`ProofSession`] so the parked per-cycle rows flow the
+/// way production stages would exercise them.
+///
+/// Fixture honesty: `with_sample_backend` is the only witness plane
+/// constructible without a `jolt-program` dependency. At its scale the
+/// bytecode decomposition has a single committed chunk (`d = 1`), so the
+/// cycle kernel's multi-factor `Π_i ra_i` loop runs with one factor; the
+/// degree-`d+1` sampling, cold-cycle zeroing, entry/RAF fusion, and both
+/// pushforward paths are exercised for real.
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -1340,6 +1376,10 @@ mod tests {
         with_sample_backend(|backend| run_pair_on(backend, committed_program));
     }
 
+    /// Parity with field-inline enabled over a program containing field instructions:
+    /// the field-inline legs of both phases carry non-zero terms, so a drift between
+    /// the reference and optimized field-inline folds surfaces here rather than only at
+    /// the e2e.
     #[cfg(feature = "field-inline")]
     fn run_pair_with_field_inline_program(f: impl FnOnce(&TraceBackend<OwnedTrace>)) {
         structured_field_register_fixture(12).with_plane(4, |backend| {
@@ -1456,6 +1496,9 @@ mod tests {
                 if committed_program { 5 } else { 0 }
             );
 
+            // ---- Stage 6b: cycle phase, from the same session (the parked
+            // cycle rows are reused, mirroring the production 6a→6b flow) and
+            // the production r_address wiring (the reversed 6a point).
             let r_address: Vec<Fr> = address_sumcheck_challenges.iter().rev().copied().collect();
             let stage_gammas = address_challenges.stage_gamma_powers();
             let cycle_relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {

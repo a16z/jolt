@@ -70,6 +70,8 @@ pub struct BooleanityAddressKernel<F: JoltField> {
     rounds: usize,
     gamma_weights: Vec<F>,
     linear: Vec<Polynomial<F>>,
+    /// The squared-term tables (squared-weight binding); raw vectors because
+    /// the bind rule is not a multilinear bind.
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
     rounds_bound: usize,
@@ -100,6 +102,13 @@ impl<F: JoltField> BooleanityAddressKernel<F> {
         // `derive_output_term` both follow that convention. Use them as-is.
         let eq_cycle = eq_table(reference_cycle);
 
+        // Per-chunk masses of each checked one-hot polynomial, folded over the
+        // cycle dimension by the reference-cycle eq weights. The address-phase
+        // relation is column-agnostic (its output is the bare intermediate),
+        // so the checked-column set comes from the shape: the base `Ra`
+        // families plus, on the packed (lattice) build, the fused-inc one-hot
+        // columns at the tail — `lattice_booleanity_output_openings`' order,
+        // continuing the same `γ^{2i}` weight sequence.
         let mut openings: Vec<_> = dimensions
             .layout
             .openings(JoltRelationId::Booleanity)

@@ -102,6 +102,8 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
     }
 }
 
+/// `s₁·eq(p₁, ·) + s₂·eq(p₂, ·)` in four ~√T split tables.
+/// Binding folds the exhausted low scalars into one dense high table.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) enum PairedEq<F> {
     Split {
@@ -134,6 +136,8 @@ impl<F: JoltField> PairedEq<F> {
         }
     }
 
+    /// The combined table's `(lo, hi)` sumcheck pair at group `y` under
+    /// low-to-high pairing.
     #[inline]
     pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {

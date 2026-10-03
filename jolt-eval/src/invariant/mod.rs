@@ -94,6 +94,7 @@ pub trait Invariant: Send + Sync {
     /// Human-readable description, also used as context for AI red-teaming.
     fn description(&self) -> String;
 
+    /// One-time setup (e.g. preprocessing, generating an honest proof).
     fn setup(&self) -> Self::Setup;
 
     /// Check the invariant for a single input against the pre-computed setup.
@@ -244,6 +245,7 @@ fn run_checks_impl<I: Invariant>(
 pub struct FailedAttempt {
     pub description: String,
     pub approach: String,
+    /// Short summary of the approach (at most 4 sentences).
     pub approach_summary: String,
     pub failure_reason: String,
     /// Path to the persisted attempt directory (relative to repo root).

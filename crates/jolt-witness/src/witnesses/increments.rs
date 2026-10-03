@@ -96,6 +96,11 @@ impl Extract for FusedInc {
         );
         let ram_delta = RamInc::extract(row, next, env)?.0;
         let rd_delta = RdInc::extract(row, next, env)?.0;
+        // One fused column serves both inc consumers only because no cycle
+        // increments RAM and rd at once (every read-modify-write instruction
+        // lowers into a sequence whose RAM-writing step is a plain store). A
+        // violation means an instruction shape the fused encoding cannot
+        // represent — fail here, not with an opaque sumcheck mismatch.
         debug_assert!(
             if store { rd_delta == 0 } else { ram_delta == 0 },
             "cycle increments both RAM and rd; the fused inc encoding cannot represent it"

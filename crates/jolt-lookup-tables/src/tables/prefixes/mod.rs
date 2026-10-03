@@ -61,6 +61,12 @@ use crate::lookup_bits::LookupBits;
 use align_addr::AlignAddrPrefix;
 use pow2_offset::Pow2OffsetPrefix;
 
+/// A prefix polynomial evaluated at binary points during materialization.
+///
+/// Implementations provide:
+/// - `default_checkpoint()`: the initial checkpoint value before any phases
+/// - `evaluate()`: the prefix value at a binary point, given accumulated
+///   checkpoints from previous phases
 pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     /// Default checkpoint value for this prefix before any phases have run.
     fn default_checkpoint() -> F;
@@ -260,6 +266,7 @@ impl Prefixes {
         PrefixEval(dispatch_prefix!(self, default_checkpoint))
     }
 
+    /// Evaluate this prefix at binary point `b`.
     pub fn evaluate<F: JoltField>(
         &self,
         checkpoints: &[PrefixEval<F>],

@@ -58,8 +58,11 @@ fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
 }
 
 pub(super) trait OneHotCoeff<F: JoltField>: Copy + Send + Sync + 'static {
+    /// Bind a vertically adjacent pair with `r`; a missing side is an
+    /// implicit zero coefficient.
     fn bind(even: Option<Self>, odd: Option<Self>, r: F, lut: &CoeffLut<F>) -> Self;
 
+    /// The pair's `[value at t = 0, slope]` sumcheck evaluations.
     fn eval_pair(even: Option<Self>, odd: Option<Self>, lut: &CoeffLut<F>) -> [F; 2];
 
     fn value(self, lut: &CoeffLut<F>) -> F;
@@ -92,6 +95,7 @@ impl<F: JoltField> OneHotCoeff<F> for F {
     }
 }
 
+/// Newtype avoids overlap with the blanket field-value implementation.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct LutIndex(pub(super) u16);
@@ -325,6 +329,7 @@ impl<F: JoltField> CycleState<F> {
         }
     }
 
+    /// Bind once; return whether a full entry generation was replaced.
     pub(super) fn bind(&mut self, r: F) -> bool {
         match &mut self.0 {
             CyclePhase::Indexed {
@@ -413,6 +418,7 @@ impl<F: JoltField> CycleState<F> {
                     true,
                 )
             }
+            // Dereference during the bind before the LUT index overflows.
             CyclePhase::Indexed {
                 vals,
                 metas,

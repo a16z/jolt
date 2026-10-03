@@ -30,6 +30,9 @@ pub fn memory_viz_path(trace_path: &Path) -> PathBuf {
     trace_path.with_file_name("memory.html")
 }
 
+/// Renders and writes the page. Call with the flush-time aggregate of the
+/// same event stream the summary was built from — both renderings derive
+/// from one stream by construction.
 pub(crate) fn write_memory_viz(
     trace_path: &Path,
     summary: &ProfileSummary,

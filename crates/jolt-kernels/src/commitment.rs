@@ -1,3 +1,11 @@
+//! The witness-commitment slot: committed witness polynomials as PCS
+//! commitments over the proof's shared embedding grid.
+//!
+//! Every witness polynomial is committed as a matrix in one common grid shape
+//! (`2^⌈total_vars/2⌉` columns), not per-polynomial squares: the stage-8 joint
+//! opening combines the commitments homomorphically, which is only meaningful
+//! when they share row geometry.
+
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
@@ -40,6 +48,7 @@ pub trait ModeStreamingCommitment: ZkStreamingCommitment {}
 #[cfg(feature = "zk")]
 impl<PCS: ZkStreamingCommitment> ModeStreamingCommitment for PCS {}
 
+/// Finish a streamed dense commitment in the compiled proof mode.
 pub fn finish_streamed<PCS>(
     partial: PCS::PartialCommitment,
     setup: &PCS::ProverSetup,
@@ -53,6 +62,8 @@ where
     PCS::finish_with_hint(partial, setup)
 }
 
+/// Finish a streamed column-major one-hot commitment in the compiled proof
+/// mode.
 pub fn finish_streamed_one_hot<PCS>(
     setup: &PCS::ProverSetup,
     one_hot_k: usize,
@@ -109,6 +120,8 @@ impl CommitmentGrid {
     }
 }
 
+/// One committed witness polynomial: its id, commitment, and the opening hint
+/// the stage-8 joint opening consumes.
 pub struct WitnessCommitment<PCS: CommitmentScheme> {
     pub id: JoltCommittedPolynomial,
     pub commitment: PCS::Output,

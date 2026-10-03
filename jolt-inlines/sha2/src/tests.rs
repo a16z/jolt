@@ -14,6 +14,7 @@ mod exec_functions {
 
         let result = execute_sha256_compression(initial_state, input);
 
+        // Expected result for SHA-256("abc")
         let expected = [
             0xba7816bf, 0x8f01cfea, 0x414140de, 0x5dae2223, 0xb00361a3, 0x96177a9c, 0xb410ff61,
             0xf20015ad,
@@ -35,6 +36,7 @@ mod exec_functions {
 
         let result = execute_sha256_compression_initial(input);
 
+        // Expected result for SHA-256("abc")
         let expected = [
             0xba7816bf, 0x8f01cfea, 0x414140de, 0x5dae2223, 0xb00361a3, 0x96177a9c, 0xb410ff61,
             0xf20015ad,
@@ -56,6 +58,7 @@ mod exec_functions {
 
         let state1 = execute_sha256_compression_initial(input1);
 
+        // Second block with padding and length
         let input2 = [
             0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
             0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -64,6 +67,7 @@ mod exec_functions {
 
         let result = execute_sha256_compression(state1, input2);
 
+        // Expected result for SHA-256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
         let expected = [
             0x248d6a61, 0xd20638b8, 0xe5c02693, 0x0c3e6039, 0xa33ce459, 0x64ff2167, 0xf6ecedd4,
             0x19db06c1,
@@ -104,6 +108,7 @@ mod sequence_tests {
 
     #[test]
     fn test_sha256_inline_rows_per_block() {
+        // Σ₀/Σ₁ are 3 rows each, σ₀/σ₁ are 4; fixed-IV folds both round-0 Σ values.
         let (custom_iv_rows, custom_iv_histogram) = inline_rows(crate::SHA256_FUNCT3);
         let (fixed_iv_rows, fixed_iv_histogram) = inline_rows(crate::SHA256_INIT_FUNCT3);
         assert_eq!(custom_iv_rows, 1900, "{custom_iv_histogram:?}");
@@ -197,6 +202,7 @@ mod sdk_tests {
 
     #[test]
     fn test_sha256_aligned_vs_unaligned() {
+        // Test various sizes including block boundary (64 bytes)
         let test_sizes = [
             0, 1, 3, 4, 7, 8, 31, 32, 55, 56, 63, 64, 65, 100, 128, 256, 512, 1024, 2048,
         ];

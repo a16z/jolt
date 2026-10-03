@@ -596,6 +596,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let shift_amt = operands.imm.trailing_zeros();
 
+            // Preserve RV64 shifts of 32..63 across reduced verifier widths.
             let scaled_shift = if shift_amt >= 32 {
                 let base = (shift_amt - 32) & (cpu.word_bits - 1);
                 (cpu.word_bits + base) as u64
@@ -829,6 +830,9 @@ fn test_consistency(instr: &Instruction) {
     }
 }
 
+/// The scaled sub-word load semantics: the `eighths`-byte lane of the
+/// containing doubleword at `rs1 + imm` (lanes are `bv_bits/8` wide so
+/// reduced solver widths stay faithful), sign- or zero-extended.
 fn lane_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, eighths: u32, signed: bool) -> BV {
     let ea = cpu.x[rs1 as usize].clone() + imm;
     let aligned = ea.clone() & cpu.bv_u64(-8i64 as u64);
@@ -845,6 +849,8 @@ fn lane_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, eighths: u32, signed: bool) -
     }
 }
 
+/// The scaled sub-word store semantics: replace the `eighths`-byte lane of
+/// the containing doubleword at `rs1 + imm` with the low lane of `rs2`.
 fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, rs2: u8, imm: i64, eighths: u32) {
     let ea = cpu.x[rs1 as usize].clone() + imm;
     let aligned = ea.clone() & cpu.bv_u64(-8i64 as u64);
@@ -1120,6 +1126,10 @@ test_sequence!(SW, FormatS, |instr: &SW, cpu| {
     );
 });
 
+// Negative immediates exercise the sign-extension path through the
+// expansions' immediate plumbing, which the templates' imm = 1234 cannot;
+// one load and one store cover the shared mechanism (the store also lands
+// in a different alignment residue class).
 #[test]
 #[allow(nonstandard_style)]
 fn test_LB_negative_imm_correctness() {

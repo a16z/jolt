@@ -323,6 +323,10 @@ struct RowGroupValues {
     b_second: [S192; SECOND_GROUP_LEN],
 }
 
+/// One active field-inline cycle's composed group values, in field form: the
+/// field-inline magnitudes are full field elements, so the integer pipeline cannot
+/// carry them. Its work is proportional to active cycles, which may occupy
+/// the entire trace.
 #[cfg(feature = "field-inline")]
 struct FieldGroupValues<F> {
     integer: RowGroupValues,
@@ -388,12 +392,15 @@ impl<F: JoltField> FieldGroupValues<F> {
     }
 }
 
+/// The field images of [`extension_coefficients`] — what ties the active field-inline
+/// field path to the same Lagrange extension the integer pipeline uses.
 #[cfg(feature = "field-inline")]
 fn extension_coefficient_fields<F: JoltField>() -> [(usize, [F; DOMAIN]); EXTENDED_NODE_COUNT] {
     extension_coefficients()
         .map(|(position, coefficients)| (position, coefficients.map(F::from_i64)))
 }
 
+/// Transfers the extracted field rows from the outer kernel to the product kernel.
 #[cfg(feature = "field-inline")]
 #[cfg_attr(
     feature = "allocative",
@@ -413,6 +420,8 @@ pub(crate) struct FieldInlineRowCursor<'a, F> {
 
 #[cfg(feature = "field-inline")]
 impl<'a, F> FieldInlineRowCursor<'a, F> {
+    /// A cursor positioned at the first row with cycle ≥ `start` — each
+    /// parallel block seeks independently.
     pub(crate) fn seek(rows: &'a [(usize, FieldInlineSpartanRow<F>)], start: usize) -> Self {
         Self {
             rows,
@@ -420,6 +429,8 @@ impl<'a, F> FieldInlineRowCursor<'a, F> {
         }
     }
 
+    /// The field-inline row at cycle `t`, if any; `t` must be non-decreasing across
+    /// calls on one cursor.
     pub(crate) fn advance(&mut self, t: usize) -> Option<&'a FieldInlineSpartanRow<F>> {
         while let Some(&(cycle, ref row)) = self.rows.get(self.next) {
             match cycle.cmp(&t) {
@@ -533,6 +544,8 @@ impl SpartanOuterRow {
         values.b_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_b_first);
         values.b_second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second);
 
+        // Field rows with zero field values still use their ordinary op flags.
+        // Nonzero field magnitudes are supplied by `field_group_values` below.
         #[cfg(feature = "field-inline")]
         {
             values.a_first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
@@ -572,6 +585,8 @@ impl SpartanOuterRow {
         &self,
         field_row: &FieldInlineSpartanRow<F>,
     ) -> FieldGroupValues<F> {
+        // The integer rows already include constants and RV64 passengers of the
+        // appended constraints. Only their field-value corrections belong here.
         FieldGroupValues {
             integer: self.group_values(),
             b_first: [
@@ -592,6 +607,11 @@ impl SpartanOuterRow {
     }
 }
 
+/// The exact integer Lagrange extension coefficients from the DOMAIN-node base
+/// window to each out-of-domain extended node: `coeffs[i] = L_i(node)`.
+/// Consecutive-integer domains make these integers (legacy's `COEFFS_PER_J`);
+/// their field images equal `centered_lagrange_evals` at the node, which is
+/// what ties the integer pipeline to the reference's field pipeline.
 fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
     let mut out = [(0usize, [0i64; DOMAIN]); EXTENDED_NODE_COUNT];
     let mut slot = 0;
@@ -675,14 +695,22 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) 
     (az.reduce(), bz.reduce())
 }
 
+/// The uni-skip carry: everything the uni-skip front computes that the
+/// remainder slot reclaims — the typed-row store (reused for
+/// materialization and the final opening walk), the stage challenge vector,
+/// and the extended-node evaluations of `t1`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
     tau: Vec<F>,
+    /// Typed-row store: slice-backed witnesses stay unmaterialized (the
+    /// ~176 B × T row vector is the prover's peak allocation at large scale).
     rows: BundleStore<SpartanOuterRow>,
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
+    /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
+    /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
 }
 
@@ -857,6 +885,8 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
     }
 }
 
+/// The stage-1 remainder slot: reclaims the uni-skip carry and builds the
+/// linear-time round kernel.
 pub struct OptimizedOuterRemainder;
 
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
@@ -876,6 +906,9 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
     }
 }
 
+/// The `Az`/`Bz` linear forms folded at both stream values — the closed forms
+/// of the relation's derived leaves after the stream bind, kept for
+/// [`SumcheckKernel::validate_derived_tables`].
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct DerivedWeights<F> {
     az_weights: [Vec<F>; 2],
@@ -886,6 +919,8 @@ struct DerivedWeights<F> {
     bz_constant: [F; 2],
 }
 
+/// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
+/// domain (stream = index LSB, bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
     az: Polynomial<F>,
@@ -1032,6 +1067,10 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         })
     }
 
+    /// Az/Bz column weights at both stream values over the composed opening-column
+    /// selection, from the same `jolt-r1cs` sources the verifier's coefficient build
+    /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
+    /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
@@ -1102,6 +1141,10 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         claimed
     }
 
+    /// The field-inline opening values at the bound cycle point: one eq-weighted walk
+    /// over the sparse field-inline rows (columns in
+    /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order the
+    /// composed remainder relation folds).
     #[cfg(feature = "field-inline")]
     fn field_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
         map_reduce_chunks(
@@ -1133,7 +1176,7 @@ const VARIABLE_COUNT: usize = SPARTAN_OUTER_R1CS_INPUTS.len();
 /// at ~2^318 — so they go through the signed-product path instead.
 const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     let mut mask = [false; VARIABLE_COUNT];
-    mask[3] = true;
+    mask[3] = true; // ShouldBranch
     mask[17] = true;
     mask[18] = true;
     mask[20] = true;
@@ -1341,6 +1384,9 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
+        // The stream challenge binds the per-stream weight pairs; the split-eq
+        // scalar is the fully bound TauKernel — both from the kernel's own
+        // state, cross-checked against the verifier's coefficient build.
         let stream = self.challenges.as_slice()[0];
         let blend = |pair: [&F; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
         let variable_count = self.derived.az_weights[0].len();
@@ -1585,6 +1631,9 @@ mod tests {
             .collect()
     }
 
+    /// The dense image of the sparse field-inline rows for one field-inline column
+    /// index (the `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` position) — what the fixed
+    /// backend's field-inline view serves the reference kernel.
     #[cfg(feature = "field-inline")]
     fn field_column_table(
         field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
@@ -1634,6 +1683,10 @@ mod tests {
         backend
     }
 
+    /// The remainder's true input claim
+    /// `Σ_{t,s} kernel · eq(τ_low, (t,s)) · Az(t,s) · Bz(t,s)`, computed
+    /// through the public `jolt-r1cs` column-weight path over the COMPOSED
+    /// opening selection (independent of both kernels' row-value pipelines).
     fn true_input_claim(
         rows: &[SpartanOuterRow],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
@@ -1851,6 +1904,13 @@ mod tests {
         });
     }
 
+    /// The trait-path parity body over a real trace backend: the optimized
+    /// bundle walk against the reference's oracle tables, with the remainder
+    /// driven by the true joint-domain sum. The trace fixtures are
+    /// witness-extraction fixtures, not constraint-satisfying traces, so the
+    /// uni-skip reduction at r0 need not equal the joint-domain sum here; the
+    /// remainder runs on the true sum, which is what the naive reference
+    /// self-checks against.
     fn sample_case(backend: &TraceBackend<OwnedTrace>, log_t: usize) {
         let tau: Vec<Fr> = (0..log_t + 2)
             .map(|i| Fr::from_u64(29 + 13 * i as u64))
@@ -1959,6 +2019,10 @@ mod tests {
         );
     }
 
+    /// Full trait-path parity: without field-inline on the canned sample trace; with
+    /// field-inline enabled over a field-inline fixture trace (the sample backend
+    /// carries no field-inline view), exercising the trace-backed sparse field-inline
+    /// row seam.
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
         #[cfg(not(feature = "field-inline"))]
@@ -1983,6 +2047,9 @@ mod tests {
         }
     }
 
+    /// The typed bundle's columns equal the oracle tables the reference
+    /// kernel materializes — the two witness paths meeting at the shared
+    /// `Extract` impls, for all ordinary R1CS inputs.
     #[test]
     fn bundle_columns_match_oracle_tables() {
         with_sample_backend(|backend| {

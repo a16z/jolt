@@ -1,5 +1,9 @@
 use super::*;
 
+/// Lowers immediate logical right shift to one virtual final row.
+///
+/// The mask-shaped immediate records the same shift amount as `imm & 0x3f` and
+/// lets the final `VirtualSRLI` row perform an unsigned RV64 shift.
 pub(in crate::expand) fn expand_srli(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

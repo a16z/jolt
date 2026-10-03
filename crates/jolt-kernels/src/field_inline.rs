@@ -79,6 +79,8 @@ impl<F: JoltField> FieldIncrementColumn<F> {
     }
 }
 
+/// The unbound round reads shared storage; its first bind allocates only T/2
+/// values. All-zero columns stay allocation-free throughout the sumcheck.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),

@@ -303,6 +303,8 @@ where
     }
 
     fn challenge_scalar(&mut self) -> F {
+        // Mirrors the digest transcript's scalar challenge: same 16-byte
+        // squeeze width as `challenge`, but the non-optimized decoding path.
         let mut buf = [0u8; 16];
         let _ = self.sponge.squeeze(&mut buf);
         F::from_scalar_challenge_bytes(&buf)

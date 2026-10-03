@@ -69,6 +69,8 @@ impl Blake2SequenceBuilder {
         );
     }
 
+    /// Load the counter `t` into v[12] and the final-block flag into v[14].
+    /// `initialize_working_state` folds the IV constants into those slots.
     fn load_tail_into_working_state(&mut self) {
         jolt_asm!(self.asm, {
             ld *self.vr[VR_WORKING_STATE_START + 12], self.operands.rs2, crate::MSG_BLOCK_LEN as i64 * 8;
@@ -76,6 +78,7 @@ impl Blake2SequenceBuilder {
         });
     }
 
+    // Initialize the working state v[0..15] according to the BLAKE2b specification.
     fn initialize_working_state(&mut self) {
         for i in 0..crate::STATE_VECTOR_LEN {
             self.asm.emit_i(
@@ -93,6 +96,7 @@ impl Blake2SequenceBuilder {
             self.asm.emit_u(Kind::LUI, rd, IV[i]);
         }
 
+        // v[12] = IV[4] ^ t (counter low)
         self.asm.xor(
             Reg(*self.vr[VR_WORKING_STATE_START + 12]),
             Imm(IV[4]),
@@ -108,6 +112,7 @@ impl Blake2SequenceBuilder {
             0,
             *self.vr[VR_WORKING_STATE_START + 14],
         );
+        // XOR the mask with IV[6]: v[14] = IV[6], bits inverted iff is_final = 1.
         self.asm.xor(
             Reg(*self.vr[VR_WORKING_STATE_START + 14]),
             Imm(IV[6]),

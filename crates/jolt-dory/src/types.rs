@@ -160,6 +160,9 @@ impl DoryHint {
 #[derive(Clone)]
 pub struct DoryPartialCommitment {
     pub row_commitments: Vec<Bn254G1>,
+    /// Affine SRS bases cached lazily for the primitive-typed feed paths
+    /// (`feed_u64`/`feed_i128`), which call arkworks `msm_u64`/`msm_i128`
+    /// against affine bases. Grown on demand to the widest fed row.
     pub(crate) scalar_affine_bases: Option<Vec<ark_bn254::G1Affine>>,
 }
 
@@ -190,6 +193,7 @@ const MAX_SETUP_GT_VECTOR_LEN: usize = MAX_SERIALIZED_PROOF_ROUNDS + 1;
 /// `g2_0`, `h1`, `h2`, `ht`, and `max_log_n` as u64. All group encodings are
 /// fixed-width, so the whole structure can be measured without allocating.
 fn validate_verifier_setup_structure(buf: &[u8]) -> Result<(), String> {
+    // All three encodings are fixed-width; measure via placeholder values.
     let gt_size = ArkGT(Default::default()).compressed_size();
     let g1_size = ArkG1::default().compressed_size();
     let g2_size = ArkG2::default().compressed_size();
@@ -340,6 +344,8 @@ mod tests {
 
     #[test]
     fn dory_verifier_setup_rejects_huge_vector_length_prefix() {
+        // A crafted length prefix must be rejected before the upstream parser
+        // calls Vec::with_capacity(len) on it.
         assert_rejected_with::<DoryVerifierSetup>(&u64::MAX.to_le_bytes(), "exceeds maximum");
     }
 

@@ -4,6 +4,7 @@ use crate::expand::{
     allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, operands::format_i_imm, ExpansionError,
 };
 
+/// Symbolic register placeholder, resolved to a physical virtual register during materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TempId(pub(super) u8);
 
@@ -23,6 +24,8 @@ impl From<TempId> for RegisterOperand {
     }
 }
 
+/// Symbolic inline-register placeholder, resolved to the inline virtual
+/// register pool during materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct InlineTempId(pub(super) u8);
 
@@ -153,6 +156,8 @@ impl<K> InstructionTemplate<K> {
         }
     }
 
+    /// Pseudo-I format for address/alignment assertions that read `rs1` and an
+    /// immediate offset but do not write `rd`.
     pub(super) fn address(instruction_kind: K, rs1: RegisterOperand, imm: i128) -> Self {
         Self {
             instruction_kind,
@@ -169,6 +174,7 @@ impl<K> InstructionTemplate<K> {
 #[derive(Clone, Copy)]
 pub(super) enum ExpansionOp {
     Emit(RowTemplate),
+    /// Recursively expand this row through the full pipeline before appending.
     Expand(SourceInstructionRowTemplate),
     Allocate(TempId),
     Release(TempId),

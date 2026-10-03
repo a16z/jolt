@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use crate::{P256_MODULUS, P256_ORDER};
 pub use jolt_inlines_sdk::{spoil_proof, UnwrapOrSpoilProof};
 
+/// Returns `true` iff `x >= modulus`, i.e., `x` is non-canonical.
+/// Full top-down comparison since limbs have mixed values.
 #[inline(always)]
 fn is_non_canonical(x: &[u64; 4], modulus: &[u64; 4]) -> bool {
     if x[3] < modulus[3] {
@@ -51,6 +53,7 @@ const fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
     (wide as u64, ((wide >> 64) & 1) as u64)
 }
 
+/// r = a + b mod modulus.  Both a and b must be < modulus.
 #[inline(always)]
 fn add_mod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     let (r0, c) = adc(a[0], b[0], 0);
@@ -74,6 +77,7 @@ fn add_mod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     }
 }
 
+/// r = a - b mod modulus.  Both a and b must be < modulus.
 #[inline(always)]
 fn sub_mod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     let (r0, bw) = sbb(a[0], b[0], 0);
@@ -92,6 +96,7 @@ fn sub_mod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     }
 }
 
+/// r = -a mod modulus.  a must be < modulus.
 #[inline(always)]
 fn neg_mod(a: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     if a[0] == 0 && a[1] == 0 && a[2] == 0 && a[3] == 0 {
@@ -145,9 +150,10 @@ pub enum P256Error {
     ROrSZero,
     ZeroMessageHash,
     RxMismatch,
-    InvalidGlvSignWord(u64),
+    InvalidGlvSignWord(u64), // GLV sign word is not 0 or 1
 }
 
+/// Decode a GLV sign word: must be exactly 0 or 1.
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
@@ -206,6 +212,8 @@ impl<C: P256FieldConfig> core::fmt::Debug for P256Field<C> {
 }
 
 impl<C: P256FieldConfig> P256Field<C> {
+    /// Creates a new element from a `[u64; 4]` array.
+    /// Returns the config-specific error if the value >= modulus.
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, P256Error> {
         if is_non_canonical(arr, &C::MODULUS) {
@@ -217,6 +225,8 @@ impl<C: P256FieldConfig> P256Field<C> {
         })
     }
 
+    /// Creates a new element from a `[u64; 4]` array (unchecked).
+    /// The array is assumed to contain a value in the range `[0, modulus)`.
     #[inline(always)]
     pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Self {
@@ -258,6 +268,7 @@ impl<C: P256FieldConfig> P256Field<C> {
         self.e == [0u64; 4]
     }
 
+    /// Returns `-self mod modulus`.
     #[inline(always)]
     pub fn neg(&self) -> Self {
         Self {
@@ -266,6 +277,7 @@ impl<C: P256FieldConfig> P256Field<C> {
         }
     }
 
+    /// Returns `self + other mod modulus`.
     #[inline(always)]
     pub fn add(&self, other: &Self) -> Self {
         Self {
@@ -274,6 +286,7 @@ impl<C: P256FieldConfig> P256Field<C> {
         }
     }
 
+    /// Returns `self - other mod modulus`.
     #[inline(always)]
     pub fn sub(&self, other: &Self) -> Self {
         Self {
@@ -282,16 +295,20 @@ impl<C: P256FieldConfig> P256Field<C> {
         }
     }
 
+    /// Returns `2 * self mod modulus`.
     #[inline(always)]
     pub fn dbl(&self) -> Self {
         self.add(self)
     }
 
+    /// Returns `3 * self mod modulus`.
     #[inline(always)]
     pub fn tpl(&self) -> Self {
         self.dbl().add(self)
     }
 
+    /// Returns `self * other mod modulus`.
+    /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -336,6 +353,8 @@ impl<C: P256FieldConfig> P256Field<C> {
         }
     }
 
+    /// Returns `self^2 mod modulus`.
+    /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -379,6 +398,8 @@ impl<C: P256FieldConfig> P256Field<C> {
         }
     }
 
+    /// Returns `self / other mod modulus`.  Assumes `other != 0`.
+    /// Uses a custom RISC-V inline instruction for performance.
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -621,6 +642,8 @@ impl CurveParams<P256Fq> for P256Curve {
     }
 }
 
+/// P-256 affine point. All point arithmetic (add, double, double_and_add, neg,
+/// is_on_curve) is provided by `AffinePoint` in `jolt-inlines-sdk`.
 pub type P256Point = AffinePoint<P256Fq, P256Curve>;
 
 pub trait P256PointExt {
@@ -636,6 +659,11 @@ impl P256PointExt for P256Point {
         )
     }
 }
+
+// ECDSA P-256 verification using Fake GLV
+//
+// Reference: "Fake GLV: You don't need an efficient endomorphism to implement
+// GLV-like scalar multiplication in SNARK circuits" (Latincrypt 2025)
 
 #[cfg(all(
     not(feature = "host"),
@@ -700,6 +728,13 @@ fn fake_glv_scalar_mul(_s: &P256Fr, _p: &P256Point) -> (P256Point, u128, bool, u
     panic!("fake_glv_scalar_mul not available on this target");
 }
 
+/// 2-scalar 128-bit Shamir's trick.
+///
+/// Computes `scalars[0] * points[0] + scalars[1] * points[1]` using
+/// simultaneous double-and-add with a 4-entry precomputed table.
+///
+/// Used by the Fake GLV verification to check each scalar multiplication
+/// independently: `a_i * P - b_i * R_i = O` binds R_i = u_i * P.
 #[inline(always)]
 fn shamir_2x128(scalars: [u128; 2], points: [P256Point; 2]) -> P256Point {
     let p01 = points[0].add(&points[1]);
@@ -863,6 +898,7 @@ pub(crate) fn verify_ecdsa_inner(
     //
     // Reference: https://ethresear.ch/t/fake-glv-you-dont-need-an-efficient-endomorphism-to-implement-glv-like-scalar-multiplication-in-snark-circuits/20394
 
+    // Check R1: a1*G - b1*R1 = O  (binds R1 = u1*G)
     let r1_adj = if b1_sign { r1.clone() } else { r1.neg() };
     let g_adj = if a1_sign { g.neg() } else { g };
     let check1 = shamir_2x128([a1_val, b1_val], [g_adj, r1_adj]);
@@ -870,6 +906,7 @@ pub(crate) fn verify_ecdsa_inner(
         spoil_proof();
     }
 
+    // Check R2: a2*Q - b2*R2 = O  (binds R2 = u2*Q)
     let r2_adj = if b2_sign { r2.clone() } else { r2.neg() };
     let q_adj = if a2_sign { q.neg() } else { q.clone() };
     let check2 = shamir_2x128([a2_val, b2_val], [q_adj, r2_adj]);

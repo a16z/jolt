@@ -1,7 +1,25 @@
+//! Jolt-optimized [`DoryRoutines`] plugged into `dory::prove`/`dory::verify`.
+//!
+//! As of dory-pcs 0.4.1 the stock routines batch-normalize MSM bases and
+//! parallelize the vector ops behind the `parallel` feature (upstreamed from
+//! here in a16z/dory#27), so `msm` and `fold_field_vectors` just delegate —
+//! those wrappers only contribute the `JoltG1Routines::msm`/
+//! `JoltG2Routines::msm` span labels the profiling telemetry grammar
+//! addresses. The remaining overrides are the GLV kernels from
+//! `jolt-optimizations` (2D decomposition for G1, 4D Frobenius for G2),
+//! which replace the stock full-width scalar multiplications per element and
+//! have no crates.io home yet. These mirror the legacy prover's
+//! `JoltG1Routines`/`JoltG2Routines`. Group results are exact, so proofs are
+//! byte-identical to the stock routines'.
+
 use ark_bn254::{Fr as ArkworksFr, G1Projective, G2Projective};
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, G1Routines, G2Routines};
 use dory::primitives::arithmetic::DoryRoutines;
 use rayon::prelude::*;
+
+// The transmutes below rely on ArkFr/ArkG1/ArkG2 being repr(transparent)
+// over ark_bn254::{Fr, G1Projective, G2Projective} (the same layout facts
+// `crate::scheme`'s conversions rest on).
 
 #[inline]
 fn ark_fr_slice(scalars: &[ArkFr]) -> &[ArkworksFr] {
@@ -148,6 +166,8 @@ mod tests {
         let mut bases: Vec<ArkG1> = (0..33).map(|_| random_g1()).collect();
         let mut scalars: Vec<ArkFr> = (0..33).map(|_| random_fr()).collect();
         let scalar = random_fr();
+        // Identity points and zero scalars exercise the GLV decomposition
+        // and batch-normalization edge cases the random fixtures miss.
         bases[5] = ArkG1::identity();
         scalars[9] = <ArkFr as DoryField>::zero();
 
@@ -192,6 +212,8 @@ mod tests {
         let mut bases: Vec<ArkG2> = (0..17).map(|_| random_g2()).collect();
         let mut scalars: Vec<ArkFr> = (0..17).map(|_| random_fr()).collect();
         let scalar = random_fr();
+        // Identity points and zero scalars exercise the GLV decomposition
+        // and batch-normalization edge cases the random fixtures miss.
         bases[5] = ArkG2::identity();
         scalars[9] = <ArkFr as DoryField>::zero();
 

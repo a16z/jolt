@@ -21,6 +21,9 @@ use crate::routines::{JoltG1Routines, JoltG2Routines};
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
+// All jolt types below are #[repr(transparent)] over the same arkworks
+// inner type as their dory-pcs counterpart, guaranteeing identical layout.
+
 pub(crate) type ArkFr = dory::backends::arkworks::ArkFr;
 pub(crate) type ArkG1 = dory::backends::arkworks::ArkG1;
 pub(crate) type ArkGT = dory::backends::arkworks::ArkGT;
@@ -145,6 +148,7 @@ impl DoryScheme {
         DoryProverSetup(setup)
     }
 
+    /// Derives the verifier SRS (a subset of the prover SRS).
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_verifier", fields(max_num_vars))]
     pub fn setup_verifier(max_num_vars: usize) -> DoryVerifierSetup {
         let prover_setup = Self::setup_prover(max_num_vars);

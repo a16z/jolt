@@ -29,10 +29,18 @@ use super::spartan::{pc_shift, unexpanded_pc_shift};
 ///
 /// [`stage_gamma_powers`]: crate::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges::stage_gamma_powers
 pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
+    // Stage 1: UnexpandedPC, Imm, then one per circuit flag (all Spartan outer).
     2 + NUM_CIRCUIT_FLAGS,
+    // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
+    // product-virtualization flags.
     4,
+    // Stage 3: Imm (instruction input), UnexpandedPC (shift), the four
+    // operand-source flags, IsNoop, VirtualInstruction, IsFirstInSequence.
     9,
+    // Stage 4: the RdWa, Rs1Ra, Rs2Ra register read-write openings.
     3,
+    // Stage 5: RdWa (registers val evaluation), InstructionRafFlag, then one
+    // per lookup table flag.
     2 + LookupTableKind::<XLEN>::COUNT,
 ];
 
@@ -69,6 +77,11 @@ impl BytecodeReadRafDimensions {
     }
 }
 
+/// The staged input fold shared by the bytecode read-RAF monolith and its
+/// address phase: the five base staged claims at `γ^0..4`, then one raw claim
+/// per `extra_stage_claims` entry at the following powers (the lattice
+/// fused-inc consumer stages), then the Spartan outer/shift PC openings and
+/// the constant entry term at the next three powers.
 pub(crate) fn read_raf_address_input_fold<F>(extra_stage_claims: Vec<JoltExpr<F>>) -> JoltExpr<F>
 where
     F: Ring,
@@ -119,6 +132,8 @@ where
     F: Ring,
 {
     let gamma = challenge(BytecodeReadRafChallenge::Gamma);
+    // The staged Val factor multiplies after the RA product so the lowered
+    // R1CS auxiliary chain matches core's `[ra..., val_stage]` factor order.
     let mut output = JoltExpr::zero();
     for stage in 0..num_val_stages {
         output = output
@@ -163,6 +178,9 @@ pub fn fused_inc_read_raf_opening() -> JoltOpeningId {
     )
 }
 
+/// Lattice full-mode cycle output: the base five stage values ride the RA
+/// product as usual; the four fused-inc stages additionally carry the
+/// `FusedInc` opening as a cycle factor (degree +1 over the base relation).
 pub(crate) fn read_raf_cycle_output_lattice<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
 where
     F: Ring,
@@ -190,6 +208,11 @@ where
         * bytecode_ra_product(dimensions)
 }
 
+/// Lattice committed-mode cycle output: the base five stages fold their staged
+/// `BytecodeValClaim` openings; the four fused stages reuse the staged *store*
+/// val (index [`BYTECODE_STAGE_GAMMA_COUNTS`]`.len()`) — directly for the two
+/// RAM legs, complemented (`1 − store`) for the two register legs — so the
+/// staged-val wire set is unchanged from the store-claim design.
 pub(crate) fn read_raf_cycle_output_committed_lattice<F>(
     dimensions: BytecodeReadRafDimensions,
 ) -> JoltExpr<F>
@@ -329,6 +352,9 @@ where
     }
 }
 
+/// Table-independent read-RAF publics shared by the full and committed
+/// evaluation paths: `(SpartanOuterRaf, SpartanShiftRaf, Entry)`, where the
+/// RAF terms scale `Int(r_address)` by the stage-1/stage-3 cycle-eq factors.
 fn read_raf_raf_entry_publics<F>(
     r_address: &[F],
     r_cycle: &[F],
@@ -455,6 +481,9 @@ where
     );
     let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
 
+    // The base monolith publics carry the five gamma'd stages only; the
+    // lattice sixth (store) row value never flows through this path, so the
+    // zip below is deliberately driven by the five-slot accumulator.
     let mut stage_values = [F::zero(); 5];
     for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
         let row_values = read_raf_row_values::<F>(
@@ -582,6 +611,9 @@ where
     {
         [stage1, stage2, stage3, stage4, stage5]
     }
+    // The lattice sixth stage: the store circuit flag as a raw staged value
+    // (the `IncVirtualization` destination selector), folded against
+    // `eq(r_address)` like the five gamma'd stages by the read-raf consumers.
     #[cfg(feature = "akita")]
     {
         let store = F::from_u64(u64::from(circuit_flags[CircuitFlags::Store]));

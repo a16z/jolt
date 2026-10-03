@@ -1,3 +1,10 @@
+/// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
+/// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
+/// size assertions, and a safe `into_inner` accessor.
+///
+/// Paths are fully qualified so the macro does not inject `use` items into the caller's
+/// module scope — callers can expand the macro multiple times in the same module or
+/// alongside unrelated imports without conflicts.
 macro_rules! impl_jolt_group_wrapper {
     ($wrapper:ident, $projective:ty, $affine:ty, $doc:literal) => {
         #[doc = $doc]
@@ -236,16 +243,19 @@ use crate::PairingGroup;
 pub struct Bn254;
 
 impl Bn254 {
+    /// Standard G1 generator. Useful for tests and PCS setup code.
     pub fn g1_generator() -> Bn254G1 {
         use ark_ec::AffineRepr;
         Bn254G1(ark_bn254::G1Affine::generator().into())
     }
 
+    /// Standard G2 generator. Useful for tests and PCS setup code.
     pub fn g2_generator() -> Bn254G2 {
         use ark_ec::AffineRepr;
         Bn254G2(ark_bn254::G2Affine::generator().into())
     }
 
+    /// Samples a uniformly random G1 element.
     pub fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Bn254G1 {
         use ark_std::UniformRand;
         Bn254G1(ark_bn254::G1Projective::rand(rng))

@@ -8,6 +8,9 @@ use jolt_inlines_sdk::host::{
 };
 use jolt_inlines_sdk::jolt_asm;
 
+/// Layout: v[0..15] + m[0..15] only (no separate h/counter/flags banks, no temp regs):
+/// inputs load directly into their `v` slots and the chaining value is produced
+/// in place via `v[i] ^= v[i+8]`.
 pub const NEEDED_REGISTERS: usize = 32;
 
 const INTERNAL_STATE_VR_START: usize = 0;

@@ -120,6 +120,7 @@ fn check_key_invariants<F: JoltField>(
             expected_num_vars_padded, matrices.num_vars,
         ));
     }
+    // Guarantees total_rows()/total_cols() cannot overflow downstream.
     if num_cycles.checked_mul(num_constraints_padded).is_none() {
         return Err(format!(
             "total row count overflows usize: {num_cycles} cycles * {num_constraints_padded} padded constraints"
@@ -382,6 +383,10 @@ impl<F: JoltField> R1csKey<F> {
     }
 }
 
+/// Dot product of a sparse row with a dense evaluation table.
+///
+/// Callers guarantee the table covers `num_vars` entries; every column index
+/// is below `num_vars` by the [`ConstraintMatrices`] invariant.
 #[expect(
     clippy::indexing_slicing,
     reason = "column indices are below num_vars by the ConstraintMatrices invariant and tables cover num_vars"
@@ -453,6 +458,7 @@ mod tests {
 
     #[test]
     fn try_from_rejects_dimensional_invariant_violations() {
+        // Zero num_cycles would make num_cycle_vars() return 64.
         assert!(R1csKey::try_from(raw_key(0, 2, 4)).is_err());
         assert!(R1csKey::try_from(raw_key(3, 2, 4)).is_err());
         assert!(R1csKey::try_from(raw_key(4, 1, 4)).is_err());

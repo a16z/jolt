@@ -29,6 +29,9 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
+/// Number of staged `BytecodeValClaim(i)` claims batched into the reduction:
+/// the five base flag stages, plus (akita) the `OpFlags(Store)` stage the
+/// `IncVirtualization` phase consumes as its destination selector.
 #[cfg(not(feature = "akita"))]
 pub const NUM_BYTECODE_VAL_STAGES: usize = 5;
 #[cfg(feature = "akita")]
@@ -62,6 +65,14 @@ pub const fn is_valid_committed_program_immediate(immediate: i128) -> bool {
     immediate.unsigned_abs() <= u64::MAX as u128
 }
 
+/// Committed bytecode chunking is valid when the chunk count is a nonzero
+/// power of two no larger than [`MAX_COMMITTED_BYTECODE_CHUNK_COUNT`] that
+/// divides the power-of-two bytecode length.
+///
+/// Deliberately stricter than core's same-named predicate: core leaves
+/// `bytecode_len` unchecked because preprocessing pads it to a power of two,
+/// while the chunk-size log derivations here rely on that invariant
+/// explicitly.
 #[inline(always)]
 pub fn is_valid_committed_bytecode_chunking_for_len(
     bytecode_len: usize,
@@ -469,6 +480,11 @@ pub fn lane_weights<F: JoltField>(
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
     }
+    // The lattice store stage: one raw circuit-flag lane at η^5, no gamma fold
+    // (mirrors the read-raf sixth staged val, which consumes the
+    // `IncVirtualization` store selector claim directly). Anchored on the fixed
+    // base count so it lands at η^5 while `eta_powers` is sized by the active
+    // (cfg'd) `NUM_BYTECODE_VAL_STAGES` (= 6 here).
     #[cfg(feature = "akita")]
     {
         weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
@@ -525,6 +541,9 @@ pub fn final_bytecode_chunk_opening(chunk_idx: usize) -> JoltOpeningId {
     )
 }
 
+/// Backstop for the formula constructors that take a raw chunk count without
+/// the bytecode length needed for full chunking validation; layouts are the
+/// validated source of this value.
 pub(crate) fn assert_valid_chunk_count(chunk_count: usize) {
     assert!(
         is_valid_chunk_count(chunk_count),

@@ -297,6 +297,10 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
     assert!(error.to_string().contains("outside the supported range"));
 }
 
+/// The emit specs are the single source of truth for what the generator
+/// writes; each checked-in one-hot catalog must be exactly its family's grid —
+/// the forward inclusion is checked above, so a length match plus a
+/// reverse-inclusion sweep rules out stale or duplicated entries.
 #[test]
 fn emit_specs_and_checked_in_catalogs_agree_exactly() {
     let [k16_spec, k256_spec, dense_spec, full_dense_spec] =
@@ -380,6 +384,7 @@ mod field_inc {
                 .ilog2() as usize
     }
 
+    /// The prover pads Akita traces to at least 2^12 cycles.
     const PROVER_MIN_LOG_T: usize = 12;
 
     fn field_inline_rows_plan_and_resolve_at_every_arity<Cfg: CommitmentConfig>(

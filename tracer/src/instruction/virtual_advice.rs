@@ -24,8 +24,8 @@ pub struct VirtualAdvice {
 }
 
 impl RISCVInstruction for VirtualAdvice {
-    const MASK: u32 = 0;
-    const MATCH: u32 = 0;
+    const MASK: u32 = 0; // Virtual
+    const MATCH: u32 = 0; // Virtual
 
     type Format = FormatJ;
     type RegisterState = RegisterStateJ;

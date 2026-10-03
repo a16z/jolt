@@ -1,3 +1,19 @@
+//! Differential tests for the extension towers (`FpExt2`/`FpExt4`/`FpExt8`)
+//! against an independent schoolbook oracle: polynomial multiplication
+//! modulo the defining relation implemented directly here over `u128`
+//! values (256-bit limb multiply + binary long division for the base-field
+//! modular ops — no Solinas folding, no shared code).
+//!
+//! Coverage: both `FpExt2` non-residue configs and the quartic/octic towers
+//! over `Fp32`/`Fp64`/`Fp128` bases (registered primes plus `Fp32<251>`,
+//! the one small prime with `p ≡ 3 mod 4` where `NegOneNr` is a genuine
+//! field, `Fp64<2^32 − 99>`, and `Prime128OffsetA7F7`, over which no tower
+//! is a field). Whether each extension is a field is computed from the
+//! prime ([`quadratic_is_field`], [`ring_subfield_is_field`]), not stated by
+//! hand. Where it is not a field (reducible defining polynomial), inversion
+//! is only verified when it succeeds (`x · x⁻¹ = 1`); a spurious `None` for
+//! an invertible element is not detectable without a polynomial-gcd oracle.
+
 #![cfg(feature = "solinas")]
 #![expect(clippy::unwrap_used, reason = "test code")]
 
@@ -147,6 +163,11 @@ fn ext_pow<E: Field>(mut base: E, mut e: u128) -> E {
     acc
 }
 
+/// Full oracle sweep for one extension instantiation.
+///
+/// `is_field: false` runs every ring-level check but does not require
+/// nonzero elements to invert (reducible defining polynomial over that
+/// base).
 macro_rules! check_ext {
     ($E2:ty, $F2:ty, $p:expr, $d:expr, $oracle:expr, is_field: $is_field:expr, $rng:expr) => {{
         let p: u128 = $p;
@@ -256,6 +277,8 @@ macro_rules! check_ext {
                 embed(i128v.unsigned_abs(), i128v < 0)
             );
 
+            // Wire bytes: structural shape and round trip (absolute bytes
+            // are pinned by the golden fixtures in golden_bytes.rs).
             let t_bytes = bincode::serde::encode_to_vec(xa, cfg).unwrap();
             let expected: Vec<u8> = <$E2 as ExtField<$F2>>::to_base_vec(&xa)
                 .iter()
@@ -295,6 +318,9 @@ macro_rules! check_ext {
             }
         }
 
+        // Boundary coefficient patterns: all-zero, all-max, single-nonzero
+        // (1 and p−1) per position — worst cases for the fused Fp32 kernel's
+        // column sums.
         let mut patterns: Vec<Vec<u128>> = vec![vec![0; d], vec![p - 1; d]];
         for i in 0..d {
             let mut v = vec![0u128; d];
@@ -353,6 +379,10 @@ macro_rules! check_ext {
     }};
 }
 
+/// Frobenius/Moore machinery: canonical thetas are the packing basis,
+/// solutions satisfy the Moore system in oracle-verified arithmetic, and
+/// singular/mismatched inputs are rejected. In a genuine field the basis
+/// thetas are linearly independent, so validate/solve must succeed.
 macro_rules! check_moore {
     ($E2:ty, $F2:ty, $p:expr, $d:expr, is_field: $is_field:expr, $rng:expr) => {{
         let p: u128 = $p;

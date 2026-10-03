@@ -46,8 +46,12 @@ impl SCD {
 impl RISCVTrace for SCD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
+        // See SCD::exec — SC.D needs an 8-byte reservation set.
         let success = cpu.reservation_covers(address, ReservationWidth::Doubleword);
 
+        // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
+        // in the sequence, on a per-execution copy of the row. Locating it by
+        // type avoids fragility against changes to the sequence's prelude.
         let mut trace = trace;
         let mut patched = false;
         cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
@@ -180,6 +184,7 @@ mod tests {
         let mut trace = Vec::new();
         lrw.trace(&mut cpu, Some(&mut trace));
 
+        // SC.D fails (width mismatch), but must clear BOTH vr32 and vr33
         cpu.x[12] = 0x1234_5678_9ABC_DEF0u64 as i64;
         let decoded = Instruction::decode(encode_scd(13, 11, 12), 0x1004, false).unwrap();
         let Instruction::SCD(scd) = decoded else {
@@ -205,6 +210,8 @@ mod tests {
         );
     }
 
+    /// SC.D to a non-RAM (I/O) address must be rejected by the
+    /// inline-sequence RAM-range constraint. Same rationale as SC.W.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_scd_to_io_rejected() {
@@ -234,6 +241,7 @@ mod tests {
         let mut cpu = setup_cpu();
         let addr = DRAM_BASE;
         cpu.mmu.store_word(addr, 0xDEADBEEF).unwrap();
+        // Also initialize the upper word so doubleword reads succeed
         cpu.mmu.store_word(addr + 4, 0xCAFEBABE).unwrap();
 
         cpu.x[11] = addr as i64;
@@ -245,6 +253,7 @@ mod tests {
         let mut trace = Vec::new();
         lrw.trace(&mut cpu, Some(&mut trace));
 
+        // SC.D to same address should fail (width mismatch)
         cpu.x[12] = 0x1234_5678_9ABC_DEF0u64 as i64;
         let decoded = Instruction::decode(encode_scd(13, 11, 12), 0x1004, false).unwrap();
         let Instruction::SCD(scd) = decoded else {

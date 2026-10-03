@@ -7,9 +7,21 @@ use serde::{Deserialize, Serialize};
 pub struct VerificationResult {
     pub tx_count: u32,
     pub recovered_count: u32,
+    /// Recovered signer addresses (in order)
     pub signers: Vec<[u8; 20]>,
 }
 
+/// Verify transactions by recovering their signer addresses.
+///
+/// This function is marked with `#[jolt::provable]` to make it provable
+/// inside the Jolt zkVM. It uses rayon-based parallel signature recovery
+/// via reth's `recover_signers` function.
+///
+/// # Arguments
+/// * `txs_bytes` - Postcard-serialized vector of RLP-encoded transactions
+///
+/// # Returns
+/// * `VerificationResult` containing the recovered signers
 #[jolt::provable(
     max_input_size = 1048576,
     max_output_size = 65536,

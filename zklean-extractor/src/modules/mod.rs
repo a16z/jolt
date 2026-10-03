@@ -11,6 +11,7 @@ pub struct Module {
     /// The name of the module. The filename will become `Jolt/{name}.lean`.
     pub name: String,
     pub imports: Vec<String>,
+    /// The contents of the module formatted as Lean4 code
     pub contents: Vec<u8>,
 }
 

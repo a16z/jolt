@@ -105,6 +105,8 @@ fn claim_from_clear<F: JoltField>(
     trace_length: usize,
     id: native::JoltOpeningId,
 ) -> Option<F> {
+    // The &mut chain is the single source of truth for the ID -> field mapping;
+    // the read path clones and projects through it to avoid duplicating it.
     let mut copy = claims.clone();
     claim_mut_from_clear(&mut copy, trace_length, id).map(|value| *value)
 }
@@ -424,6 +426,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
                 return Some(intermediate);
             }
         }
+        // cycle-phase-only shapes emit the final chunk claims here
         for (chunk, opening_claim) in reduction.chunks.iter_mut().enumerate() {
             if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {
                 return Some(opening_claim);

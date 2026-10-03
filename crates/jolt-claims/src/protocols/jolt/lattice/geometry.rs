@@ -11,6 +11,10 @@ use crate::lattice::BalancedChunkingError;
 pub use crate::lattice::BALANCED_INC_BITS as FUSED_INC_BITS;
 pub use crate::lattice::{balanced_inc_value, BalancedIncChunking};
 
+/// Bytecode read-raf val stages in lattice mode: the base stages plus one
+/// carrying the `OpFlags(Store)` opening that `IncVirtualization` consumes as
+/// its destination selector. Always six; in an akita build the active
+/// `NUM_BYTECODE_VAL_STAGES` already folds the store stage, so it equals this.
 #[cfg(not(feature = "akita"))]
 pub const LATTICE_BYTECODE_VAL_STAGES: usize = NUM_BYTECODE_VAL_STAGES + 1;
 #[cfg(feature = "akita")]

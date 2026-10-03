@@ -18,6 +18,8 @@ declare_riscv_instr!(
 
 impl VirtualAdviceLoad {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAdviceLoad as RISCVInstruction>::RAMAccess) {
+        // Read from advice tape and write to rd register
+        // The imm field specifies how many bytes to read (1, 2, 4, or 8)
         let num_bytes = self.operands.imm as usize;
         debug_assert!([1, 2, 4, 8].contains(&num_bytes));
         let advice_value =

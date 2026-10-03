@@ -1,3 +1,7 @@
+//! The top-level prover: the stage recipes run in protocol order on one
+//! transcript and one backend session, and their wire outputs assemble into
+//! the complete [`JoltProof`].
+
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
@@ -246,6 +250,9 @@ where
     {
         use crate::blindfold::{self, ZkFinalOpening, ZkStageWitnesses};
 
+        // The shell: every wire field real, the claims slot a unit
+        // placeholder the stage replay never reads (claims are not absorbed
+        // in ZK — the BlindFold proof replaces them after the tail).
         let shell = JoltProof::<PCS, VC, ()> {
             protocol: JoltProtocolConfig::for_zk(true),
             commitments: stage0.commitments,

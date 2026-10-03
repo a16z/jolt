@@ -17,6 +17,7 @@ use num_traits::One;
 
 use super::fs_transcript::{ChallengeKind, ChallengeTape};
 
+/// Changes two Dory commitments in the kernel of the frozen final-opening RLC.
 #[cfg(not(feature = "akita"))]
 pub fn cancel_dory_final_opening_commitments<PCS, VC, ZkProof>(
     proof: &mut JoltProof<PCS, VC, ZkProof>,
@@ -52,6 +53,8 @@ pub fn cancel_dory_final_opening_commitments<PCS, VC, ZkProof>(
     assert_ne!(proof.commitments.rd_inc, original_rd_inc);
 }
 
+/// Rewrites the clear stage-1 proof while preserving every algebraic check at
+/// the recorded challenges.
 pub fn equivocate_stage1_clear<PCS, VC, ZkProof>(
     proof: &mut JoltProof<PCS, VC, ZkProof>,
     tape: &ChallengeTape<PCS::Field>,

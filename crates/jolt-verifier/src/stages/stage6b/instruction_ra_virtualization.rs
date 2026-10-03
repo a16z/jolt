@@ -26,6 +26,8 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
 
+/// Wire the per-virtual reduced `InstructionRa` opening *values* from the stage-5
+/// instruction read-RAF. Clear-only.
 pub fn instruction_ra_virtualization_input_values_from_upstream<F: JoltField>(
     stage5: &Stage5OutputClaims<F>,
 ) -> InstructionRaVirtualizationInputClaims<F> {
@@ -34,6 +36,8 @@ pub fn instruction_ra_virtualization_input_values_from_upstream<F: JoltField>(
     }
 }
 
+/// Wire the per-virtual reduced `InstructionRa` opening *points* from the stage-5
+/// instruction read-RAF. ZK-agnostic.
 pub fn instruction_ra_virtualization_input_points_from_upstream<F: JoltField>(
     stage5: &Stage5OutputPoints<F>,
 ) -> InstructionRaVirtualizationInputClaims<Vec<F>> {
@@ -46,7 +50,10 @@ pub fn instruction_ra_virtualization_input_points_from_upstream<F: JoltField>(
 pub struct InstructionRaVirtualization<F: JoltField> {
     symbolic: relations::instruction::RaVirtualization,
     dimensions: InstructionRaVirtualizationDimensions,
+    /// The stage-5 instruction address point, chunked into the per-chunk committed
+    /// opening points.
     instruction_address: Vec<F>,
+    /// The stage-5 instruction read-RAF cycle that `EqCycle` compares against.
     instruction_read_raf_cycle: Vec<F>,
     committed_chunk_bits: usize,
 }

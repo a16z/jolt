@@ -1,5 +1,13 @@
 #![no_main]
 
+//! Differential check of the shared-inversion batch G1 addition against a
+//! naive fold-add over the same index sets.
+//!
+//! Index sets are non-empty and duplicate-free by construction: the batch
+//! inversion's documented precondition excludes equal or inverse points
+//! within one pair, and duplicate indices over a common base set violate it
+//! (the result is documented as silently garbage, not an error).
+
 use std::sync::OnceLock;
 
 use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi;

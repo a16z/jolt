@@ -14,6 +14,7 @@ pub struct LookupOutput(pub u64);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LookupIndex(pub u128);
 
+/// Which lookup table the instruction's lookup targets, if any.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TableIndex(pub Option<usize>);
 

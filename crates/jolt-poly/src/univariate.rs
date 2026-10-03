@@ -1,3 +1,5 @@
+//! Univariate polynomial in coefficient form.
+
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use jolt_field::Field;
@@ -313,6 +315,10 @@ impl<F: Field> UnivariatePoly<F> {
         let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
         let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
 
+        // s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = hint
+        // l(1) = l(0) + l(∞) = linear_eval_one
+        // q(1) = q(0) + q(1_coeff) + q(2_coeff)
+        // Solve for the linear coefficient of q:
         assert!(
             !linear_eval_one.is_zero(),
             "linear polynomial vanishes at x=1"
@@ -332,6 +338,7 @@ impl<F: Field> UnivariatePoly<F> {
         Self { coefficients }
     }
 
+    /// Returns `true` if all coefficients are zero (or the vector is empty).
     pub fn is_zero(&self) -> bool {
         self.coefficients.is_empty() || self.coefficients.iter().all(|c| *c == F::zero())
     }

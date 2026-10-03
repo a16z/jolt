@@ -1,5 +1,10 @@
 use super::*;
 
+/// Lowers immediate arithmetic right shift to a single virtual final row.
+///
+/// The immediate is converted into the same bitmask shape used by dynamic
+/// shifts. `VirtualSRAI` recovers the shift amount from that mask and performs
+/// the signed RV64 shift.
 pub(in crate::expand) fn expand_srai(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

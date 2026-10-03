@@ -11,11 +11,15 @@ use jolt_program::execution::TraceError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 pub enum ExitReason {
+    /// Still running (initial value; never observed on return).
     Running = 0,
     /// Guest terminated via the PC-stall convention (`j .`).
     Terminated = 1,
+    /// Guest RAM access outside the memory plane.
     FaultOutOfBounds = 2,
+    /// Indirect jump to an address that is not a compiled group start.
     FaultBadJumpTarget = 3,
+    /// A host helper reported an error (e.g. device access violation).
     FaultHelper = 4,
     /// Record mode ran out of observation slots (the record pass emitted more
     /// rows than the fast pass counted, i.e. the two diverged).
@@ -28,16 +32,21 @@ pub enum ExitReason {
 /// State shared with generated code. Field offsets are load-bearing.
 #[repr(C)]
 pub struct GuestState {
+    /// All 128 guest registers (32 architectural + 96 virtual), by index.
     pub x: [u64; REGISTER_COUNT as usize],
     /// Guest PC (source address of the current group). Written by generated
     /// code only at indirect control flow and on exit.
     pub pc: u64,
+    /// Trace rows executed so far.
     pub trace_len: u64,
+    /// [`ExitReason`] as a raw u64 (written by generated code).
     pub exit: u64,
+    /// Faulting guest address when `exit` is a fault.
     pub fault_addr: u64,
     /// Host base of the guest RAM plane (also pinned in a register; stored
     /// here so helpers can reconstruct it from `&mut GuestState` alone).
     pub mem_base: u64,
+    /// Size in bytes of the RAM plane.
     pub mem_size: u64,
     pub host: *mut HostContext,
     /// Runtime advice values for the group being executed, filled by the
@@ -50,7 +59,9 @@ pub struct GuestState {
     /// only place a resumable PC is statically known). `u64::MAX` disables
     /// pausing, which is what the eager paths use.
     pub row_limit: u64,
+    /// Record mode: next observation slot, bumped per emitted row.
     pub obs_cursor: *mut Observation,
+    /// Record mode: one past the last writable slot.
     pub obs_end: *mut Observation,
 }
 
@@ -126,6 +137,7 @@ const _: () = {
 /// (largest today: the modular-division inlines at 8).
 pub const ADVICE_SLOTS: usize = 16;
 
+/// One group's advice computation, resolved at compile time.
 pub struct AdviceJob {
     pub compute: AdviceCompute,
     /// Number of `VirtualAdvice` rows in the job's group, i.e. how many
@@ -194,6 +206,9 @@ pub struct HostContext {
     pub device: JoltDevice,
     /// Runtime advice tape bytes (append-only; reads go through the cursor).
     pub advice_tape: Vec<u8>,
+    /// Read cursor into `advice_tape` (advice-load kinds).
     pub advice_cursor: usize,
+    /// Set when a helper encounters an unrecoverable condition; carries the
+    /// message surfaced in the resulting `TraceError`.
     pub helper_error: Option<String>,
 }

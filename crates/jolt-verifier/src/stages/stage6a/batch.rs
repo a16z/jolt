@@ -1,3 +1,11 @@
+//! Construction of the stage-6a address-phase sumcheck batch.
+//!
+//! [`Stage6aSumchecks::build_from_parts`] assembles the two members over data
+//! both the verifier and the prover hold, so the member legs (the bytecode
+//! stage points, the booleanity dimensions, the stage-5 instruction points)
+//! are single-sourced across the two fronts — the same idiom as stage 6b's
+//! `Stage6bSumchecks::build_from_parts`.
+
 use jolt_claims::protocols::jolt::geometry::{
     booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions,
 };
@@ -12,6 +20,9 @@ use crate::stages::stage4::outputs::Stage4OutputPoints;
 use crate::stages::stage5::outputs::Stage5OutputPoints;
 use crate::VerifierError;
 
+/// The batch legs [`Stage6aSumchecks::build_from_parts`] assembles the members
+/// from: protocol geometry and the mode-agnostic upstream opening points.
+/// Every field is data both the verifier and the prover hold.
 pub struct Stage6aBuildParts<'a, F: JoltField> {
     pub formula_dimensions: &'a JoltFormulaDimensions,
     pub committed_chunk_bits: usize,
@@ -25,6 +36,11 @@ pub struct Stage6aBuildParts<'a, F: JoltField> {
 }
 
 impl<F: JoltField> Stage6aSumchecks<F> {
+    /// Assemble the address-phase batch: the bytecode member carries the
+    /// upstream cycle/register points and the entry index (full geometry at
+    /// construction — the prover's kernel read path; the verifier itself
+    /// never evaluates them), the booleanity member the stage-5 instruction
+    /// address/cycle points.
     pub fn build_from_parts(parts: Stage6aBuildParts<'_, F>) -> Result<Self, VerifierError> {
         let Stage6aBuildParts {
             formula_dimensions,

@@ -29,6 +29,7 @@ impl AdviceTape {
         Self::default()
     }
 
+    /// Build a tape from raw bytes with the read cursor at 0.
     pub fn from_bytes(data: Vec<u8>) -> Self {
         Self {
             data,
@@ -40,10 +41,12 @@ impl AdviceTape {
         self.data
     }
 
+    /// Append bytes to the advice tape (called during first emulation pass)
     pub fn write(&mut self, bytes: &[u8]) {
         self.data.extend_from_slice(bytes);
     }
 
+    /// Read a specific number of bytes from the advice tape (called during second emulation pass)
     pub fn read(&mut self, num_bytes: usize) -> Option<u64> {
         if self.read_position + num_bytes > self.data.len() {
             return None;
@@ -69,6 +72,7 @@ impl AdviceTape {
         self.data.is_empty()
     }
 
+    /// Get the number of bytes remaining to be read
     pub fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.read_position)
     }
@@ -82,6 +86,7 @@ pub fn advice_tape_read(cpu: &mut Cpu, num_bytes: usize) -> Option<u64> {
     cpu.advice_tape.read(num_bytes)
 }
 
+/// Get the number of bytes remaining to be read from the CPU's advice tape
 pub fn advice_tape_remaining(cpu: &Cpu) -> usize {
     cpu.advice_tape.remaining()
 }
@@ -232,6 +237,7 @@ pub(crate) struct ChunkCpuState {
     x: [i64; REGISTER_COUNT as usize],
     f: [f64; 32],
     pc: u64,
+    /// Boxed: 32 KB, keeps checkpoints cheap to move.
     csr: Box<[u64; CSR_CAPACITY]>,
     reservation: u64,
     is_reservation_set: bool,
@@ -246,6 +252,11 @@ pub(crate) struct ChunkCpuState {
 }
 
 impl ChunkCpuState {
+    /// First difference between this captured boundary state and `cpu`'s
+    /// current state (`None` = equal). Paranoia check: a worker finishing
+    /// chunk k must land exactly on checkpoint k+1's capture. `trace_len` is
+    /// row-uniform across modes and is compared too — a replay row-count
+    /// drift shows up here at the boundary that caused it.
     pub(crate) fn diff_vs_cpu(&self, cpu: &Cpu) -> Option<String> {
         if self.trace_len != cpu.trace_len {
             return Some(format!(
@@ -342,8 +353,10 @@ pub struct Cpu {
     active_markers: FnvHashMap<u32, ActiveMarker>,
     pub vr_allocator: VirtualRegisterAllocator,
     call_stack: VecDeque<CallFrame>,
+    /// Whether call frames snapshot the register file (JOLT_BACKTRACE=full).
     capture_backtrace_registers: bool,
     pub advice_tape: AdviceTape,
+    /// Live in pass-1/serial runs; Replay in parallel-trace workers.
     host_io: HostIo,
     #[cfg(feature = "field-inline")]
     pub field_registers: FieldRegisterFile,
@@ -516,6 +529,8 @@ impl Cpu {
         cpu
     }
 
+    /// Set the host-I/O mode (see [`HostIo`]). Workers replaying chunks run
+    /// in `Replay` for their whole lifetime.
     pub(crate) fn set_host_io(&mut self, mode: HostIo) {
         self.host_io = mode;
     }
@@ -529,10 +544,14 @@ impl Cpu {
         self.pc = value;
     }
 
+    /// Reads integer register content
+    ///
+    /// # Arguments
+    /// * `reg` Register number. Must be 0-31
     pub fn read_register(&self, reg: u8) -> i64 {
         debug_assert!(reg <= 31, "reg must be 0-31. {reg}");
         match reg {
-            0 => 0,
+            0 => 0, // 0th register is hardwired zero
             _ => self.x[reg as usize],
         }
     }
@@ -545,6 +564,7 @@ impl Cpu {
         );
         match reg {
             0 => {
+                // 0th register is hardwired zero
                 debug_assert_eq!(self.x[reg], 0);
             }
             _ => self.x[reg] = write_value,
@@ -583,6 +603,7 @@ impl Cpu {
         self.is_reservation_set
     }
 
+    /// Runs program one cycle. Fetch, decode, and execution are completed in a cycle so far.
     pub fn tick(&mut self, trace: Option<&mut Vec<Cycle>>) {
         let instruction_address = self.pc;
         match self.tick_operate(trace) {
@@ -892,6 +913,9 @@ impl Cpu {
                     PrivilegeMode::Reserved => panic!(),
                 };
             }
+
+            // Interrupt can be maskable by xie csr register
+            // where x is a new privilege mode.
 
             let interrupt_enabled = match trap.trap_type {
                 TrapType::UserSoftwareInterrupt => usie != 0,
@@ -1245,8 +1269,11 @@ impl Cpu {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    /// Track a function call (JAL/JALR instruction that saves callsite information)
+    /// Optimized for minimal overhead - just append to a circular buffer (VecDeque)
     #[inline]
     pub fn track_call(&mut self, return_address: u64) {
+        // Backtraces are pass-1's job; workers do not maintain a call stack.
         if self.host_io == HostIo::Replay {
             return;
         }
@@ -1256,6 +1283,8 @@ impl Cpu {
 
         self.call_stack.push_back(CallFrame {
             call_site: return_address,
+            // Register snapshots are only displayed by JOLT_BACKTRACE=full;
+            // skip the bulk copy unless that mode was requested.
             x: self.capture_backtrace_registers.then(|| Box::new(self.x)),
             cycle_count: self.trace_len,
         });
@@ -1357,6 +1386,9 @@ impl Cpu {
         }
     }
 
+    /// Install captured chunk state into this (worker) CPU. Counterpart of
+    /// [`Cpu::capture_chunk_state`]; the memory image, JoltDevice outputs and
+    /// decode cache are installed by the checkpoint layer.
     pub(crate) fn install_chunk_state(&mut self, state: &ChunkCpuState) {
         debug_assert!(
             self.vr_allocator.is_quiescent(),
@@ -1712,6 +1744,9 @@ mod test_cpu {
 
     #[test]
     fn exception() {
+        // ECALL executes through its inline sequence in both modes (execute
+        // mode mirrors trace mode), so trap state lives in the CSR virtual
+        // registers: vr34 = mtvec, vr36 = mepc, vr37 = mcause.
         let handler_vector = 0x10000000;
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(4);

@@ -1,3 +1,23 @@
+//! Fixture-driven tamper suite for the akita path.
+//!
+//! Three layers, all over real packed-prover fixtures:
+//!
+//! - An exhaustive typed sweep ([`every_clear_claim_wire_rejects_offset`]):
+//!   every field-element leaf of the clear claims is offset by one, one at a
+//!   time, and the verifier must reject each. The visitor
+//!   ([`for_each_scalar_mut`]) fully destructures every aggregate, so a future
+//!   claim wire cannot be added without failing to compile until it is covered.
+//! - A byte-level commitment sweep ([`every_commitment_wire_rejects_perturbation`]):
+//!   every serde leaf of each trace, advice, and direct-program commitment is
+//!   perturbed; a deserialization failure or a verifier rejection both count.
+//! - Proof-shape tampers ([`akita_proof_shape_tampers_reject`],
+//!   [`akita_advice_commitment_presence_rejects`]): a swapped phase proof,
+//!   reordered direct-program commitments, and an absent trusted-advice
+//!   commitment.
+//!
+//! Together these are the active coverage behind the akita
+//! `TamperCoverage::Active` manifest entries.
+
 #![expect(
     clippy::expect_used,
     clippy::panic,
@@ -572,6 +592,9 @@ fn perturb_leaf(value: &mut serde_json::Value, path: &str) {
     }
 }
 
+/// Perturb every serde leaf of `commitment` one at a time. A mutation that no
+/// longer deserializes is rejected at the boundary; otherwise verification
+/// must fail.
 fn sweep_commitment(
     commitment: &AkitaCommitment,
     minimum_leaves: usize,
@@ -700,6 +723,8 @@ fn akita_proof_shape_tampers_reject() {
     ));
 }
 
+/// The advice case fails closed when its trusted-advice commitment is absent:
+/// the direct dense opening has no commitment to bind against.
 #[test]
 fn akita_advice_commitment_presence_rejects() {
     let advice = akita_advice_case();

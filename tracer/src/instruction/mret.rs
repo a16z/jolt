@@ -27,7 +27,7 @@ use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RIS
 
 declare_riscv_instr!(
     name   = MRET,
-    mask   = 0xffffffff,
+    mask   = 0xffffffff,  // Exact match
     match  = 0x30200073,
     format = FormatI,
     registers = RegisterStateI,
@@ -40,11 +40,19 @@ impl MRET {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MRET as RISCVInstruction>::RAMAccess) {
         let mepc = cpu.read_csr_raw(CSR_MEPC_ADDRESS);
         cpu.pc = mepc;
+
+        // mstatus is not modified — see module-level docs for why this is
+        // correct in the M-mode-only model.
     }
 }
 
 impl RISCVTrace for MRET {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
+        // Don't call self.execute() - the inline sequence's JALR handles the PC update.
+        // The JALR reads mepc from virtual register vr36 and jumps to it.
+
+        // Generate and execute inline sequence
+        // The inline sequence reads mepc from virtual register (source of truth for proofs)
         super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
     }
 }

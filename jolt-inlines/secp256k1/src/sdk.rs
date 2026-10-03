@@ -80,6 +80,8 @@ pub struct Secp256k1Fq {
 }
 
 impl Secp256k1Fq {
+    /// creates a new Secp256k1Fq element from a [u64; 4] array
+    /// returns Err(Secp256k1Error) if the array does not correspond to a valid Fq element
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Secp256k1Error> {
         if is_fq_non_canonical(arr) {
@@ -87,6 +89,8 @@ impl Secp256k1Fq {
         }
         Ok(Secp256k1Fq { e: *arr })
     }
+    /// creates a new Secp256k1Fq element from a [u64; 4] array (unchecked)
+    /// the array is assumed to contain a value in the range [0, p)
     #[inline(always)]
     pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fq { e: *arr }
@@ -141,6 +145,8 @@ impl Secp256k1Fq {
     pub fn tpl(&self) -> Self {
         self.dbl().add(self)
     }
+    /// returns self * other
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -182,6 +188,8 @@ impl Secp256k1Fq {
                 .0,
         }
     }
+    /// returns self^2
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -220,6 +228,9 @@ impl Secp256k1Fq {
             e: Fq::new(BigInt(self.e)).square().into_bigint().0,
         }
     }
+    /// returns self / other
+    /// uses custom inline for performance
+    /// assumes that other is non-zero
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -245,6 +256,9 @@ impl Secp256k1Fq {
         }
         Secp256k1Fq::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
+    /// panics and spoils the proof if other is zero
+    /// returns self / other
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -270,6 +284,7 @@ impl Secp256k1Fq {
     pub fn div(&self, _other: &Secp256k1Fq) -> Self {
         panic!("Secp256k1Fq::div called on non-RISC-V target without host feature");
     }
+    /// assumes other != 0
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div_assume_nonzero(&self, other: &Secp256k1Fq) -> Self {
@@ -279,6 +294,7 @@ impl Secp256k1Fq {
                 .0,
         }
     }
+    /// checks other != 0 then calls div_assume_nonzero
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
@@ -365,6 +381,8 @@ pub struct Secp256k1Fr {
 }
 
 impl Secp256k1Fr {
+    /// creates a new Secp256k1Fr element from a [u64; 4] array
+    /// returns Err(Secp256k1Error) if the array does not correspond to a valid Fr element
     #[inline(always)]
     pub fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Secp256k1Error> {
         if is_fr_non_canonical(arr) {
@@ -372,6 +390,8 @@ impl Secp256k1Fr {
         }
         Ok(Secp256k1Fr { e: *arr })
     }
+    /// creates a new Secp256k1Fr element from a [u64; 4] array (unchecked)
+    /// the array is assumed to contain a value in the range [0, n)
     #[inline(always)]
     #[allow(dead_code)]
     pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
@@ -428,6 +448,8 @@ impl Secp256k1Fr {
     pub fn tpl(&self) -> Self {
         self.dbl().add(self)
     }
+    /// returns self * other
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -469,6 +491,8 @@ impl Secp256k1Fr {
                 .0,
         }
     }
+    /// returns self^2
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -507,6 +531,9 @@ impl Secp256k1Fr {
             e: Fr::new(BigInt(self.e)).square().into_bigint().0,
         }
     }
+    /// returns self / other
+    /// uses custom inline for performance
+    /// assumes that other is non-zero
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -532,6 +559,9 @@ impl Secp256k1Fr {
         }
         Secp256k1Fr::from_u64_arr_unchecked(&e[0..4].try_into().unwrap())
     }
+    /// panics and spoils the proof if other is zero
+    /// returns self / other
+    /// uses custom inline for performance
     #[cfg(all(
         not(feature = "host"),
         any(target_arch = "riscv32", target_arch = "riscv64")
@@ -557,6 +587,7 @@ impl Secp256k1Fr {
     pub fn div(&self, _other: &Secp256k1Fr) -> Self {
         panic!("Secp256k1Fr::div called on non-RISC-V target without host feature");
     }
+    /// assumes other != 0
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div_assume_nonzero(&self, other: &Secp256k1Fr) -> Self {
@@ -566,6 +597,7 @@ impl Secp256k1Fr {
                 .0,
         }
     }
+    /// checks other != 0 then calls div_assume_nonzero
     #[cfg(feature = "host")]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
@@ -668,6 +700,8 @@ impl Secp256k1PointExt for Secp256k1Point {
         ])
     }
 
+    // returns lambda * self
+    // where lambda is 0x5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72
     #[inline(always)]
     fn endomorphism(&self) -> Secp256k1Point {
         if self.is_infinity() {

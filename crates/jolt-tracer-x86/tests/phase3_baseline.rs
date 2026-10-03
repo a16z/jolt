@@ -45,6 +45,10 @@ fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
         start.elapsed().as_secs_f64()
     });
 
+    // AOT x86 fast pass (supported guests only).
+    // One-time AOT compile cost, reported separately: the spec tracks it
+    // as an amortized number rather than a gated one, since every
+    // re-trace and chunk replay reuses the cached artifact.
     let compile_seconds = x86.then(|| {
         let mut backend = X86TracerBackend::new();
         let start = Instant::now();

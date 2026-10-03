@@ -494,6 +494,11 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), Box<dyn std::error::E
 
     println!("--- {name} ---");
     if shape.rd {
+        // This instruction writes to a destination register.
+        // In RISC-V writes to x0 turn into no-ops.
+        // In Jolt they are no-ops to RISC-V state but often modify virtual registers
+        // as side-effects.
+        // So we have to model both.
         for (label, rd) in [("rd == x0", 0u8), ("rd != x0", SOURCE_RD)] {
             let arm = expansion_arm(kind, rd)?;
             println!("{label}:");

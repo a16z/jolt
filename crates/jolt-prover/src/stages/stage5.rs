@@ -90,6 +90,9 @@ where
             FieldRegistersTraceDimensions::new(trace_dimensions.log_t()),
         ),
     };
+    // Draws the instruction gamma, then the RAM gamma (registers draws
+    // nothing, and so does the `field-inline` field value-evaluation member) —
+    // the generated declaration-order draw.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
@@ -128,6 +131,14 @@ where
     })
 }
 
+/// Clear round-trips with field-inline enabled of the stage-5 recipe against the verifier's own
+/// public constituents — `stage5::verify`'s clear body (the four-member batch
+/// with the field-register value evaluation member, which draws no instance challenge) on a
+/// twin transcript positioned by the stage-1..4 replays. The 32-byte
+/// transcript-state equality pins the absorb order end to end. A second test
+/// drives the field-register value evaluation kernel directly and ties both extracted
+/// openings to direct MLE evaluations of the witness oracle's tables at the
+/// bound point.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -192,6 +203,8 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
+        // The verifier twin (stage5::verify's clear body), positioned by the
+        // upstream replays.
         let mut transcript = Blake2bTranscript::new(b"stage5-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
@@ -222,6 +235,8 @@ mod field_inline_round_trip {
         Fr::from_u64(value)
     }
 
+    /// `Σ_i eq(point, i) · evals[i]` — the big-endian MLE the oracle grids and
+    /// opening points share.
     fn mle(evals: &[Fr], point: &[Fr]) -> Fr {
         EqPolynomial::<Fr>::evals(point, None)
             .into_iter()
@@ -230,6 +245,13 @@ mod field_inline_round_trip {
             .sum()
     }
 
+    /// The field-register value evaluation kernel on the honest field-inline replay: every round
+    /// message passes the engine's running-claim check starting from the
+    /// relation's own input claim (the `FieldRegistersVal` MLE — honest field-inline
+    /// register state makes the "value equals the sum of earlier increments"
+    /// identity hold), and both extracted openings equal direct MLE
+    /// evaluations of the witness oracle's tables at the derived
+    /// `[address ‖ cycle]` opening point.
     #[test]
     fn field_register_val_evaluation_kernel_outputs_match_direct_mle() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
@@ -292,6 +314,8 @@ mod field_inline_round_trip {
             FieldInlineVirtualPolynomial::FieldRdWa,
         ));
         assert_eq!(outputs.rd_wa, mle(&wa_grid, opening_point));
+        // `FieldRdInc` is cycle-only; its MLE at the joint point is its MLE at
+        // the cycle sub-point (the address variables integrate out).
         let inc = table(FieldInlinePolynomialId::Committed(
             FieldInlineCommittedPolynomial::FieldRdInc,
         ));

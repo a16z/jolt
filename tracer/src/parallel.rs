@@ -24,6 +24,8 @@ use std::sync::{Arc, OnceLock};
 pub struct ChunkCheckpoint {
     cpu: ChunkCpuState,
     mmu: ChunkMmuState,
+    /// JoltDevice outputs at the boundary: the guest can read outputs back,
+    /// so they are live per-chunk state (inputs/advice regions are static).
     outputs: Vec<u8>,
     panic: bool,
 }
@@ -91,6 +93,8 @@ impl ChunkCheckpoint {
 #[derive(Debug, Default)]
 pub struct SnapshotPool {
     free: Vec<Vec<u64>>,
+    /// Total bytes ever allocated for image buffers (the pool's RAM
+    /// footprint: buffers cycle, they are never freed mid-run).
     allocated_bytes: usize,
 }
 
@@ -99,6 +103,7 @@ impl SnapshotPool {
         Self::default()
     }
 
+    /// Snapshot `memory`'s flat image into a pooled full-size buffer.
     pub fn capture(&mut self, memory: &Memory) -> Vec<u64> {
         let (image, touched) = memory.data.flat_parts();
         let mut buf = match self.free.pop() {
@@ -274,6 +279,7 @@ impl PassOne {
         self.emulator.get_cpu().trace_len
     }
 
+    /// Capture a chunk checkpoint at the current tick boundary.
     pub fn checkpoint(&self) -> ChunkCheckpoint {
         ChunkCheckpoint::capture(&self.emulator)
     }
@@ -317,6 +323,10 @@ fn demote_worker_thread() {
     set_thread_qos(QOS_CLASS_USER_INITIATED);
 }
 
+/// Default chunk size in rows (~1M): large enough that snapshot capture and
+/// dispatch stay ≪ chunk replay time, small enough that the final worker
+/// wave doesn't dominate the wall clock (measured optimum on ~10M-row
+/// traces; at 100M+ rows both effects are negligible for any size here).
 pub const DEFAULT_CHUNK_ROWS: usize = 1 << 20;
 
 /// Default output capacity in rows (matches the serial path's reserve).
@@ -352,6 +362,9 @@ struct ChunkJob<'trace> {
     image: Vec<u64>,
     ticks: usize,
     rows: usize,
+    /// Destination window inside the output vec's spare capacity (disjoint
+    /// across chunks, in chunk order). `None` = capacity exhausted; the
+    /// worker ships its rows back for copy assembly instead.
     window: Option<&'trace mut [core::mem::MaybeUninit<Cycle>]>,
 }
 
@@ -373,10 +386,16 @@ impl Drop for PanicGuard<'_> {
     }
 }
 
+/// Test-only fault injection: inflate every chunk's expected row count so
+/// replay workers trip the divergence tripwire (exercises the panic
+/// propagation path, which no divergence-free gate reaches).
 #[cfg(test)]
 pub(crate) static TEST_CORRUPT_ROW_COUNTS: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Test-only fault injection: flip one worker register after replay (row
+/// counts preserved) so the boundary-state verification trips (exercises the
+/// tripwire that a count-preserving divergence must hit).
 #[cfg(test)]
 pub(crate) static TEST_CORRUPT_BOUNDARY_STATE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -408,6 +427,9 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         .decode_cache
         .snapshot_with_empty_entries();
 
+    // Untouched capacity is lazily committed by the OS, so over-reserving is
+    // cheap; the prover pads the trace to a power of two afterwards, which
+    // this capacity absorbs without reallocation for typical trace sizes.
     let mut trace: Vec<Cycle> = Vec::with_capacity(config.capacity_rows.max(1));
     let mut spare: &mut [MaybeUninit<Cycle>] = trace.spare_capacity_mut();
 
@@ -439,6 +461,8 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                 let mut worker = ChunkWorker::from_seed(seed_device, seed_decode);
                 let mut scratch: Vec<Cycle> = Vec::new();
                 loop {
+                    // Hold the lock only for the dequeue; idle workers block
+                    // here, which is fine — there is no work for them anyway.
                     let job = {
                         let receiver = job_rx.lock().expect("job queue lock poisoned");
                         receiver.recv()
@@ -512,8 +536,12 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
         let mut chunk_index = 0usize;
         let mut windowed_rows = 0usize;
         let mut overflowed = false;
+        // The previous chunk's end-boundary slot, published at the next
+        // capture (every boundary is both an end and a start).
         let mut pending_end: Option<Arc<OnceLock<Arc<ChunkCheckpoint>>>> = None;
         loop {
+            // Fail at the next chunk boundary (not only when the queue
+            // fills) so a dead pool surfaces promptly even on long traces.
             assert!(
                 !worker_panicked.load(std::sync::atomic::Ordering::Acquire),
                 "a replay worker panicked; aborting the two-pass trace \
@@ -611,6 +639,8 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
     if timing {
         eprintln!("two-pass timing: workers joined at {:?}", started.elapsed());
     }
+    // The job channel's type carries the window lifetime (a borrow of
+    // `trace`); it must drop before `trace` can be touched again.
     drop(job_rx);
 
     // SAFETY: every window handed to a worker was split off `spare` in chunk

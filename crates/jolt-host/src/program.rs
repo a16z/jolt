@@ -35,7 +35,7 @@ impl Program {
             max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
             std: false,
-            backtrace: Some("off".to_string()),
+            backtrace: Some("off".to_string()), // Default to off for minimal size
             elf: None,
             elf_compute_advice: None,
         }
@@ -178,15 +178,18 @@ impl Program {
                 )
             };
 
+            // Add separator for cargo passthrough args
             args.push("--".to_string());
 
             if let Some(profile) = &self.profile {
                 args.push("--profile".to_string());
                 args.push(profile.clone());
             } else {
+                // --release goes after -- as a cargo argument
                 args.push("--release".to_string());
             }
 
+            // Pass --target-dir to cargo (not cargo-jolt)
             args.push("--target-dir".to_string());
             args.push(guest_target_dir.clone());
 
@@ -224,6 +227,7 @@ impl Program {
                     .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES");
             }
 
+            // Pass JOLT_FUNC_NAME if a specific function is set (for guest packages with multiple provable functions)
             if let Some(func) = &self.func {
                 let _ = cmd.env("JOLT_FUNC_NAME", func);
             }
@@ -250,6 +254,7 @@ impl Program {
                 "riscv64imac-unknown-none-elf"
             };
 
+            // ELF is built to guest_target_dir with standard cargo layout.
             let out_profile = profile_output_dir(self.profile.as_deref());
             let elf_path = PathBuf::from(&guest_target_dir)
                 .join(target_triple)

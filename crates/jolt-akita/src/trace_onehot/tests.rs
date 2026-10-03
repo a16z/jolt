@@ -549,6 +549,8 @@ fn small_k256_blocks_commit_like_materialized_onehot() {
 
     let streamed = commit_packed::<D>(&setup.expanded, &source, plan).unwrap();
 
+    // Oracle: Akita's canonical one-hot table, one ring per D coefficients,
+    // under the single-digit inner map rows[b] = sum_p A[0][p] * ring(b * P + p).
     let a_view = setup
         .expanded
         .shared_matrix()

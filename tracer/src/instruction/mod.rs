@@ -203,6 +203,9 @@ pub(crate) fn trace_inline_sequence(
     });
 }
 
+/// Like [`trace_inline_sequence`], but patches `values` into the sequence's
+/// `VirtualAdvice` rows (in order) before tracing them. The advice is written
+/// to per-execution copies of the rows; the cached template is not mutated.
 pub(crate) fn trace_inline_sequence_with_advice(
     source: &Instruction,
     cpu: &mut Cpu,
@@ -834,6 +837,7 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
+            /// The memory address this instruction was decoded from.
             pub fn address(&self) -> u64 {
                 match self {
                     Instruction::NoOp => 0,
@@ -1108,9 +1112,9 @@ impl Instruction {
         }
 
         match self.virtual_sequence_remaining() {
-            None => true,
-            Some(0) => true,
-            Some(_) => false,
+            None => true,     // ordinary instruction
+            Some(0) => true,  // "anchor" of a inline sequence
+            Some(_) => false, // helper within the sequence
         }
     }
 
@@ -1278,6 +1282,7 @@ impl Instruction {
                 let funct5 = (instr >> 27) & 0x1f;
 
                 match (funct3, funct5) {
+                    // LR (Load Reserved) has no rs2 operand; its encoding requires rs2 = 0
                     (0b010 | 0b011, 0b00010) if (instr >> 20) & 0x1f != 0 => Err("Invalid LR rs2"),
                     (0b010, 0b00010) => Ok(LRW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00010) => Ok(LRD::new(instr, address, true, compressed).into()),
@@ -1343,6 +1348,7 @@ impl Instruction {
                         }
                         Ok(CSRRW::new(instr, address, true, compressed).into())
                     }
+                    // CSRRS: funct3=2. Same rationale as CSRRW above.
                     (2, _, _) => {
                         let csr_addr = ((instr >> 20) & 0xFFF) as u16;
                         if !is_supported_csr(csr_addr) {
@@ -1353,8 +1359,17 @@ impl Instruction {
                     _ => Err("Unsupported SYSTEM instruction"),
                 }
             }
+            // 0x0B is reserved for inlines supported by Jolt in jolt-inlines crate.
+            // In attempt to standardize this space for precompiles and inlines,
+            // each new type of operation should be placed under different funct7,
+            // while funct3 should hold all necessary instructions for that operation.
+            // funct7:
+            // - 0x00: SHA256
+            // - 0x01: Keccak256
             0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            // 0x5B is reserved for custom/virtual instructions.
             0b1011011 => {
                 let funct3 = ((instr >> 12) & 0x7) as u8;
                 if funct3 == FUNCT3_VIRTUAL_R {
@@ -1969,7 +1984,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
         }
         _ => {}
     };
-    0xffffffff
+    0xffffffff // Return invalid value
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
@@ -2224,6 +2239,7 @@ mod tests {
     #[should_panic(expected = "FIELD_INV of zero")]
     fn field_inline_inverse_of_zero_traps_at_trace_time() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        // Fresh field registers are zero, so field register 2 is a zero operand.
         trace_one(&mut cpu, field_inline_word(FieldInlineOp::Inv, 1, 2, 0));
     }
 
@@ -2334,6 +2350,8 @@ mod tests {
 
     const ADDR: u64 = 0x8000_1000;
 
+    // Independent RV64 encoders (assembled per the RISC-V ISA manual encoding
+    // tables) — the decoder under test must invert these exactly.
     fn r_type(funct7: u32, rs2: u32, rs1: u32, funct3: u32, rd: u32, opcode: u32) -> u32 {
         (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
     }
@@ -2476,12 +2494,14 @@ mod tests {
             (amo(0b11000, 0b011, 3, 1, 2), "AMOMINUD"),
             (amo(0b11100, 0b010, 3, 1, 2), "AMOMAXUW"),
             (amo(0b11100, 0b011, 3, 1, 2), "AMOMAXUD"),
+            // aq/rl bits (26:25) must not affect decoding
             (amo(0b00000, 0b010, 3, 1, 2) | (0b11 << 25), "AMOADDW"),
             (0x0000_0073, "ECALL"),
             (0x0010_0073, "EBREAK"),
             (0x3020_0073, "MRET"),
             (i_type(0x305, 1, 0b001, 2, 0x73), "CSRRW"),
             (i_type(0x305, 1, 0b010, 2, 0x73), "CSRRS"),
+            // Reserved inline opcodes decode as INLINE without validation
             (0x0000_000b, "INLINE"),
             (0x0000_002b, "INLINE"),
             (r_type(FUNCT7_ADVICE_LB, 0, 1, 0, 2, 0x5b), "AdviceLB"),
@@ -2516,6 +2536,7 @@ mod tests {
             (b_type(16, 2, 1, 0b010), "Invalid branch funct3"),
             (i_type(0, 1, 0b111, 2, 0x03), "Invalid load funct3"),
             (s_type(0, 2, 1, 0b100, 0x23), "Invalid store funct3"),
+            // funct6 = (word >> 26) & 0x3f must be zero for SLLI/SRLI
             (
                 r_type(0x02, 63, 1, 0b001, 2, 0x13),
                 "Invalid funct7 for SLLI",
@@ -2549,6 +2570,7 @@ mod tests {
                 i_type(0, 1, 0b101, 2, 0x73),
                 "Unsupported SYSTEM instruction",
             ),
+            // cycle CSR (0xc00) is not modelled; rejected at decode time
             (i_type(0xc00, 1, 0b001, 2, 0x73), "Unsupported CSR in CSRRW"),
             (i_type(0xc00, 1, 0b010, 2, 0x73), "Unsupported CSR in CSRRS"),
             (
@@ -2576,6 +2598,8 @@ mod tests {
         cpu
     }
 
+    /// Decode `word` at `ADDR`, set the PC as `tick_operate` would after the
+    /// fetch (instruction address + 4), and execute.
     fn exec(cpu: &mut Cpu, word: u32) {
         let instr = Instruction::decode(word, ADDR, false).unwrap();
         cpu.update_pc(ADDR.wrapping_add(4));
@@ -2603,10 +2627,12 @@ mod tests {
             exec_imm_op(i_type(1, 1, 0b000, 2, 0x13), i64::MAX),
             i64::MIN
         );
+        // SLTI compares signed; SLTIU compares the sign-extended imm unsigned
         assert_eq!(exec_imm_op(i_type(-4, 1, 0b010, 2, 0x13), -5), 1);
         assert_eq!(exec_imm_op(i_type(-6, 1, 0b010, 2, 0x13), -5), 0);
         assert_eq!(exec_imm_op(i_type(-1, 1, 0b011, 2, 0x13), 5), 1);
-        assert_eq!(exec_imm_op(i_type(1, 1, 0b011, 2, 0x13), 0), 1);
+        assert_eq!(exec_imm_op(i_type(1, 1, 0b011, 2, 0x13), 0), 1); // seqz idiom
+                                                                     // XORI/ORI/ANDI sign-extend the immediate
         assert_eq!(exec_imm_op(i_type(-1, 1, 0b100, 2, 0x13), 0x55), !0x55);
         assert_eq!(exec_imm_op(i_type(-16, 1, 0b110, 2, 0x13), 0x0f), -1);
         assert_eq!(exec_imm_op(i_type(-16, 1, 0b111, 2, 0x13), 0x7f), 0x70);
@@ -2645,6 +2671,7 @@ mod tests {
             exec_binary_op(r_type(0x20, 2, 1, 0b000, 3, 0x33), i64::MIN, 1),
             i64::MAX
         );
+        // Shift amounts use only the low 6 bits of rs2
         assert_eq!(
             exec_binary_op(r_type(0x00, 2, 1, 0b001, 3, 0x33), 1, 64 + 4),
             16
@@ -2671,6 +2698,7 @@ mod tests {
             exec_binary_op(r_type(0x00, 2, 1, 0b111, 3, 0x33), 0b1100, 0b1010),
             0b1000
         );
+        // Word variants sign-extend their 32-bit result
         assert_eq!(
             exec_binary_op(r_type(0x00, 2, 1, 0b000, 3, 0x3b), 0x7fff_ffff, 1),
             i32::MIN as i64
@@ -2728,10 +2756,12 @@ mod tests {
         assert_eq!(exec_binary_op(div_w, 7, -2), -3);
         assert_eq!(exec_binary_op(rem_w, 7, -2), 1);
         assert_eq!(exec_binary_op(rem_w, -7, 2), -1);
+        // Division by zero: DIV -> -1, DIVU -> all ones, REM(U) -> dividend
         assert_eq!(exec_binary_op(div_w, 42, 0), -1);
         assert_eq!(exec_binary_op(divu_w, 42, 0), u64::MAX as i64);
         assert_eq!(exec_binary_op(rem_w, 42, 0), 42);
         assert_eq!(exec_binary_op(remu_w, 42, 0), 42);
+        // Signed overflow: MIN / -1 -> MIN, remainder 0
         assert_eq!(exec_binary_op(div_w, i64::MIN, -1), i64::MIN);
         assert_eq!(exec_binary_op(rem_w, i64::MIN, -1), 0);
 
@@ -2793,12 +2823,14 @@ mod tests {
         exec(&mut cpu, j_type(-2048, 5));
         assert_eq!(cpu.read_pc(), ADDR - 2048);
 
+        // JALR x5, 3(x1): target has bit 0 cleared
         let mut cpu = exec_cpu();
         cpu.write_register(1, (DRAM_BASE + 0x100) as i64);
         exec(&mut cpu, i_type(3, 1, 0b000, 5, 0x67));
         assert_eq!(cpu.read_pc(), DRAM_BASE + 0x102);
         assert_eq!(cpu.x[5], (ADDR + 4) as i64);
 
+        // LUI sign-extends imm20 = 0x80000; AUIPC adds to the instruction address
         let mut cpu = exec_cpu();
         exec(&mut cpu, u_type(0x80000, 5, 0x37));
         assert_eq!(cpu.x[5], 0xffff_ffff_8000_0000_u64 as i64);
@@ -2855,6 +2887,7 @@ mod tests {
             (cpu.x[3], memory)
         };
 
+        // AMOADD.W: old word is sign-extended into rd; memory gets the sum word
         let amoaddw = amo(0b00000, 0b010, 2, 1, 3);
         let mut cpu = exec_cpu();
         cpu.write_register(1, addr as i64);
@@ -2971,6 +3004,7 @@ mod tests {
         let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
 
+        // DIV has no final Jolt row; it must be expanded
         assert!(div.try_jolt_instruction_row().is_err());
 
         let sequence = div.inline_sequence(&cpu.vr_allocator);
@@ -2984,6 +3018,10 @@ mod tests {
             .count();
         assert_eq!(advice_count, 1, "DIV advises the quotient");
 
+        // `fill_virtual_advice`'s successor patches the values into
+        // per-execution copies of the advice rows while tracing. With
+        // x1 = x2 = 0 the sequence's own assertions require the RISC-V
+        // division-by-zero quotient: all-ones.
         let mut trace = Vec::new();
         trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX], Some(&mut trace));
         let filled: Vec<u64> = trace
@@ -3001,6 +3039,9 @@ mod tests {
     fn trace_with_advice_panics_when_values_outnumber_slots() {
         let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
+        // 2 values for 1 advice slot; the first is the correct quotient for
+        // x1 = x2 = 0, so the mismatch check fires rather than a division
+        // assertion inside the sequence.
         trace_inline_sequence_with_advice(&div, &mut cpu, &[u64::MAX, 3], None);
     }
 
@@ -3098,6 +3139,8 @@ mod tests {
         }
     }
 
+    // Compressed halfwords are hand-assembled per the RVC encoding tables;
+    // expected expansions are assembled with the independent encoders above.
     #[test]
     fn uncompress_expands_rvc_encodings_per_the_spec() {
         const INVALID: u32 = 0xffff_ffff;

@@ -1,3 +1,29 @@
+//! Less-than polynomial for value accumulation sumchecks.
+//!
+//! The MLE `LT(x, y)` evaluates to 1 on Boolean inputs when `x < y` as
+//! integers and 0 otherwise. Its multilinear extension is:
+//!
+//! $$\text{LT}(x, y) = \sum_{i} (1 - x_i) \cdot y_i \cdot \text{eq}(x_{i+1:}, y_{i+1:})$$
+//!
+//! where the sum runs from MSB to LSB (big-endian bit ordering).
+//!
+//! Used in the register/RAM value evaluation sumcheck to accumulate writes
+//! that occurred before a given cycle point.
+//!
+//! # Split optimization
+//!
+//! Rather than materializing the full `2^n` table and binding it each round
+//! (O(n·2^n) total work, O(2^n) memory), `LtPolynomial` splits the point
+//! `r` at the midpoint into `(r_hi, r_lo)` and stores three √N-sized tables:
+//!
+//! ```text
+//! LT(j, r) = LT(j_hi, r_hi) + eq(j_hi, r_hi) · LT(j_lo, r_lo)
+//! ```
+//!
+//! where `j = (j_hi, j_lo)`. Binding proceeds HighToLow: first all hi vars
+//! (shrinking `lt_hi` and `eq_hi`), then all lo vars (shrinking `lt_lo`).
+//! Total memory stays at 3 · √N throughout.
+
 use jolt_field::JoltField;
 
 use crate::EqPolynomial;
@@ -34,11 +60,13 @@ impl<F: JoltField> LtPolynomial<F> {
         }
     }
 
+    /// Total number of remaining variables.
     #[inline]
     pub fn num_vars(&self) -> usize {
         self.n_hi_vars + self.n_lo_vars
     }
 
+    /// Effective table size `2^num_vars`.
     #[inline]
     pub fn len(&self) -> usize {
         self.lt_hi.len() * self.lt_lo.len()

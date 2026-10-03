@@ -1,3 +1,15 @@
+//! Shared packed Solinas algebra for the word-sized fields, written once
+//! against the [`SimdWord`] vocabulary and instantiated per ISA through the
+//! marker type parameter `I` — the one source of truth for the packed
+//! fold/canonicalize structure across NEON, AVX2, and AVX-512.
+//!
+//! [`PackedFp32`] is the u32-lane engine (widen to 64-bit products, two or
+//! three Solinas folds, fused deferred-reduction dot products for the
+//! degree-4 extension kernels); [`PackedFp64`] is the u64-lane engine
+//! (128-bit products folded through `2^BITS ≡ C`). The fold constants are
+//! taken from the scalar field types, so the `C(C+1) < P` precondition is
+//! asserted in exactly one place per width (`word.rs`).
+
 #![cfg(any(
     all(target_arch = "aarch64", target_feature = "neon"),
     all(target_arch = "x86_64", target_feature = "avx2")
@@ -96,6 +108,7 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
     fn add_raw(a: Self, b: Self) -> Self {
         let t = I::add32(a.0, b.0);
         let t = if Self::BITS == 32 {
+            // The carry out of u32 is 2^32 ≡ C; fold it before canonicalizing.
             I::select32(I::lt_u32(t, a.0), I::add32(t, I::splat32(Self::C)), t)
         } else {
             t
@@ -107,6 +120,7 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
     fn sub_raw(a: Self, b: Self) -> Self {
         let t = I::sub32(a.0, b.0);
         if Self::BITS == 32 {
+            // A wrap adds 2^32 ≡ C, so subtract C where a < b.
             Self(I::select32(
                 I::lt_u32(a.0, b.0),
                 I::sub32(t, I::splat32(Self::C)),
@@ -332,6 +346,9 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
         }
     }
 
+    /// Two-fold sub-word reduction that retains the carry out of the first
+    /// `C * (product >> BITS)` fold. It also accepts sums of up to three
+    /// products when [`Self::EXT2_TWO_FUSION_SAFE`] holds.
     #[inline(always)]
     fn reduce128_sub_word_wide(lo: I::V64, hi: I::V64) -> I::V64 {
         let mask = I::splat64(Self::MASK);

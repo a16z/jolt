@@ -101,6 +101,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// One checked polynomial's chunk selector over the packed per-cycle rows
+/// (canonical layout order: instruction, bytecode, ram).
 enum ColumnSelector {
     Instruction(RaChunkSelector),
     Bytecode(RaChunkSelector),
@@ -110,6 +112,10 @@ enum ColumnSelector {
 }
 
 impl ColumnSelector {
+    /// The selected row at `row`; `None` is a cold cycle. Mirrors the
+    /// trace oracle's grid materializers (`materialize_one_hot`), so
+    /// gathered indices and the reference tier's dense grids describe the
+    /// same one-hot polynomials.
     #[inline]
     fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
         match self {
@@ -213,6 +219,14 @@ impl BooleanityColumns {
     }
 }
 
+/// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`
+/// (legacy `compute_all_G` / `one_hot_pushforwards`): per `E_out` block,
+/// the `E_in` weights scatter into per-polynomial `K`-sized
+/// deferred-reduction buckets (an unreduced add per hot polynomial, no
+/// per-cycle multiply); each block then reduces its touched buckets and
+/// folds them by `e_out` into the running partials. Equals the reference's
+/// per-chunk cycle masses exactly — same terms, regrouped through the
+/// `eq = E_out ⊗ E_in` factorization.
 fn cycle_pushforward<F: JoltField>(
     rows: &[InstructionCycleRow],
     selectors: &[ColumnSelector],
@@ -329,11 +343,19 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
     }
 }
 
+/// The address-phase kernel: the reference kernel's round machinery over
+/// pushforward-built tables. The linear term binds `A_i[k] = G_i[k]` as a
+/// plain multilinear; the squared term binds `B_i[k]` (same initial masses)
+/// with squared weights, because binding squares the one-hot's accumulated
+/// eq factor. The initial `A = B` makes the input claim exactly zero.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityAddressKernel<F: JoltField> {
     progress: RoundProgress,
+    /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
+    /// canonical order.
     gamma_weights: Vec<F>,
     linear: Vec<Polynomial<F>>,
+    /// Raw vectors because the squared-weight bind is not a multilinear bind.
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
 }
@@ -483,6 +505,9 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         let columns = BooleanityColumns::new(witness, dimensions)?;
         let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
 
+        // The fixed address eq factor of the `EqAddressCycle` public; rides
+        // in the split-eq scaling so round messages and the bound scalar
+        // carry it exactly like the reference's derived table.
         let address_scalar = try_eq_mle(r_address, reference_address).map_err(|_| {
             KernelError::InvariantViolation {
                 reason: "booleanity address point and reference length mismatch",
@@ -554,6 +579,9 @@ impl ChunkIndexSource for BooleanityChunks {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
     progress: RoundProgress,
+    /// Split-eq over the reference cycle, scaled by
+    /// `eq(r_address, reference_address)` — together the reference's
+    /// `EqAddressCycle` derived table.
     eq: GruenSplitEqPolynomial<F>,
     tables: LazyFoldedRa<F, BooleanityChunks>,
     gamma_powers: Vec<F>,
@@ -570,6 +598,10 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     }
 }
 
+/// After address binding, every unbound value comes from a small alphabet.
+/// Cache the two nonlinear coefficients over that alphabet, retaining the
+/// existing exact split-equality fold. The extra category is a cold RAM row;
+/// it must remain distinct from hot address zero, including after a bind.
 struct CategoricalProducts<'a, F: JoltField, S> {
     source: &'a S,
     width: usize,
@@ -590,6 +622,8 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         else {
             return false;
         };
+        // Cached products, construction temporary and lazy branches fit
+        // within the existing T/16 dense allocation budget per family.
         states * (states + 2) + width * addresses <= cycles / 16
     }
 
@@ -742,6 +776,12 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
             pairs: Vec<(F, F)>,
         }
 
+        // Inner quadratic `q(X) = Σ_j eq_rest(j) · Σ_i (H_i(X)² − γ^i·H_i(X))`:
+        // constant coefficient from `H` at 0, leading coefficient from the
+        // pair delta — the pre-scaling makes `γ^{2i}(x² − x) = H(H − γ^i)`.
+        // Per-row products accumulate unreduced, reduce once, and fold into
+        // the block lanes by `e_in`; blocks fold by `e_out` (legacy
+        // `par_fold_out_in_unreduced`).
         let block_lanes = self.eq.par_fold_out_in(
             || Scratch {
                 lanes: [F::Accumulator::default(); 2],
@@ -826,6 +866,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
             .map_err(SumcheckKernelError::from)
     }
 
+    /// The split-eq scalar (fully bound `EqAddressCycle`) against the
+    /// verifier's `derive_output_term` — the same drift detector the naive
+    /// tier runs on its hand-materialized derived table.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -845,6 +888,11 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
     }
 }
 
+/// Trace-backed test fixtures shared by the optimized-kernel parity tests
+/// (this module and `optimized::ram_hamming_booleanity`): a tiny consistent
+/// trace behind a full witness plane, so the reference kernels' dense
+/// `oracle_table` grids and the optimized kernels' typed bundle rows
+/// describe the same witness by construction.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 pub(crate) mod testing {
@@ -1345,6 +1393,10 @@ mod tests {
         cycle_parity(1, 4, false);
     }
 
+    /// `log_t = 5` drives the shared-table state machine through
+    /// materialization (four staged binds, dense at `T/16`) into a dense
+    /// round message. At `log_t = 4`, materialization happens only during
+    /// `finish_rounds`.
     #[test]
     fn cycle_kernel_matches_reference_through_dense_rounds() {
         cycle_parity(5, 4, false);
@@ -1365,6 +1417,12 @@ mod tests {
         cycle_parity(2, 4, true);
     }
 
+    /// The production 6a→6b sequencing: the address phase (both kernels in
+    /// lockstep) stages the intermediate claim; the cycle phase consumes it
+    /// with `r_address` = the reversed address challenges, reclaiming the
+    /// parked index columns from the shared session. The reference kernel's
+    /// round-zero check pins the intermediate claim to the cycle-phase sum,
+    /// so a cross-phase orientation drift fails loudly.
     #[test]
     fn two_phase_flow_matches_reference_end_to_end() {
         let log_t = 2;
@@ -1372,6 +1430,9 @@ mod tests {
             let reference_address = point(700, dimensions.log_k_chunk);
             let reference_cycle = point(400, log_t);
             let gamma = Fr::from_u64(31);
+            // The stage-6a relation derives its reference cycle from the
+            // stage-5 instruction cycle by reversal; feed the reversed
+            // vector so `reference_cycle()` equals the 6b relation's.
             let instruction_r_cycle: Vec<Fr> = reference_cycle.iter().rev().copied().collect();
             let address_relation = BooleanityAddressPhase::<Fr>::new(
                 dimensions,
@@ -1531,6 +1592,9 @@ mod categorical_tests {
     fn check_categorical_case<F: JoltField>(gamma: F, exceptional: Option<ExceptionalEq>) {
         for addresses in [2, 16, 256] {
             for bind in [F::zero(), F::one(), F::from_u64(13)] {
+                // All-cold, alternating hot/cold, and fully hot families.
+                // In particular None is not address zero, and a folded pair
+                // can have only its low or only its high branch cold.
                 let source = Source(
                     (0..3)
                         .map(|family| {

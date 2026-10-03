@@ -283,6 +283,9 @@ mod tests {
             max_padded_trace_length: 1 << log_t,
         });
         let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
+        // Post-execution DRAM bytes (outside the IO mask): nonzero
+        // `val_final − val_io` there keeps the later round polynomials
+        // nontrivial while the Boolean-point sum stays zero.
         let final_memory = MemoryImage {
             bytes: vec![
                 (RAM_START_ADDRESS, 0xAB),
@@ -323,6 +326,8 @@ mod tests {
                 let claims = RamOutputCheckInputClaims::<Fr>::default();
                 let points = RamOutputCheckInputClaims::<Vec<Fr>>::default();
 
+                // Fixture guard: the DRAM image must reach `val_final` (a zero
+                // table would make parity vacuous).
                 let val_final = dense_view::<Fr>(witness, ram_val_final()).unwrap();
                 assert_ne!(val_final[8], Fr::from_u64(0), "degenerate DRAM fixture");
 

@@ -4,10 +4,12 @@ use jolt_inlines_sdk::host::{
     Value::{self, Imm, Reg},
 };
 
+/// SHA-256 initial hash values
 pub const BLOCK: [u64; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
+/// SHA-256 round constants (K)
 pub const K: [u64; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -139,6 +141,8 @@ impl Sha256SequenceBuilder {
     }
 
     fn compute_t1(&mut self, t1: u8, ss: u8, ss2: u8) -> Value {
+        // Put H + K
+        // We do this first because H is going to be Imm the longest of all inputs
         let h_add_k = self.asm.add(Imm(K[self.round as usize]), self.vri('H'), t1);
         let sigma_1 = self.sha_sigma_1(self.vri('E'), ss, ss2);
         let add_sigma_1 = self.asm.add(h_add_k, sigma_1, t1);
@@ -156,6 +160,8 @@ impl Sha256SequenceBuilder {
 
     fn apply_round_update(&mut self, t1: Value, t2: Value, old_d: Value) {
         self.round += 1;
+        // After incrementing round, the rotation has happened
+        // So vr('A') now points to the right place to write the new A
         self.asm.add(t1, t2, self.vr('A'));
         self.asm.add(t1, old_d, self.vr('E'));
     }
@@ -192,6 +198,8 @@ impl Sha256SequenceBuilder {
         *self.message[((self.round + shift).rem_euclid(16)) as usize]
     }
 
+    /// Updates message schedule for rounds 16-63
+    /// W[t] = σ₁(W[t-2]) + W[t-7] + σ₀(W[t-15]) + W[t-16]
     fn update_w(&mut self, ss: [u8; 2]) {
         if self.round < 16 {
             return;
@@ -203,6 +211,8 @@ impl Sha256SequenceBuilder {
         self.asm.add(Reg(self.w(-16)), Reg(ss[0]), self.w(-16));
     }
 
+    /// Computes sha256 Ch function
+    /// Ch(E, F, G) = (E and F) xor ((not E) and G)
     fn sha_ch(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
         let e_and_f = self.asm.and(rs1, rs2, ss);
         // Use ANDN to compute (not E) and G in one instruction
@@ -221,6 +231,7 @@ impl Sha256SequenceBuilder {
         }
     }
 
+    /// Computes sha256 Maj function: Maj(A, B, C) = (A and B) xor (A and C) xor (B and C)
     fn sha_maj(&mut self, rs1: Value, rs2: Value, rs3: Value, rd: u8, ss: u8) -> Value {
         let b_and_c = self.asm.and(rs2, rs3, ss);
         let b_xor_c = self.asm.xor(rs2, rs3, rd);
@@ -228,6 +239,7 @@ impl Sha256SequenceBuilder {
         self.asm.xor(b_and_c, a_and_b_xor_c, rd)
     }
 
+    /// Sigma_0 function of SHA256 compression function: Σ₀(x) = ROTR²(x) ⊕ ROTR¹³(x) ⊕ ROTR²²(x)
     fn sha_sigma_0(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
         match rs1 {
             Reg(rs1) => {
@@ -246,6 +258,7 @@ impl Sha256SequenceBuilder {
         }
     }
 
+    /// Sigma_1 function of SHA256 compression function: Σ₁(x) = ROTR⁶(x) ⊕ ROTR¹¹(x) ⊕ ROTR²⁵(x)
     fn sha_sigma_1(&mut self, rs1: Value, rd: u8, ss: u8) -> Value {
         match rs1 {
             Reg(rs1) => {
@@ -264,6 +277,7 @@ impl Sha256SequenceBuilder {
         }
     }
 
+    /// sigma_0 for word computation: σ₀(x) = ROTR⁷(x) ⊕ ROTR¹⁸(x) ⊕ SHR³(x)
     fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
         self.asm.rotri32(Reg(rs1), 11, ss);
         self.asm.emit_r(Kind::VirtualXORROTW7, rd, rs1, ss);
@@ -271,6 +285,7 @@ impl Sha256SequenceBuilder {
         self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
+    /// sigma_1 for word computation: σ₁(x) = ROTR¹⁷(x) ⊕ ROTR¹⁹(x) ⊕ SHR¹⁰(x)
     fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
         self.asm.rotri32(Reg(rs1), 30, ss);
         self.asm.emit_r(Kind::VirtualXORROTW19, rd, rs1, ss);

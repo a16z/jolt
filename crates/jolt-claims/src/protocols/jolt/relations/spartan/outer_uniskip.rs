@@ -161,6 +161,9 @@ mod tests {
         );
     }
 
+    /// The hand-written `InputClaims` impl (the derive requires at least one
+    /// field) must present an empty consumed-claim surface: no canonical ids
+    /// and no resolvable values, not even for this relation's own opening.
     #[test]
     fn input_claims_resolve_nothing() {
         let claims = OuterUniskipInputClaims::<Fr>::default();

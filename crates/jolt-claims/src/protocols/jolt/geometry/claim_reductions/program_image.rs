@@ -186,6 +186,19 @@ pub fn final_program_image_opening() -> JoltOpeningId {
     )
 }
 
+/// Evaluate the shifted program-image eq slice at the reduction's opening
+/// point without materializing the slice.
+///
+/// The slice is `eq_slice[j] = eq(r_addr, start_index + j)` for `j` in
+/// `0..2^m` where `m = opening_point_be.len()`; this computes its multilinear
+/// extension at `opening_point_be` as the MLE of the binary-addition automaton
+/// for `a = start_index + y`, processing bits LSB first. `dp_c` accumulates
+/// the eq weight of bit paths whose carry into the current position is `c`;
+/// per bit, the transfer coefficients are `eq` (output bit matches the y
+/// bit), `carry_gen` (y-bit 1 produced output 0, generating a carry), and
+/// `carry_use` (y-bit 0 produced output 1, consuming the incoming carry).
+/// Window bits at and above `m` are fixed to zero, so `r_y = 0` there. The
+/// final carry-out is dropped, i.e. addresses wrap mod `2^ell`.
 fn eval_shifted_eq_poly_at_opening_point<F: JoltField>(
     r_addr_be: &[F],
     start_index: usize,

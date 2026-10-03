@@ -225,6 +225,9 @@ pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
             labels.extend(KERNEL_SEAM_SPANS);
             labels.extend(WITNESS_AND_OPENING_SPANS);
         }
+        // The packed prover streams no witness commit and runs no
+        // homomorphic joint opening; its bundle collection and oracle reads
+        // still fire (stage-0 assembly, the naive kernels).
         ProverMode::Akita => {
             labels.extend(UNISKIP_SEAM_SPANS);
             labels.extend(["collect_bundles", "TraceBackend::oracle_table"]);

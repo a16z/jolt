@@ -1,3 +1,13 @@
+//! The stage 2 `SpartanProductVirtualization` product-remainder sumcheck instance.
+//!
+//! Owns the product opening-point derivation and the uni-skip Lagrange-weight /
+//! `TauKernel` public-value computation, in lockstep with the BlindFold constraint's
+//! `spartan::product_remainder` formula.
+//!
+//! The companion product *uni-skip* first round is a univariate skip rather than a
+//! [`ConcreteSumcheck`], so it stays hand-coded in the stage-2 verifier; this
+//! relation consumes that uni-skip's reduced opening as its input claim.
+
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
 use std::collections::BTreeSet;
@@ -157,6 +167,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
+            // The uni-skip first-round Lagrange weights, evaluated at the product
+            // uni-skip challenge; the product remainder reweights its operands by
+            // `LagrangeWeight(0..2)` exactly as the formula's `product_weight(i)`.
             SpartanProductVirtualizationPublic::LagrangeWeight(index) => {
                 let weights = centered_lagrange_evals(
                     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
@@ -170,6 +183,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
                         "product remainder Lagrange weight index {index} out of range for domain size {SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE}"
                     )))
             }
+            // `UniskipLagrangeWeight` belongs to the product uni-skip relation, not the
+            // remainder: `product_remainder` reweights via `product_weight` ->
+            // `LagrangeWeight` only (plus `TauKernel`). Reject rather than silently
+            // aliasing it onto the Lagrange-weight path, so a misrouted public surfaces.
             SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
@@ -245,6 +262,11 @@ mod tests {
         (relation, input_points, output_points)
     }
 
+    /// The composed `expected_output` over the feature-aware 5-lane domain equals the
+    /// from-scratch factored form: `tau_kernel · (Σ w_i·L_i) · (Σ w_i·R_i)` over all five
+    /// lanes (ordinary lane table, then the field-inline lanes' rs1·rs2 and rs1·rd factors),
+    /// with weights over the composed domain — the `field-inline-protocol.md` "Stage 2
+    /// Composition" algebra.
     #[test]
     fn composed_expected_output_matches_five_lane_factored_form() {
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);

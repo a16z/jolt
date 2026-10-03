@@ -79,6 +79,8 @@ pub struct FieldProductLaneFactors<F> {
 }
 
 impl<F: Ring> FieldProductLaneFactors<F> {
+    /// The lane's `(left, right)` factor values, in
+    /// [`FieldRegistersProductLane::factor_openings`] order.
     fn factor_values(&self, lane: FieldRegistersProductLane) -> [F; 2] {
         match lane {
             FieldRegistersProductLane::Product => [self.rs1_value, self.rs2_value],
@@ -183,6 +185,10 @@ mod tests {
         }
     }
 
+    /// The composed helpers weight the selected lanes at the indices following
+    /// the ordinary lanes, and each lane's factor mapping follows
+    /// `FieldRegistersProductLane::factor_openings` (Product: rs1·rs2;
+    /// InverseProduct: rs1·rd — the FINV guarded-inverse witness).
     #[test]
     fn composed_contributions_follow_selected_lane_order() {
         let base_lanes = 3usize;

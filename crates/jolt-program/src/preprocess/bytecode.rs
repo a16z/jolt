@@ -23,6 +23,7 @@ use crate::preprocess::PreprocessingError;
 pub struct BytecodePreprocessing {
     pub code_size: usize,
     pub bytecode: Vec<JoltInstructionRow>,
+    /// Maps each unexpanded instruction address to its virtual bytecode index.
     pub pc_map: BytecodePCMapper,
     pub entry_address: u64,
 }
@@ -121,6 +122,7 @@ impl BytecodePCMapper {
             first.virtual_sequence_length = 1;
         }
 
+        // The leading no-op sentinel is the only row allowed at address 0.
         let rows = match bytecode.split_first() {
             Some((first, rest)) if first.address == 0 => rest,
             _ => bytecode,
@@ -205,6 +207,7 @@ impl BytecodePCMapper {
     pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
         let index = Self::try_get_index(address).ok()?;
         let slot = *self.slots.get(index)?;
+        // An unmapped slot has length 0, so this also rejects it.
         if virtual_sequence_remaining >= slot.virtual_sequence_length {
             return None;
         }

@@ -152,6 +152,8 @@ impl Workload {
         }
     }
 
+    /// Whether the guest uses the field-inline SDK surface (and so needs the
+    /// `field-inline` guest feature besides the field-inline instruction profile).
     #[cfg(feature = "field-inline")]
     const fn uses_field_inline(self) -> bool {
         matches!(self, Self::FieldOps)
@@ -197,6 +199,12 @@ impl Workload {
     }
 }
 
+/// The eq-MLE guest's inputs: the `(r_i, x_i)` pairs and the expected
+/// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))`, pinned in the compiled
+/// protocol's proof field as four canonical little-endian u64 limbs (the
+/// guest Horner-recomposes them in whatever field it proves over; a 16-byte
+/// field fills the low two limbs). The same shape the field-inline e2e and verifier
+/// fixture generators feed the guest.
 #[cfg(feature = "field-inline")]
 fn eqpoly_inputs() -> Vec<u8> {
     const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
@@ -317,6 +325,9 @@ pub struct ProfileArtifacts {
     pub summary: Option<ProfileSummary>,
 }
 
+/// Largest supported `--scale`: keeps `1usize << scale` (and the derived
+/// Dory variable counts) far from shift overflow; 2^40 rows is already
+/// orders of magnitude past any provable trace.
 const MAX_SCALE: u32 = 40;
 
 fn validate_scale(scale: u32) {
@@ -374,12 +385,18 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let trace_name = trace_name(args.name, scale, args.backend);
     let _run_lock = RunLock::acquire(&trace_name);
 
+    // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
+    // holding every artifact the run produces; `latest_{trace_name}` is
+    // flipped to it on success (the stable path consumers read, so history
+    // accumulates without breaking deterministic paths).
     let run_dir = PathBuf::from(format!(
         "benchmark-runs/{}_{trace_name}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     ));
     fs::create_dir_all(&run_dir).expect("create run directory");
 
+    // Per-batch heap snapshots (allocative feature): opt in before the
+    // prove so the cfg-gated hooks inside `prove()` see the prefix.
     #[cfg(feature = "allocative")]
     jolt_profiling::set_flamegraph_prefix(format!("{}/", run_dir.display()));
 
@@ -491,6 +508,8 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
         for &workload in &workloads {
             let name = workload.as_str();
             let backend = args.backend.as_str();
+            // A completed run flips the `latest_` link, so its presence is
+            // the resume marker (dangling links read as absent).
             let latest_link = format!(
                 "benchmark-runs/latest_{}",
                 trace_name(workload, scale, args.backend)
@@ -807,6 +826,10 @@ fn prove_workload(
         BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
     };
 
+    // --- The measured window: the full modular prove (witness
+    // materialization, commitment, all sumcheck stages, joint opening). The
+    // `jolt_prover::prove` root span covers exactly this interval; the
+    // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
     let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
         &backend,
@@ -936,6 +959,10 @@ fn prove_workload(
         ),
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     );
+    // --- The measured window: the full packed prove (OneHotTrace assembly
+    // and native commit, all sumcheck stages, and the native grouped opening).
+    // The `jolt_prover::prove` root span covers exactly
+    // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
     let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
         &backend,

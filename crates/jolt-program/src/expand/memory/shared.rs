@@ -27,6 +27,12 @@ pub(in crate::expand) fn expand_ram_region_assertion(
     Ok(())
 }
 
+/// Lowers `LB`/`LBU` by loading the containing doubleword and extracting a byte.
+///
+/// The effective address is rounded down to the aligned 8-byte address for the
+/// `LD`. `VirtualWindowMaskB` turns the effective address into the byte mask of
+/// the addressed lane, and a single fused parallel-extract lookup (signed or
+/// unsigned) pulls the byte out of the loaded doubleword.
 pub(in crate::expand) fn expand_byte_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -38,6 +44,8 @@ pub(in crate::expand) fn expand_byte_load(
     let destination = reg(rd(instruction)?);
     let offset = format_i_imm(instruction.operands.imm);
 
+    // v1 = aligned address of the containing doubleword; the fused lookup
+    // computes `(rs1 + imm) & !7` in one row.
     jolt_asm!(asm, {
         align_addr v1, base, offset;
         ld v1, v1, 0;
@@ -53,6 +61,12 @@ pub(in crate::expand) fn expand_byte_load(
     asm.finalize()
 }
 
+/// Lowers `LH`/`LHU` by loading the containing doubleword and extracting a halfword.
+///
+/// Halfword alignment is asserted first. The extraction mirrors byte loads:
+/// `VirtualWindowMaskH` builds the halfword lane's byte mask from the
+/// effective address, and a fused parallel-extract lookup (signed or unsigned)
+/// pulls the lane out of the loaded doubleword.
 pub(in crate::expand) fn expand_halfword_load(
     instruction: &SourceInstructionRow,
     signed: bool,
@@ -65,6 +79,10 @@ pub(in crate::expand) fn expand_halfword_load(
     let offset = instruction.operands.imm;
     let formatted_offset = format_i_imm(offset);
 
+    // Halfword loads may start at byte offsets 0, 2, 4, or 6 within the
+    // containing doubleword.
+    // v1 = aligned address of the containing doubleword; the fused lookup
+    // computes `(rs1 + imm) & !7` in one row.
     jolt_asm!(asm, {
         assert_halfword_alignment base, offset;
         align_addr v1, base, formatted_offset;
@@ -100,6 +118,8 @@ pub(in crate::expand) fn expand_word_load(
     let offset = instruction.operands.imm;
     let formatted_offset = format_i_imm(offset);
 
+    // v1 = aligned address of the containing doubleword; the fused lookup
+    // computes `(rs1 + imm) & !7` in one row.
     jolt_asm!(asm, {
         assert_word_alignment base, offset;
         align_addr v1, base, formatted_offset;
@@ -117,6 +137,11 @@ pub(in crate::expand) fn expand_word_load(
     asm.finalize()
 }
 
+/// Lowers an advice load with byte length 1, 2, 4, or 8.
+///
+/// `VirtualAdviceLoad` reads from the advice tape rather than RAM. Narrow
+/// advice loads are signed loads, so the helper left-shifts the value into the
+/// high bits and arithmetic-shifts it back to XLEN.
 pub(in crate::expand) fn expand_advice_load(
     instruction: &SourceInstructionRow,
     byte_len: i128,
@@ -147,6 +172,12 @@ pub(in crate::expand) fn expand_advice_load(
     asm.finalize()
 }
 
+/// Lowers arithmetic/bitwise doubleword AMOs using the shared read-modify-write shape.
+///
+/// The old memory value is loaded, `op(old, rs2)` is stored back, and the old
+/// value is copied to `rd`. Jolt traces are sequential, so the atomicity
+/// contract reduces to preserving this single-instruction read/modify/write
+/// order in the expanded bytecode.
 pub(in crate::expand) fn expand_amo_d(
     instruction: &SourceInstructionRow,
     op: SourceInstructionKind,
@@ -179,6 +210,12 @@ pub(in crate::expand) fn expand_amo_d(
     asm.finalize()
 }
 
+/// Lowers signed or unsigned doubleword AMO min/max.
+///
+/// `compare_op` decides whether `rs2` should replace the old memory value.
+/// The update is computed as `old + take_rs2 * (rs2 - old)`, so the same
+/// arithmetic shape handles min and max once the comparison operands are
+/// ordered appropriately.
 pub(in crate::expand) fn expand_amo_minmax_d(
     instruction: &SourceInstructionRow,
     compare_op: SourceInstructionKind,
@@ -236,6 +273,12 @@ pub(in crate::expand) fn expand_amo_minmax_d(
     asm.finalize()
 }
 
+/// Lowers arithmetic/bitwise word AMOs by updating one word lane in a doubleword.
+///
+/// The pre-helper extracts the old word from the containing doubleword. The
+/// final operation is performed on that word, and the post-helper merges the
+/// low word of the result back into the containing doubleword while returning
+/// the old word sign-extended in `rd`.
 pub(in crate::expand) fn expand_amo_w(
     instruction: &SourceInstructionRow,
     op: SourceInstructionKind,
@@ -272,6 +315,11 @@ pub(in crate::expand) fn expand_amo_w(
     asm.finalize()
 }
 
+/// Lowers signed or unsigned word AMO min/max.
+///
+/// The old word and `rs2` are extended according to the comparison mode before
+/// `compare_op` runs. The stored value is still the selected low word, merged
+/// back into the containing doubleword by `expand_amo_post64`.
 pub(in crate::expand) fn expand_amo_minmax_w(
     instruction: &SourceInstructionRow,
     compare_op: SourceInstructionKind,
@@ -302,6 +350,8 @@ pub(in crate::expand) fn expand_amo_minmax_w(
             jolt_riscv::instructions::VirtualZeroExtendWord(()),
         )
     };
+    // Compare normalized word values, but keep the original low-word payload
+    // for the value that will be merged back into memory.
     asm.emit_i(extend_op, v_rs2.operand(), reg(rs2(instruction)?), 0);
     asm.emit_i(extend_op, v0.operand(), v_rd.operand(), 0);
     let (cmp_rs1, cmp_rs2) = if min {
@@ -345,6 +395,11 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     asm.finalize()
 }
 
+/// Reads the containing doubleword and extracts the selected word for word AMOs.
+///
+/// `rs1` must be word-aligned. `v_dword` receives the containing aligned
+/// doubleword, `v_shift` receives the byte offset times eight, and `v_rd`
+/// receives the selected old word in its low 32 bits.
 pub(in crate::expand) fn expand_amo_pre64(
     asm: &mut ExpansionBuilder,
     rs1: RegisterOperand,
@@ -360,6 +415,11 @@ pub(in crate::expand) fn expand_amo_pre64(
     Ok(())
 }
 
+/// Register bundle consumed by `expand_amo_post64`.
+///
+/// The post-helper needs both the containing doubleword state and the selected
+/// lane metadata from `expand_amo_pre64`, plus the new word value and the
+/// architectural destination for the old word.
 pub(in crate::expand) struct AmoPost64 {
     pub(in crate::expand) rs1: RegisterOperand,
     pub(in crate::expand) v_rs2: RegisterOperand,
@@ -370,6 +430,12 @@ pub(in crate::expand) struct AmoPost64 {
     pub(in crate::expand) v_rd: RegisterOperand,
 }
 
+/// Merges a word-AMO result into its containing doubleword and returns old word.
+///
+/// `v_rs2` is shifted into the selected lane, XORed with the old doubleword,
+/// masked to that lane, and XORed back. This updates only the selected 32 bits
+/// before storing the containing doubleword and sign-extending the old word to
+/// `rd`.
 pub(in crate::expand) fn expand_amo_post64(
     asm: &mut ExpansionBuilder,
     registers: AmoPost64,
@@ -384,6 +450,8 @@ pub(in crate::expand) fn expand_amo_post64(
         v_rd,
     } = registers;
 
+    // Build a 32-bit lane mask, shift the new word into place, and use
+    // masked-XOR replacement: new_dword = old ^ ((old ^ new) & mask).
     asm.emit_i(SourceInstructionKind::ORI, v_mask, reg(0), format_i_imm(-1));
     asm.emit_i(SourceInstructionKind::SRLI, v_mask, v_mask, 32);
     asm.emit_r(SourceInstructionKind::SLL, v_mask, v_mask, v_shift);

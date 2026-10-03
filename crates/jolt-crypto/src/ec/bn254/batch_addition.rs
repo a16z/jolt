@@ -139,6 +139,8 @@ fn batch_g1_additions_multi_affine_inner(
         working_sets = new_working_sets;
     }
 
+    // Every working set is non-empty by construction (empty index sets become
+    // `[identity]`), and the identity is the correct sum of an empty set anyway.
     working_sets
         .into_iter()
         .map(|set| set.first().copied().unwrap_or_else(G1Affine::identity))
@@ -179,6 +181,8 @@ mod tests {
             .collect();
         let jolt_bases: Vec<Bn254G1> = projectiles.clone().into_iter().map(Bn254G1::from).collect();
 
+        // Draw unique indices per set so the batch addition never hits the
+        // equal-x precondition violation.
         let indices_sets: Vec<Vec<usize>> = (0..num_batches)
             .map(|_| {
                 let size = (rng.next_u64() as usize) % 50 + 1;

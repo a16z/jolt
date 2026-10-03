@@ -25,6 +25,10 @@ use crate::{
     VerifierError,
 };
 
+/// Assemble the stage-3 consumed opening *values* from the upstream outputs into
+/// the generated `Stage3InputClaims` aggregate. This is the single place the
+/// stage's Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream`
+/// helper wires which upstream opening feeds which downstream input.
 pub fn stage3_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
@@ -52,6 +56,9 @@ where
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = TraceDimensions::new(log_t);
 
+    // The shift/register relations evaluate their `EqPlusOne`/`EqSpartan` publics
+    // against upstream stage-2 data, read mode-agnostically so the one construction
+    // serves both paths.
     let tau_low = stage2.product_tau_low().to_vec();
     let product_remainder_point = stage2
         .batch_output_points()
@@ -64,6 +71,10 @@ where
         registers_claim_reduction: RegistersClaimReduction::new(dimensions, tau_low),
     };
 
+    // Draw each relation's batching gamma in declaration order (shift, instruction
+    // input, register reduction); each is a single `challenge_scalar`. The drawn
+    // challenges feed the input/output claims and populate the stage aggregate
+    // carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

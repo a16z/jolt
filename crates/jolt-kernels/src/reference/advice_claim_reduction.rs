@@ -110,6 +110,9 @@ impl<F: JoltField> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for ReferenceB
     }
 }
 
+/// The advice reduction's cycle-phase kernel: the advice polynomial as the
+/// value table and the eq table of the staged RAM value-check point, both
+/// permuted into Dory opening-round order.
 fn advice_reduction_kernel<F: JoltField, R>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
@@ -129,6 +132,10 @@ fn advice_reduction_kernel<F: JoltField, R>(
     }
     let table = advice_table(witness, kind, permutation.len())?;
 
+    // Both tables in Dory opening-round order: the coefficient permute and
+    // the challenge permute are the same LSB relabeling, so
+    // `permuted_table[i] · permuted_eq[i]` pairs exactly as the unpermuted
+    // product did and the sum (the input claim) is preserved.
     let (value, eq) = match lsb_permutation(permutation) {
         Some(old_lsb_to_new_lsb) => (
             permute_coefficients(&table, &old_lsb_to_new_lsb),

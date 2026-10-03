@@ -67,6 +67,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         }
         let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
 
+        // Reuse stage 2 addresses; collect only the short-lived values.
         let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
         super::ram_trace::validate_addresses(&columns.addresses, 1usize << ram_log_k)?;
         let addresses = Arc::clone(&columns.addresses);
@@ -80,6 +81,8 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
+/// Raw trace values for two rounds; a dense `T/4` table afterward.
+/// Reads have `post == pre`, and no-ops are zero, matching `RamInc`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncColumn<F: JoltField> {
     Raw(RamAccessColumns),
@@ -197,6 +200,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamValCheckOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        // Advice outputs echo their input claims; they are not bound here.
         Ok(RamValCheckOutputClaims {
             untrusted_advice: inputs.untrusted_advice,
             trusted_advice: inputs.trusted_advice,
@@ -210,6 +214,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         })
     }
 
+    /// Check the bound split-LT value against the verifier's scalar path.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -354,6 +359,8 @@ mod tests {
 
     #[test]
     fn matches_reference_on_odd_log_t() {
+        // Five rounds: the lazy `ra` crosses its dense materialization and
+        // the split LT collapses its lo tables mid-protocol.
         let mut ops = mixed_ops();
         ops.extend([
             RamOp::Write { word: 7, post: 2 },

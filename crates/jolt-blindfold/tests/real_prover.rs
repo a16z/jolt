@@ -1,3 +1,8 @@
+//! Drives the shipped prover (`jolt_blindfold::prove`) end-to-end against the
+//! real verifier. The rest of the suite exercises the verifier via the test
+//! harness's reference prover; these tests are what tie the production
+//! folding/Spartan prover itself to the verifier's acceptance criteria.
+
 #![expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 
 mod support;

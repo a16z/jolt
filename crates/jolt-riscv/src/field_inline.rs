@@ -30,15 +30,19 @@ pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3: u8 =
     FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3;
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7_FAMILY: u8 = 0x60;
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK: u8 = 0x1f;
+/// Bytes between consecutive word offsets of a memory-sourced load.
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE: u32 = 8;
+/// Limb advice and zero assertions share funct3 6 under distinct funct7 values.
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT3: u8 = 6;
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT7: u8 = 1;
 
+/// The funct7 of a memory-sourced load at `offset_words` (at most 31).
 pub const fn field_inline_load_accumulate_from_memory_funct7(offset_words: u8) -> u8 {
     FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7_FAMILY
         | (offset_words & FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK)
 }
 
+/// The byte offset a memory-sourced load word adds to its base register.
 pub const fn field_inline_load_accumulate_from_memory_offset(word: u32) -> u32 {
     (((word >> 25) as u8) & FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK) as u32
         * FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE
@@ -346,6 +350,7 @@ impl FieldInlineOperandShape {
         }
     }
 
+    /// Retain the ordinary register operands; field operands use a separate plane.
     pub fn x_operands(self, mut operands: NormalizedOperands) -> NormalizedOperands {
         operands.rs1 = match self.op {
             FieldInlineOp::LoadAccumulateFromRegister | FieldInlineOp::LoadAccumulateFromMemory => {
@@ -570,6 +575,8 @@ mod tests {
 
     #[test]
     fn field_register_deserialize_rejects_out_of_range() {
+        // The inner field is `pub`, so an out-of-range value can be serialized directly,
+        // bypassing `FieldRegister::new`; the `Valid` check must reject it on the way back.
         let register = FieldRegister(FIELD_REGISTER_COUNT);
         assert!(roundtrip(register, Validate::Yes).is_err());
         assert!(roundtrip(register, Validate::No).is_ok());

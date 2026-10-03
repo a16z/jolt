@@ -22,6 +22,12 @@ use crate::VerifierError;
 pub struct BooleanityAddressPhase<F: JoltField> {
     symbolic: relations::booleanity::BooleanityAddressPhase,
     dimensions: BooleanityDimensions,
+    /// The stage-5 instruction read-RAF opening points (big-endian) the
+    /// reference points derive from: `draw_challenges` reverses the address
+    /// into the little-endian reference address,
+    /// [`reference_cycle`](Self::reference_cycle) the cycle (the same
+    /// construction-geometry idiom as `BytecodeReadRafAddressPhase`'s
+    /// `BytecodeStagePoints`).
     instruction_r_address: Vec<F>,
     instruction_r_cycle: Vec<F>,
 }

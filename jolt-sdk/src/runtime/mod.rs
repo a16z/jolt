@@ -70,6 +70,18 @@ pub unsafe extern "C" fn __debug_write(msg: *const u8, len: usize) {
     __platform_stdout_write(msg, len);
 }
 
+/// Syscall handler for Jolt guests.
+///
+/// This function is called by jolt-sdk's trap_handler to route syscalls
+/// through ZeroOS's Linux syscall infrastructure. The syscall dispatch
+/// is proven as part of the guest execution.
+///
+/// # Arguments
+/// * `a0`-`a5` - Syscall arguments
+/// * `nr` - Syscall number
+///
+/// # Returns
+/// The syscall return value (negative values indicate errors)
 #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
 #[no_mangle]
 pub extern "C" fn jolt_syscall(
