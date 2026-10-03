@@ -58,8 +58,9 @@ field-inline bytecode kernel geometry only on the prover path.
 Limb readout uses `FIELD_ADVICE_LIMB` repeatedly and checks the final quotient
 with `FIELD_ASSERT_ZERO`. The guest must also establish that the emitted
 integer is below the active field modulus when it needs a canonical encoding.
-The `field-ops` guest checks a pinned integer below both supported moduli and
-exercises readout and restoration in the same field register.
+The SDK's `field_to_limbs!` and `field_from_limbs!` own the complete checked
+sequences ("SDK Limb Conversions" below); the `field-ops` guest uses them, and
+`field-limbs-guest` is their conformance guest in the acceptance matrix.
 
 ## Purpose
 
@@ -884,6 +885,8 @@ These rows depend on canonical encoding for the active `F: JoltField`. For a
 128-bit Jolt field, they may use two 64-bit limbs. This affects ABI,
 advice-tape encoding, and the number of ingress/readout rows. It does not change
 the field arithmetic relation: field values remain native elements of `F`.
+Guests learn the active field from the SDK, never from a limb count ("Guest
+Field Selection" below).
 
 ## Memory-Sourced Loads And Limb Readout
 
@@ -920,7 +923,7 @@ may name the same field register, allowing the readout to consume it in place.
 
 `FIELD_ASSERT_ZERO field_rs1` checks `IsFieldAssertZero * FieldRs1Value = 0`
 without writing any field or integer register. Encoding: opcode `0x7b`,
-funct3 `6`, funct7 `2`, field-op tag `11`. The SDK emits zero in the unused
+funct3 `6`, funct7 `2`, field-op tag `6`. The SDK emits zero in the unused
 `rd` and `rs2` fields; these operands are ignored by decoding and do not reserve
 a zero field register. Field register zero is an ordinary writable slot, like
 the other fifteen slots.
@@ -938,10 +941,89 @@ register or hardwired zero register.
 
 Raw instruction users must check `L < p` whenever subsequent computation
 requires canonical limbs. Equality with an independently pinned integer known
-to be below `p` also suffices, as in the `field-ops` memory/readout regression.
-The ISA supplies bounded limb advice and a zero assertion; ergonomic
-`field_to`/`field_from` macros remain follow-up work in
-[#1934](https://github.com/a16z/jolt/issues/1934).
+to be below `p` also suffices.
+
+### SDK Limb Conversions
+
+`jolt::field_to_limbs!(r)` (limb count from the expected type),
+`jolt::field_to_limbs!(r, N)`, and `jolt::field_from_limbs!(r, limbs)` own
+the checked sequences in `jolt-sdk/src/field_inline.rs`. Limbs are little-endian
+`[u64; N]` with `N >= 1`; the register index is a constant below 16. With `K`
+the modulus width (4 for BN254, 2 for fp128):
+
+```text
+field_to_limbs!(r, N):
+  K-1 x FIELD_ADVICE_LIMB a0, r -> r
+  FIELD_ADVICE_LIMB a0, r -> r; FIELD_ASSERT_ZERO r     one asm block
+  modulus binding on r (zero here)
+  guest: L < p, else spoil_proof()
+  guest: limbs N..K are zero, else panic
+  K x FIELD_LOAD_ACCUMULATE_FROM_REGISTER r <- limb, most significant first
+
+field_from_limbs!(r, limbs):
+  guest: L < p, else panic
+  FIELD_LOAD_IMM r, 0
+  modulus binding on r
+  min(N, K) x FIELD_LOAD_ACCUMULATE_FROM_REGISTER r <- limb, most significant first
+
+modulus binding on a zero register r:
+  K x FIELD_LOAD_ACCUMULATE_FROM_MEMORY r <- the guest's modulus table
+  FIELD_ASSERT_ZERO r
+```
+
+A readout costs `3K + 2` field rows for any `N`; an import costs
+`K + 2 + min(N, K)`. Readouts above `K` limbs zero-extend. Only `r` changes
+during either sequence, and a readout restores it; the asm blocks bind every
+x-register they encode (`a0`, plus `a1` as the memory-load scratch).
+
+Failure outcomes follow who controls the failing value:
+
+- Noncanonical readout limbs (`L >= p` with a zero residual, such as the limbs
+  of `p` for zero or `value + p`) need dishonest advice, so the guest calls
+  `spoil_proof()`: the trace completes but no proof verifies.
+- A value that does not fit `N < K` limbs is the guest's own condition once
+  the canonical limbs are fixed, so the guest panics, a provable outcome.
+- Import limbs are guest data. An integer of `p` or more, including any nonzero
+  limb past `K`, panics the guest; there is no implicit reduction.
+- A nonzero residual quotient fails the `FIELD_ASSERT_ZERO` fused with the last
+  advice limb: at trace time for the honest tracer, and through the
+  `ROW_ASSERT_ZERO` field constraint for a proof.
+
+The binding accumulates the guest's modulus limbs, read from the verifier-fixed
+program image, into the zero register and asserts zero. That proves
+`p_active | p_guest`, and both are prime, so the fields are equal. It needs the
+register to be zero first: with a nonzero residual `q`, a dishonest prover
+could choose `q = -p_guest / 2^(64K)` to pass a single combined assertion.
+Hence the separate residual assertion.
+
+`crates/jolt-prover/tests/field_inline_limbs.rs` drives these failures with
+the tracer's `test-utils` advice-injection hook, which emits chosen limbs
+with the quotients the advice row then forces, in both proof fields.
+
+### Guest Field Selection
+
+The guest-visible modulus has one owner chain:
+
+- The tracer's `FIELD_INLINE_MODULUS`, selected with `ProofField` by
+  `fp128-field-inline`, names the executing field. A const assertion pins
+  `jolt_platform::FieldInlineModulus::limbs()` to the jolt-field modulus
+  (`Fr::MODULUS_LIMBS`, `Fp128::MODULUS_LIMBS`) in every field-inline tracer
+  build.
+- jolt-host sets `JOLT_FIELD_INLINE_MODULUS` (`bn254` or `fp128`) on guest
+  builds that enable the guest `field-inline` feature, from that constant, and
+  gives each field its own cargo target directory.
+- jolt-sdk reads the variable at compile time into
+  `jolt::field_inline::MODULUS`, defaulting to BN254, the SDK's Dory field.
+- Every conversion's binding proves the guest's choice. A guest built for the
+  other field, for example by `jolt build` without the variable and then
+  traced for Akita, fails the binding's `FIELD_ASSERT_ZERO` at trace time and
+  has no proof. It cannot silently accept noncanonical limbs.
+
+The binding runs per conversion rather than once at guest entry: an entry-time
+check would add field rows to every field-inline guest, including those with no
+field activity. Selecting the field at runtime from unproved advice and then
+binding it would also be sound, but would cost more rows per BN254 conversion
+and give guests no compile-time modulus.
 
 Stage 1 carries `OpFlags(CircuitFlags::FieldLoadAccumulateFromMemory)` and
 `OpFlags(CircuitFlags::FieldAdviceLimb)` in the common flag columns. Bytecode
@@ -1341,7 +1423,9 @@ Each step should be reviewed before continuing to the next.
      non-native arithmetic.
    - Review gate: fixtures exercise accumulating ingress on both fields;
      readout checks an independently pinned integer below both moduli,
-     including in-place restoration from its emitted limbs.
+     including in-place restoration from its emitted limbs. The SDK
+     conversions (#1934) add canonical round trips of limb-boundary values and
+     `p - 1` in both fields, and dishonest-advice rejection.
 
 6. Wire verifier support one stage slice at a time.
    - Proof/config gate: require `proof.protocol.field_inline` to match the

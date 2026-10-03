@@ -6,6 +6,7 @@ use common::constants::{
     RAM_START_ADDRESS,
 };
 use common::jolt_device::{JoltDevice, MemoryConfig};
+use jolt_platform::FIELD_INLINE_MODULUS_ENV;
 use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 use jolt_program::{JoltProgram, ProgramError};
 #[cfg(feature = "field-inline")]
@@ -16,9 +17,15 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use tracer::emulator::memory::Memory;
+#[cfg(feature = "field-inline")]
+use tracer::instruction::field_inline::FIELD_INLINE_MODULUS;
 use tracer::instruction::Cycle;
 use tracer::LazyTraceIterator;
 use tracing::info;
+
+/// The guest-crate feature that forwards `jolt-sdk/field-inline`.
+#[cfg(feature = "field-inline")]
+const FIELD_INLINE_GUEST_FEATURE: &str = "field-inline";
 
 impl Program {
     pub fn new(guest: &str) -> Self {
@@ -74,7 +81,7 @@ impl Program {
     #[cfg(feature = "field-inline")]
     pub fn enable_field_inline(&mut self) {
         self.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
-        self.add_guest_feature("field-inline");
+        self.add_guest_feature(FIELD_INLINE_GUEST_FEATURE);
     }
 
     /// Set backtrace mode for the guest build.
@@ -168,22 +175,31 @@ impl Program {
                 }
             }
 
-            // Add suffix to target dir if building with compute_advice feature
-            let guest_target_dir = if features.iter().any(|feature| feature == "compute_advice") {
-                format!(
-                    "{}/{}-{}-compute-advice",
-                    target_dir,
-                    self.guest,
-                    self.func.as_deref().unwrap_or("")
-                )
-            } else {
-                format!(
-                    "{}/{}-{}",
-                    target_dir,
-                    self.guest,
-                    self.func.as_deref().unwrap_or("")
-                )
-            };
+            // Field-inline guests are compiled for the field the tracer
+            // executes, which the SDK reads from the environment.
+            #[cfg(feature = "field-inline")]
+            let field_inline_modulus = features
+                .iter()
+                .any(|feature| feature == FIELD_INLINE_GUEST_FEATURE)
+                .then_some(FIELD_INLINE_MODULUS.name());
+            #[cfg(not(feature = "field-inline"))]
+            let field_inline_modulus: Option<&str> = None;
+
+            // Variants that compile to different ELFs get their own target dir:
+            // the compute_advice build, and each field-inline proof field.
+            let mut guest_target_dir = format!(
+                "{}/{}-{}",
+                target_dir,
+                self.guest,
+                self.func.as_deref().unwrap_or("")
+            );
+            if features.iter().any(|feature| feature == "compute_advice") {
+                guest_target_dir.push_str("-compute-advice");
+            }
+            if let Some(modulus) = field_inline_modulus {
+                guest_target_dir.push('-');
+                guest_target_dir.push_str(modulus);
+            }
 
             // Add separator for cargo passthrough args
             args.push("--".to_string());
@@ -240,6 +256,12 @@ impl Program {
             if let Some(func) = &self.func {
                 let _ = cmd.env("JOLT_FUNC_NAME", func);
             }
+
+            // Other builds must not inherit a field selection from the caller.
+            let _ = match field_inline_modulus {
+                Some(modulus) => cmd.env(FIELD_INLINE_MODULUS_ENV, modulus),
+                None => cmd.env_remove(FIELD_INLINE_MODULUS_ENV),
+            };
 
             let output = cmd
                 .output()

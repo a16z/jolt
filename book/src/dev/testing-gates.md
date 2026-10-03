@@ -5,9 +5,10 @@
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
 profile. The ordinary profile has nine cases: muldiv, fibonacci, memory-ops,
 stdlib, sha2, sha3 through both its unaligned and aligned entry points,
-advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`
-and `muldiv`, covering both active field operations and an ordinary
-guest proved under the field-inline protocol with no field activity.
+advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`,
+`field_limbs`, and `muldiv`, covering active field operations, the SDK's
+checked limb conversions, and an ordinary guest proved under the field-inline
+protocol with no field activity.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, trace bound, and field activity, then proves it with
@@ -18,7 +19,8 @@ Dory ZK with `zk`, or Akita with `akita`. The mode is part of every test name
 modes, so a guest added to either table gains all three arms at once.
 Specialized checks (tampering, committed programs, forced one-hot sizes)
 stay in `zk_e2e.rs` and `akita_e2e.rs`; field-inline parity and tampering
-checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`.
+checks stay in `field_inline_e2e.rs` and `akita_field_inline_e2e.rs`; limb
+conversion policy and dishonest-advice checks stay in `field_inline_limbs.rs`.
 
 ```bash
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet

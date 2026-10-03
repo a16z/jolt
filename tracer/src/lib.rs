@@ -15,6 +15,7 @@ use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
 use jolt_riscv::RV64IMAC_JOLT;
+use parallel::TwoPassConfig;
 
 pub mod emulator;
 pub mod execution_backend;
@@ -314,12 +315,12 @@ pub fn trace_checkpoints(
 /// unparsable = serial — a single worker would only re-trace what pass-1
 /// already executed); `JOLT_TRACER_CHUNK_ROWS` overrides the default chunk
 /// size and `JOLT_TRACER_CAPACITY_ROWS` the up-front output reservation.
-fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
+pub(crate) fn parallel_config_from_env() -> Option<TwoPassConfig> {
     let workers: usize = std::env::var("TRACER_PARALLEL").ok()?.parse().ok()?;
     if workers <= 1 {
         return None;
     }
-    Some(parallel::TwoPassConfig {
+    Some(TwoPassConfig {
         workers,
         chunk_rows: env_rows("JOLT_TRACER_CHUNK_ROWS", parallel::DEFAULT_CHUNK_ROWS),
         capacity_rows: env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS),
