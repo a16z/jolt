@@ -1,5 +1,3 @@
-//! The full bytecode read-RAF symbolic sumcheck (monolith).
-
 use jolt_field::Ring;
 
 use crate::protocols::jolt::geometry::bytecode::{
@@ -12,8 +10,6 @@ use crate::protocols::jolt::{
 };
 use crate::{SumcheckChallenges, SymbolicSumcheck};
 
-/// Fiat-Shamir challenges drawn by the full bytecode read-RAF sumcheck: the
-/// batching `gamma` plus the five per-stage gammas folding the staged claims.
 #[derive(Clone, Copy, Debug, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafChallenges<F> {
@@ -302,10 +298,6 @@ mod tests {
         );
     }
 
-    /// Every staged gamma the relation draws (`stage_gammas`) must resolve to a
-    /// distinct field of the `Challenges` struct. A missing or mismatched
-    /// `#[challenge(..)]` among the six fields would surface here as a `None` or a
-    /// wrong value.
     #[test]
     fn challenges_resolve_every_stage_gamma() {
         let challenges = BytecodeReadRafChallenges {
@@ -330,7 +322,6 @@ mod tests {
                 Some(value),
             );
         }
-        // Each id the relation declares it draws resolves under the struct.
         for id in stage_gammas() {
             assert!(challenges.resolve_challenge(&id).is_some());
         }

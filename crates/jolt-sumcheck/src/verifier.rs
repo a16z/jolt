@@ -1,5 +1,3 @@
-//! Sumcheck verifier: checks round polynomials against the claimed sum.
-
 use jolt_field::Field;
 use jolt_poly::UnivariatePolynomial;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
@@ -13,7 +11,6 @@ use crate::error::SumcheckError;
 use crate::proof::CompressedSumcheckProof;
 use crate::round_proof::{ClearRound, RoundMessage};
 
-/// Stateless sumcheck verifier engine.
 pub struct SumcheckVerifier;
 
 impl SumcheckVerifier {
@@ -130,7 +127,6 @@ impl SumcheckVerifier {
         Ok(EvaluationClaim::new(challenges, running_sum))
     }
 
-    /// Checks committed sumcheck rounds and returns the transcript-derived data.
     #[tracing::instrument(
         skip_all,
         name = "SumcheckVerifier::verify_committed_round_consistency"

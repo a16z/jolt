@@ -10,7 +10,6 @@ pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
     pub guest_only: bool,
-    /// Optional cargo profile name to use for guest builds (e.g. "guest", "release").
     pub profile: Option<String>,
     pub heap_size: u64,
     pub stack_size: u64,

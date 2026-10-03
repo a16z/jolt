@@ -15,7 +15,6 @@ pub struct DeviceLimits {
     pub max_threads_per_threadgroup: usize,
 }
 
-/// What the platform backend reads from a newly opened device.
 pub(crate) struct DeviceInfo {
     pub(crate) name: String,
     pub(crate) registry_id: u64,
@@ -57,7 +56,6 @@ impl Device {
         self.limits
     }
 
-    /// Refuses an allocation of `bytes` that exceeds a device limit.
     pub(crate) fn admit_allocation(&self, bytes: usize) -> Result<(), MetalError> {
         let exceeded = |limit, requested: usize, available| MetalError::CapacityExceeded {
             limit,

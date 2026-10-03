@@ -1,8 +1,3 @@
-//! Compressed univariate polynomial with the linear term omitted.
-//!
-//! Used in sumcheck proofs to save one field element per round polynomial.
-//! The linear term is recoverable from the sumcheck claim `f(0) + f(1)`.
-
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +35,6 @@ impl<F: Field> CompressedPoly<F> {
         }
     }
 
-    /// The stored coefficients `[c0, c2, c3, ...]` (linear term omitted).
     pub fn coeffs_except_linear_term(&self) -> &[F] {
         &self.coeffs_except_linear_term
     }
@@ -49,14 +43,8 @@ impl<F: Field> CompressedPoly<F> {
         self.coeffs_except_linear_term.is_empty()
     }
 
-    /// Recovers the omitted linear term from the hint `h = f(0) + f(1)`.
-    ///
-    /// `c1 = h - 2*c0 - c2 - c3 - ...`
     #[inline]
     fn recover_linear_term(&self, hint: F) -> F {
-        // Deserialized proofs can carry an empty coefficient vector; fail with
-        // a clear contract violation instead of an index panic. Callers on
-        // untrusted data must reject empty polynomials first (`is_empty`).
         assert!(
             !self.coeffs_except_linear_term.is_empty(),
             "cannot evaluate an empty compressed polynomial"
@@ -121,8 +109,6 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use num_traits::{One, Zero};
 
-    /// Helper: build a standard polynomial p(x) = c0 + c1*x + c2*x^2 + ...
-    /// and compute the sumcheck hint h = p(0) + p(1).
     fn poly_and_hint(coeffs: Vec<Fr>) -> (UnivariatePoly<Fr>, Fr) {
         let p = UnivariatePoly::new(coeffs);
         let hint = p.evaluate(Fr::zero()) + p.evaluate(Fr::one());
@@ -131,7 +117,6 @@ mod tests {
 
     #[test]
     fn compress_decompress_round_trip() {
-        // p(x) = 1 + 3x + 2x^2
         let (p, hint) = poly_and_hint(vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(2)]);
         let compressed = p.compress();
         let recovered = compressed.decompress(hint);
@@ -140,7 +125,6 @@ mod tests {
 
     #[test]
     fn evaluate_with_hint_matches_standard() {
-        // p(x) = 1 + 3x + 2x^2
         let (p, hint) = poly_and_hint(vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(2)]);
         let compressed = p.compress();
 
@@ -156,12 +140,10 @@ mod tests {
 
     #[test]
     fn compress_linear_polynomial() {
-        // p(x) = 5 + 7x  (degree 1)
         let (p, hint) = poly_and_hint(vec![Fr::from_u64(5), Fr::from_u64(7)]);
         let compressed = p.compress();
 
         assert_eq!(compressed.degree(), 1);
-        // Stored coefficients: [c0] = [5]
         assert_eq!(compressed.coeffs_except_linear_term().len(), 1);
 
         let recovered = compressed.decompress(hint);
@@ -173,7 +155,6 @@ mod tests {
 
     #[test]
     fn compress_cubic_polynomial() {
-        // p(x) = 1 + 3x + 2x^2 + x^3  (typical sumcheck degree)
         let (p, hint) = poly_and_hint(vec![
             Fr::from_u64(1),
             Fr::from_u64(3),
@@ -183,7 +164,6 @@ mod tests {
         let compressed = p.compress();
 
         assert_eq!(compressed.degree(), 3);
-        // Stored: [c0, c2, c3] = [1, 2, 1]
         assert_eq!(compressed.coeffs_except_linear_term().len(), 3);
 
         let recovered = compressed.decompress(hint);

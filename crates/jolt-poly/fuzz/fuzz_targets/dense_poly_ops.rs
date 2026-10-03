@@ -1,13 +1,9 @@
 #![no_main]
 
-//! Differential check of `Polynomial` evaluation paths against a naive
-//! per-index multilinear-extension reference.
-
 use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::Polynomial;
 use libfuzzer_sys::fuzz_target;
 
-/// Bytes per BN254 scalar window.
 const SCALAR_BYTES: usize = 32;
 
 /// Largest variable count whose full encoding (`2^n` coefficients plus the
@@ -20,7 +16,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1; // 1..=6, all reachable
+    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1;
     let n = 1usize << num_vars;
     if data.len() < 1 + (n + num_vars) * SCALAR_BYTES {
         return;
@@ -35,7 +31,6 @@ fuzz_target!(|data: &[u8]| {
 
     let poly = Polynomial::new(evals.clone());
 
-    // The two optimized paths must agree with each other...
     let eval = poly.evaluate(&point);
     let eval_consumed = poly.clone().evaluate_and_consume(&point);
     assert_eq!(
@@ -43,9 +38,6 @@ fuzz_target!(|data: &[u8]| {
         "evaluate and evaluate_and_consume disagree"
     );
 
-    // ...and with a naive Σᵢ evals[i]·eq(bits(i), point) reference computed
-    // without the shared eq-table machinery. The first point coordinate
-    // corresponds to the most significant index bit.
     let one = Fr::from_u64(1);
     let mut reference = Fr::from_u64(0);
     for (i, &coeff) in evals.iter().enumerate() {

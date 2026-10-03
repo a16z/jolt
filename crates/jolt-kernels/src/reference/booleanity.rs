@@ -68,13 +68,8 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBack
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct BooleanityAddressKernel<F: JoltField> {
     rounds: usize,
-    /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
-    /// canonical order.
     gamma_weights: Vec<F>,
-    /// The linear-term tables (plain multilinear binding).
     linear: Vec<Polynomial<F>>,
-    /// The squared-term tables (squared-weight binding); raw vectors because
-    /// the bind rule is not a multilinear bind.
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
     rounds_bound: usize,
@@ -105,13 +100,6 @@ impl<F: JoltField> BooleanityAddressKernel<F> {
         // `derive_output_term` both follow that convention. Use them as-is.
         let eq_cycle = eq_table(reference_cycle);
 
-        // Per-chunk masses of each checked one-hot polynomial, folded over the
-        // cycle dimension by the reference-cycle eq weights. The address-phase
-        // relation is column-agnostic (its output is the bare intermediate),
-        // so the checked-column set comes from the shape: the base `Ra`
-        // families plus, on the packed (lattice) build, the fused-inc one-hot
-        // columns at the tail — `lattice_booleanity_output_openings`' order,
-        // continuing the same `γ^{2i}` weight sequence.
         let mut openings: Vec<_> = dimensions
             .layout
             .openings(JoltRelationId::Booleanity)
@@ -296,10 +284,6 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 Polynomial::new(address_fold(witness, opening, dimensions.log_t, r_address)?),
             );
         }
-        // The packed (lattice) shape extends the boolean fold over the
-        // fused-inc one-hot columns: serve them per the relation's own
-        // expression leaves (the base expression references none, so the
-        // loop no-ops there).
         for term in &relation.symbolic().output_expression::<F>().terms {
             for factor in &term.factors {
                 let Source::Opening(id) = factor else {

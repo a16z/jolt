@@ -96,9 +96,6 @@ pub struct SpartanProductRow {
     pub virtual_instruction: OpFlag,
 }
 
-/// The exact integer Lagrange coefficients `L_i(node)` of the 3-node base
-/// window at every node of the extended window (in-domain nodes included —
-/// there they are the 0/1 selectors).
 fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     let mut out = [[0i64; DOMAIN]; EXTENDED_SIZE];
     for (position, coefficients) in out.iter_mut().enumerate() {
@@ -155,10 +152,6 @@ fn extended_products(
     }
     out
 }
-/// The field twin of [`extended_products`] for active field-inline cycles: the composed
-/// left/right factor forms with the field-inline lane contributions from the pinned
-/// jolt-claims composed-lane helper (the same fold the verifier's composed checks
-/// perform).
 #[cfg(feature = "field-inline")]
 fn field_extended_products<F: JoltField>(
     row: &SpartanProductRow,
@@ -199,30 +192,22 @@ fn field_extended_products<F: JoltField>(
     out
 }
 
-/// The field images of [`extension_coefficients`], for the active field-inline cycles'
-/// field path.
 #[cfg(feature = "field-inline")]
 fn extension_coefficient_fields<F: JoltField>() -> [[F; DOMAIN]; EXTENDED_SIZE] {
     extension_coefficients().map(|coefficients| coefficients.map(F::from_i64))
 }
 
-/// The uni-skip carry: the typed rows (reused by the remainder), the low
-/// challenge vector, and all extended-node values of `t1`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
-    /// The active field-inline cycles' composed column values, sparse and sorted by
-    /// cycle (only the three value columns feed the product lanes).
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     t1_values: Vec<F>,
 }
 
-/// Extended-node evaluations of
-/// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
 fn extended_t1_values<F: JoltField>(
     rows: &BundleAccess<'_, SpartanProductRow>,
     tau_low: &[F],
@@ -280,9 +265,6 @@ fn extended_t1_values<F: JoltField>(
 pub struct OptimizedProductUniskip;
 
 impl OptimizedProductUniskip {
-    /// The post-collection half of [`UniskipKernel::prepare`], shared with the
-    /// in-module parity tests (which construct rows — and with field-inline enabled,
-    /// the sparse field-inline rows — directly).
     #[cfg(test)]
     fn prepare_from_rows<F: JoltField>(
         session: &mut ProofSession,
@@ -306,7 +288,6 @@ impl OptimizedProductUniskip {
         )
     }
 
-    /// The store-generic half of `prepare`.
     fn prepare_from_store<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
@@ -400,8 +381,6 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
     }
 }
 
-/// The stage-2 product remainder slot: reclaims the uni-skip carry and builds
-/// the linear-time round kernel.
 pub struct OptimizedProductRemainder;
 
 impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemainder {
@@ -421,13 +400,10 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
     }
 }
 
-/// The linear-time product remainder rounds over the cycle domain
-/// (bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    /// Whether the first-shrink purge ran.
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -437,7 +413,6 @@ struct ProductRemainderKernel<F: JoltField> {
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
-    /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
 }
 impl<F: JoltField> ProductRemainderKernel<F> {
@@ -604,7 +579,6 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     fn bind(&mut self, challenge: F) {
         let shrunk = self.left.bind_low_to_high_in_place(challenge);
         let _ = self.right.bind_low_to_high_in_place(challenge);
-        // Purge once after the first shrink.
         if shrunk && !self.purged {
             self.purged = true;
             crate::mem::purge_retained_memory(self.challenges.total());
@@ -614,16 +588,11 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    /// `eq(r_cycle, ·)` over the bound cycle point, shared by the base and field-inline
-    /// opening walks below (one `2^log_T` table per extraction).
     fn cycle_weights(&self) -> Vec<F> {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         EqPolynomial::<F>::evals(&reversed, None)
     }
 
-    /// The eight produced opening values at the bound cycle point: one
-    /// eq-weighted walk over the typed rows, in the output claims' canonical
-    /// field order.
     fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
         let cycles = weights.len();
         let access = self.rows.access();
@@ -663,9 +632,6 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         try_par_sum_vecs(blocks, 8, block)
     }
 
-    /// The three field-inline factor opening values at the bound cycle point
-    /// (`selected_product_remainder_output_openings` order: rs1, rs2, rd) — one
-    /// eq-weighted walk over the sparse field-inline rows.
     #[cfg(feature = "field-inline")]
     fn field_claimed_inputs(&self, weights: &[F]) -> [F; 3] {
         map_reduce_chunks(
@@ -800,9 +766,6 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
     }
 }
 
-/// Byte parity against the reference product kernels, mirroring the outer
-/// module's test structure: synthetic wide-value witnesses across sizes plus
-/// the real sample trace through the full trait path.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -831,7 +794,6 @@ mod tests {
     use crate::reference::spartan_product::{ReferenceProductRemainder, SpartanProductKernel};
     use crate::ReferenceBackend;
 
-    /// The eight product columns in the output claims' canonical order.
     const COLUMNS: [JoltVirtualPolynomial; 8] = [
         JoltVirtualPolynomial::LeftInstructionInput,
         JoltVirtualPolynomial::RightInstructionInput,
@@ -891,9 +853,6 @@ mod tests {
             .collect()
     }
 
-    /// Sparse synthetic field-inline rows with pseudo-random full-field values in the
-    /// three lane factor columns (the composed product lanes read nothing else off the
-    /// field-inline rows).
     #[cfg(feature = "field-inline")]
     fn synthetic_field_rows(log_t: usize, seed: u64) -> Vec<(usize, FieldInlineSpartanRow<Fr>)> {
         let mut state = seed | 1;
@@ -964,9 +923,6 @@ mod tests {
         backend
     }
 
-    /// The remainder's true input claim
-    /// `scale · Σ_j eq(τ_low, j) · left(j) · right(j)` over the composed lane
-    /// selection, straight field math.
     fn true_input_claim(
         rows: &[SpartanProductRow],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
@@ -1234,20 +1190,12 @@ mod tests {
         });
     }
 
-    /// Canonical value at or above `0.7·p` (top limb of the BN254 scalar
-    /// modulus is `0x3064_4E72_E131_A029`).
     fn heavy(value: Fr) -> bool {
         let mut bytes_le = [0u8; 32];
         value.to_bytes_le(&mut bytes_le);
         u64::from_le_bytes(bytes_le[24..].try_into().unwrap()) >= 0x2200_0000_0000_0000
     }
 
-    /// Round-0 materialization at the small-scalar accumulator's Barrett
-    /// boundary: both full-u64 left lanes at `u64::MAX` under uni-skip
-    /// weights whose canonical values exceed `0.7·p`, where two
-    /// `fmadd_u64` terms reach ~2^318.6 and leave the `reduce_nplus1`
-    /// window (2^318). The wide accumulator path must still match the
-    /// reference kernel's straight field arithmetic round for round.
     #[test]
     fn full_range_left_lanes_under_heavy_uniskip_weights_match_reference() {
         let log_t = 2;
@@ -1261,10 +1209,6 @@ mod tests {
                 ..row
             })
             .collect();
-        // At integer points the centered Lagrange weights are small (signed)
-        // integers, and small-integer points keep the low-degree weights
-        // structured, so walk a squaring iteration (full-field after two
-        // steps) until both full-u64 lane weights are heavy.
         let mut r0 = Fr::from_u64(0x9E37_79B9_7F4A_7C15);
         let r0 = (1u64..=4096)
             .map(|k| {
@@ -1293,9 +1237,6 @@ mod tests {
         });
     }
 
-    /// The trait-path parity body over a real trace backend, with the
-    /// remainder driven by the true joint-domain sum (the trace fixtures are
-    /// not constraint-satisfying; see the outer module's twin test).
     fn sample_case(backend: &TraceBackend<OwnedTrace>, log_t: usize) {
         {
             let tau_low: Vec<Fr> = (0..log_t)
@@ -1416,10 +1357,6 @@ mod tests {
         }
     }
 
-    /// Full trait-path parity: without field-inline on the canned sample trace; with
-    /// field-inline enabled over a field-inline fixture trace (the sample backend
-    /// carries no field-inline view), exercising the trace-backed sparse field-inline
-    /// row seam.
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
         #[cfg(not(feature = "field-inline"))]
@@ -1429,8 +1366,6 @@ mod tests {
             .with_plane(4, |backend| sample_case(backend, 4));
     }
 
-    /// The integer extension coefficients equal the field Lagrange basis
-    /// evaluations at every extended node (in-domain selectors included).
     #[test]
     fn extension_coefficients_match_field_lagrange() {
         for (position, coefficients) in extension_coefficients().iter().enumerate() {
@@ -1446,8 +1381,6 @@ mod tests {
         }
     }
 
-    /// The typed bundle's columns equal the oracle tables for all eight
-    /// product openings.
     #[test]
     fn bundle_columns_match_oracle_tables() {
         with_sample_backend(|backend| {

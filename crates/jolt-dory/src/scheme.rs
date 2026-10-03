@@ -1,5 +1,3 @@
-//! Dory PCS implementing the `jolt-openings` trait hierarchy.
-
 #![expect(
     clippy::unimplemented,
     reason = "the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
@@ -22,9 +20,6 @@ use rayon::prelude::*;
 use crate::routines::{JoltG1Routines, JoltG2Routines};
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
-
-// All jolt types below are #[repr(transparent)] over the same arkworks
-// inner type as their dory-pcs counterpart, guaranteeing identical layout.
 
 pub(crate) type ArkFr = dory::backends::arkworks::ArkFr;
 pub(crate) type ArkG1 = dory::backends::arkworks::ArkG1;
@@ -97,9 +92,6 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     unsafe { std::mem::transmute(ark) }
 }
 
-/// First `n` bases of an SRS table. Callers size `n` from the polynomial
-/// being committed; the assert keeps a descriptive panic if it outgrows the
-/// setup instead of a bare slice-bounds failure.
 #[inline]
 pub(crate) fn srs_prefix<T>(bases: &[T], n: usize) -> &[T] {
     assert!(
@@ -153,7 +145,6 @@ impl DoryScheme {
         DoryProverSetup(setup)
     }
 
-    /// Derives the verifier SRS (a subset of the prover SRS).
     #[tracing::instrument(skip_all, name = "DoryScheme::setup_verifier", fields(max_num_vars))]
     pub fn setup_verifier(max_num_vars: usize) -> DoryVerifierSetup {
         let prover_setup = Self::setup_prover(max_num_vars);
@@ -451,7 +442,6 @@ impl ZkOpeningScheme for DoryScheme {
     }
 }
 
-/// Dense commit: full MSM per row, parallel over rows.
 fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     sigma: usize,
@@ -471,7 +461,6 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
         .collect()
 }
 
-/// One-hot commit: O(T) group additions for unit-valued one-hot polynomials.
 fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     num_rows: usize,
@@ -560,8 +549,6 @@ impl DoryHint {
     }
 }
 
-/// Bridges [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits
-/// without materializing the full evaluation table.
 struct DorySourceAdapter<'a, S: MultilinearPoly<Fr> + ?Sized> {
     source: &'a S,
 }
@@ -671,7 +658,6 @@ mod tests {
     fn commit_rejects_polynomial_exceeding_setup_capacity() {
         let mut rng = ChaCha20Rng::seed_from_u64(700);
         let prover_setup = DoryScheme::setup_prover(2);
-        // 6-variable poly: 8 columns > the 2-var setup's SRS width.
         let poly = Polynomial::<Fr>::random(6, &mut rng);
         let err = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap_err();
         assert!(

@@ -1,14 +1,3 @@
-//! Differential tests for the packed SIMD backends.
-//!
-//! Packed-vs-scalar equivalence on the native ISA for every width
-//! (32/64/128) and every packed extension type, over random inputs and
-//! boundary lane patterns (all-max lanes, mixed canonical extremes,
-//! single-lane-nonzero); lane-access and slice-helper laws;
-//! `WithPacking` associated-type sanity for every field type; `NoPacking`
-//! equivalence; and, on aarch64/NEON, the expected lane widths. Scalar
-//! arithmetic is verified against independent oracles in the other suites,
-//! so packed-vs-scalar equivalence transitively pins the packed kernels.
-
 #![cfg(feature = "solinas")]
 #![expect(clippy::unwrap_used, reason = "test code")]
 
@@ -20,7 +9,6 @@ use two::{
     pseudo_mersenne_modulus, CanonicalEncoding, ExtField, Field, NoPacking, Packed, WithPacking,
 };
 
-/// Packed ops must equal per-lane scalar ops (add/sub/mul/square/inverse).
 fn check_packed_matches_scalar<PF: Packed>(lhs: &[PF::Scalar], rhs: &[PF::Scalar]) {
     let w = PF::WIDTH;
     assert_eq!(lhs.len() % w, 0);
@@ -46,8 +34,6 @@ fn check_packed_matches_scalar<PF: Packed>(lhs: &[PF::Scalar], rhs: &[PF::Scalar
     }
 }
 
-/// Boundary lane patterns for a prime field with modulus `p`: all-max
-/// lanes, mixed canonical extremes, and single-lane-nonzero, crossed.
 fn check_boundary_patterns<PF>(p: u128)
 where
     PF: Packed,
@@ -70,7 +56,6 @@ where
     }
 }
 
-/// Random packed-vs-scalar equivalence plus boundary patterns.
 fn check_prime_field<PF>(p: u128, seed: u64)
 where
     PF: Packed,
@@ -84,8 +69,6 @@ where
     check_boundary_patterns::<PF>(p);
 }
 
-/// Packed Fp64 arithmetic checked directly against integer modular
-/// arithmetic, without routing the expectation through the scalar kernel.
 fn check_fp64_integer_oracle<const P: u64, PF>(lhs: &[u64], rhs: &[u64])
 where
     PF: Packed<Scalar = two::Fp64<P>>,
@@ -131,7 +114,6 @@ where
     }
 }
 
-/// `from_fn`/`extract`/`broadcast` and the slice-helper laws.
 fn check_lane_laws<PF: Packed>(vals: &[PF::Scalar]) {
     let w = PF::WIDTH;
     assert!(w >= 1);
@@ -158,8 +140,6 @@ fn check_lane_laws<PF: Packed>(vals: &[PF::Scalar]) {
     assert_eq!(PF::pack_slice(&buf[..w * 3]).len(), 3);
 }
 
-/// `WithPacking` associated-type sanity: the packing's scalar is the field
-/// itself and the lane laws hold.
 fn check_with_packing<F: WithPacking>(seed: u64) {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let vals: Vec<F> = (0..<F::Packing as Packed>::WIDTH.max(4))
@@ -203,7 +183,6 @@ fn packed_fp128_matches_scalar() {
     );
 }
 
-/// Extension boundary lanes: all-max coefficient vectors and mixed extremes.
 fn check_ext_boundaries<PF, F>(p: u128)
 where
     F: Field + CanonicalEncoding,
@@ -228,7 +207,6 @@ where
     check_packed_matches_scalar::<PF>(&mixed_lanes, &mixed_lanes);
 }
 
-/// Packed extension towers vs scalar extension arithmetic.
 fn check_ext_field<PF, F>(p: u128, seed: u64)
 where
     F: Field + CanonicalEncoding,
@@ -248,7 +226,6 @@ fn packed_ext2_matches_scalar() {
     type F32 = two::Prime32Offset99;
     type E2 = two::Ext2<F32>;
     check_ext_field::<<E2 as WithPacking>::Packing, F32>(pm(32, 99), 0xE201);
-    // NegOneNr is a genuine field over p ≡ 3 (mod 4).
     type F251 = two::Fp32<251>;
     type E2Neg = two::FpExt2<F251, two::NegOneNr>;
     check_ext_field::<<E2Neg as WithPacking>::Packing, F251>(251, 0xE202);
@@ -257,9 +234,6 @@ fn packed_ext2_matches_scalar() {
     type F128 = two::Prime128Offset275;
     check_ext_field::<<two::Ext2<F128> as WithPacking>::Packing, F128>(pm(128, 275), 0xE204);
 
-    // Fused NR=2 paths: a wide 63-bit base product, a narrow base reducer
-    // whose three-product coefficient needs the wide fold, and a large
-    // offset that exercises the full-low-word SIMD correction multiply.
     type Wide = two::Fp64<{ (1u64 << 63) - 259 }>;
     check_ext_field::<<two::Ext2<Wide> as WithPacking>::Packing, Wide>((1u128 << 63) - 259, 0xE205);
     type NarrowBase = two::Fp64<{ (1u64 << 58) - 27 }>;
@@ -321,8 +295,6 @@ fn with_packing_associated_types() {
 
 #[test]
 fn no_packing_equivalence() {
-    // A type with no SIMD path: NoPacking over a word field, exercised
-    // through the same laws and differentials as the SIMD backends.
     type PF = NoPacking<two::Prime32Offset99>;
     check_prime_field::<PF>(pm(32, 99), 0x0001);
     let mut rng = ChaCha20Rng::seed_from_u64(0x0002);
@@ -331,8 +303,6 @@ fn no_packing_equivalence() {
     assert_eq!(PF::WIDTH, 1);
 }
 
-/// Expected NEON lane widths on aarch64 (previously asserted against
-/// jolt-field's packed types; the widths are part of the layout contract).
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 #[test]
 fn neon_lane_widths() {

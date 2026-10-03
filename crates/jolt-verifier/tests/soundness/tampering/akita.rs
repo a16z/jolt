@@ -1,23 +1,3 @@
-//! Fixture-driven tamper suite for the akita path.
-//!
-//! Three layers, all over real packed-prover fixtures:
-//!
-//! - An exhaustive typed sweep ([`every_clear_claim_wire_rejects_offset`]):
-//!   every field-element leaf of the clear claims is offset by one, one at a
-//!   time, and the verifier must reject each. The visitor
-//!   ([`for_each_scalar_mut`]) fully destructures every aggregate, so a future
-//!   claim wire cannot be added without failing to compile until it is covered.
-//! - A byte-level commitment sweep ([`every_commitment_wire_rejects_perturbation`]):
-//!   every serde leaf of each trace, advice, and direct-program commitment is
-//!   perturbed; a deserialization failure or a verifier rejection both count.
-//! - Proof-shape tampers ([`akita_proof_shape_tampers_reject`],
-//!   [`akita_advice_commitment_presence_rejects`]): a swapped phase proof,
-//!   reordered direct-program commitments, and an absent trusted-advice
-//!   commitment.
-//!
-//! Together these are the active coverage behind the akita
-//! `TamperCoverage::Active` manifest entries.
-
 #![expect(
     clippy::expect_used,
     clippy::panic,
@@ -80,8 +60,6 @@ use crate::support::akita_fixtures::{
 };
 use crate::support::assert_rejects;
 
-/// The single packed `OneHotTrace` commitment object type (also the advice object
-/// type): the concrete `Commitment::Output` of the akita scheme.
 type AkitaCommitment = <AkitaScheme as jolt_crypto::Commitment>::Output;
 
 fn one() -> AkitaField {
@@ -507,8 +485,6 @@ fn clear_claim_scalar_count(case: &AkitaFixtureCase) -> usize {
     count
 }
 
-/// Offset each clear-claim scalar in turn by one and assert the verifier
-/// rejects the mutated proof.
 fn sweep_clear_claim_offsets(case: &AkitaFixtureCase, scalar_count: usize) {
     for target in 0..scalar_count {
         let mut proof = case.proof.clone();
@@ -523,7 +499,6 @@ fn sweep_clear_claim_offsets(case: &AkitaFixtureCase, scalar_count: usize) {
     }
 }
 
-/// Every clear-claim scalar of every fixture case rejects a one-off offset.
 #[test]
 fn every_clear_claim_wire_rejects_offset() {
     let muldiv = akita_muldiv_case();
@@ -541,9 +516,6 @@ fn every_clear_claim_wire_rejects_offset() {
     sweep_clear_claim_offsets(committed, clear_claim_scalar_count(committed));
 }
 
-/// Collect every perturbable serde leaf under `value`, keyed by a dot/index
-/// path rooted at `prefix`. A non-empty all-number array (a limb/byte column)
-/// is one leaf; an empty array has none.
 fn leaf_paths(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(map) => {
@@ -553,7 +525,6 @@ fn leaf_paths(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
         }
         serde_json::Value::Array(items) => {
             if items.is_empty() {
-                // No leaf to perturb.
             } else if items.iter().all(serde_json::Value::is_number) {
                 out.push(prefix.to_string());
             } else {
@@ -569,8 +540,6 @@ fn leaf_paths(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
-/// Perturb the leaf at `path` (as produced by [`leaf_paths`], whose first
-/// segment names the root and is skipped).
 fn perturb_leaf(value: &mut serde_json::Value, path: &str) {
     let mut cursor = value;
     for segment in path.split('.').skip(1) {
@@ -603,9 +572,6 @@ fn perturb_leaf(value: &mut serde_json::Value, path: &str) {
     }
 }
 
-/// Perturb every serde leaf of `commitment` one at a time. A mutation that no
-/// longer deserializes is rejected at the boundary; otherwise verification
-/// must fail.
 fn sweep_commitment(
     commitment: &AkitaCommitment,
     minimum_leaves: usize,
@@ -629,8 +595,6 @@ fn sweep_commitment(
     }
 }
 
-/// Every trace, advice, and direct-program commitment rejects a leaf-level
-/// perturbation.
 #[test]
 fn every_commitment_wire_rejects_perturbation() {
     for case in [
@@ -690,8 +654,6 @@ fn every_commitment_wire_rejects_perturbation() {
     }
 }
 
-/// A swapped phase proof and reordered direct-program commitments both fail
-/// closed.
 #[test]
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();
@@ -738,8 +700,6 @@ fn akita_proof_shape_tampers_reject() {
     ));
 }
 
-/// The advice case fails closed when its trusted-advice commitment is absent:
-/// the direct dense opening has no commitment to bind against.
 #[test]
 fn akita_advice_commitment_presence_rejects() {
     let advice = akita_advice_case();

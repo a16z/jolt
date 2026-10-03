@@ -19,15 +19,12 @@ pub fn main() {
     let verify_secp256k1_ecdsa_verify =
         guest::build_verifier_secp256k1_ecdsa_verify(verifier_preprocessing);
 
-    // custom ECDSA signature test vectors, all as little-endian u64 arrays
-    // message hash z (the hash of "hello world")
     let z = [
         0x9088f7ace2efcde9,
         0xc484efe37a5380ee,
         0xa52e52d7da7dabfa,
         0xb94d27b9934d3e08,
     ];
-    // signature (r, s)
     let r = [
         0xb8fc413b4b967ed8,
         0x248d4b0b2829ab00,
@@ -40,7 +37,6 @@ pub fn main() {
         0x6212d714118f617e,
         0x9d452f63cf91018d,
     ];
-    // public key Q (as an uncompressed point)
     let q = [
         0x0012563f32ed0216,
         0xee00716af6a73670,

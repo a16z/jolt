@@ -32,7 +32,6 @@ use jolt_field::Prime128OffsetA7F7;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_program::field_inline::FieldEncodedValue;
 
-// Execute in the proof field: fp128 for Akita, BN254 Fr for Dory.
 #[cfg(not(feature = "fp128-field-inline"))]
 type ProofField = Fr;
 #[cfg(feature = "fp128-field-inline")]
@@ -50,12 +49,8 @@ fn decode_field<F: CanonicalEncoding>(value: FieldEncodedValue) -> F {
 }
 
 fn encode_field<F: CanonicalEncoding>(value: F) -> FieldEncodedValue {
-    // A field wider than the fixed 32-byte register buffer cannot ride
-    // FieldEncodedValue; reject it at monomorphization, not per encode.
     const { assert!(F::NUM_BYTES <= FieldEncodedValue::BYTE_LEN as usize) }
     let mut encoded = FieldEncodedValue::zero();
-    // Narrower fields occupy the low NUM_BYTES; the rest of the buffer stays
-    // zero.
     value.to_bytes_le(&mut encoded.bytes_le[..F::NUM_BYTES]);
     encoded
 }

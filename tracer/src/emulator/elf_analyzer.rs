@@ -8,9 +8,8 @@ use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
-/// ELF header
 pub struct Header {
-    pub e_width: u8, // 32 or 64
+    pub e_width: u8,
     _e_class: u8,
     _e_endian: u8,
     _e_elf_version: u8,
@@ -31,7 +30,6 @@ pub struct Header {
     _e_shstrndx: u16,
 }
 
-/// ELF program header
 pub struct _ProgramHeader {
     _p_type: u32,
     _p_flags: u32,
@@ -43,7 +41,6 @@ pub struct _ProgramHeader {
     _p_align: u64,
 }
 
-/// ELF section header
 #[derive(Debug)]
 pub struct SectionHeader {
     #[allow(dead_code)]
@@ -59,7 +56,6 @@ pub struct SectionHeader {
     _sh_entsize: u64,
 }
 
-/// ELF symbol table entry
 pub struct SymbolEntry {
     st_name: u32,
     st_info: u8,
@@ -69,26 +65,18 @@ pub struct SymbolEntry {
     _st_size: u64,
 }
 
-/// ELF file analyzer
 pub struct ElfAnalyzer {
     data: Vec<u8>,
 }
 
 impl ElfAnalyzer {
-    /// Creates a new `ElfAnalyzer`.
-    ///
-    /// # Arguments
-    /// * `data` ELF file content binary
     pub fn new(data: &[u8]) -> Self {
         ElfAnalyzer {
             data: data.to_vec(),
         }
     }
 
-    /// Checks if ELF file content is valid
-    // @TODO: Validate more precisely
     pub fn validate(&self) -> bool {
-        // check ELF magic number
         if self.data.len() < 4
             || self.data[0] != 0x7f
             || self.data[1] != 0x45
@@ -100,7 +88,6 @@ impl ElfAnalyzer {
         true
     }
 
-    /// Reads ELF header
     pub fn read_header(&self) -> Header {
         let e_class = self.read_byte(4);
 
@@ -184,28 +171,6 @@ impl ElfAnalyzer {
         offset += 2;
 
         let e_shstrndx = self.read_halfword(offset);
-        //offset += 2;
-
-        /*
-        println!("ELF:{}", e_width);
-        println!("e_endian:{:X}", e_endian);
-        println!("e_elf_version:{:X}", e_elf_version);
-        println!("e_osabi:{:X}", e_osabi);
-        println!("e_abi_version:{:X}", e_abi_version);
-        println!("e_type:{:X}", e_type);
-        println!("e_machine:{:X}", e_machine);
-        println!("e_version:{:X}", e_version);
-        println!("e_entry:{:X}", e_entry);
-        println!("e_phoff:{:X}", e_phoff);
-        println!("e_shoff:{:X}", e_shoff);
-        println!("e_flags:{:X}", e_flags);
-        println!("e_ehsize:{:X}", e_ehsize);
-        println!("e_phentsize:{:X}", e_phentsize);
-        println!("e_phnum:{:X}", e_phnum);
-        println!("e_shentsize:{:X}", e_shentsize);
-        println!("e_shnum:{:X}", e_shnum);
-        println!("e_shstrndx:{:X}", e_shstrndx);
-        */
 
         Header {
             e_width,
@@ -230,10 +195,6 @@ impl ElfAnalyzer {
         }
     }
 
-    /// Reads ELF program headers
-    ///
-    /// # Arguments
-    /// * `header`
     pub fn _read_program_headers(&self, header: &Header) -> Vec<_ProgramHeader> {
         let mut headers = Vec::new();
         let mut offset = header._e_phoff as usize;
@@ -365,10 +326,6 @@ impl ElfAnalyzer {
         headers
     }
 
-    /// Reads ELF section headers
-    ///
-    /// # Arguments
-    /// * `header`
     pub fn read_section_headers(&self, header: &Header) -> Vec<SectionHeader> {
         let mut headers = Vec::new();
         let mut offset = header.e_shoff as usize;
@@ -501,11 +458,6 @@ impl ElfAnalyzer {
         headers
     }
 
-    /// Reads symbol entries of symbol table sections
-    ///
-    /// # Arguments
-    /// * `Terminal`
-    /// * `symbol_table_section_headers`
     pub fn read_symbol_entries(
         &self,
         header: &Header,
@@ -620,11 +572,6 @@ impl ElfAnalyzer {
         map
     }
 
-    /// Reads strings from a string table section
-    ///
-    /// # Arguments
-    /// * `section_header` The header of the string table section
-    /// * `index` Offset in the string table section
     fn read_strings(&self, section_header: &SectionHeader, index: u64) -> String {
         let sh_offset = section_header.sh_offset;
         let sh_size = section_header.sh_size;
@@ -645,12 +592,6 @@ impl ElfAnalyzer {
         symbol
     }
 
-    /// Creates a symbol - virtual address mapping from symbol entries
-    /// and a string table section.
-    ///
-    /// # Arguments
-    /// * `entries` Symbol entries
-    /// * `string_table_section_header` The header of the string table section
     pub fn create_symbol_map(
         &self,
         entries: &Vec<SymbolEntry>,
@@ -662,7 +603,6 @@ impl ElfAnalyzer {
             let st_name = entry.st_name;
             let st_value = entry.st_value;
 
-            // Stores only function and notype symbol
             if (st_info & 0x2) != 0x2 && (st_info & 0xf) != 0 {
                 continue;
             }
@@ -670,25 +610,16 @@ impl ElfAnalyzer {
             let symbol = self.read_strings(string_table_section_header, st_name as u64);
 
             if !symbol.is_empty() {
-                //println!("{} {:0x}", symbol, st_value);
                 map.insert(symbol, st_value);
             }
         }
         map
     }
 
-    /// Reads a byte from ELF file content
-    ///
-    /// # Arguments
-    /// * `offset`
     pub fn read_byte(&self, offset: usize) -> u8 {
         self.data[offset]
     }
 
-    /// Reads two bytes from ELF file content
-    ///
-    /// # Arguments
-    /// * `offset`
     fn read_halfword(&self, offset: usize) -> u16 {
         let mut data = 0;
         for i in 0..2 {
@@ -697,10 +628,6 @@ impl ElfAnalyzer {
         data
     }
 
-    /// Reads four bytes from ELF file content
-    ///
-    /// # Arguments
-    /// * `offset`
     fn read_word(&self, offset: usize) -> u32 {
         let mut data = 0;
         for i in 0..4 {
@@ -709,10 +636,6 @@ impl ElfAnalyzer {
         data
     }
 
-    /// Reads eight bytes from ELF file content
-    ///
-    /// # Arguments
-    /// * `offset`
     fn read_doubleword(&self, offset: usize) -> u64 {
         let mut data = 0;
         for i in 0..8 {
@@ -744,9 +667,6 @@ pub(crate) mod test_elf {
         Lld,
     }
 
-    /// Builds a minimal but well-formed RV64 ELF: `.text` loaded at
-    /// 0x8000_0000 with the given instruction words, plus a symbol table whose
-    /// `sh_link` names `.strtab` in either section order.
     pub(crate) fn build_elf64(text: &[u32], symbols: &[TestSymbol], order: StrtabOrder) -> Vec<u8> {
         const TEXT_ADDR: u64 = 0x8000_0000;
         let text_bytes: Vec<u8> = text.iter().flat_map(|w| w.to_le_bytes()).collect();

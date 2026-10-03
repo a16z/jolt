@@ -1,7 +1,3 @@
-//! The owned one-hot commitment surface: `commit_one_hot_group_owned` must
-//! agree with the borrowed path, and its hint must drive native batching to
-//! proofs the batch verifier accepts.
-
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 #[expect(
@@ -19,8 +15,6 @@ use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{f, layout, native_statement};
 
-/// `log2(K) + 8`: the smallest K=16 one-hot dimension the folded-only
-/// planner schedules (mirrors the scheme unit tests' roundtrip size).
 const NUM_VARS: usize = 12;
 const ROWS: usize = 1 << (NUM_VARS - 4);
 
@@ -155,8 +149,6 @@ fn owned_group_rejects_polynomials_the_setup_cannot_open() {
         "unexpected error: {err}"
     );
 
-    // Same twelve-variable dimension as the setup, but chunk size 4 instead
-    // of the setup's 16 — the shape check passes and the K check must fire.
     let wrong_k = vec![OneHotPolynomial::new(4, vec![Some(1); 1 << (NUM_VARS - 2)])];
     let err = AkitaScheme::commit_one_hot_group_owned(&prover_setup, layout(3), wrong_k)
         .expect_err("K=4 polynomial must reject against a K=16 setup");

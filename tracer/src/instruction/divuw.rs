@@ -16,9 +16,6 @@ declare_riscv_instr!(
 
 impl DIVUW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <DIVUW as RISCVInstruction>::RAMAccess) {
-        // DIVW and DIVUW are RV64 instructions that divide the lower 32 bits of rs1 by the lower
-        // 32 bits of rs2, treating them as signed and unsigned integers, placing the 32-bit
-        // quotient in rd, sign-extended to 64 bits.
         let dividend = cpu.x[self.operands.rs1 as usize] as u32;
         let divisor = cpu.x[self.operands.rs2 as usize] as u32;
         cpu.write_register(
@@ -34,7 +31,6 @@ impl DIVUW {
 
 impl RISCVTrace for DIVUW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // DIVUW operands
         let x = cpu.x[self.operands.rs1 as usize] as u32;
         let y = cpu.x[self.operands.rs2 as usize] as u32;
 

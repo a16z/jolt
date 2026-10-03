@@ -1,11 +1,3 @@
-//! Packed two-limb field: `I::W64` [`Fp128`] lanes in SoA layout
-//! (`lo`/`hi` limb vectors), shared across ISAs like the word engines.
-//!
-//! Add/sub vectorize the 128-bit carry chains with fused reduction;
-//! multiplication goes lane-by-lane through the scalar kernel (which is the
-//! AArch64 inline-asm multiply on that target) — no ISA in the baseline had
-//! a vectorized 128-bit multiply either.
-
 #![cfg(any(
     all(target_arch = "aarch64", target_feature = "neon"),
     all(target_arch = "x86_64", target_feature = "avx2")
@@ -16,7 +8,6 @@ use super::simd::SimdWord;
 use crate::solinas::Fp128;
 use crate::Packed;
 
-/// Packed `Fp128` lanes over ISA `I`: `lo[i]`/`hi[i]` are lane `i`'s limbs.
 pub struct PackedFp128<const P: u128, I: SimdWord> {
     lo: I::V64,
     hi: I::V64,
@@ -37,7 +28,6 @@ impl<const P: u128, I: SimdWord> PackedFp128<P, I> {
         let carry_lo = I::lt_u64(s_lo, a.lo);
         let h1 = I::add64(a.hi, b.hi);
         let wrap1 = I::lt_u64(h1, a.hi);
-        // Subtracting an all-ones carry mask adds one.
         let s_hi = I::sub64(h1, carry_lo);
         let wrap2 = I::lt_u64(s_hi, h1);
         let wrapped = I::or64(wrap1, wrap2);
@@ -54,7 +44,6 @@ impl<const P: u128, I: SimdWord> PackedFp128<P, I> {
         }
     }
 
-    /// Subtract with borrow-conditional modulus add-back.
     #[inline(always)]
     fn sub_raw(a: Self, b: Self) -> Self {
         let one = I::splat64(1);
@@ -75,7 +64,6 @@ impl<const P: u128, I: SimdWord> PackedFp128<P, I> {
         }
     }
 
-    /// Lane-by-lane scalar multiply (inline-asm kernel on AArch64).
     #[inline(always)]
     fn mul_raw(a: Self, b: Self) -> Self {
         let mut lo = [0u64; 8];

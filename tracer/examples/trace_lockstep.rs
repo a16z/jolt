@@ -20,7 +20,6 @@ mod support;
 use support::chain_input;
 use tracer::instruction::Cycle;
 
-/// Same (guest, input) pairs as the golden-trace gate.
 fn golden_cases() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         ("sha2-chain-guest", chain_input(300)),
@@ -34,8 +33,6 @@ fn golden_cases() -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
-/// Lockstep-runs the guest in both modes; returns the tick count on success,
-/// or the first divergence report.
 fn run_case(guest: &str, input: &[u8]) -> Result<usize, String> {
     let (elf, _, memory_config) = support::build_guest(guest);
 

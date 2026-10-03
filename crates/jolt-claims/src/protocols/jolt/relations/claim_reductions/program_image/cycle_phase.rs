@@ -1,5 +1,3 @@
-//! Cycle phase of the two-phase program-image (initial RAM) claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +24,6 @@ pub struct ProgramImageReductionCyclePhaseOutputClaims<C> {
     pub program_image: C,
 }
 
-/// The consumed RAM value-check program-image contribution.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct ProgramImageReductionCyclePhaseInputClaims<C> {
     #[opening(ProgramImageInitContributionRw, from = RamValCheck)]

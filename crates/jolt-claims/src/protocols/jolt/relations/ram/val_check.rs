@@ -1,5 +1,3 @@
-//! RAM value-check symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +84,6 @@ pub struct RamValCheckShape {
     pub contributions: Vec<RamValContribution>,
 }
 
-/// Fiat-Shamir challenge drawn by the RAM value-check sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamValCheckChallenges<F> {
@@ -172,11 +169,6 @@ mod tests {
         assert_eq!(relation.degree(), 3);
     }
 
-    /// The remodel's soundness anchor: the `Public`-symbol input expression must
-    /// evaluate to the same value the pre-remodel baked-constant decomposition did
-    /// (proven equal to the full-init formula in `geometry::ram`'s tests). With
-    /// `InitEval = public_eval` and `InitSelector = neg_selector`, the
-    /// `public·opening` term equals the old `constant·opening` term.
     #[test]
     fn ram_val_check_symbolic_evaluates_like_decomposed_init() {
         use crate::protocols::jolt::geometry::ram::val_check_advice_opening;

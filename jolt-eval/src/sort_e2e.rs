@@ -103,7 +103,6 @@ impl Invariant for NaiveSortInvariant {
     }
 }
 
-/// Run the red-team e2e test against `CandidateSortInvariant`.
 pub fn run_redteam_test(
     model: &str,
     max_turns: usize,
@@ -166,8 +165,6 @@ mod tests {
     fn redteam_e2e_finds_sort_violation() {
         let invariant = CandidateSortInvariant;
 
-        // 17 elements (exceeds the small-array threshold), with the
-        // minimum value at the end — triggers the bug.
         let bad_input: Vec<i32> = (1..=17).rev().collect();
         let response = serde_json::json!({
             "analysis": "Trying a reversed sequence of 17 elements.",

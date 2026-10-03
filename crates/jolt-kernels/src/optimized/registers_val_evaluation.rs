@@ -48,10 +48,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The write-address column: hot indices plus the address eq table until the first
-/// bind, a dense bound vector afterwards. The `K × T` grid never exists. Shared with
-/// the field-register value-evaluation kernel, whose write column has the same
-/// lazy-fold shape at the field-register address width.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) enum WaState<F: JoltField> {
     Indices {
@@ -143,8 +139,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
         }
         let inc = IncState::Rows(BundleStore::resolve(witness, cycles)?);
 
-        // Reclaim the rd hot indices the stage-4 kernel parked; collect them
-        // from the row source otherwise (reference-only stage 4, tests).
         let rd = match session.take::<SharedRdIndices>() {
             Some(SharedRdIndices(rd)) if rd.len() == cycles => rd,
             _ => collect_rows::<RegisterCycleRow>(witness, cycles)?
@@ -165,14 +159,12 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
     }
 }
 
-/// Trace rows before the first bind; a dense table afterward.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncState<F: JoltField> {
     Rows(BundleStore<RdIncRow>),
     Dense(Polynomial<F>),
 }
 
-/// The single-column bundle behind the increment table.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RdIncRow {
     rd_inc: RdInc,
@@ -197,7 +189,6 @@ impl<F: JoltField> ValEvaluationKernel<F> {
         match &mut self.inc {
             IncState::Dense(inc) => inc.bind_with_order(challenge, BindingOrder::LowToHigh),
             IncState::Rows(store) => {
-                // Bind row pairs directly into a half-length field table.
                 debug_assert_eq!(self.progress.bound(), 0);
                 let half = (1usize << self.progress.total()) / 2;
                 let access = store.access();
@@ -239,8 +230,6 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
             self.bind(challenge)?;
         }
 
-        // Evaluate at 0, 2, 3; the engine supplies s(1).
-        // Round 0 reads rows fallibly; later rounds read the dense table.
         let evals = match &self.inc {
             IncState::Rows(store) => {
                 debug_assert_eq!(self.progress.bound(), 0);
@@ -324,8 +313,6 @@ impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
         })
     }
 
-    /// Pin the split-LT tables to the verifier's scalar path: the fully bound
-    /// LT value must equal `derive_output_term(LtCycle)`.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -369,14 +356,9 @@ mod tests {
     use super::OptimizedRegistersValEvaluation;
     use crate::ProofSession;
 
-    /// How the optimized kernel sources its per-cycle rd indices.
     enum IndexSource {
-        /// Collected from the row source inside `prepare`.
         Collect,
-        /// Reclaimed from a session carry parked by stage 4.
         Parked,
-        /// A stale (wrong-length) carry is parked; `prepare` must fall back
-        /// to collecting.
         StaleParked,
     }
 

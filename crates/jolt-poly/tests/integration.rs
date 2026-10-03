@@ -1,9 +1,4 @@
 #![expect(clippy::expect_used)]
-//! Cross-type integration tests for jolt-poly.
-//!
-//! These tests verify composition patterns between polynomial types
-//! (Polynomial, EqPolynomial, UnivariatePoly, IdentityPolynomial, RlcSource)
-//! that are used throughout the proving system.
 
 use jolt_field::{Ext2, Field, Fr, One, Prime64Offset59, Ring, Zero};
 use jolt_poly::{
@@ -13,9 +8,6 @@ use jolt_poly::{
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-// Polynomial ↔ EqPolynomial: the fundamental MLE identity
-
-/// ⟨f, eq(·, r)⟩ = f̃(r) for any multilinear f and point r.
 #[test]
 fn inner_product_with_eq_is_evaluation() {
     let mut rng = ChaCha20Rng::seed_from_u64(1000);
@@ -37,9 +29,6 @@ fn inner_product_with_eq_is_evaluation() {
     }
 }
 
-// Sequential binding converges to evaluate
-
-/// Binding all variables one-by-one yields the same result as evaluate.
 #[test]
 fn sequential_bind_equals_evaluate() {
     let mut rng = ChaCha20Rng::seed_from_u64(2000);
@@ -58,9 +47,6 @@ fn sequential_bind_equals_evaluate() {
     }
 }
 
-// Compact polynomial promotion
-
-/// Polynomial<u8>::bind_to_field agrees with Polynomial<Fr> built from the same data.
 #[test]
 fn compact_u8_bind_matches_field_bind() {
     let mut rng = ChaCha20Rng::seed_from_u64(3000);
@@ -82,8 +68,6 @@ fn compact_u8_bind_matches_field_bind() {
         "compact bind_to_field must match field bind"
     );
 }
-
-// UnivariatePoly interpolation
 
 fn check_equispaced_interpolation<F: Field>(coefficients: Vec<F>) {
     let original = UnivariatePoly::new(coefficients);
@@ -193,7 +177,6 @@ fn omitted_constant_payload_preserves_shape_and_evaluates() {
     );
 }
 
-/// Lagrange interpolation recovers the original polynomial at domain points.
 #[test]
 fn univariate_interpolation_recovers_points() {
     let mut rng = ChaCha20Rng::seed_from_u64(4000);
@@ -210,7 +193,6 @@ fn univariate_interpolation_recovers_points() {
     }
 }
 
-/// Interpolation over integers matches evaluate at integer domain.
 #[test]
 fn univariate_interpolation_over_integers() {
     let evals = vec![
@@ -227,9 +209,6 @@ fn univariate_interpolation_over_integers() {
     }
 }
 
-// CompressedPoly round-trip
-
-/// compress → decompress preserves the polynomial.
 #[test]
 fn compressed_round_trip() {
     let mut rng = ChaCha20Rng::seed_from_u64(5000);
@@ -240,7 +219,6 @@ fn compressed_round_trip() {
     let compressed = original.compress();
     let recovered = compressed.decompress(hint);
 
-    // Check evaluation at several points
     for i in 0..10 {
         let x = Fr::from_u64(i);
         assert_eq!(
@@ -251,7 +229,6 @@ fn compressed_round_trip() {
     }
 }
 
-/// CompressedPoly::evaluate_with_hint matches the original polynomial.
 #[test]
 fn compressed_evaluate_with_hint() {
     let mut rng = ChaCha20Rng::seed_from_u64(5001);
@@ -270,9 +247,6 @@ fn compressed_evaluate_with_hint() {
     }
 }
 
-// IdentityPolynomial
-
-/// IdentityPolynomial maps Boolean hypercube points to their integer index.
 #[test]
 fn identity_polynomial_boolean_indexing() {
     let nv = 4;
@@ -293,7 +267,6 @@ fn identity_polynomial_boolean_indexing() {
     }
 }
 
-/// IdentityPolynomial at a random point matches manual computation.
 #[test]
 fn identity_polynomial_random_point() {
     let mut rng = ChaCha20Rng::seed_from_u64(6000);
@@ -303,7 +276,6 @@ fn identity_polynomial_random_point() {
 
     let eval = id.evaluate(&point);
 
-    // Manual: sum_i r_i * 2^(n-1-i)
     let expected: Fr = point
         .iter()
         .enumerate()
@@ -313,9 +285,6 @@ fn identity_polynomial_random_point() {
     assert_eq!(eval, expected);
 }
 
-// RlcSource: lazy random linear combination
-
-/// RlcSource evaluation matches materializing and linearly combining.
 #[test]
 fn rlc_source_matches_materialized_combination() {
     let mut rng = ChaCha20Rng::seed_from_u64(7000);
@@ -328,23 +297,18 @@ fn rlc_source_matches_materialized_combination() {
     let scalars: Vec<Fr> = (0..num_polys).map(|_| Fr::random(&mut rng)).collect();
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
-    // Materialized: sum_i scalar_i * poly_i.evaluate(point)
     let expected: Fr = polys
         .iter()
         .zip(scalars.iter())
         .map(|(p, s)| *s * p.evaluate(&point))
         .sum();
 
-    // Lazy via RlcSource
     let rlc = RlcSource::new(polys, scalars);
     let actual = rlc.evaluate(&point);
 
     assert_eq!(actual, expected);
 }
 
-// Polynomial arithmetic
-
-/// Addition is commutative: a + b == b + a.
 #[test]
 fn polynomial_addition_commutative() {
     let mut rng = ChaCha20Rng::seed_from_u64(8000);
@@ -357,7 +321,6 @@ fn polynomial_addition_commutative() {
     assert_eq!(ab.evaluations(), b_plus_a.evaluations());
 }
 
-/// Scalar multiplication distributes over addition: s*(a+b) == s*a + s*b.
 #[test]
 fn scalar_mul_distributes_over_addition() {
     let mut rng = ChaCha20Rng::seed_from_u64(8001);
@@ -371,9 +334,6 @@ fn scalar_mul_distributes_over_addition() {
     assert_eq!(sum_then_scale.evaluations(), scale_then_sum.evaluations());
 }
 
-// Serialization
-
-/// bincode round-trip preserves a Polynomial<Fr>.
 #[test]
 fn polynomial_bincode_round_trip() {
     let mut rng = ChaCha20Rng::seed_from_u64(9000);
@@ -391,7 +351,6 @@ fn polynomial_bincode_round_trip() {
     assert_eq!(poly.num_vars(), recovered.num_vars());
 }
 
-/// bincode round-trip preserves UnivariatePoly<Fr>.
 #[test]
 fn univariate_bincode_round_trip() {
     let mut rng = ChaCha20Rng::seed_from_u64(9001);

@@ -1,9 +1,3 @@
-//! Deep fold-schedule coverage. The rest of the suite stays at the
-//! 13/14-variable planner floor where schedules carry one to three recursive
-//! folds; this exercises a deeper recursion (17 variables, four recursive
-//! folds) end to end, plus the `valid_proof || garbage` rejection Akita's
-//! argument parser must enforce.
-
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 #[expect(
@@ -84,10 +78,6 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
     }
 }
 
-/// 17 variables resolve to four recursive fold levels — deeper than any
-/// other single-polynomial suite fixture — and a tampered evaluation must
-/// still reject. The depth is asserted so a catalog regeneration cannot
-/// quietly shrink the fixture.
 #[test]
 fn deep_recursive_fold_schedule_roundtrips() {
     const NUM_VARS: usize = 17;
@@ -121,7 +111,6 @@ fn deep_recursive_fold_schedule_roundtrips() {
     );
 }
 
-/// The argument parser must consume exactly one complete proof.
 #[test]
 fn proof_payloads_with_trailing_or_missing_bytes_reject() {
     let fixture = fold_roundtrip(14, b"akita-fold-trailing");

@@ -1,5 +1,3 @@
-//! Equality polynomial for multilinear evaluation.
-
 use std::ops::{Mul, SubAssign};
 
 use jolt_field::JoltField;
@@ -25,17 +23,14 @@ pub struct EqPolynomial<F: JoltField> {
     point: Vec<F>,
 }
 
-/// Parallelism threshold: tables larger than this are built with rayon.
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
 impl<F: JoltField> EqPolynomial<F> {
-    /// Creates a new equality polynomial for the given point $r \in \mathbb{F}^n$.
     pub fn new(point: Vec<F>) -> Self {
         Self { point }
     }
 
-    /// Number of variables `n` in the fixed point `r`.
     pub fn num_vars(&self) -> usize {
         self.point.len()
     }
@@ -59,14 +54,10 @@ impl<F: JoltField> EqPolynomial<F> {
 
             table.resize(prev_len * 2, F::zero());
 
-            // Process in reverse to avoid overwriting entries we still need.
-            // After this loop, table[2*j] = old[j] * (1 - r_i) and
-            // table[2*j+1] = old[j] * r_i.
             #[cfg(feature = "parallel")]
             {
                 if prev_len >= PAR_THRESHOLD {
                     use rayon::prelude::*;
-                    // Snapshot the previous layer so we can scatter into interleaved positions.
                     let prev: Vec<F> = table[..prev_len].to_vec();
                     let dest = &mut table[..prev_len * 2];
                     dest.par_chunks_mut(2)
@@ -180,11 +171,6 @@ pub fn boolean_index_msb<F: JoltField>(point: &[F]) -> Option<usize> {
     Some(index)
 }
 
-/// Static (point-free) evaluation methods for eq polynomial tables.
-///
-/// These accept challenge or field-element slices and produce materialized
-/// tables without constructing an `EqPolynomial` instance. They are used
-/// by split-eq evaluators and sumcheck witnesses.
 impl<F: JoltField> EqPolynomial<F> {
     /// Computes `eq(x, y) = Π_i (x_i y_i + (1 - x_i)(1 - y_i))` for two slices.
     pub fn mle<C>(x: &[C], y: &[C]) -> F
@@ -294,7 +280,6 @@ impl<F: JoltField> EqPolynomial<F> {
         )
     }
 
-    /// Serial eq table construction with optional scaling.
     #[inline]
     pub(crate) fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
@@ -365,10 +350,6 @@ impl<F: JoltField> EqPolynomial<F> {
         evals
     }
 
-    /// Parallel eq table construction with optional scaling.
-    ///
-    /// Uses rayon to build large layers in parallel. Low-to-high construction:
-    /// processes `r` in reverse so that the first coordinate ends up as the MSB.
     #[tracing::instrument(skip_all, name = "EqPolynomial::evals_parallel")]
     #[inline]
     pub(crate) fn evals_parallel<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
@@ -535,8 +516,6 @@ mod tests {
 
     #[test]
     fn parallel_evaluations_sum_is_one() {
-        // num_vars=11 -> 2048 entries, above PAR_THRESHOLD=1024
-        // Verifies the parallel path produces a valid eq table whose entries sum to 1.
         let mut rng = ChaCha20Rng::seed_from_u64(300);
         let n = 11;
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -550,9 +529,6 @@ mod tests {
 
     #[test]
     fn parallel_evaluations_inner_product_consistency() {
-        // Verifies that the inner product of two eq tables (which computes
-        // eq(r, s) = sum_x eq(x,r)*eq(x,s)) is consistent with evaluate().
-        // This holds regardless of table ordering.
         let mut rng = ChaCha20Rng::seed_from_u64(303);
         let n = 11;
         let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -592,12 +568,9 @@ mod tests {
         let eq = EqPolynomial::new(r);
         let table = eq.evaluations();
 
-        // Pick a random non-Boolean evaluation point and verify via definition
         let p: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let direct = eq.evaluate(&p);
 
-        // Manual computation: sum over hypercube of eq(x,r) * eq(x,p)
-        // which equals eq(r,p) since sum_x eq(x,r)*eq(x,p) = eq(r,p)
         let eq_p = EqPolynomial::new(p);
         let table_p = eq_p.evaluations();
         let via_tables: Fr = table.iter().zip(table_p.iter()).map(|(&a, &b)| a * b).sum();
@@ -606,7 +579,6 @@ mod tests {
 
     #[test]
     fn eq_at_boolean_point_is_one() {
-        // eq(b, b) = 1 for any Boolean vector b ∈ {0,1}^n
         for n in 1..=5 {
             for idx in 0..(1 << n) {
                 let bits = index_to_bits(idx, n);
@@ -688,10 +660,8 @@ mod tests {
             for (j, table) in cached_rev.iter().enumerate() {
                 assert_eq!(table.len(), 1 << j);
             }
-            // The last entry should equal evals over all variables in reverse order
             let full_rev: Vec<Fr> = r.iter().rev().copied().collect();
             let full_table = EqPolynomial::<Fr>::evals_serial(&full_rev, None);
-            // Sizes should match but the table is built differently
             assert_eq!(cached_rev[n].len(), full_table.len());
         }
     }
@@ -723,10 +693,8 @@ mod tests {
 
     #[test]
     fn parallel_evaluations_pointwise_correctness() {
-        // Verifies that the parallel path in evaluations() produces the correct
-        // entry at every index — catches layout mismatches (blocked vs interleaved).
         let mut rng = ChaCha20Rng::seed_from_u64(500);
-        let n = 12; // 4096 entries, well above PAR_THRESHOLD=1024
+        let n = 12;
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let eq = EqPolynomial::new(point);
         let table = eq.evaluations();

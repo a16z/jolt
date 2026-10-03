@@ -1,5 +1,3 @@
-//! field_inline rd-inc claim-reduction symbolic sumcheck relation.
-
 use crate::protocols::field_inline::geometry::claim_reductions::increments::{
     field_rd_inc_read_write, field_rd_inc_reduced, field_rd_inc_val_evaluation,
 };

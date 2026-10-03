@@ -25,7 +25,6 @@ use crate::{PolynomialEncoding, Shape, WitnessError};
 
 pub mod witnesses;
 
-/// Error label for the field-inline witness backend.
 pub const FIELD_INLINE_LABEL: &str = "jolt_vm.field_inline";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -171,11 +170,6 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
         TraceBackedFieldInlineWitness::committed_order(self)
     }
 
-    /// Direct sparse walk: exactly the rows carrying a field-inline payload,
-    /// decoded once — the five dense tables the trait default would
-    /// materialize never exist. Value-for-value equal to the default (the
-    /// dense extractors read the same payload fields, and a payload row
-    /// is retained even when all its field values are zero).
     fn field_inline_spartan_rows(
         &self,
     ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
@@ -318,8 +312,6 @@ impl TraceBackedFieldInlineWitness {
         }
     }
 
-    /// Materializes one cycle-domain witness column; rows beyond the trace
-    /// are zero. All per-witness logic lives on `W`.
     fn materialize_cycle<F: JoltField, W: Extract<TraceRow> + FieldValue<F> + Send>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {

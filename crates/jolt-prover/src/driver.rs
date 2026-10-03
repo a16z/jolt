@@ -124,16 +124,6 @@ pub struct Proved<F: JoltField, S: StageProver<F>, C> {
     pub final_claim: F,
 }
 
-/// Instrumentation-only [`ProveRounds`] shim: the generated driver wraps
-/// each member's kernel so every `prove_round` call runs inside a fresh
-/// tracing span named `<Relation>::prove_round` and the terminal
-/// `finish_rounds` call inside `<Relation>::finish_rounds`, attributing the
-/// engine's batched round-loop time per member in a Perfetto timeline
-/// (`finish_rounds` nests directly under `prove_batch` rather than a
-/// `sumcheck_round`, so the distinct label keeps the per-label buckets
-/// self-describing). The delegation is transparent — zero behavior change;
-/// the driver reaches the kernel itself through [`inner`](Self::inner) for
-/// extraction and parking.
 pub struct SpannedRounds<K, SR, SF> {
     pub inner: K,
     pub round_span: SR,
@@ -185,8 +175,6 @@ pub fn mid_stage_flamegraph(
     });
 }
 
-/// Mint one required member's kernel through the source's [`PrepareKernel`]
-/// slot.
 pub fn prepare_required<F, R, B>(
     kernels: &B,
     relation: &R,
@@ -305,11 +293,6 @@ where
     }
 }
 
-/// One member slot of the generated driver body, dispatched on the member's
-/// presence: the kernel-bundle tuple element type, the prepare expression,
-/// the round-loop push, the derived-table cross-check, and the typed
-/// extraction. Internal to [`impl_stage_prover!`]; every local it touches is
-/// passed in by name (macro hygiene).
 macro_rules! __stage_member {
     (kernel_ty required $relation:ident) => {
         ::std::boxed::Box<dyn ::jolt_kernels::SumcheckKernel<F, Relation = $relation<F>>>
@@ -345,9 +328,6 @@ macro_rules! __stage_member {
             )
         })?
     };
-    // Rebind the member's kernel inside the instrumentation-only
-    // [`SpannedRounds`](crate::driver::SpannedRounds) shim; later arms reach
-    // the kernel through `.inner`.
     (spanned required $member:ident, $relation:ident) => {
         let mut $member = $crate::driver::SpannedRounds {
             inner: $member,
@@ -366,8 +346,6 @@ macro_rules! __stage_member {
             },
         });
     };
-    // `SumcheckKernel`'s `MaybeAllocative` supertrait is `Allocative` under
-    // this cfg, so the `dyn SumcheckKernel` upcasts at the argument.
     (flame required $member:ident, $fg:ident) => {
         $fg.visit_root(&*$member.inner);
     };
@@ -420,10 +398,6 @@ macro_rules! __stage_member {
     };
 }
 
-/// The output-shape leg of the generated driver, keyed by the derive-emitted
-/// flag: `checked` runs the generated `validate_output_claims`; `unchecked`
-/// (a `no_output_shape` stage, whose wire shape is runtime-curated) has no
-/// validator to run.
 macro_rules! __stage_shape_check {
     (checked, $self:expr, $claims:expr) => {
         $self.validate_output_claims(&$claims)?;
@@ -515,9 +489,6 @@ macro_rules! impl_stage_prover {
                 )?;
                 $($crate::driver::__stage_member!(spanned $presence $member, $relation);)+
 
-                // Mid-stage heap snapshot: the members' tables are
-                // materialized and nothing is bound yet — the peak the
-                // end-of-stage flamegraphs structurally miss.
                 #[cfg(feature = "allocative")]
                 $crate::driver::mid_stage_flamegraph(
                     concat!($label, "_prepared"),

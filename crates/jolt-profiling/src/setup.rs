@@ -16,7 +16,6 @@ use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 /// on drop. Avoids `std::env::set_var` which is unsound in multi-threaded contexts.
 pub(crate) static PPROF_PREFIX: OnceLock<String> = OnceLock::new();
 
-/// Output format for tracing subscribers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TracingFormat {
     /// Console output with span close events and compact formatting.
@@ -49,8 +48,6 @@ pub struct TracingGuards(#[expect(dead_code)] Vec<Box<dyn Any>>);
 ///
 /// Panics if called more than once (the global subscriber can only be set once).
 pub fn setup_tracing(formats: &[TracingFormat], trace_name: &str) -> TracingGuards {
-    // Legacy pprof default; the run-dir layout below never sees it because
-    // the OnceLock is initialized here first.
     let _ = PPROF_PREFIX.get_or_init(|| {
         std::env::var("PPROF_PREFIX")
             .unwrap_or_else(|_| format!("benchmark-runs/pprof/{trace_name}_"))
@@ -114,7 +111,6 @@ pub fn setup_tracing_with_trace_path(
         tracing::info!("Chrome tracing enabled. Output: {}", trace_path.display());
     }
 
-    // Boundary RSS sampling for the prover-stage spans; inert for all others.
     #[cfg(not(target_arch = "wasm32"))]
     layers.push(crate::stage_memory::StageMemoryLayer.boxed());
 

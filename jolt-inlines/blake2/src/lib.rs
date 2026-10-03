@@ -1,4 +1,3 @@
-//! BLAKE2 inline implementation module
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x0B;
@@ -23,7 +22,6 @@ pub use host::*;
 #[cfg(all(test, feature = "host"))]
 pub mod spec;
 
-/// Blake2b initialization vector (IV).
 pub const IV: [u64; 8] = [
     0x6a09e667f3bcc908,
     0xbb67ae8584caa73b,
@@ -35,7 +33,6 @@ pub const IV: [u64; 8] = [
     0x5be0cd19137e2179,
 ];
 
-/// BLAKE2b sigma permutation table for 12 rounds.
 pub const SIGMA: [[usize; 16]; 12] = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],

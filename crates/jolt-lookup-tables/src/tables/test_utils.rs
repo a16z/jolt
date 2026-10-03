@@ -49,11 +49,6 @@ pub fn index_to_field_bitvector<F: JoltField + ChallengeOps<F>>(
     bitvector
 }
 
-/// Verify the MLE of `T` agrees with `materialize_entry` on every point of
-/// the boolean hypercube `{0, 1}^(2*XLEN)`.
-///
-/// Only feasible for small `XLEN` (= 8 in the workspace), where the table
-/// has `2^16` entries.
 pub fn mle_full_hypercube_test<const XLEN: usize, F, T>()
 where
     F: JoltField + FieldOps<F> + ChallengeOps<F>,
@@ -95,12 +90,6 @@ where
     }
 }
 
-/// Validate the materialization flow used by the sparse-dense sumcheck prover:
-/// per phase, each prefix is materialized as a dense table of `2^RPP` binary
-/// evaluations, bound HighToLow with random field challenges across the phase's
-/// rounds, and its fully-bound value becomes the checkpoint for the next phase.
-/// Every round checks `combine(prefixes, suffixes) == table MLE` at the
-/// corresponding (partially random) evaluation point.
 pub fn prefix_suffix_test<const XLEN: usize, F, T>()
 where
     F: JoltField + FieldOps<F> + ChallengeOps<F>,
@@ -110,9 +99,6 @@ where
     prefix_suffix_materialization_test::<XLEN, F, T>(8, 6);
 }
 
-/// Same check with a caller-chosen phase size. Tables whose prefixes read
-/// specific low index bits use this to pin phase-boundary-agnostic behavior,
-/// placing boundaries inside those bits (e.g. `rounds_per_phase = 2`).
 pub fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
     rounds_per_phase: usize,
     num_runs: usize,

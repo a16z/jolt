@@ -17,9 +17,6 @@ const EMPTY: u32 = u32::MAX;
 pub struct DecodeCache {
     text_base: u64,
     text_end: u64,
-    /// One slot per halfword in `[text_base, text_end)`: `EMPTY` or an index
-    /// into `entries`. Allocated lazily on first insert so that emulator
-    /// snapshots (checkpoints) stay cheap until they are actually replayed.
     slots: Vec<u32>,
     entries: Vec<CachedDecode>,
 }
@@ -27,7 +24,6 @@ pub struct DecodeCache {
 #[derive(Clone, Debug)]
 pub struct CachedDecode {
     pub instr: Instruction,
-    /// Instruction length in bytes (2 or 4), for advancing the PC.
     pub len: u8,
     /// Lazily-built inline sequence for multi-row instructions. Taken out and
     /// put back around tracing so the rows can be iterated while the CPU is
@@ -71,8 +67,6 @@ impl DecodeCache {
         self.entries = Vec::new();
     }
 
-    /// A copy that keeps the executable range but drops all cached entries.
-    /// Used for emulator snapshots: replay re-populates the cache lazily.
     pub fn snapshot_with_empty_entries(&self) -> Self {
         Self {
             text_base: self.text_base,

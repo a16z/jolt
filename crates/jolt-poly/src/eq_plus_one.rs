@@ -1,14 +1,3 @@
-//! Equality-plus-one polynomial for shift sumcheck.
-//!
-//! The MLE `eq+1(x, y)` evaluates to 1 when `y = x + 1` (as integers in
-//! `[0, 2^l − 2]`) and 0 otherwise. There is no wrap-around: when `x` is all
-//! ones (the maximum), the polynomial outputs 0 for every `y`.
-//!
-//! This is used in the Spartan shift sumcheck to relate polynomial evaluations
-//! at consecutive cycles.
-//!
-//! Both `x` and `y` are in **big-endian** bit ordering (`point[0]` = MSB).
-
 use jolt_field::JoltField;
 
 use crate::EqPolynomial;
@@ -19,7 +8,6 @@ use jolt_utils::unsafe_allocate_zero_vec;
 /// Stores a fixed point `x` in big-endian order. Call [`evaluate`](Self::evaluate)
 /// to compute `eq+1(x, y)` at any `y`.
 pub struct EqPlusOnePolynomial<F: JoltField> {
-    /// Fixed point (big-endian: `point[0]` = MSB).
     point: Vec<F>,
 }
 
@@ -76,35 +64,22 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
         eq_evals[0] = scaling_factor.unwrap_or(F::one());
         let mut eq_plus_one_evals: Vec<F> = unsafe_allocate_zero_vec(size);
 
-        // Build tables incrementally. After processing bit i, the eq table
-        // encodes a prefix of length i+1, stored at strided positions.
-        //
-        // At each step:
-        // 1. Derive eq+1 contributions from the current eq prefix.
-        // 2. Extend the eq table by one more variable r[i].
         for i in 0..ell {
             let step = 1usize << (ell - i);
             let half_step = step / 2;
 
-            // r_lower_product = (1 - r[i]) · Π_{j > i} r[j]
             let mut r_lower_product = F::one();
             for &x in r.iter().skip(i + 1) {
                 r_lower_product *= x;
             }
             r_lower_product *= F::one() - r[i];
 
-            // Fill eq+1 entries for bit position i.
             let mut idx = half_step;
             while idx < size {
                 eq_plus_one_evals[idx] = eq_evals[idx - half_step] * r_lower_product;
                 idx += step;
             }
 
-            // Extend eq table by variable r[i].
-            // The eq table after i steps has 2^i nonzero entries at stride 2^(ell-i).
-            // After extension, it has 2^(i+1) entries at stride 2^(ell-i-1).
-            // Selected indices: 0, eq_step, 2·eq_step, ... where eq_step = 2^(ell-i-1).
-            // Pairs: (k, k+eq_step) → eq[k+eq_step] = eq[k]·r[i]; eq[k] -= eq[k+eq_step].
             let eq_step = 1usize << (ell - i - 1);
             let mut k = 0;
             while k < size {
@@ -151,7 +126,6 @@ impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
         let mid = r.len() / 2;
         let (r_hi, r_lo) = r.split_at(mid);
 
-        // is_max(r_lo) = eq((1,...,1), r_lo) = Π r_lo[i]
         let ones: Vec<F> = vec![F::one(); r_lo.len()];
         let is_max_eval = EqPolynomial::<F>::mle(&ones, r_lo);
 
@@ -191,7 +165,6 @@ mod tests {
 
     #[test]
     fn successor_at_boolean_points() {
-        // For l=3, eq+1(x, y) = 1 iff y = x + 1 (no wrap at 7).
         let l = 3;
         for x_int in 0..(1 << l) {
             let x_bits = index_to_bits(x_int, l);
@@ -211,7 +184,6 @@ mod tests {
 
     #[test]
     fn no_wraparound_at_max() {
-        // eq+1(all_ones, 0) = 0 (no wrap-around).
         let l = 4;
         let x = vec![Fr::one(); l];
         let y = vec![Fr::zero(); l];
@@ -270,7 +242,6 @@ mod tests {
 
         let ps = EqPlusOnePrefixSuffix::new(&r);
 
-        // Verify at a random evaluation point y = (y_hi, y_lo).
         let y: Vec<Fr> = (0..l).map(|_| Fr::random(&mut rng)).collect();
         let (y_hi, y_lo) = y.split_at(l / 2);
 
@@ -319,10 +290,6 @@ mod tests {
 
     #[test]
     fn eq_plus_one_sum_over_hypercube() {
-        // For random r, sum_y eq+1(r, y) should equal 1 - eq(r, max).
-        // Because eq+1 maps x → x+1 for x in [0, 2^l-2], so it covers
-        // all y in [1, 2^l-1], missing y=0 and hitting y=(2^l-1) only if
-        // x=(2^l-2). The sum should be 1 - Π r_i (the missing all-ones term).
         let mut rng = ChaCha20Rng::seed_from_u64(789);
         let l = 5;
         let r: Vec<Fr> = (0..l).map(|_| Fr::random(&mut rng)).collect();

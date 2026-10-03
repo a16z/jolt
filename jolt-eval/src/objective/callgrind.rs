@@ -17,7 +17,6 @@ use serde::Deserialize;
 
 use super::MeasurementError;
 
-/// One parsed `callgrind:<bench-name>:instructions` objective.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallgrindObjective {
     /// The full verbatim key (also the objective's CLI name).
@@ -154,8 +153,6 @@ struct ProfileTotal {
 }
 
 impl ProfileTotal {
-    /// The new-run `Ir` total, if this tool summary is Callgrind's and the
-    /// new run produced one.
     fn new_ir(&self) -> Result<Option<f64>, MeasurementError> {
         let Some(ir) = self.summary.pointer("/Callgrind/Ir") else {
             return Ok(None);
@@ -202,7 +199,6 @@ impl Metric {
 }
 
 impl EitherOrBoth {
-    /// The new run's value, if the new run produced one.
     fn new_value(&self) -> Option<f64> {
         match self {
             Self::Both(new, _) | Self::Left(new) => Some(new.as_f64()),
@@ -211,10 +207,6 @@ impl EitherOrBoth {
     }
 }
 
-/// Sums the new-run `Ir` totals across the benchmark-case documents on
-/// stdout. Malformed documents, an unsupported summary version, and output
-/// without a single Callgrind `Ir` total are all loud errors — a partial or
-/// silently-zero instruction count would corrupt optimizer decisions.
 fn parse_instruction_count(stdout: &str) -> Result<f64, MeasurementError> {
     let mut total = 0.0;
     let mut found = false;
@@ -342,9 +334,6 @@ mod tests {
         )
     }
 
-    /// The fixture must deserialize through the real
-    /// `iai-callgrind-runner` summary structs — the schema this parser
-    /// mirrors. A runner upgrade that reshapes the summary fails here first.
     #[test]
     fn real_runner_types_accept_the_fixture() {
         use iai_callgrind_runner::runner::summary::BenchmarkSummary as RealSummary;
@@ -353,7 +342,6 @@ mod tests {
             fixture_document(1000, Some(900)),
         ] {
             let parsed: RealSummary = serde_json::from_str(&fixture).unwrap();
-            // And our extraction agrees with the runner's own reserialization.
             let reserialized = serde_json::to_string(&parsed).unwrap();
             assert_eq!(parse_instruction_count(&reserialized).unwrap(), 1000.0);
         }
@@ -369,7 +357,6 @@ mod tests {
 
     #[test]
     fn extracts_new_ir_when_a_baseline_is_present() {
-        // `Both(new, old)`: the measurement is the new run, never the old.
         assert_eq!(
             parse_instruction_count(&fixture_document(1000, Some(2500))).unwrap(),
             1000.0
@@ -388,7 +375,6 @@ mod tests {
 
     #[test]
     fn missing_ir_is_an_error() {
-        // A document without any Callgrind profile carries no Ir.
         let no_callgrind = fixture_document(1, None).replace("\"Callgrind\"", "\"Cachegrind\"");
         assert!(parse_instruction_count(&no_callgrind).is_err());
         assert!(parse_instruction_count("").is_err());

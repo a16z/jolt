@@ -1,5 +1,3 @@
-//! Akita prover artifacts backing verifier completeness and tamper tests.
-
 #![expect(
     clippy::expect_used,
     reason = "fixture generation should fail loudly when prover artifact construction breaks"
@@ -44,21 +42,16 @@ impl AkitaFixtureCase {
     }
 }
 
-/// The muldiv case: one `OneHotTrace` commitment object and no precommitted objects.
 pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_muldiv)
 }
 
-/// The advice case: both advice kinds, three commitment objects
-/// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`) in one grouped opening.
 pub fn akita_advice_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_advice)
 }
 
-/// The committed-program case: direct bytecode and program-image objects in
-/// the native grouped opening.
 pub fn akita_committed_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_committed_muldiv)
@@ -177,12 +170,6 @@ fn prove_prepared(
     }
 }
 
-/// The packed field-inline case: the eq-MLE field-inline guest proven by the MODULAR packed
-/// prover (the only field-inline-capable one) over fp128, with the transparent grouped setup
-/// carrying the field-increment limb arity line — the packed twin of the Dory
-/// `standard_field_inline_eqpoly_case`. Legacy-generated akita fixtures pin the field-inline
-/// axis disabled and cannot verify with field-inline enabled, so this is the only packed
-/// fixture the akita verifier suites with field-inline enabled run over.
 #[cfg(feature = "field-inline")]
 pub fn akita_field_inline_eqpoly_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();

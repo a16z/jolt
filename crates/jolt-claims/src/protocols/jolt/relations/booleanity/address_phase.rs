@@ -1,5 +1,3 @@
-//! The address-phase split of the booleanity symbolic sumcheck relation.
-
 use core::marker::PhantomData;
 
 use jolt_field::{JoltField, Ring};

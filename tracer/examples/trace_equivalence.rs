@@ -34,15 +34,11 @@ use support::chain_input;
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 struct TraceDigest {
     row_count: usize,
-    /// blake3 over the postcard bytes of every Cycle, in stream order.
     trace_hash: String,
-    /// blake3 over postcard of `Memory::materialized_nonzero_bytes()` (address-sorted).
     memory_hash: String,
-    /// blake3 over postcard of the final `JoltDevice` (inputs, outputs, panic, layout).
     io_hash: String,
 }
 
-/// A tracer configuration, expressed as the environment that selects it.
 struct Config {
     name: &'static str,
     env: &'static [(&'static str, &'static str)],
@@ -83,19 +79,12 @@ const CONFIGS: &[Config] = &[
     },
 ];
 
-/// Fixed (guest, input) pairs. Sizes target ~1M cycles except muldiv, which is
-/// a tiny guest covering M-extension mul/div and compressed instructions.
 fn cases() -> Vec<(&'static str, Vec<u8>)> {
     vec![
-        // ~3396 cycles/hash
         ("sha2-chain-guest", chain_input(300)),
-        // ~4330 cycles/hash
         ("sha3-chain-guest", chain_input(235)),
-        // ~12 cycles/unit
         ("fibonacci-guest", postcard::to_stdvec(&84_000u32).unwrap()),
-        // ~1550 cycles/op; alloc-heavy, exercises rem via wyhash indexing
         ("btreemap-guest", postcard::to_stdvec(&650u32).unwrap()),
-        // M-extension mul/div, compressed instructions
         (
             "muldiv-guest",
             postcard::to_stdvec(&[9u32, 5u32, 3u32]).unwrap(),
@@ -133,7 +122,6 @@ fn run_case(guest: &str, input: &[u8]) -> TraceDigest {
     }
 }
 
-/// Re-run this binary under `config` and collect its digests.
 fn digests_under(config: &Config, filter: Option<&str>) -> BTreeMap<String, TraceDigest> {
     let exe = std::env::current_exe().expect("cannot locate own executable");
     let mut command = std::process::Command::new(exe);
@@ -159,7 +147,6 @@ fn digests_under(config: &Config, filter: Option<&str>) -> BTreeMap<String, Trac
     serde_json::from_slice(&output.stdout).expect("malformed digest JSON from emit run")
 }
 
-/// Report every component that differs, not just the first.
 fn describe_divergence(guest: &str, reference: &TraceDigest, actual: &TraceDigest) -> Vec<String> {
     let mut parts = Vec::new();
     if reference.row_count != actual.row_count {

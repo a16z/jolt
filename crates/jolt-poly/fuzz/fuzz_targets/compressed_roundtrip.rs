@@ -1,10 +1,5 @@
 #![no_main]
 
-//! Compression round-trip for sumcheck round polynomials: dropping the linear
-//! coefficient and recovering it from the hint `h = p(0) + p(1)` must
-//! reproduce the original polynomial and its evaluations. This is the wire
-//! transformation every compressed sumcheck round goes through.
-
 use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use libfuzzer_sys::fuzz_target;
@@ -16,8 +11,7 @@ fuzz_target!(|data: &[u8]| {
     if data.len() < 2 {
         return;
     }
-    // A compressible polynomial needs at least the constant and linear terms.
-    let coeff_count = (data[0] as usize % MAX_DEGREE) + 2; // 2..=7
+    let coeff_count = (data[0] as usize % MAX_DEGREE) + 2;
     if data.len() < 1 + (coeff_count + 1) * SCALAR_BYTES {
         return;
     }

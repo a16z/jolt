@@ -31,9 +31,6 @@ use tracer::TracerBackend;
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
-/// Guests in the equivalence corpus. Each is a distinct execution shape:
-/// a tight arithmetic loop, an inline-heavy hash chain, allocator and
-/// pointer-chasing traffic, and the division/remainder advice groups.
 const CORPUS: &[Guest] = &[
     Guest {
         package: "fibonacci-guest",
@@ -118,7 +115,6 @@ pub struct TracerBackendEquivalenceInput {
     pub parameter: u32,
 }
 
-/// What a fast pass observes, for equality comparison.
 #[derive(PartialEq, Eq)]
 struct Observation {
     rows: usize,
@@ -219,7 +215,6 @@ impl Invariant for TracerBackendEquivalenceInvariant {
             entry.memory_config,
         );
 
-        // The reference eager trace is the oracle.
         let mut reference = TracerBackend::new();
         let eager = reference
             .trace(&entry.program, inputs.clone())
@@ -232,8 +227,6 @@ impl Invariant for TracerBackendEquivalenceInvariant {
             advice_tape: eager.advice_tape.clone(),
         };
 
-        // The reference backend's own fast pass must observe the same
-        // execution as its recording pass.
         let summary = reference
             .execute(&entry.program, inputs.clone(), 1 << 18)
             .map_err(|e| CheckError::InvalidInput(format!("reference fast pass failed: {e:?}")))?;
@@ -254,7 +247,6 @@ impl Invariant for TracerBackendEquivalenceInvariant {
             )));
         }
 
-        // Where the AOT backend exists, it faces the same oracle.
         #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         {
             let mut native = jolt_tracer_x86::X86TracerBackend::new();

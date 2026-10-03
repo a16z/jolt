@@ -601,10 +601,6 @@ mod tests {
         (value >> lo) & ((1 << (hi - lo + 1)) - 1)
     }
 
-    // Encoding-side assemblers transcribed from the RV64I base instruction
-    // formats (unprivileged spec §2.3); they scatter immediates independently
-    // of the reassembly code under test.
-
     fn b_word(offset: i32, rs2: u32, rs1: u32, funct3: u32) -> u32 {
         let imm = offset as u32;
         (bit(imm, 12) << 31)
@@ -654,7 +650,6 @@ mod tests {
         assert_eq!(sign_extend_i64(0x800, 12), -2048);
         assert_eq!(sign_extend_i64(0xfff, 12), -1);
         assert_eq!(sign_extend_i64(0, 12), 0);
-        // garbage above the extracted width must not leak into the result
         assert_eq!(sign_extend_i64(0xffff_f7ff, 12), 2047);
         assert_eq!(sign_extend_i64(1, 1), -1);
         assert_eq!(sign_extend_i64(0, 1), 0);
@@ -687,7 +682,6 @@ mod tests {
         );
         assert_eq!(format_b_operands(b_word(4094, 31, 15, 0b000)).imm, 4094);
         assert_eq!(format_b_operands(b_word(-2, 0, 0, 0b000)).imm, -2);
-        // one-hot sweep over every branch immediate bit position
         for b in 1..=11 {
             let offset = 1 << b;
             assert_eq!(
@@ -699,8 +693,6 @@ mod tests {
 
     #[test]
     fn format_j_operands_reassembles_scattered_jump_immediate() {
-        // JAL immediates carry the 64-bit two's-complement pattern
-        // zero-extended into i128, not a negative i128
         let operands = format_j_operands(j_word(-2, 1));
         assert_eq!(operands.rd, Some(1));
         assert_eq!(operands.rs1, None);
@@ -710,7 +702,7 @@ mod tests {
             format_j_operands(j_word(-1_048_576, 0)).imm,
             i128::from(-1_048_576i64 as u64)
         );
-        assert_eq!(format_j_operands(j_word(703_710, 0)).imm, 703_710); // 0xABCDE
+        assert_eq!(format_j_operands(j_word(703_710, 0)).imm, 703_710);
         for b in 1..=19 {
             let offset = 1 << b;
             assert_eq!(format_j_operands(j_word(offset, 5)).imm, i128::from(offset));
@@ -750,8 +742,6 @@ mod tests {
                 imm: 0x1234_5000,
             }
         );
-        // sign bit set: the sign-extended u64 pattern appears as a large
-        // positive i128
         assert_eq!(
             format_u_operands(u_word(0xfffff, 3, 0x37)).imm,
             i128::from(0xffff_ffff_ffff_f000u64)
@@ -777,8 +767,6 @@ mod tests {
     fn decodes_i_format_addi_and_records_row_metadata() {
         let instruction = decode_ok(0xff01_0113, 0x8000_0010, true); // addi sp,sp,-16
         assert_eq!(instruction.kind(), SourceInstructionKind::ADDI);
-        // unlike loads (format_load_operands), plain I-format immediates carry
-        // the zero-extended 64-bit two's-complement pattern in the i128
         assert_eq!(
             instruction.row().operands,
             NormalizedOperands {
@@ -915,13 +903,11 @@ mod tests {
         let word = (0xc00 << 20) | (0b010 << 12) | (5 << 7) | 0x73; // csrrs t0,cycle,x0
         let instruction = decode_ok(word, 0x8000_0000, false);
         assert_eq!(instruction.kind(), SourceInstructionKind::CSRRS);
-        // I-format sign extension leaves the u64 bit pattern in the i128
         assert_eq!(
             instruction.row().operands.imm,
             i128::from(0xffff_ffff_ffff_fc00u64)
         );
 
-        // ecall with rd=1 is not the canonical 0x00000073 encoding
         assert!(matches!(
             decode_instruction(0x0000_00f3, 0x8000_0000, false, RV64IMAC_JOLT),
             Err(ProgramError::MalformedImage(
@@ -1004,7 +990,6 @@ mod tests {
 
     #[test]
     fn rejects_source_instructions_outside_the_profile() {
-        // amoadd.w decodes but the A extension is absent from RV64IM_JOLT
         let word = (11 << 20) | (12 << 15) | (0b010 << 12) | (10 << 7) | 0x2f;
         match decode_instruction(word, 0x8000_0000, false, RV64IM_JOLT) {
             Err(ProgramError::IllegalSourceInstruction(kind)) => {
@@ -1082,9 +1067,6 @@ mod tests {
         .is_err());
     }
 
-    /// `fence` (`fence iorw, iorw`) decodes as FENCE, the only MISC-MEM
-    /// instruction in RV64IMAC; the other funct3 values are rejected in
-    /// `rejects_invalid_encodings_with_exact_messages`.
     #[test]
     fn decodes_fence() {
         let fence = decode_instruction(0x0ff0_000f, 0x8000_0000, false, RV64IMAC_JOLT);

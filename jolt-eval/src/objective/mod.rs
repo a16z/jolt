@@ -9,7 +9,6 @@ pub mod telemetry;
 use code_quality::PROOF_SYSTEM_CRATE_DIRS;
 use std::fmt;
 
-/// Error during objective measurement.
 #[derive(Debug, Clone)]
 pub struct MeasurementError {
     pub message: String,
@@ -55,16 +54,13 @@ pub trait Objective: Send + Sync {
     /// Per-iteration setup for Criterion benchmarks.
     fn setup(&self) -> Self::Setup;
 
-    /// Override for static-analysis objectives that produce a direct measurement.
     fn collect_measurement(&self) -> Result<f64, MeasurementError> {
         Err(MeasurementError::new("not directly measurable"))
     }
 
-    /// Override for performance objectives benchmarked by Criterion.
     fn run(&self, _setup: Self::Setup) {}
 }
 
-/// Static-analysis objectives.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StaticAnalysisObjective {
     Lloc(code_quality::lloc::LlocObjective),
@@ -135,7 +131,6 @@ impl StaticAnalysisObjective {
     }
 }
 
-/// Criterion-benchmarked performance objectives.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PerformanceObjective {
     BindLowToHigh(performance::binding::BindLowToHighObjective),
@@ -221,7 +216,6 @@ pub enum OptimizationObjective {
     Callgrind(callgrind::CallgrindObjective),
 }
 
-// Re-export the const objective keys from their defining modules.
 pub use code_quality::cognitive::COGNITIVE_COMPLEXITY;
 pub use code_quality::halstead_bugs::HALSTEAD_BUGS;
 pub use code_quality::lloc::LLOC;
@@ -272,9 +266,7 @@ impl OptimizationObjective {
         match self {
             Self::StaticAnalysis(s) => s.diff_paths(),
             Self::Performance(p) => p.diff_paths(),
-            // The modular prover stack plus the leaf crates it orchestrates.
             Self::Telemetry(_) => &["crates/"],
-            // The hot paths the callgrind benches exercise.
             Self::Callgrind(_) => &["crates/jolt-poly/", "crates/jolt-kernels/"],
         }
     }
@@ -380,7 +372,6 @@ mod tests {
         m.insert(lloc, 100.0);
         m.insert(bind, 0.5);
 
-        // Same variant with identical inner data looks up successfully.
         let lloc_same = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
                 crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
@@ -388,7 +379,6 @@ mod tests {
         ));
         assert_eq!(m[&lloc_same], 100.0);
 
-        // Same variant with different inner data does NOT match.
         let lloc_other = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
                 crate_dirs: &["other/path"],

@@ -1,17 +1,3 @@
-//! The stage 7 advice claim-reduction address phase, split per advice kind.
-//!
-//! The trusted/untrusted advice two-phase reduction begins in stage 6b (cycle
-//! phase) and, when active address-phase rounds remain, finishes here. The two
-//! reductions are structurally identical but bind disjoint openings, so each is its
-//! own batch member with its own relation type. The single-slot claims structs
-//! (a non-`Option` `trusted` / `untrusted` field, from the `#[opening]` id mapping
-//! fixed per type) make the off-kind slot unrepresentable — no runtime `kind → slot`
-//! match is needed.
-//!
-//! As with the committed-program address phases, the `FinalScale` public is a
-//! function of the reduction's final opening point, which `derive_output_term`
-//! recovers from the output claims.
-
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::cycle_phase_advice_opening;
 use jolt_claims::protocols::jolt::relations;
@@ -31,9 +17,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage6b::outputs::Stage6bOutputClaims;
 use crate::VerifierError;
 
-/// The consumed cycle-phase trusted-advice opening *value*, read off the stage-6b
-/// cycle-phase output. Errors if the cycle phase produced no trusted-advice opening
-/// (the address phase runs only when it did).
 #[cfg(not(feature = "akita"))]
 pub fn trusted_advice_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
@@ -46,7 +29,6 @@ pub fn trusted_advice_input_values_from_upstream<F: JoltField>(
     Ok(TrustedAdviceAddressPhaseInputClaims { trusted })
 }
 
-/// The consumed cycle-phase untrusted-advice opening *value*.
 #[cfg(not(feature = "akita"))]
 pub fn untrusted_advice_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
@@ -71,17 +53,10 @@ pub struct TrustedAdviceAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::TrustedAddressPhase,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
-    /// The RAM address point of the staged advice opening from RAM value-check
-    /// (stage 4). Consumed only by the clear-only `derive_output_term` (`FinalScale`),
-    /// so it is `None` in ZK — where BlindFold recomputes the scale independently and
-    /// this relation's `derive_output_term` never runs.
     reference_opening_point: Option<Vec<F>>,
 }
 
 impl<F: JoltField> TrustedAdviceAddressPhase<F> {
-    /// `reference_opening_point` is the RAM address point of the staged advice
-    /// opening from RAM value-check (stage 4), `None` in ZK (clear-only aux). It and
-    /// the cycle-phase variables are known before the stage-7 sumcheck.
     pub fn new(
         layout: &AdviceClaimReductionLayout,
         reference_opening_point: Option<Vec<F>>,
@@ -155,10 +130,6 @@ pub struct UntrustedAdviceAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::UntrustedAddressPhase,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
-    /// The RAM address point of the staged advice opening from RAM value-check
-    /// (stage 4). Consumed only by the clear-only `derive_output_term` (`FinalScale`),
-    /// so it is `None` in ZK — where BlindFold recomputes the scale independently and
-    /// this relation's `derive_output_term` never runs.
     reference_opening_point: Option<Vec<F>>,
 }
 

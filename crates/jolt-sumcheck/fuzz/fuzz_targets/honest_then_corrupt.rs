@@ -1,17 +1,5 @@
 #![no_main]
 
-//! Honest sumcheck proof over a real MLE product, then one fuzzer-chosen
-//! corruption; the verifier must reject.
-//!
-//! The harness proves `Σ_x A(x)·B(x)` honestly with an in-harness
-//! degree-2 prover (LSB-first binding), then corrupts exactly one thing: the
-//! claimed sum, one round coefficient, the round count, or the degree bound.
-//! Every corruption breaks a check the verifier performs deterministically —
-//! a wrong claimed sum or coefficient breaks that round's `s(0) + s(1)`
-//! comparison, and shape corruptions break the count/degree checks. As a
-//! belt-and-braces discharge, an accept of a false statement only counts as
-//! sound if the returned claim matches the true product evaluation.
-
 use jolt_field::{CanonicalEncoding, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
@@ -22,8 +10,6 @@ use num_traits::Zero;
 const SCALAR_BYTES: usize = 32;
 const MAX_NUM_VARS: usize = 5;
 
-/// Evaluates the multilinear extension of `evals` at `point`, with
-/// `point[k]` bound to index bit `k` (LSB-first, matching the prover below).
 fn mle_eval(evals: &[Fr], point: &[Fr]) -> Fr {
     let one = Fr::from_u64(1);
     let mut sum = Fr::zero();
@@ -41,12 +27,11 @@ fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
         return;
     }
-    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1; // 1..=5
+    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1;
     let n = 1usize << num_vars;
     let corruption = data[1];
     let corruption_round = data[2] as usize % num_vars;
     let corruption_coeff = data[3] as usize % 3;
-    // Corruption scalar + the two evaluation tables.
     if data.len() < 4 + (1 + 2 * n) * SCALAR_BYTES {
         return;
     }
@@ -60,8 +45,6 @@ fuzz_target!(|data: &[u8]| {
 
     let true_sum: Fr = evals_a.iter().zip(&evals_b).map(|(&a, &b)| a * b).sum();
 
-    // Honest degree-2 prover, binding the low variable each round and
-    // mirroring the verifier's transcript exactly.
     let two_inverse = Fr::from_u64(2).inverse().expect("2 is invertible");
     let mut a = evals_a.clone();
     let mut b = evals_b.clone();
@@ -77,7 +60,6 @@ fuzz_target!(|data: &[u8]| {
             let (b0, b1) = (b[2 * j], b[2 * j + 1]);
             s0 += a0 * b0;
             s1 += a1 * b1;
-            // s(2) with a(2) = 2·a1 − a0 by multilinearity.
             s2 += (a1 + a1 - a0) * (b1 + b1 - b0);
         }
         let c0 = s0;
@@ -98,18 +80,15 @@ fuzz_target!(|data: &[u8]| {
         rounds.push(poly);
     }
 
-    // Apply exactly one corruption.
     let mut claimed_sum = true_sum;
     match corruption % 5 {
         0 => {
-            // False statement: honest proof, wrong claimed sum.
             if corruption_scalar.is_zero() {
                 return;
             }
             claimed_sum += corruption_scalar;
         }
         1 => {
-            // One round coefficient replaced; breaks that round's s(0)+s(1).
             let coefficients = rounds[corruption_round].coefficients();
             if coefficients[corruption_coeff] == corruption_scalar {
                 return;
@@ -126,7 +105,6 @@ fuzz_target!(|data: &[u8]| {
             rounds.push(last);
         }
         _ => {
-            // Degree inflation past the claimed bound.
             let coefficients = rounds[corruption_round].coefficients();
             let mut inflated = coefficients.to_vec();
             inflated.push(corruption_scalar);
@@ -149,8 +127,6 @@ fuzz_target!(|data: &[u8]| {
     match result {
         Err(_) => {}
         Ok(final_claim) => {
-            // Discharge: an accept is only sound if the reduced claim is
-            // actually true of the underlying product.
             let product =
                 mle_eval(&evals_a, &final_claim.point) * mle_eval(&evals_b, &final_claim.point);
             assert_eq!(

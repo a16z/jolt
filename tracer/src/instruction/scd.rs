@@ -46,12 +46,8 @@ impl SCD {
 impl RISCVTrace for SCD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
-        // See SCD::exec — SC.D needs an 8-byte reservation set.
         let success = cpu.reservation_covers(address, ReservationWidth::Doubleword);
 
-        // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
-        // in the sequence, on a per-execution copy of the row. Locating it by
-        // type avoids fragility against changes to the sequence's prelude.
         let mut trace = trace;
         let mut patched = false;
         cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
@@ -142,7 +138,6 @@ mod tests {
 
         cpu.x[11] = addr as i64;
 
-        // LR.D: rd=10, rs1=11
         let decoded = Instruction::decode(encode_lrd(10, 11), 0x1000, false).unwrap();
         let Instruction::LRD(lrd) = decoded else {
             panic!("Expected LRD");
@@ -150,7 +145,6 @@ mod tests {
         let mut trace = Vec::new();
         lrd.trace(&mut cpu, Some(&mut trace));
 
-        // SC.D: rd=13, rs1=11, rs2=12
         let store_val: u64 = 0x1234_5678_9ABC_DEF0;
         cpu.x[12] = store_val as i64;
 
@@ -179,7 +173,6 @@ mod tests {
         cpu.mmu.store_doubleword(addr, 0xDEADBEEF_CAFEBABE).unwrap();
         cpu.x[11] = addr as i64;
 
-        // LR.W sets reservation_w (vr32)
         let decoded = Instruction::decode(encode_lrw(10, 11), 0x1000, false).unwrap();
         let Instruction::LRW(lrw) = decoded else {
             panic!("Expected LRW");
@@ -187,7 +180,6 @@ mod tests {
         let mut trace = Vec::new();
         lrw.trace(&mut cpu, Some(&mut trace));
 
-        // SC.D fails (width mismatch), but must clear BOTH vr32 and vr33
         cpu.x[12] = 0x1234_5678_9ABC_DEF0u64 as i64;
         let decoded = Instruction::decode(encode_scd(13, 11, 12), 0x1004, false).unwrap();
         let Instruction::SCD(scd) = decoded else {
@@ -196,7 +188,6 @@ mod tests {
         let mut trace = Vec::new();
         scd.trace(&mut cpu, Some(&mut trace));
 
-        // Inspect the trace: both reservation registers must be written to 0
         let cleared_regs: Vec<u8> = trace
             .iter()
             .filter_map(|cycle| cycle.rd_write())
@@ -214,8 +205,6 @@ mod tests {
         );
     }
 
-    /// SC.D to a non-RAM (I/O) address must be rejected by the
-    /// inline-sequence RAM-range constraint. Same rationale as SC.W.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_scd_to_io_rejected() {
@@ -245,12 +234,10 @@ mod tests {
         let mut cpu = setup_cpu();
         let addr = DRAM_BASE;
         cpu.mmu.store_word(addr, 0xDEADBEEF).unwrap();
-        // Also initialize the upper word so doubleword reads succeed
         cpu.mmu.store_word(addr + 4, 0xCAFEBABE).unwrap();
 
         cpu.x[11] = addr as i64;
 
-        // LR.W sets a word reservation
         let decoded = Instruction::decode(encode_lrw(10, 11), 0x1000, false).unwrap();
         let Instruction::LRW(lrw) = decoded else {
             panic!("Expected LRW");
@@ -258,7 +245,6 @@ mod tests {
         let mut trace = Vec::new();
         lrw.trace(&mut cpu, Some(&mut trace));
 
-        // SC.D to same address should fail (width mismatch)
         cpu.x[12] = 0x1234_5678_9ABC_DEF0u64 as i64;
         let decoded = Instruction::decode(encode_scd(13, 11, 12), 0x1004, false).unwrap();
         let Instruction::SCD(scd) = decoded else {

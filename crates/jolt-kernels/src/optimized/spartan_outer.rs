@@ -323,10 +323,6 @@ struct RowGroupValues {
     b_second: [S192; SECOND_GROUP_LEN],
 }
 
-/// One active field-inline cycle's composed group values, in field form: the
-/// field-inline magnitudes are full field elements, so the integer pipeline cannot
-/// carry them. Its work is proportional to active cycles, which may occupy
-/// the entire trace.
 #[cfg(feature = "field-inline")]
 struct FieldGroupValues<F> {
     integer: RowGroupValues,
@@ -392,15 +388,12 @@ impl<F: JoltField> FieldGroupValues<F> {
     }
 }
 
-/// The field images of [`extension_coefficients`] — what ties the active field-inline
-/// field path to the same Lagrange extension the integer pipeline uses.
 #[cfg(feature = "field-inline")]
 fn extension_coefficient_fields<F: JoltField>() -> [(usize, [F; DOMAIN]); EXTENDED_NODE_COUNT] {
     extension_coefficients()
         .map(|(position, coefficients)| (position, coefficients.map(F::from_i64)))
 }
 
-/// Transfers the extracted field rows from the outer kernel to the product kernel.
 #[cfg(feature = "field-inline")]
 #[cfg_attr(
     feature = "allocative",
@@ -412,7 +405,6 @@ pub(crate) struct FieldSpartanCarry<F: JoltField>(
     pub(crate) Vec<(usize, FieldInlineSpartanRow<F>)>,
 );
 
-/// A block-local cursor through sorted sparse field rows.
 #[cfg(feature = "field-inline")]
 pub(crate) struct FieldInlineRowCursor<'a, F> {
     rows: &'a [(usize, FieldInlineSpartanRow<F>)],
@@ -421,8 +413,6 @@ pub(crate) struct FieldInlineRowCursor<'a, F> {
 
 #[cfg(feature = "field-inline")]
 impl<'a, F> FieldInlineRowCursor<'a, F> {
-    /// A cursor positioned at the first row with cycle ≥ `start` — each
-    /// parallel block seeks independently.
     pub(crate) fn seek(rows: &'a [(usize, FieldInlineSpartanRow<F>)], start: usize) -> Self {
         Self {
             rows,
@@ -430,8 +420,6 @@ impl<'a, F> FieldInlineRowCursor<'a, F> {
         }
     }
 
-    /// The field-inline row at cycle `t`, if any; `t` must be non-decreasing across
-    /// calls on one cursor.
     pub(crate) fn advance(&mut self, t: usize) -> Option<&'a FieldInlineSpartanRow<F>> {
         while let Some(&(cycle, ref row)) = self.rows.get(self.next) {
             match cycle.cmp(&t) {
@@ -545,8 +533,6 @@ impl SpartanOuterRow {
         values.b_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_b_first);
         values.b_second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second);
 
-        // Field rows with zero field values still use their ordinary op flags.
-        // Nonzero field magnitudes are supplied by `field_group_values` below.
         #[cfg(feature = "field-inline")]
         {
             values.a_first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
@@ -586,8 +572,6 @@ impl SpartanOuterRow {
         &self,
         field_row: &FieldInlineSpartanRow<F>,
     ) -> FieldGroupValues<F> {
-        // The integer rows already include constants and RV64 passengers of the
-        // appended constraints. Only their field-value corrections belong here.
         FieldGroupValues {
             integer: self.group_values(),
             b_first: [
@@ -608,11 +592,6 @@ impl SpartanOuterRow {
     }
 }
 
-/// The exact integer Lagrange extension coefficients from the DOMAIN-node base
-/// window to each out-of-domain extended node: `coeffs[i] = L_i(node)`.
-/// Consecutive-integer domains make these integers (legacy's `COEFFS_PER_J`);
-/// their field images equal `centered_lagrange_evals` at the node, which is
-/// what ties the integer pipeline to the reference's field pipeline.
 fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
     let mut out = [(0usize, [0i64; DOMAIN]); EXTENDED_NODE_COUNT];
     let mut slot = 0;
@@ -681,9 +660,6 @@ fn widen(value: &S192) -> S256 {
     S256::new([limbs[0], limbs[1], limbs[2], 0], value.is_positive)
 }
 
-/// Fold group row values with the uni-skip challenge's Lagrange weights into
-/// the bound `Az`/`Bz` values for one `(cycle, stream)` cell, through the
-/// unreduced accumulators.
 fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (F, F) {
     let mut az = <F as WithAccumulator>::SmallScalarAccumulator::default();
     let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
@@ -699,36 +675,20 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) 
     (az.reduce(), bz.reduce())
 }
 
-/// The uni-skip carry: everything the uni-skip front computes that the
-/// remainder slot reclaims — the typed-row store (reused for
-/// materialization and the final opening walk), the stage challenge vector,
-/// and the extended-node evaluations of `t1`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
     tau: Vec<F>,
-    /// Typed-row store: slice-backed witnesses stay unmaterialized (the
-    /// ~176 B × T row vector is the prover's peak allocation at large scale).
     rows: BundleStore<SpartanOuterRow>,
-    /// The active field-inline cycles' composed column values, sparse and sorted by
-    /// cycle (the witness seam's direct walk — the five dense field-inline tables never
-    /// materialize).
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
-    /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
-    /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
 }
 
-/// The stage-1 uni-skip front: typed-row collection, the extended-node
-/// evaluation pass, and the first-round polynomial assembly.
 pub struct OptimizedOuterUniskip;
 
 impl OptimizedOuterUniskip {
-    /// The post-collection half of [`UniskipKernel::prepare`], for the in-module parity
-    /// tests (which construct rows — and with field-inline enabled, the sparse
-    /// field-inline rows — directly).
     #[cfg(test)]
     fn prepare_from_rows<F: JoltField>(
         session: &mut ProofSession,
@@ -752,7 +712,6 @@ impl OptimizedOuterUniskip {
         )
     }
 
-    /// The store-generic half of `prepare`.
     fn prepare_from_store<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
@@ -783,10 +742,6 @@ impl OptimizedOuterUniskip {
         Ok(())
     }
 
-    /// Extended-node evaluations of
-    /// `t1(Y) = Σ_{t,s} eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)`, with the eq
-    /// table factored as `E_out ⊗ E_in` and the per-cycle products from the
-    /// integer extension pipeline.
     fn extended_t1_values<F: JoltField>(
         rows: &BundleAccess<'_, SpartanOuterRow>,
         tau_low: &[F],
@@ -891,7 +846,6 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
                     reason:
                         "the outer uni-skip slot parked no carry for the first-round polynomial",
                 })?;
-        // The reference's exact assembly path, fed the same t1 node values.
         let tau_high = carry.tau[carry.log_t + 1];
         let kernel_values = centered_lagrange_evals::<F>(DOMAIN, tau_high)?;
         let kernel_coefficients = interpolate_to_coeffs(DOMAIN_START, &kernel_values);
@@ -903,8 +857,6 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
     }
 }
 
-/// The stage-1 remainder slot: reclaims the uni-skip carry and builds the
-/// linear-time round kernel.
 pub struct OptimizedOuterRemainder;
 
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
@@ -924,9 +876,6 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
     }
 }
 
-/// The `Az`/`Bz` linear forms folded at both stream values — the closed forms
-/// of the relation's derived leaves after the stream bind, kept for
-/// [`SumcheckKernel::validate_derived_tables`].
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct DerivedWeights<F> {
     az_weights: [Vec<F>; 2],
@@ -937,17 +886,12 @@ struct DerivedWeights<F> {
     bz_constant: [F; 2],
 }
 
-/// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
-/// domain (stream = index LSB, bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
-    /// `(Az, Bz)` over the joint domain.
     az: Polynomial<F>,
     bz: Polynomial<F>,
-    /// Whether the first-shrink purge ran.
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
-    /// Round-0 endpoints, fused into the materialization pass.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
@@ -997,9 +941,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
 
-        // Fused round-0 materialization: one pass over the typed rows writes
-        // the bound Az/Bz tables and accumulates the first round's endpoints
-        // q(0) = Σ_t E(t)·az₀·bz₀ and q(∞) = Σ_t E(t)·(az₁−az₀)(bz₁−bz₀).
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * cycles);
@@ -1091,10 +1032,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         })
     }
 
-    /// Az/Bz column weights at both stream values over the composed opening-column
-    /// selection, from the same `jolt-r1cs` sources the verifier's coefficient build
-    /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
-    /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
@@ -1122,10 +1059,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     fn bind(&mut self, challenge: F) {
         let shrunk = self.az.bind_low_to_high_in_place(challenge);
         let _ = self.bz.bind_low_to_high_in_place(challenge);
-        // Purge once after the first shrink.
         if shrunk && !self.purged {
             self.purged = true;
-            // `rounds = log_t + 1`.
             crate::mem::purge_retained_memory(self.challenges.total() - 1);
         }
         self.split_eq.bind(challenge);
@@ -1133,7 +1068,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    /// The bound cycle point's eq table (the stream challenge excluded).
     fn cycle_weights(&self) -> Vec<F> {
         let reversed: Vec<F> = self.challenges.as_slice()[1..]
             .iter()
@@ -1144,9 +1078,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         EqPolynomial::<F>::evals(&reversed, None)
     }
 
-    /// The ordinary produced opening values at the bound cycle point: one
-    /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
-    /// mixed-width accumulators per input.
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
     fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
         let cycles = weights.len();
@@ -1171,10 +1102,6 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         claimed
     }
 
-    /// The field-inline opening values at the bound cycle point: one eq-weighted walk
-    /// over the sparse field-inline rows (columns in
-    /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order the
-    /// composed remainder relation folds).
     #[cfg(feature = "field-inline")]
     fn field_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
         map_reduce_chunks(
@@ -1206,11 +1133,11 @@ const VARIABLE_COUNT: usize = SPARTAN_OUTER_R1CS_INPUTS.len();
 /// at ~2^318 — so they go through the signed-product path instead.
 const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     let mut mask = [false; VARIABLE_COUNT];
-    mask[3] = true; // ShouldBranch
-    mask[17] = true; // NextIsVirtual
-    mask[18] = true; // NextIsFirstInSequence
-    mask[20] = true; // ShouldJump
-    let mut flag = 21; // the circuit flags
+    mask[3] = true;
+    mask[17] = true;
+    mask[18] = true;
+    mask[20] = true;
+    let mut flag = 21;
     while flag < VARIABLE_COUNT {
         mask[flag] = true;
         flag += 1;
@@ -1218,9 +1145,6 @@ const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     mask
 };
 
-/// Mixed-width claim accumulators for the final opening walk: boolean inputs
-/// through the small-scalar path, word/wide inputs through the signed-product
-/// path.
 struct ClaimAccumulator<F: JoltField> {
     small: Vec<<F as WithAccumulator>::SmallScalarAccumulator>,
     wide: Vec<<F as WithAccumulator>::SignedProductAccumulator>,
@@ -1417,12 +1341,8 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        // The stream challenge binds the per-stream weight pairs; the split-eq
-        // scalar is the fully bound TauKernel — both from the kernel's own
-        // state, cross-checked against the verifier's coefficient build.
         let stream = self.challenges.as_slice()[0];
         let blend = |pair: [&F; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
-        // The composed selection width (50 with field-inline enabled), including all ordinary ids and appended field values.
         let variable_count = self.derived.az_weights[0].len();
         let ids = std::iter::once(SpartanOuterPublic::TauKernel)
             .chain((0..variable_count).map(SpartanOuterPublic::AzWeight))
@@ -1463,11 +1383,6 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernels: identical uni-skip first-round
-/// polynomials, identical remainder round polynomials at every round,
-/// identical typed output claims — from identical `ProverInputs`, over
-/// synthetic structured witnesses (both groups' wide integer paths exercised)
-/// and over the real sample trace through the full trait path.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -1494,9 +1409,6 @@ mod tests {
     use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
     use crate::ReferenceBackend;
 
-    /// The `ToField` image of one canonical R1CS input, straight off the
-    /// typed row — the single conversion source for backend columns and
-    /// consistency checks.
     fn variable_field_value(row: &SpartanOuterRow, index: usize) -> Fr {
         match index {
             0 => row.left_instruction_input.to_field(),
@@ -1558,10 +1470,6 @@ mod tests {
         }
     }
 
-    /// Structured pseudo-random rows: full-range `u64`s, mixed-sign `i128`s,
-    /// two-limb `u128`/`S128` values (both wide B-row paths), diverse flags.
-    /// No satisfying-witness structure — parity must hold pointwise on any
-    /// witness.
     fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanOuterRow> {
         let mut state = seed | 1;
         let mut next = move || {
@@ -1650,8 +1558,6 @@ mod tests {
             .collect()
     }
 
-    /// Sparse synthetic field-inline rows on roughly a third of the cycles, with
-    /// pseudo-random full-field values in every field-inline value/product column.
     #[cfg(feature = "field-inline")]
     fn synthetic_field_rows(log_t: usize, seed: u64) -> Vec<(usize, FieldInlineSpartanRow<Fr>)> {
         let mut state = seed | 1;
@@ -1679,9 +1585,6 @@ mod tests {
             .collect()
     }
 
-    /// The dense image of the sparse field-inline rows for one field-inline column
-    /// index (the `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` position) — what the fixed
-    /// backend's field-inline view serves the reference kernel.
     #[cfg(feature = "field-inline")]
     fn field_column_table(
         field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
@@ -1731,10 +1634,6 @@ mod tests {
         backend
     }
 
-    /// The remainder's true input claim
-    /// `Σ_{t,s} kernel · eq(τ_low, (t,s)) · Az(t,s) · Bz(t,s)`, computed
-    /// through the public `jolt-r1cs` column-weight path over the COMPOSED
-    /// opening selection (independent of both kernels' row-value pipelines).
     fn true_input_claim(
         rows: &[SpartanOuterRow],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
@@ -1748,8 +1647,6 @@ mod tests {
         let kernel = centered_lagrange_kernel::<Fr>(DOMAIN, tau_high, r0).unwrap();
         let matrices = spartan_outer_constraints::<Fr>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
-        // Selection position → column value at cycle `t`: rv64 typed row fields for the
-        // ordinary positions, the sparse field-inline rows behind them.
         let value = |t: usize, position: usize| -> Fr {
             if position < VARIABLE_COUNT {
                 return variable_field_value(&rows[t], position);
@@ -1788,10 +1685,6 @@ mod tests {
         kernel * total
     }
 
-    /// One full parity case: uni-skip polynomial, every remainder round polynomial,
-    /// typed output claims, and both kernels' derived-table validation — reference and
-    /// optimized fed identical `ProverInputs` (with field-inline enabled: the composed
-    /// 50-column selection over synthetic field-inline rows too).
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
         parity_case_with_eq(dummy_plane, log_t, seed, None, false);
     }
@@ -1939,9 +1832,6 @@ mod tests {
             .unwrap();
     }
 
-    /// Synthetic parity across sizes spanning the uni-skip boundary and
-    /// degenerate small domains. The sample backend only supplies the (never
-    /// read) witness-plane argument of the remainder `prepare` calls.
     #[test]
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
         with_sample_backend(|dummy| {
@@ -1961,13 +1851,6 @@ mod tests {
         });
     }
 
-    /// The trait-path parity body over a real trace backend: the optimized
-    /// bundle walk against the reference's oracle tables, with the remainder
-    /// driven by the true joint-domain sum. The trace fixtures are
-    /// witness-extraction fixtures, not constraint-satisfying traces, so the
-    /// uni-skip reduction at r0 need not equal the joint-domain sum here; the
-    /// remainder runs on the true sum, which is what the naive reference
-    /// self-checks against.
     fn sample_case(backend: &TraceBackend<OwnedTrace>, log_t: usize) {
         let tau: Vec<Fr> = (0..log_t + 2)
             .map(|i| Fr::from_u64(29 + 13 * i as u64))
@@ -2076,10 +1959,6 @@ mod tests {
         );
     }
 
-    /// Full trait-path parity: without field-inline on the canned sample trace; with
-    /// field-inline enabled over a field-inline fixture trace (the sample backend
-    /// carries no field-inline view), exercising the trace-backed sparse field-inline
-    /// row seam.
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
         #[cfg(not(feature = "field-inline"))]
@@ -2089,9 +1968,6 @@ mod tests {
             .with_plane(4, |backend| sample_case(backend, 4));
     }
 
-    /// The integer extension coefficients are exactly the field Lagrange
-    /// basis evaluations at the extended nodes — the fact that ties the
-    /// integer pipeline to the reference's field pipeline.
     #[test]
     fn extension_coefficients_match_field_lagrange() {
         for (position, coefficients) in extension_coefficients() {
@@ -2107,9 +1983,6 @@ mod tests {
         }
     }
 
-    /// The typed bundle's columns equal the oracle tables the reference
-    /// kernel materializes — the two witness paths meeting at the shared
-    /// `Extract` impls, for all ordinary R1CS inputs.
     #[test]
     fn bundle_columns_match_oracle_tables() {
         with_sample_backend(|backend| {

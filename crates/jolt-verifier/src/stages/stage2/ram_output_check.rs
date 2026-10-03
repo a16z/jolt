@@ -1,12 +1,3 @@
-//! The stage 2 `RamOutputCheck` sumcheck instance.
-//!
-//! Owns the RAM output-check address opening-point derivation and the
-//! `EqAddress` / `IoMask` / `ValIo` public-value computation (against the
-//! committed public IO memory), in lockstep with the BlindFold constraint's
-//! `ram::output_check` formula.
-//!
-//! The relation has no input opening; its claimed sum is the constant zero.
-
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamOutputCheckChallenges, RamOutputCheckInputClaims, RamOutputCheckOutputClaims,
@@ -42,11 +33,6 @@ impl<F: JoltField> RamOutputCheck<F> {
     }
 }
 
-/// `(EqAddress, IoMask, ValIo)` at the produced output address point — one
-/// value per derived multilinear: `eq(output_address_challenges, addr)`, the
-/// `[io_start, io_end)` range mask, and the committed public-IO value. Shared
-/// by the stage-2 clear path and the BlindFold statement builder so the
-/// algebra lives in one place.
 pub(crate) fn ram_output_check_publics<F: JoltField>(
     public_memory: &PublicIoMemory,
     output_address_challenges: &[F],
@@ -128,8 +114,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
         })
     }
 
-    /// Delegates to `super::phase1_instance_point_offset` (the phase-1 sub-point
-    /// slicing shared with `RamRafEvaluation`).
     fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
         super::phase1_instance_point_offset(self.read_write_dimensions, self.id(), batch_num_vars)
     }
@@ -176,9 +160,6 @@ mod tests {
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_field::Fr;
 
-    /// The `instance_point_offset` override must place the relation's own
-    /// rounds exactly at the batch tail, and reject batch vectors shorter
-    /// than the active stage-2 window.
     #[test]
     fn instance_point_offset_spans_the_batch_tail() {
         for (log_t, log_k, phase1, phase2) in [(4usize, 3usize, 2usize, 1usize), (6, 5, 3, 2)] {
@@ -189,8 +170,6 @@ mod tests {
             }))
             .unwrap();
             let relation = RamOutputCheck::<Fr>::new(dimensions, public_memory);
-            // The real batch has `log_t + log_k` variables (the RAM read-write
-            // leader); also probe a padded vector.
             for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {
                 let offset = relation.instance_point_offset(batch_num_vars).unwrap();
                 assert_eq!(offset + relation.rounds(), batch_num_vars);

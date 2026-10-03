@@ -1,5 +1,3 @@
-//! Univariate polynomial in coefficient form.
-
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use jolt_field::Field;
@@ -96,7 +94,6 @@ impl<F: Field> UnivariatePoly<F> {
                     .expect("interpolation points must be distinct");
                 let neg_xm = -points[m].0;
 
-                // Multiply polynomial by (x - x_m): shift up and add
                 for k in (1..=basis_len).rev() {
                     basis[k] = basis[k - 1] + basis[k] * neg_xm;
                 }
@@ -123,7 +120,6 @@ impl<F: Field> UnivariatePoly<F> {
         &self.coefficients
     }
 
-    /// Consumes the polynomial and returns the coefficient vector.
     pub fn into_coefficients(self) -> Vec<F> {
         self.coefficients
     }
@@ -317,10 +313,6 @@ impl<F: Field> UnivariatePoly<F> {
         let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
         let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
 
-        // s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = hint
-        // l(1) = l(0) + l(∞) = linear_eval_one
-        // q(1) = q(0) + q(1_coeff) + q(2_coeff)
-        // Solve for the linear coefficient of q:
         assert!(
             !linear_eval_one.is_zero(),
             "linear polynomial vanishes at x=1"
@@ -331,7 +323,6 @@ impl<F: Field> UnivariatePoly<F> {
         let quadratic_coeff_1 =
             (hint - cubic_coeff_0) * linear_eval_one_inv - quadratic_coeff_0 - quadratic_coeff_2;
 
-        // s(X) = (a + bX)(c + dX + eX^2) = ac + (ad+bc)X + (ae+bd)X^2 + beX^3
         let coefficients = vec![
             cubic_coeff_0,
             linear_coeffs[0] * quadratic_coeff_1 + linear_coeffs[1] * quadratic_coeff_0,
@@ -341,12 +332,10 @@ impl<F: Field> UnivariatePoly<F> {
         Self { coefficients }
     }
 
-    /// Returns `true` if all coefficients are zero (or the vector is empty).
     pub fn is_zero(&self) -> bool {
         self.coefficients.is_empty() || self.coefficients.iter().all(|c| *c == F::zero())
     }
 
-    /// The leading (highest-degree) coefficient, or `None` for the zero polynomial.
     pub fn leading_coefficient(&self) -> Option<&F> {
         self.coefficients.last()
     }
@@ -385,7 +374,6 @@ impl<F: Field> UnivariatePoly<F> {
                 remainder.coefficients[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
             }
 
-            // Strip trailing zeros
             while remainder
                 .coefficients
                 .last()
@@ -518,7 +506,6 @@ mod tests {
 
     #[test]
     fn horner_known_polynomial() {
-        // p(x) = 3 + 2x + x^2
         let p = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(2), Fr::from_u64(1)]);
         assert_eq!(p.evaluate(Fr::from_u64(0)), Fr::from_u64(3));
         assert_eq!(p.evaluate(Fr::from_u64(1)), Fr::from_u64(6));
@@ -559,7 +546,6 @@ mod tests {
 
     #[test]
     fn interpolate_linear() {
-        // (0, 1), (1, 3) -> p(x) = 1 + 2x
         let points = vec![
             (Fr::from_u64(0), Fr::from_u64(1)),
             (Fr::from_u64(1), Fr::from_u64(3)),
@@ -641,7 +627,6 @@ mod tests {
     fn interpolate_single_point_constant() {
         let c = Fr::from_u64(7);
         let poly = UnivariatePoly::interpolate(&[(Fr::from_u64(0), c)]);
-        // Degree-0 polynomial: evaluates to c everywhere
         assert_eq!(poly.evaluate(Fr::from_u64(0)), c);
         assert_eq!(poly.evaluate(Fr::from_u64(99)), c);
         assert_eq!(poly.degree(), 0);
@@ -649,7 +634,6 @@ mod tests {
 
     #[test]
     fn compress_then_evaluate_with_hint() {
-        // p(x) = 1 + 3x + 2x^2  =>  p(0)=1, p(1)=6
         let p = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(2)]);
         let hint = p.evaluate(Fr::zero()) + p.evaluate(Fr::one());
 
@@ -660,7 +644,6 @@ mod tests {
 
     #[test]
     fn add_polynomials() {
-        // (1 + 2x) + (3 + x + 5x^2) = 4 + 3x + 5x^2
         let a = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
         let b = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(1), Fr::from_u64(5)]);
         let sum = &a + &b;
@@ -702,7 +685,6 @@ mod tests {
 
     #[test]
     fn scalar_mul() {
-        // (1 + 2x) * 3 = 3 + 6x
         let p = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
         let scaled = &p * Fr::from_u64(3);
         assert_eq!(
@@ -723,7 +705,6 @@ mod tests {
 
     #[test]
     fn add_then_scalar_mul_pattern() {
-        // Mimics sumcheck batching: batched += &(round_poly * coeff)
         let mut batched = UnivariatePoly::<Fr>::zero();
         let poly_a = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)]);
         let poly_b = UnivariatePoly::new(vec![Fr::from_u64(4), Fr::from_u64(5), Fr::from_u64(6)]);
@@ -733,7 +714,6 @@ mod tests {
         batched += &(&poly_a * coeff_a);
         batched += &(&poly_b * coeff_b);
 
-        // 2*(1+2x+3x^2) + 3*(4+5x+6x^2) = (2+12) + (4+15)x + (6+18)x^2
         for x_val in 0..5u64 {
             let x = Fr::from_u64(x_val);
             let expected = poly_a.evaluate(x) * coeff_a + poly_b.evaluate(x) * coeff_b;
@@ -743,7 +723,6 @@ mod tests {
 
     #[test]
     fn divide_exact() {
-        // (x^2 - 1) / (x - 1) = (x + 1), remainder 0
         let dividend = UnivariatePoly::new(vec![-Fr::one(), Fr::zero(), Fr::one()]);
         let divisor = UnivariatePoly::new(vec![-Fr::one(), Fr::one()]);
         let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
@@ -753,12 +732,10 @@ mod tests {
 
     #[test]
     fn divide_with_remainder_nonzero() {
-        // (x^2 + 1) / (x - 1): quotient = x + 1, remainder = 2
         let dividend = UnivariatePoly::new(vec![Fr::one(), Fr::zero(), Fr::one()]);
         let divisor = UnivariatePoly::new(vec![-Fr::one(), Fr::one()]);
         let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
 
-        // Verify: q * divisor + r == dividend
         for x_val in 0..5u64 {
             let x = Fr::from_u64(x_val);
             assert_eq!(
@@ -776,7 +753,6 @@ mod tests {
 
     #[test]
     fn divide_by_all_zero_divisor_returns_none() {
-        // Non-canonical zero divisor: nonempty vector of zero coefficients.
         let p = UnivariatePoly::new(vec![Fr::one(), Fr::one()]);
         let divisor = UnivariatePoly::new(vec![Fr::zero(), Fr::zero()]);
         assert!(p.divide_with_remainder(&divisor).is_none());
@@ -784,7 +760,6 @@ mod tests {
 
     #[test]
     fn divide_by_divisor_with_trailing_zeros() {
-        // (x^2 + 3x + 2) / (x + 2), divisor stored non-canonically as [2, 1, 0].
         let dividend = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::from_u64(3), Fr::one()]);
         let divisor = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::one(), Fr::zero()]);
         let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
@@ -803,7 +778,6 @@ mod tests {
 
     #[test]
     fn from_evals_quadratic() {
-        // p(x) = 2x^2 + 3x + 1 → p(0)=1, p(1)=6, p(2)=15
         let evals = vec![Fr::from_u64(1), Fr::from_u64(6), Fr::from_u64(15)];
         let poly = UnivariatePoly::from_evals(&evals);
         assert_eq!(poly.coefficients[0], Fr::from_u64(1));
@@ -813,7 +787,6 @@ mod tests {
 
     #[test]
     fn from_evals_cubic() {
-        // p(x) = x^3 + 2x^2 + 3x + 1
         let evals = vec![
             Fr::from_u64(1),
             Fr::from_u64(7),
@@ -850,9 +823,6 @@ mod tests {
 
     #[test]
     fn from_evals_and_hint() {
-        // p(x) = 2x^2 + 3x + 1 → p(0)=1, p(1)=6
-        // hint = p(0) + p(1) = 7
-        // Given evals at [0, 2] = [1, 15], recover p(1) = 7 - 1 = 6
         let hint = Fr::from_u64(7);
         let evals = vec![Fr::from_u64(1), Fr::from_u64(15)];
         let poly = UnivariatePoly::from_evals_and_hint(hint, &evals);
@@ -876,7 +846,6 @@ mod tests {
 
     #[test]
     fn from_evals_toom_cubic() {
-        // p(x) = 9x^3 + 3x^2 + x + 5
         let gt_poly = UnivariatePoly::new(vec![
             Fr::from_u64(5),
             Fr::from_u64(1),
@@ -887,7 +856,6 @@ mod tests {
         let mut toom_evals: Vec<Fr> = (0..degree)
             .map(|x| gt_poly.evaluate(Fr::from_u64(x)))
             .collect();
-        // eval at ∞ = leading coefficient
         toom_evals.push(*gt_poly.coefficients().last().unwrap());
 
         let poly = UnivariatePoly::from_evals_toom(&toom_evals);
@@ -914,8 +882,6 @@ mod tests {
 
     #[test]
     fn from_linear_times_quadratic_with_hint() {
-        // s(x) = (x + 1) * (x^2 + 2x + 3) = x^3 + 3x^2 + 5x + 3
-        // hint = s(0) + s(1) = 3 + 12 = 15
         let linear_coeffs = [Fr::from_u64(1), Fr::from_u64(1)];
         let q0 = Fr::from_u64(3);
         let q2 = Fr::from_u64(1);

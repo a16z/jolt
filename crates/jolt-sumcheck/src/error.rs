@@ -1,12 +1,5 @@
-//! Error types for sumcheck protocol verification failures.
-
 use jolt_field::Field;
 
-/// Errors that can occur during sumcheck verification.
-///
-/// Each variant corresponds to a distinct failure mode in the sumcheck
-/// protocol, enabling the caller to diagnose exactly where verification
-/// diverged.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SumcheckError<F: Field> {
@@ -16,7 +9,6 @@ pub enum SumcheckError<F: Field> {
     RoundCheckFailed {
         /// Zero-indexed round number where the check failed.
         round: usize,
-        /// The expected sum.
         expected: F,
         /// The computed domain sum.
         actual: F,
@@ -47,9 +39,7 @@ pub enum SumcheckError<F: Field> {
     BatchMemberRoundsOutOfRange {
         /// Zero-indexed member position (declaration order).
         member: usize,
-        /// Round count declared for this member.
         rounds: usize,
-        /// The batch's total round count.
         max_num_vars: usize,
     },
 
@@ -62,16 +52,13 @@ pub enum SumcheckError<F: Field> {
         exponent: usize,
     },
 
-    /// A batch activation window overflowed `usize`.
     #[error(
         "batch member {member}: activation window overflow for offset {offset}, rounds {rounds}"
     )]
     BatchMemberWindowOverflow {
         /// Zero-indexed member position (declaration order).
         member: usize,
-        /// The member's activation offset.
         offset: usize,
-        /// The member's round count.
         rounds: usize,
     },
 
@@ -86,7 +73,6 @@ pub enum SumcheckError<F: Field> {
     CompressedPolynomialTooShort {
         /// Zero-indexed round number where the malformed polynomial appeared.
         round: usize,
-        /// Actual number of coefficients received.
         got: usize,
     },
 
@@ -119,7 +105,6 @@ pub enum SumcheckError<F: Field> {
         got: usize,
     },
 
-    /// A round witness did not contain any coefficients.
     #[error("round polynomial must contain at least one coefficient")]
     EmptyRoundCoefficients,
 
@@ -133,15 +118,11 @@ pub enum SumcheckError<F: Field> {
         kind: &'static str,
     },
 
-    /// A vector-commitment setup cannot commit to any values.
     #[error("vector-commitment setup has zero capacity")]
     ZeroCommitmentCapacity,
 
-    /// A round polynomial has more coefficients than the vector-commitment
-    /// setup can commit to.
     #[error("round polynomial has {coefficients} coefficients, but vector-commitment capacity is {capacity}")]
     RoundExceedsCommitmentCapacity {
-        /// Number of coefficients in the offending round polynomial.
         coefficients: usize,
         /// The vector-commitment setup's capacity.
         capacity: usize,
@@ -164,22 +145,17 @@ pub enum SumcheckError<F: Field> {
         member: usize,
         /// Round count recorded in the batch prelude.
         expected: usize,
-        /// Round count the member reports.
         got: usize,
     },
 
-    /// A batch member's activation window extends past the batch's last round.
     #[error(
         "batch member {member}: window [{offset}, {offset} + {rounds}) exceeds {max_num_vars} rounds"
     )]
     BatchMemberWindowOutOfRange {
         /// Zero-indexed member position (declaration order).
         member: usize,
-        /// The member's activation offset.
         offset: usize,
-        /// The member's round count.
         rounds: usize,
-        /// The batch's total round count.
         max_num_vars: usize,
     },
 
@@ -229,9 +205,7 @@ pub enum SumcheckError<F: Field> {
     BatchedPointOutOfRange {
         /// Starting index into the batched challenge vector.
         offset: usize,
-        /// Number of variables in the requested instance.
         num_vars: usize,
-        /// Total number of available batched challenges.
         total: usize,
     },
 }

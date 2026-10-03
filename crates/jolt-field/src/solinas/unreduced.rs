@@ -1,39 +1,9 @@
-//! Deferred-reduction backend: `i32`-lane wide accumulators, `u128`-slot
-//! product accumulators, challenge-fold matrices, and the [`Unreduced`],
-//! [`Fold`], and [`MulBaseUnreduced`] impls for every Solinas field and
-//! extension.
-//!
-//! # Accumulator semantics and headroom
-//!
-//! Product accumulators are `[u128; N]` with **wrapping** per-slot ops,
-//! i.e. the group `(Z/2^128)^N`. Reduction reads each slot as a plain
-//! integer, so a sum reduces exactly iff the *final* integer value of every
-//! slot lies in `[0, 2^128)` — intermediate dips below zero cancel exactly
-//! under wrapping, and no runtime check enforces the bound. The per-type
-//! headroom (worst-case per-term slot contribution, hence how many fmadds
-//! fit) is derived in each accumulation formula's comment.
-//!
-//! Wide accumulators are `[i32; N]` (16 data bits per lane) with
-//! **non-wrapping** ops: lane overflow panics in debug builds, which is the
-//! only runtime enforcement of the lane headroom. Splitting a canonical
-//! element gives lanes in `[0, 2^16)`, so at least
-//! `⌊(2^31 − 1) / (2^16 − 1)⌋ = 32768` same-sign accumulations (or
-//! `k` accumulations scaled by `s` with `k·|s|·(2^16 − 1) < 2^31`) fit
-//! before any lane can overflow. The same lanes stored as `[u16; N]` are the
-//! [`WithCommitAccumulator::CommitLanes`] form.
-//!
-//! The baseline's NEON intrinsic Add/Sub/Neg lane paths are dropped: LLVM
-//! auto-vectorizes the element-wise `[i32; N]` code to the identical
-//! `add.4s`/`sub.4s`/`neg.4s` (and `mul.4s` for scaling) instructions at
-//! opt-level 3 (see specs/jolt-field-rebuild.md dropped-specialization evidence).
-
 use super::{Fp128, Fp32, Fp64, FpExt2, FpExt4, FpExt8};
 use crate::{
     CanonicalEncoding, Ext2Config, ExtField, Fold, MulBaseUnreduced, PseudoMersenne, Ring,
     Unreduced, WithCommitAccumulator,
 };
 
-/// Splits a canonical value into its 16-bit digits, least significant first.
 #[inline(always)]
 fn split16<const N: usize>(v: u128) -> [u16; N] {
     std::array::from_fn(|i| (v >> (16 * i)) as u16)
@@ -81,12 +51,8 @@ macro_rules! wide_lanes {
 }
 
 wide_lanes! {
-    /// Wide unreduced accumulator for [`Fp32`]: 2 × `i32` lanes.
     Fp32x2i32: 2;
-    /// Wide unreduced accumulator for [`Fp64`]: 4 × `i32` lanes.
     Fp64x4i32: 4;
-    /// Wide unreduced accumulator for [`Fp128`]: 8 × `i32` lanes (one
-    /// 256-bit vector register on AVX2, two 128-bit on NEON).
     Fp128x8i32: 8;
 }
 
@@ -183,7 +149,6 @@ product_accum! {
     FpExt2Fp64ProductAccum: 4;
 }
 
-/// Lifts of a canonical element into its accumulator/lane shapes.
 macro_rules! impl_from {
     ($(impl[$($g:tt)*] $src:ty => $dst:ty { $x:ident => $body:expr })*) => {$(
         impl<$($g)*> From<$src> for $dst {
@@ -212,8 +177,6 @@ impl_from! {
     }
 }
 
-/// Pair accumulator for quadratic extensions: two base accumulators,
-/// component-wise.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccumPair<A>(pub A, pub A);
@@ -433,8 +396,6 @@ pub(super) fn fp_ext4_mul_to_accum_fp32<const P: u32>(
     ])
 }
 
-/// Widening `FpExt4<Fp32>` square into one `u128` slot per coefficient.
-/// This is the ten-product specialization of [`fp_ext4_mul_to_accum_fp32`].
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(super) fn fp_ext4_square_to_accum_fp32<const P: u32>(
@@ -560,15 +521,12 @@ fn fp_ext2_mul_to_accum_fp64<const P: u64, C: Ext2Config<Fp64<P>>>(
     let p10 = a[1].mul_wide(b[0]);
 
     let [c0_lo, c0_hi] = if subtract_p11 {
-        // c0 = p00 + P² − p11 (the P² bias keeps it non-negative and is
-        // invisible mod p).
         let modulus_sq = (P as u128) * (P as u128);
         let (sum, carry_add) = p00.overflowing_add(modulus_sq);
         let (diff, borrow) = sum.overflowing_sub(p11);
         let hi_carry = (carry_add as u128) - (borrow as u128);
         fp64_accum_limbs(diff, hi_carry)
     } else {
-        // c0 = p00 + 2·p11.
         let (sum1, carry1) = p00.overflowing_add(p11);
         let (sum2, carry2) = sum1.overflowing_add(p11);
         fp64_accum_limbs(sum2, (carry1 as u128) + (carry2 as u128))
@@ -584,9 +542,6 @@ fn fp_ext2_reduced_product_accum<const P: u64, C: Ext2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
     b: [Fp64<P>; 2],
 ) -> FpExt2Fp64ProductAccum {
-    // An arbitrary non-residue can make NR*p11 wider than the two-limb
-    // coefficient accumulator. Reduce this uncommon configuration first,
-    // then lift the canonical coordinates into the exact split-limb sum.
     let product = FpExt2::<Fp64<P>, C>::new(a[0], a[1]) * FpExt2::new(b[0], b[1]);
     FpExt2Fp64ProductAccum([
         product.coeffs[0].0 as u128,
@@ -649,10 +604,6 @@ impl<const P: u64, C: Ext2Config<Fp64<P>>> Unreduced for FpExt2<Fp64<P>, C> {
 
 impl<const P: u64, C: Ext2Config<Fp64<P>>> MulBaseUnreduced<Fp64<P>> for FpExt2<Fp64<P>, C> {}
 
-/// Identity-shape [`Unreduced`] for extension variants without a dedicated
-/// accumulator: every "unreduced" op reduces immediately (`Product = Self`),
-/// which is trivially exact per term — `SUM_IS_EXACT` keeps its
-/// conservative `false` so callers do not switch to batched reduction.
 macro_rules! unreduced_identity {
     (impl[$($g:tt)*] $ty:ty, base: $base:ty) => {
         impl<$($g)*> Unreduced for $ty {
@@ -696,7 +647,6 @@ unreduced_identity!(impl[const P: u64] FpExt4<Fp64<P>>, base: Fp64<P>);
 unreduced_identity!(impl[const P: u128] FpExt4<Fp128<P>>, base: Fp128<P>);
 unreduced_identity!(impl[F: PseudoMersenne] FpExt8<F>, base: F);
 
-/// Default [`Fold`]: no precomputation, one generic multiply per pair.
 macro_rules! fold_default {
     (impl[$($g:tt)*] $ty:ty) => {
         impl<$($g)*> Fold for $ty {
@@ -818,11 +768,6 @@ impl<const P: u64, C: Ext2Config<Fp64<P>>> Fold for FpExt2<Fp64<P>, C> {
         ])
     }
 
-    /// `even + r·(odd − even)`: each output coordinate is two `u64 × u64`
-    /// products with one delayed reduction
-    /// ([`fp64_reduce_sum_of_two_products`]) — schoolbook with 2 reductions
-    /// versus the generic Karatsuba's 3. Canonical, hence byte-identical to
-    /// the generic fold.
     #[inline]
     fn fold_one(ctx: &FoldMatrixFp64, even: Self, odd: Self) -> Self {
         let m = &ctx.0;

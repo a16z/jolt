@@ -1,9 +1,3 @@
-//! End-to-end pipeline over the prover-side assignment API:
-//! `BlindFoldProtocol::assign_witness` → `jolt_blindfold::prove` →
-//! `BlindFoldProtocol::verify`, cross-validating the crate's own prover
-//! against the verifier on witnesses assembled from committed sumcheck data
-//! and the protocol's public parts alone.
-
 #![expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 
 mod support;
@@ -41,9 +35,6 @@ const STAGE_DOMAINS: [SumcheckDomainSpec; 2] = [
     SumcheckDomainSpec::BooleanHypercube,
 ];
 
-/// The two-stage committed pipeline of the proof tests, rebuilt through the
-/// public builder: constant claim expressions, one final opening bound to
-/// the first output claim.
 fn assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
     let setup = pedersen_setup(4);
     let statement1 = SumcheckStatement::new(3, 3);
@@ -117,11 +108,6 @@ fn assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
     }
 }
 
-/// A product-bearing variant of [`assignment_fixture`]: stage 2's input
-/// claim is the product of two stage-1 output-claim openings, so the claim
-/// lowering allocates a product auxiliary and `assign_witness` must solve it
-/// (the constant-claim fixture above lowers to purely linear constraints and
-/// never exercises the solver).
 fn product_assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
     let setup = pedersen_setup(4);
     let statement1 = SumcheckStatement::new(3, 3);
@@ -133,8 +119,6 @@ fn product_assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
         let stage1 =
             prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
-        // Stage 2 opens on the product of two stage-1 output-claim entries —
-        // the claim-binding shape that forces a product auxiliary.
         let input2 = stage1.output_claim_rows[0][0] * stage1.output_claim_rows[0][1];
         let stage2 =
             prover.prove_stage_with_output_claims(&setup, &mut transcript, statement2, input2, 1);
@@ -251,8 +235,6 @@ fn product_auxiliaries_solve_and_prove_through_the_real_prover() {
     let fixture = product_assignment_fixture(&mut rng);
     let stage_refs: Vec<&CommittedSumcheckWitness<F>> = fixture.stage_witnesses.iter().collect();
 
-    // The point of the fixture: the claim lowering allocated at least one
-    // product auxiliary, so `assign_witness` runs the solver.
     assert!(fixture.protocol.dimensions.auxiliary_values > 0);
 
     let assigned = fixture
@@ -369,7 +351,6 @@ fn assign_witness_rejects_output_claim_blinding_count_mismatch() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AF);
     let fixture = assignment_fixture(&mut rng);
     let mut extended = fixture.stage_witnesses.clone();
-    // A surplus blind is the silent-truncation direction of the old bug.
     let surplus = extended[0]
         .output_claim_blindings
         .first()
@@ -395,11 +376,6 @@ fn assign_witness_rejects_output_claim_blinding_count_mismatch() {
     ));
 }
 
-/// The final-opening rows are opened at fixed coordinates, so the proof
-/// publishes their real-instance commitments together with the folded
-/// opening blindings. Unblinding a real row with the published folded
-/// blinding must not recover a deterministic commitment to the hidden
-/// evaluation or to its Dory blinding.
 #[test]
 fn final_opening_rows_stay_hidden_from_public_proof_data() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AC);

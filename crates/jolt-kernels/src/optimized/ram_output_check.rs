@@ -64,7 +64,6 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             });
         }
 
-        // The public-IO tables, exactly as the reference builds them.
         let public_memory = relation.public_memory();
         let addresses = 1usize << ram_log_k;
         let mut val_io = unsafe_allocate_zero_vec(addresses);
@@ -110,8 +109,6 @@ struct OutputCheckKernel<F: JoltField> {
     bind_scratch: Vec<F>,
 }
 impl<F: JoltField> OutputCheckKernel<F> {
-    /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
-    /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
         &self,
         round: usize,
@@ -202,9 +199,6 @@ impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
         })
     }
 
-    /// Pin the three derived leaves to the verifier's scalar path: the bound
-    /// Gruen scalar is the `EqAddress` value, the bound mask/io tables the
-    /// other two.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -246,10 +240,6 @@ mod tests {
     use super::*;
     use crate::ReferenceBackend;
 
-    /// A witness plane whose `RamValFinal` is nontrivial on both sides of the
-    /// IO-mask boundary: real inputs/outputs (the oracle synthesizes the IO
-    /// region from the device, so `val_final = val_io` there by construction)
-    /// plus a final-memory image carrying post-execution DRAM bytes.
     fn with_output_check_plane<R>(
         log_t: usize,
         ram_k: usize,
@@ -293,9 +283,6 @@ mod tests {
             max_padded_trace_length: 1 << log_t,
         });
         let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
-        // Post-execution DRAM bytes (outside the IO mask): nonzero
-        // `val_final − val_io` there keeps the later round polynomials
-        // nontrivial while the Boolean-point sum stays zero.
         let final_memory = MemoryImage {
             bytes: vec![
                 (RAM_START_ADDRESS, 0xAB),
@@ -336,8 +323,6 @@ mod tests {
                 let claims = RamOutputCheckInputClaims::<Fr>::default();
                 let points = RamOutputCheckInputClaims::<Vec<Fr>>::default();
 
-                // Fixture guard: the DRAM image must reach `val_final` (a zero
-                // table would make parity vacuous).
                 let val_final = dense_view::<Fr>(witness, ram_val_final()).unwrap();
                 assert_ne!(val_final[8], Fr::from_u64(0), "degenerate DRAM fixture");
 

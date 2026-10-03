@@ -177,11 +177,6 @@ pub extern "sysv64" fn assert_failed(state: *mut GuestState, code: u64, value: u
     fail(state, host, message)
 }
 
-/// Guest-state view handed to registered inline advice builders.
-///
-/// The same `build_advice` functions the interpreter uses run unchanged here
-/// (the seam's purpose): reads go to this backend's register array and memory
-/// plane instead of the interpreter's `Cpu`.
 struct GuestAdviceContext<'a> {
     state: &'a mut GuestState,
     host: &'a HostContext,
@@ -235,7 +230,6 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
             // One advice value per group; formulas mirror the tracer's
             // per-variant `trace` implementations (div.rs, rem.rs, …).
             let quotient = match code {
-                // DIV: signed quotient
                 0 => {
                     if y == 0 {
                         u64::MAX
@@ -245,7 +239,6 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                         (x / y) as u64
                     }
                 }
-                // REM: quotient magnitude
                 1 => {
                     if y == 0 {
                         0
@@ -255,8 +248,6 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                         (x / y).unsigned_abs()
                     }
                 }
-                // DIVW: 32-bit signed quotient, sign-extended
-                // (except the overflow case, zero-extended 0x8000_0000)
                 2 => {
                     let x = x as i32;
                     let y = y as i32;
@@ -268,7 +259,6 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                         (x / y) as u64
                     }
                 }
-                // REMW: 32-bit quotient magnitude, zero-extended
                 3 => {
                     let x = x as i32;
                     let y = y as i32;
@@ -280,9 +270,7 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
                         u64::from((x / y).unsigned_abs())
                     }
                 }
-                // DIVU / REMU
                 4 => (x as u64).checked_div(y as u64).unwrap_or(u64::MAX),
-                // DIVUW / REMUW: 32-bit, zero-extended
                 _ => {
                     let x = x as u32;
                     let y = y as u32;

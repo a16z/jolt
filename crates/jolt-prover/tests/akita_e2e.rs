@@ -1,7 +1,3 @@
-//! End-to-end coverage for the modular Akita prover and verifier: the
-//! mode-specific checks (tampering, forced one-hot sizes, committed programs,
-//! trace-order rejection). Plain acceptance across guests is `e2e_matrix.rs`.
-
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "akita",
@@ -322,7 +318,6 @@ mod akita_tests {
         };
         verify(&proof).expect("committed Akita proof must verify");
 
-        // A mutated direct bytecode claim breaks the grouped opening.
         let mut tampered = proof;
         let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
             panic!("Akita proofs carry clear claims");

@@ -250,7 +250,6 @@ fn read_folded_files(prefix: &str) -> BTreeMap<String, String> {
     snapshots
 }
 
-/// Run identity threaded into [`RunMetadata`] by the profile harness.
 #[derive(Clone, Debug)]
 pub struct SummaryContext {
     pub workload: String,
@@ -258,7 +257,6 @@ pub struct SummaryContext {
     pub backend: String,
 }
 
-/// The `memory_gib` counter name both peak-memory metrics sample.
 const MEMORY_COUNTER: &str = "memory_gib";
 
 /// Rewrites every event carrying `counters.*` args into one chrome counter
@@ -300,12 +298,8 @@ fn json_f64(value: &Value) -> Option<f64> {
     }
 }
 
-/// Extracts `counters.*` args from an event, prefix stripped. `None` when
-/// the event carries no counter fields (i.e. it is not a monitor sample).
 fn counter_samples(event: &Value) -> Option<Vec<(String, f64)>> {
     let obj = event.as_object()?;
-    // Span begin/end and metadata events never carry counter fields; only
-    // instant events (the monitor's `tracing::debug!` samples) do.
     match obj.get("ph").and_then(Value::as_str) {
         Some("i" | "I") => {}
         _ => return None,
@@ -321,14 +315,12 @@ fn counter_samples(event: &Value) -> Option<Vec<(String, f64)>> {
     (!samples.is_empty()).then_some(samples)
 }
 
-/// One thread's currently open span during the stack replay.
 struct OpenSpan {
     name: String,
     start_us: f64,
     child_us: f64,
 }
 
-/// Half-open microsecond interval of one closed span instance.
 #[derive(Clone, Copy)]
 pub(crate) struct Interval {
     pub(crate) start_us: f64,
@@ -353,23 +345,14 @@ fn us_to_ns(us: f64) -> u64 {
     }
 }
 
-/// Everything [`build_summary`] (and the memory-timeline viz) needs from
-/// one replay of the event stream.
 pub(crate) struct TraceAggregate {
     pub(crate) spans: BTreeMap<String, SpanAggregate>,
     pub(crate) root: Option<(Interval, u64)>,
     pub(crate) stage_intervals: Vec<(String, Interval)>,
     pub(crate) counter_points: BTreeMap<String, Vec<(f64, f64)>>,
-    /// `heap_snapshot` instant events: snapshot label → absolute trace µs.
     pub(crate) snapshot_instants: Vec<(String, f64)>,
 }
 
-/// Replays the chrome events through per-thread span stacks, producing
-/// per-label aggregates, the root/stage intervals, and counter samples.
-///
-/// Accepts both raw (`counters.*` instant events) and converted (`"ph": "C"`)
-/// counter encodings, so it can run before or after
-/// [`convert_counter_events`].
 pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggregate {
     let mut stacks: HashMap<u64, Vec<OpenSpan>> = HashMap::new();
     let mut spans: BTreeMap<String, SpanAggregate> = BTreeMap::new();
@@ -428,7 +411,6 @@ pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggreg
                 entry.self_ns += us_to_ns(self_us);
 
                 if open.name == root_span {
-                    // Keep the longest instance if the label somehow repeats.
                     let dark_ns = us_to_ns(self_us);
                     if root.is_none_or(|(prev, _)| interval.duration_ns() > prev.duration_ns()) {
                         root = Some((interval, dark_ns));
@@ -504,9 +486,6 @@ pub fn build_summary(
     let aggregate = aggregate_events(events, taxonomy::ROOT_SPAN);
     let memory_points = aggregate.counter_points.get(MEMORY_COUNTER);
 
-    // Situate the allocative snapshots on the trace clock: join the
-    // driver's `heap_snapshot` instant events by label, as ns since the
-    // root span opened.
     if let Some((root_interval, _)) = aggregate.root {
         for (label, ts_us) in &aggregate.snapshot_instants {
             if let Some(snapshot) = heap.get_mut(label) {
@@ -530,8 +509,6 @@ pub fn build_summary(
         }
     });
 
-    // Pipeline order per the taxonomy, then unknown prove_stage* labels in
-    // first-seen order.
     let mut ordered: Vec<(String, Interval)> = Vec::with_capacity(aggregate.stage_intervals.len());
     for stage in taxonomy::STAGE_SPANS {
         ordered.extend(
@@ -619,7 +596,6 @@ pub fn build_summary(
     }
 }
 
-/// Parses a chrome trace file (bare event array or `{"traceEvents": [...]}`).
 fn read_events(path: &Path) -> Result<Vec<Value>, SummaryError> {
     let data = std::fs::read_to_string(path).map_err(|source| SummaryError::ReadTrace {
         path: path.to_path_buf(),
@@ -691,9 +667,6 @@ pub fn finalize_trace(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default();
-    // Heap attribution from the allocative lane's mid-stage snapshots, if
-    // the harness opted in (prefix set + .folded twins on disk). The raw
-    // folded text is kept for the memory-timeline viz's icicles.
     #[cfg(feature = "allocative")]
     let folded_files = crate::flamegraph::flamegraph_prefix()
         .map(read_folded_files)
@@ -719,9 +692,6 @@ pub fn finalize_trace(
     let summary_json = serde_json::to_string_pretty(&summary)?;
     write_atomic(&out_path, &summary_json)?;
 
-    // The memory-timeline companion (`memory.html`): only
-    // meaningful when the allocative lane produced snapshots and the trace
-    // has a root span to anchor time.
     if !summary.heap.is_empty() && summary.root.is_some() {
         let aggregate = aggregate_events(&events, taxonomy::ROOT_SPAN);
         let _ =
@@ -730,7 +700,6 @@ pub fn finalize_trace(
     Ok((out_path, summary))
 }
 
-/// Short git revision of the working directory, if resolvable.
 fn git_rev() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])

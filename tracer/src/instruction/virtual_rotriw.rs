@@ -7,7 +7,6 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{RISCVInstruction, RISCVTrace};
 
-// Note, unlike ROTIW from Zbb extension of RiscV, ROTRIW does not sign extend the result
 declare_riscv_instr!(
     name = VirtualROTRIW,
     mask = 0,
@@ -19,10 +18,8 @@ declare_riscv_instr!(
 
 impl VirtualROTRIW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRIW as RISCVInstruction>::RAMAccess) {
-        // Extract rotation amount from bitmask: trailing zeros = rotation amount
         let shift = self.operands.imm.trailing_zeros().min(XLEN as u32 / 2);
 
-        // Rotate right by `shift` in lower 32bits width (matches ROTRI semantics)
         let val = cpu.x[self.operands.rs1 as usize] as u64 as u32;
         let rotated = val.rotate_right(shift);
 

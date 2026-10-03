@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-// The point error is protocol-neutral (field_inline geometry raises it too), so
-// it lives in the crate's framework half; re-exported here at its historical path.
 pub use crate::formula_error::PointGeometryError;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
@@ -52,8 +50,6 @@ pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), PointG
     Ok(())
 }
 
-/// [`require_len`] with the opening-point flavored error, for inputs that are
-/// opening points rather than challenge vectors.
 pub(crate) fn require_opening_point_len<F>(
     values: &[F],
     expected: usize,

@@ -162,9 +162,6 @@ fn committed_table(
     )
 }
 
-/// Recovers the per-cycle hot addresses from a flat address-major `(K x T)`
-/// one-hot grid, asserting every entry is 0 or 1 and every cycle has at most
-/// one hot address (`None` is a cold cycle).
 fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
     assert!(table.len().is_multiple_of(cycles));
     let addresses = table.len() / cycles;
@@ -399,8 +396,6 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     assert_virtual_values(&witness, JoltVirtualPolynomial::Product, &[15, 0, 0, 0])?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::LookupOutput, &[8, 0, 0, 0])?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::PC, &[1, 2, 0, 0])?;
-    // The last cycle's missing successor counts as a no-op (the
-    // product/shift-family convention; see the trace materialization).
     assert_virtual_values(&witness, JoltVirtualPolynomial::NextIsNoop, &[0, 1, 1, 1])?;
     assert_virtual_values(
         &witness,
@@ -754,7 +749,6 @@ fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
         RamReadValue::extract(&ram_row, Some(&next), &env),
         Ok(RamReadValue(7))
     );
-    // Reads write back the read value.
     assert_eq!(
         RamWriteValue::extract(&ram_row, Some(&next), &env),
         Ok(RamWriteValue(7))
@@ -792,8 +786,6 @@ fn lookahead_witnesses_pad_the_final_cycle() {
     .unwrap();
     let noop_next = JoltTraceRow::default();
 
-    // A missing successor counts as a no-op for the shift family, exactly
-    // like a present no-op successor.
     assert_eq!(NextIsNoop::extract(&row, None, &env), Ok(NextIsNoop(true)));
     assert_eq!(
         NextIsNoop::extract(&row, Some(&noop_next), &env),
@@ -807,10 +799,6 @@ fn lookahead_witnesses_pad_the_final_cycle() {
         crate::witnesses::NextUnexpandedPc::extract(&row, None, &env),
         Ok(crate::witnesses::NextUnexpandedPc(0))
     );
-    // ShouldJump suppresses the jump only for a PRESENT no-op successor: a
-    // missing successor does not count as a no-op here (ADDI has no jump
-    // flag, so both are false; the semantics are pinned by the oracle-table
-    // assertions on real traces).
     assert_eq!(ShouldJump::extract(&row, None, &env), Ok(ShouldJump(false)));
 }
 
@@ -1161,7 +1149,6 @@ fn excluded_ids_report_their_classification() {
     }
 }
 
-/// [`OwnedTrace`] with its slice accessor hidden.
 #[derive(Clone)]
 struct IteratorOnlyTrace(OwnedTrace);
 
@@ -1214,11 +1201,6 @@ fn backend_drops_only_canonical_trailing_padding() {
     );
 }
 
-/// The dense-grid capacity formula: in-range shapes pass through, the
-/// profiling-scale shape that used to abort the process (`ram_K = 4096`,
-/// `log_T = 22`, 32-byte field: a 2^39-byte request) is refused with an
-/// actionable error, and the element/byte products refuse on overflow
-/// instead of wrapping.
 #[test]
 fn dense_grid_len_is_capped_and_overflow_checked() {
     assert_eq!(checked_dense_grid_len::<Fr>(4096, 1 << 10), Ok(4096 << 10));

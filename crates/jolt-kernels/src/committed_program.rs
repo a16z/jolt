@@ -41,7 +41,6 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
     InstructionFlags::IsNoop,
 ];
 
-/// The sparse `(lane, value)` encoding of one committed bytecode row.
 fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
@@ -87,8 +86,6 @@ fn for_each_active_lane_value<F: JoltField>(
     }
 }
 
-/// Build the per-chunk committed bytecode coefficient grids, interleaved by
-/// the proof's trace order.
 #[tracing::instrument(skip_all, name = "build_committed_bytecode_chunk_coeffs")]
 pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     instructions: &[JoltInstructionRow],
@@ -132,8 +129,6 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     Ok(chunk_coeffs)
 }
 
-/// The `(lane, cycle)` coordinates of a chunk-grid index in the given trace
-/// order — the pairing the reduction's lane-weight/eq template walks.
 pub fn chunk_index_to_lane_cycle(
     index: usize,
     chunk_cycle_len: usize,
@@ -151,7 +146,6 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     words
 }
 
-/// Sanity re-export target: the lane total the layout must fit.
 pub const fn committed_total_lanes() -> usize {
     total_lanes()
 }

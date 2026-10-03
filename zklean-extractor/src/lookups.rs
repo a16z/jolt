@@ -6,9 +6,6 @@ use crate::{
     DefaultMleAst,
 };
 
-/// Wrapper around a JoltInstructionRowData
-// TODO: Can we tie the XLEN to the JoltParameterSet somehow? Seem hard w/o const generic
-// exprs...
 #[derive(Debug, Clone)]
 pub struct ZkLeanLookupTable<const XLEN: usize> {
     pub lookup_table: LookupTableKind<XLEN>,
@@ -22,7 +19,6 @@ impl<const XLEN: usize> From<LookupTableKind<XLEN>> for ZkLeanLookupTable<XLEN> 
     }
 }
 
-/// This structure is merely here to gather all the information needed for displaying a MLE.
 struct DisplayZkLean<F: ZkLeanReprField> {
     mle: F,
     name: String,
@@ -54,7 +50,6 @@ impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
         LookupTableKind::<XLEN>::iter().map(Self::from)
     }
 
-    /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
     pub fn zklean_pretty_print<F: ZkLeanReprField>(
         &self,
         f: &mut impl std::io::Write,

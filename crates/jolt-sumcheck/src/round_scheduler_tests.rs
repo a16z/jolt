@@ -1,6 +1,3 @@
-//! RoundScheduler seam: reorder must leave proof bytes unchanged; skipping an
-//! active member must be reported, not folded as padding.
-
 #![expect(
     clippy::unwrap_used,
     reason = "tests use unwrap on fallible prove paths under assertion"

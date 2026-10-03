@@ -1,23 +1,3 @@
-//! The ZK proof tail: BlindFold over the committed stage proofs.
-//!
-//! The prover does not mirror the verifier's protocol lowering — it *runs*
-//! it, strictly through `jolt-verifier`'s existing public verification
-//! surface. After stage 8 it assembles a shell proof (every wire field real,
-//! the claims slot a unit placeholder) and replays it through the verifier's
-//! own stage functions — `validate_and_seed_transcript`, `stage1::verify` …
-//! `stage8::verify` — to obtain the per-stage ZK outputs and a transcript
-//! positioned exactly where the verifier's will be, then lowers them with
-//! the verifier's own `stages::zk::blindfold::build`. The `BlindFoldProtocol`
-//! the prover proves against is therefore the same code path the verifier
-//! executes — a claim-formula change that updates the verifier's lowering is
-//! picked up here automatically — and the replay doubles as a full
-//! self-check of the assembled proof.
-//!
-//! The witness rows come from the recorder-retained per-stage secrets via
-//! [`BlindFoldProtocol::assign_witness`], which needs only the protocol's
-//! public parts plus the stage domains — protocol constants this crate's own
-//! stage recipes prove over.
-
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
@@ -90,16 +70,11 @@ const STAGE_DOMAINS: [SumcheckDomainSpec; 10] = [
     SumcheckDomainSpec::BooleanHypercube,
 ];
 
-/// The stage-8 hiding-opening secrets: the joint evaluation committed inside
-/// the PCS's hiding evaluation commitment and its blind.
 pub(crate) struct ZkFinalOpening<F> {
     pub joint_evaluation: F,
     pub evaluation_blind: F,
 }
 
-/// Prove the BlindFold tail for `shell` (the assembled proof with a unit
-/// claims placeholder). `forward_state` is the prover's own transcript state
-/// at the stage-8 boundary — the replay must land on the same bytes.
 pub(crate) fn prove_blindfold<F, PCS, VC, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -167,10 +142,6 @@ where
     Ok(proof)
 }
 
-/// Replay the shell through the verifier's public stage spine and lower the
-/// ZK outputs into the BlindFold protocol — the same call sequence
-/// `jolt_verifier::verify` runs before its BlindFold tail, expressed against
-/// the same public surface its ZK audit harness uses.
 #[expect(
     clippy::type_complexity,
     reason = "the pair is the protocol plus the transcript it was lowered on"
@@ -290,7 +261,6 @@ where
 mod tests {
     use super::*;
 
-    /// The stage table follows the composed geometry, including field-inline lanes when enabled.
     #[test]
     fn stage_domains_use_the_composed_uniskip_constants() {
         use jolt_claims::protocols::jolt::geometry::dimensions::{

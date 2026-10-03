@@ -1,5 +1,3 @@
-//! Spartan outer remainder symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use jolt_riscv::CircuitFlags;
 use serde::{Deserialize, Serialize};
@@ -148,9 +146,6 @@ impl OuterRemainder {
     /// The ordinary Az/Bz linear forms, including their affine terms.
     /// Composed relations extend these with their additional columns.
     pub fn output_factor_expressions<F: Ring>(&self) -> (JoltExpr<F>, JoltExpr<F>) {
-        // The factored quadratic form `tau_kernel · Az · Bz` with each linear
-        // form expanded over its per-column weights — every derived leaf one
-        // multilinear (the weights are linear in the stream variable).
         let mut az = JoltExpr::zero();
         let mut bz = JoltExpr::zero();
         for (index, variable) in self.shape.variables().iter().copied().enumerate() {
@@ -213,12 +208,6 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_riscv::CIRCUIT_FLAGS;
 
-    /// The expanded `output_expression` reproduces the factored quadratic form
-    /// `tau_kernel * (Σ az[i] o[i] + az_c) * (Σ bz[i] o[i] + bz_c)` when fed the
-    /// `public_coefficients` expansion of those linear forms. This is the same
-    /// expansion `JoltSpartanOuterRemainder::public_coefficients` produces and the
-    /// verifier's `derive_output_term` resolves against; equality with the factored
-    /// form is the invariant the clear stage-1 path relies on.
     #[test]
     fn output_expression_matches_factored_quadratic_form() {
         let dimensions = match SpartanOuterDimensions::new(
@@ -263,10 +252,6 @@ mod tests {
         assert_eq!(output, tau_kernel * az_form * bz_form);
     }
 
-    /// Pins the circuit-flag coverage of the outer-remainder output claims: every
-    /// `CircuitFlags` variant has a field (a newly added flag missing its field
-    /// would leave an R1CS input opening unresolvable — and desynchronize the
-    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` append order this struct encodes).
     #[test]
     fn output_claims_cover_circuit_flags() {
         let claims = OuterRemainderOutputClaims::<Fr>::default();

@@ -24,7 +24,6 @@ use tracing_subscriber::Layer;
 use crate::taxonomy::ROOT_SPAN;
 use crate::units::{format_memory_size, BYTES_PER_GIB};
 
-/// One tracked span's RSS at open, parked in the span's extensions.
 #[derive(Clone, Copy)]
 struct RssAtOpen(u64);
 
@@ -36,13 +35,8 @@ pub struct StageMemoryRow {
     pub rss_close_bytes: u64,
 }
 
-/// Cap on retained rows: a prove records ~11 rows, so this covers ~90
-/// undrained proves while bounding the global log in a long-lived process
-/// that installs the layer but never calls [`take_stage_memory_rows`].
 const MAX_STAGE_MEMORY_ROWS: usize = 1024;
 
-/// The global row log plus a saturation marker, so overflow warns once per
-/// drain instead of per dropped row.
 struct RowLog {
     rows: Vec<StageMemoryRow>,
     warned_full: bool,
@@ -53,7 +47,6 @@ static STAGE_MEMORY_ROWS: Mutex<RowLog> = Mutex::new(RowLog {
     warned_full: false,
 });
 
-/// The stage spans worth boundary-sampling.
 fn tracked(name: &str) -> bool {
     name.starts_with("prove_stage") || name == ROOT_SPAN
 }
@@ -92,8 +85,6 @@ where
             rss_open_bytes,
             rss_close_bytes: stats.physical_mem as u64,
         };
-        // An instant event for the Chrome/Perfetto trace, anchoring the
-        // boundary RSS next to the stage's slice.
         tracing::info!(
             stage = row.stage,
             rss_open_gib = row.rss_open_bytes as f64 / BYTES_PER_GIB,

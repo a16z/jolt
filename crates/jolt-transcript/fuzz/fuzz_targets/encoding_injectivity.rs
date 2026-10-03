@@ -21,7 +21,7 @@ fn parse_chunks(data: &[u8]) -> Vec<&[u8]> {
     let mut chunks = Vec::new();
     let mut cursor = 0;
     while cursor < data.len() && chunks.len() < MAX_CHUNKS {
-        let len = data[cursor] as usize % 33; // 0..=32 bytes
+        let len = data[cursor] as usize % 33;
         cursor += 1;
         if cursor + len > data.len() {
             break;
@@ -55,16 +55,12 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    // Morph one boundary: split a chunk in two. The concatenated payload
-    // bytes are identical; only the chunk structure differs.
     let index = split_chunk % original.len();
     if original[index].is_empty() {
         return;
     }
     let position = 1 + split_at % original[index].len();
     if position >= original[index].len() {
-        // Splitting at the end appends an extra empty-chunk frame rather than
-        // moving a payload boundary; that is outside this harness's morph class.
         return;
     }
     let mut morphed = original.clone();

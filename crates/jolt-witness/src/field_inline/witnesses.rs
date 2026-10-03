@@ -38,8 +38,6 @@ pub struct FieldInvProduct<F>(pub F);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FieldRdInc<F>(pub F);
 
-/// Unwraps an atomic field-inline witness into its field value — the
-/// oracle-table boundary, like the scalar witnesses' `ToField`.
 pub trait FieldValue<F> {
     fn value(self) -> F;
 }

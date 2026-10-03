@@ -1,9 +1,3 @@
-//! Bridges the `jolt-transcript` framework into dory-pcs's `DoryTranscript` trait.
-//!
-//! Prover/verifier parity within `jolt-dory` is by construction: both sides
-//! traverse this adapter. The surrounding Jolt transcript is responsible for
-//! matching the core Fiat-Shamir byte layout before this adapter is entered.
-
 use dory::backends::arkworks::BN254;
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::transcript::Transcript as DoryTranscript;
@@ -117,8 +111,6 @@ mod tests {
         Blake2bTranscript::new(b"dory-adapter-framing")
     }
 
-    /// `ArkFr` in scope is a type alias, which cannot be used in constructor
-    /// position; this builds the dory wrapper explicitly.
     fn dory_ark_fr(inner: ArkBn254Fr) -> ArkFr {
         DoryArkFr(inner)
     }
@@ -135,15 +127,11 @@ mod tests {
         expected.append_bytes(&payload);
         assert_eq!(actual.state(), expected.state());
 
-        // The count is load-bearing: the same payload under a wrong count
-        // must diverge, otherwise the golden comparison proves nothing.
         let mut wrong_count = transcript();
         wrong_count.append_bytes(&label_with_count_word(b"dory_bytes", 4));
         wrong_count.append_bytes(&payload);
         assert_ne!(actual.state(), wrong_count.state());
 
-        // Word and payload are separate absorptions, not one concatenated
-        // buffer (the sponge length-prefixes each `append_bytes` call).
         let mut merged = transcript();
         let mut buffer = label_with_count_word(b"dory_bytes", 5).to_vec();
         buffer.extend_from_slice(&payload);
@@ -159,8 +147,6 @@ mod tests {
             &dory_ark_fr(ArkBn254Fr::from(0xdead_beefu64)),
         );
 
-        // Fr absorbs as its 32-byte big-endian canonical form: 24 zero bytes
-        // then the value, reconstructed here without CanonicalBytes.
         let mut scalar_be = [0u8; 32];
         scalar_be[24..].copy_from_slice(&0xdead_beefu64.to_be_bytes());
 
@@ -169,7 +155,6 @@ mod tests {
         expected.append_bytes(&scalar_be);
         assert_eq!(actual.state(), expected.state());
 
-        // Little-endian absorption would be an invisible-to-roundtrip bug.
         let mut little_endian = transcript();
         let mut scalar_le = [0u8; 32];
         scalar_le[..8].copy_from_slice(&0xdead_beefu64.to_le_bytes());
@@ -185,8 +170,6 @@ mod tests {
         let mut actual = transcript();
         JoltToDoryTranscript::new(&mut actual).append_group(b"caller-label", &generator);
 
-        // Payload reconstructed via arkworks compressed serialization of the
-        // inner point; the adapter's framing is the labeled count word.
         let mut payload = Vec::new();
         generator
             .0
@@ -220,8 +203,6 @@ mod tests {
         assert_eq!(actual.state(), expected.state());
     }
 
-    /// Domain separation comes from the fixed `dory_*` labels; the caller's
-    /// dory-side label is deliberately dropped by the adapter.
     #[test]
     fn caller_labels_do_not_reach_the_transcript() {
         let payload = [1u8, 2, 3];
@@ -236,10 +217,6 @@ mod tests {
         assert_ne!(first.state(), transcript().state());
     }
 
-    /// The adapter's challenge is the Jolt transcript's scalar challenge,
-    /// converted — so after identical absorptions both sides must squeeze the
-    /// same scalar, and the adapter's state advances exactly like the direct
-    /// transcript's.
     #[test]
     fn challenge_scalar_matches_underlying_jolt_transcript() {
         let mut adapted = transcript();
@@ -256,8 +233,6 @@ mod tests {
         assert_ne!(adapter_challenge, dory_ark_fr(ArkBn254Fr::from(0u64)));
         assert_eq!(adapted.state(), direct.state());
 
-        // Fr conversion sanity: the transmute-based bridge is the identity on
-        // canonical values.
         assert_eq!(
             jolt_fr_to_ark(&Fr::from_u64(7)),
             dory_ark_fr(ArkBn254Fr::from(7u64)),

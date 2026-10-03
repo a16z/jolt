@@ -46,12 +46,6 @@ use crate::{
     VerifierError,
 };
 
-/// Assemble the stage-4 consumed opening *values* from the upstream outputs into the generated
-/// `Stage4InputClaims` aggregate. This is the single place the stage's Outputs→Inputs dataflow
-/// is expressed: the register read-write inputs come from stage 3's registers claim-reduction,
-/// the field-register read-write inputs (under `field-inline`) from stage 2's field-inline
-/// claim-reduction, and the RAM value-check inputs come from stage 2's RAM `val`/`val_final`
-/// plus the reconstructed `Val_init` decomposition (advice / program-image contributions).
 pub fn stage4_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
@@ -65,10 +59,6 @@ pub fn stage4_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Assemble the stage-4 consumed opening *points* from the upstream output-points
-/// aggregates and the pre-branch init structure. ZK-agnostic: both the clear and
-/// ZK upstream outputs expose these, so the same wiring builds the input points in
-/// either mode.
 pub fn stage4_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage3: &Stage3OutputPoints<F>,
@@ -138,9 +128,6 @@ where
 
     let ram_val_check_public_eval =
         public_initial_ram_evaluation(checked, preprocessing, r_address)?;
-    // The mode-agnostic init structure (public eval + contribution selectors and
-    // staged points); the clear arm attaches the claimed opening values below. Its
-    // decomposition must stay in lockstep with the prover's and BlindFold's.
     let init_structure = ram_val_check_init_structure(
         checked,
         proof.untrusted_advice_commitment.is_some(),
@@ -161,10 +148,6 @@ where
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
 
-    // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
-    // the field-register read-write gamma (each a single `challenge_scalar`), then the RAM
-    // value-check gamma behind its `b"ram_val_check_gamma"` domain separator (the relation's
-    // `draw_challenges` override replays the separator at its exact transcript position).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {
@@ -172,10 +155,6 @@ where
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
         sumchecks.validate_output_claims(claims)?;
-        // Attaches the claimed advice / program-image opening values (consumed by the
-        // input wiring and carried downstream for the stage-6/7 address-phase
-        // reductions); presence against the init structure is validated by the
-        // generated `validate_output_claims` above and re-checked here.
         let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, claims)?;
 
         let input_values = stage4_input_values_from_upstream(
@@ -218,10 +197,6 @@ where
             JoltRelationId::RegistersReadWriteChecking,
         )?;
 
-        // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points and init structure. Advice / program-image openings live in
-        // BlindFold for ZK proofs, so `derive_opening_points` leaves those leaves
-        // absent in the produced points.
         let input_points = stage4_input_points_from_upstream(
             stage2.batch_output_points(),
             stage3.output_points(),
@@ -303,9 +278,6 @@ mod tests {
 
     use super::validate_segments_in_domain;
 
-    /// Regression: `start + len` computed with wrapping arithmetic would fold
-    /// a `start_index` near `u128::MAX` back into `[0, ram_K)` and admit an
-    /// out-of-domain segment; the checked form must reject it.
     #[test]
     #[expect(non_snake_case, reason = "ram_K is the codebase's math-variable name")]
     fn segment_domain_check_rejects_wrapping_start_index() {

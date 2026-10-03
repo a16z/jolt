@@ -93,7 +93,6 @@ mod canonical_address_tests {
         assert_eq!(C, u128::MAX - P + 1);
         assert_eq!(C, 4_294_944_759);
 
-        // (1) every representable alias has an all-ones upper half
         for r in [0u128, 1, 2, C / 2, C - 2, C - 1] {
             let alias = P + r;
             assert_eq!(alias % P, r, "alias for r={r} is not congruent to r");
@@ -102,18 +101,13 @@ mod canonical_address_tests {
                 "alias for r={r} escapes the predicate"
             );
         }
-        // r = c is the first value whose alias overflows 2^128, i.e. is not
-        // representable as a committed address at all.
         assert!(P.checked_add(C).is_none());
 
-        // (2) surviving addresses are canonical: !U(k) => k < p (see the
-        // compile-time assertion above for the inequality itself).
         assert!(!upper_all_ones(FIRST_ALL_ONES - 1));
         assert!(upper_all_ones(FIRST_ALL_ONES));
 
-        // Honest bounds for every non-interleaved family stay below that line.
-        let add_max = 2u128 * (u64::MAX as u128); // x + y
-        let sub_max = (u64::MAX as u128) + (1u128 << 64); // x + 2^64 - y
+        let add_max = 2u128 * (u64::MAX as u128);
+        let sub_max = (u64::MAX as u128) + (1u128 << 64);
         let mul_max = (u64::MAX as u128) * (u64::MAX as u128);
         let advice_max = u64::MAX as u128;
         for (name, k) in [

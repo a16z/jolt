@@ -1,5 +1,3 @@
-//! The address phase of the bytecode read-RAF symbolic sumcheck.
-
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
@@ -146,9 +144,6 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub lookup_table_flags: Vec<C>,
 }
 
-/// Fiat-Shamir challenges drawn by the address phase of the bytecode read-RAF
-/// sumcheck: the batching `gamma` plus the five per-stage gammas (the same set
-/// the full monolith folds).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReadRafAddressPhaseChallenges<F> {
@@ -252,10 +247,6 @@ mod tests {
         );
     }
 
-    /// Pins the circuit-flag coverage of the input claims struct: every
-    /// `CircuitFlags` variant has a `SpartanOuter` field (a newly added flag
-    /// missing its field would make the input `Expr` reference an unresolvable
-    /// opening).
     #[test]
     fn input_claims_cover_circuit_flags() {
         let claims = BytecodeReadRafAddressPhaseInputClaims::<Fr>::default();

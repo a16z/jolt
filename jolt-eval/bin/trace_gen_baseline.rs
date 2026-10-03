@@ -16,9 +16,6 @@ use tracer::TracerBackend;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 
-/// Prefix identifying the measurement JSON on a stdout shared with guest
-/// output. `rsplit_once` on it also strips any guest text that ran on without
-/// a newline.
 const JSON_MARKER: &str = "BASELINE_JSON: ";
 
 const GUESTS: &[&str] = &[
@@ -41,8 +38,6 @@ struct Args {
 }
 
 fn main() {
-    // The tracer env-dispatches to parallel mode; pin serial so
-    // baselines are environment-independent.
     std::env::remove_var("TRACER_PARALLEL");
     let args = Args::parse();
     match args.guest {
@@ -172,8 +167,6 @@ fn orchestrate(runs: usize) {
     println!("\n{}", provenance());
 }
 
-/// Machine and revision provenance, so a table pasted into a PR stays
-/// reproducible months later.
 fn provenance() -> String {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get().to_string())

@@ -69,36 +69,20 @@ use crate::{
 };
 use jolt_witness::field_inline::FieldInlineWitnessOracle;
 
-/// Entry count above which the round accumulation and the bind run over
-/// pair-aligned parallel blocks (the v2-port `DENSE_BIND_PAR_THRESHOLD`
-/// convention — below it the sequential walk beats the fork/join overhead).
 const PARALLEL_THRESHOLD: usize = 1 << 12;
 
-/// One non-zero cell of the conceptual `K × T` field register matrices: the bound `Val`
-/// coefficient plus the γ-combined read and write coefficients of one touched register
-/// slice. All value fields are field elements — field registers hold full field values,
-/// so there is no raw-scalar shortcut for the untouched-neighbor boundary values.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct FieldSparseEntry<F> {
-    /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     val: F,
-    /// Register value just before this entry's row slice.
     prev_val: F,
-    /// Register value just after this entry's row slice.
     next_val: F,
-    /// Bound `γ·rs1_ra + γ²·rs2_ra` coefficient.
     ra: F,
-    /// Bound `rd_wa` coefficient.
     wa: F,
-    /// Cycle-domain row index (before binding: the cycle).
     row: usize,
-    /// Field register index.
     col: u8,
 }
 
-/// Before binding, Val equals its pre-value and the access coefficients are
-/// selector bits. Keep only two field values and expand coefficients on demand.
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct FieldSeed<F> {
@@ -228,9 +212,6 @@ impl<F: JoltField> FieldEntries<F> {
 }
 
 impl<F: JoltField> FieldSparseEntry<F> {
-    /// Bind two vertically adjacent cells (rows `2j`/`2j+1`, same column)
-    /// with `r`. A missing side is an untouched slice: its `Val` is the
-    /// neighbor's boundary value and its `ra`/`wa` are zero.
     fn bind(even: Option<&Self>, odd: Option<&Self>, r: F) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {
@@ -267,9 +248,6 @@ impl<F: JoltField> FieldSparseEntry<F> {
         }
     }
 
-    /// Accumulate this vertical pair's `[t = 0, t = ∞]` contributions to the
-    /// quadratic inner factor `ra_t·val_t + wa_t·(val_t + inc_t)`, weighted
-    /// by the pair's eq factor.
     fn accumulate_pair_evals(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -302,7 +280,6 @@ impl<F: JoltField> FieldSparseEntry<F> {
                 );
             }
             (None, Some(odd)) => {
-                // The even side has zero ra/wa, so the t = 0 term vanishes.
                 let val_m = odd.val - odd.prev_val;
                 acc[1].fmadd(weight, odd.ra * val_m + odd.wa * (val_m + inc_evals[1]));
             }
@@ -349,10 +326,6 @@ fn sparse_at_one<F: JoltField>(
     sum.reduce()
 }
 
-/// The cycle-round quadratic inner factor `[q(0), leading coefficient]` over the sparse
-/// entries: per row pair, the eq weight is `E_out[z >> in_bits] · E_in[z & mask]`
-/// (recombined per pair — untouched pairs contribute nothing, so there is no
-/// per-`x_out` factoring win at field-inline densities).
 fn sparse_quadratic<F: JoltField, E: Cell>(
     entries: &[E],
     e_in: &[F],
@@ -409,16 +382,11 @@ fn sparse_quadratic<F: JoltField, E: Cell>(
     range_contribution(0..entries.len())
 }
 
-/// The rd write slots of one proof's field-inline trace — `(cycle, register)` pairs of
-/// every bytecode-active field-inline write — parked by the stage-4 kernel for the
-/// stage-5 val-evaluation kernel (which folds the same one-hot `FieldRdWa` grid at its
-/// address prefix).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedFieldRdWrites(pub(crate) Vec<(u32, u8)>);
 
 type FieldRegisterRows<F> = Arc<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>>;
 
-/// Sparse register rows shared by claim reduction and read/write checking.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedFieldRegisterRows<F: JoltField>(
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_shared_heap_free_elements))]
@@ -446,9 +414,6 @@ pub(crate) fn field_register_rows<F: JoltField>(
     Ok(rows)
 }
 
-/// Sparse per-cycle field-inline access facts extracted from the oracle's decoded rows:
-/// the ≤3-entries-per-active-cycle matrix cells plus the raw read/write index lists
-/// (reads feed the final one-hot claims, writes feed stage 5).
 pub(crate) struct FieldRegisterAccesses<F: JoltField> {
     entries: Vec<FieldSeed<F>>,
     rs1_reads: Vec<(u32, u8)>,
@@ -457,9 +422,6 @@ pub(crate) struct FieldRegisterAccesses<F: JoltField> {
 }
 
 impl<F: JoltField> FieldRegisterAccesses<F> {
-    /// Count then fill disjoint spans over the already-validated sparse rows.
-    /// Read/pre-write values are pinned to the register replay by the witness
-    /// boundary, so entry construction needs no serial register-file replay.
     pub(crate) fn collect(
         rows: &[(usize, FieldInlineRegisterReadWriteRow<F>)],
         register_count: usize,
@@ -563,9 +525,6 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
     > {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
-        // The field-inline phase split is pinned by the compile-time protocol config
-        // (phase 1 = log_t, phase 2 = log_k) — the same guard as the reference kernel:
-        // a drifted config is a bug, not a capability gap.
         if dimensions.phase1_num_rounds() != dimensions.log_t()
             || dimensions.phase2_num_rounds() != dimensions.log_k()
         {
@@ -614,8 +573,6 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
             rd_writes,
         } = FieldRegisterAccesses::collect(&rows, 1usize << log_k)?;
 
-        // Park the rd write slots for the stage-5 field-register value-evaluation
-        // kernel.
         session.park(SharedFieldRdWrites(rd_writes));
         let _ = session.take::<SharedFieldRegisterRows<F>>();
 
@@ -644,8 +601,6 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
 struct FieldReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
-    /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
-    /// cycle→address transition.
     entries: FieldEntries<F>,
     gruen: GruenSplitEqPolynomial<F>,
     inc: IncrementRounds<F>,
@@ -656,9 +611,6 @@ struct FieldReadWriteKernel<F: JoltField> {
 }
 
 impl<F: JoltField> FieldReadWriteKernel<F> {
-    /// Cycle-round message via Gruen factoring: the quadratic inner factor's
-    /// `[q(0), leading coefficient]` over the remaining sparse rows, wrapped
-    /// into the exact cubic by `gruen_poly_deg_3`.
     fn cycle_round_message(
         &self,
         round: usize,
@@ -679,9 +631,6 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
             })
     }
 
-    /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
-    /// sparse rows; the final cycle bind collapses to the K-sized dense
-    /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
         if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
@@ -711,9 +660,6 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
         }
     }
 
-    /// The bound opening point, split as `(r_address, r_cycle)` — the same
-    /// reversal `FieldRegistersReadWriteDimensions::read_write_opening_point`
-    /// applies under the config-pinned phase split.
     fn bound_point(&self) -> (Vec<F>, Vec<F>) {
         let r_cycle: Vec<F> = self.challenges.as_slice()[..self.log_t]
             .iter()
@@ -728,12 +674,6 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
         (r_address, r_cycle)
     }
 
-    /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for both
-    /// read operands — the direct MLE of a one-hot `(K × T)` grid at the
-    /// bound point, walked over the sparse read lists (the sibling's
-    /// `one_hot_operand_claims` with the dense scan replaced by the lists).
-    /// Big-endian joint point `[r_cycle ‖ r_address]`, joint index
-    /// `(j << addr_bits) | k`.
     fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
         let eq = OperandEq::new(r_address, r_cycle);
 
@@ -806,9 +746,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
         })
     }
 
-    /// The `EqCycle` cross-check: the fully bound Gruen scalar must equal the
-    /// verifier's `derive_output_term` at the bound point (the reference
-    /// kernel's tie-down on the table it materializes).
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -828,11 +765,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent field-inline traces:
-/// identical round polynomials at every round (cycle and address phases), equal typed
-/// output claims, and both kernels' derived-table validation — plus the degenerate case
-/// without field-inline activity, where the sparse state is empty and every round
-/// polynomial is honestly zero.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -954,8 +886,6 @@ mod tests {
 
     #[test]
     fn parity_partially_padded_trace() {
-        // Real rows in the front half only: the padding tail exercises the
-        // constant-value slices the sparse boundary values reconstruct.
         run_parity(structured_field_register_fixture(9), 5, 107, true);
     }
 

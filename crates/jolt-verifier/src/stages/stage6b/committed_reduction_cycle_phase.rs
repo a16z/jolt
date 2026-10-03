@@ -44,9 +44,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage4::RamValCheckInitialEvaluation;
 use crate::VerifierError;
 
-/// Wire the consumed RAM value-check trusted-advice opening *value* off the RAM
-/// value-check initial evaluation. Clear-only. Errors if the RAM value-check
-/// produced no trusted-advice contribution (the reduction runs only when it did).
 pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<TrustedAdviceCyclePhaseInputClaims<F>, VerifierError> {
@@ -59,7 +56,6 @@ pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
     Ok(TrustedAdviceCyclePhaseInputClaims { trusted })
 }
 
-/// Wire the consumed RAM value-check untrusted-advice opening *value*. Clear-only.
 pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<UntrustedAdviceCyclePhaseInputClaims<F>, VerifierError> {
@@ -72,10 +68,6 @@ pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
     Ok(UntrustedAdviceCyclePhaseInputClaims { untrusted })
 }
 
-/// Wire the staged RAM value-check advice RAM-address *point* off the RAM
-/// value-check initial evaluation — the clear-only reference the advice
-/// `FinalScale` terms read. `None` when the RAM value-check produced no
-/// contribution of this kind.
 pub fn advice_reference_point_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
     kind: JoltAdviceKind,
@@ -96,9 +88,6 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 pub struct TrustedAdviceCyclePhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::TrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
-    /// The RAM address point of the staged advice opening from RAM value-check;
-    /// the `FinalScale` public compares the produced opening point against it.
-    /// `None` in ZK, where `expected_output` (its only reader) never runs.
     reference_opening_point: Option<Vec<F>>,
 }
 
@@ -185,9 +174,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
 pub struct UntrustedAdviceCyclePhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::UntrustedCyclePhase,
     layout: AdviceClaimReductionLayout,
-    /// The RAM address point of the staged advice opening from RAM value-check;
-    /// the `FinalScale` public compares the produced opening point against it.
-    /// `None` in ZK, where `expected_output` (its only reader) never runs.
     reference_opening_point: Option<Vec<F>>,
 }
 
@@ -268,8 +254,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
     }
 }
 
-/// Wire the consumed RAM value-check program-image contribution *value*.
-/// Clear-only.
 pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: JoltField>(
     ram_val_check_init: &RamValCheckInitialEvaluation<F>,
 ) -> Result<ProgramImageReductionCyclePhaseInputClaims<F>, VerifierError> {
@@ -288,9 +272,6 @@ pub fn program_image_reduction_cycle_phase_input_values_from_upstream<F: JoltFie
 pub struct ProgramImageReductionCyclePhase<F: JoltField> {
     symbolic: relations::claim_reductions::program_image::CyclePhase,
     layout: ProgramImageClaimReductionLayout,
-    /// The RAM address component of the `RamVal` opening from RAM read-write
-    /// checking; the `FinalScale` public compares the produced opening point
-    /// against it.
     r_addr_rw: Vec<F>,
 }
 
@@ -309,8 +290,6 @@ impl<F: JoltField> ProgramImageReductionCyclePhase<F> {
         &self.layout
     }
 
-    /// The RAM address component of the stage-2 `RamVal` opening the kernel's
-    /// shifted eq slice binds against.
     pub fn r_addr_rw(&self) -> &[F] {
         &self.r_addr_rw
     }
@@ -394,12 +373,6 @@ impl<F: JoltField> BytecodeReductionCyclePhase<F> {
         }
     }
 
-    /// The public bytecode claim-reduction weights this member was built
-    /// with. Pub: the prove-side recipe reads them back off the
-    /// `build_from_parts` batch (they also feed the bytecode reduction kernel
-    /// and ride the clear carrier), so the weight fold is single-sourced.
-    /// Stage 7's bytecode address phase reads them off the stage-6b clear output
-    /// rather than recomputing them.
     pub fn weights(&self) -> &BytecodeReductionWeights<F> {
         &self.weights
     }
@@ -409,10 +382,6 @@ impl<F: JoltField> BytecodeReductionCyclePhase<F> {
     }
 }
 
-/// Fold the stage-6a bytecode read-RAF address opening and the per-stage gamma
-/// vectors into the public [`BytecodeReductionWeights`] (the per-chunk `r_bc`
-/// weights and the gamma-folded lane weights) consumed by the bytecode
-/// claim-reduction cycle and address phases.
 pub fn bytecode_reduction_weights<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     lane_inputs: BytecodeLaneWeightInputs<'_, F>,

@@ -1,5 +1,3 @@
-//! Address phase of the two-phase committed-bytecode claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +25,6 @@ pub struct BytecodeReductionAddressPhaseOutputClaims<C> {
     pub chunks: Vec<C>,
 }
 
-/// Consumed intermediate opening from the stage-6b bytecode cycle phase.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReductionAddressPhaseInputClaims<C> {
     #[opening(BytecodeClaimReductionIntermediate, from = BytecodeClaimReductionCyclePhase)]

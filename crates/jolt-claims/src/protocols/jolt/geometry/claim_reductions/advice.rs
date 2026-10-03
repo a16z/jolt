@@ -24,8 +24,6 @@ pub struct AdviceClaimReductionLayout {
     cycle_phase_row_rounds: Range<usize>,
 }
 
-/// Total-var counts of the present advice polynomials, in the order core feeds
-/// them to the shared precommitted scheduling reference (trusted first).
 pub fn candidate_total_vars(
     trusted_max_advice_size_bytes: Option<usize>,
     untrusted_max_advice_size_bytes: Option<usize>,
@@ -204,8 +202,6 @@ fn advice_opening(kind: JoltAdviceKind, relation: JoltRelationId) -> JoltOpening
     }
 }
 
-/// Compute the column-side and row-side active round ranges for the advice
-/// cycle-phase sumcheck, given the main/advice matrix shapes and trace order.
 fn cycle_phase_round_schedule(
     trace_order: TracePolynomialOrder,
     log_t: usize,

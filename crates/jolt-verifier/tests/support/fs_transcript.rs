@@ -10,16 +10,6 @@ use jolt_field::{Field, Ring};
 use jolt_transcript::Transcript;
 use jolt_verifier::fs_audit::{self, FsScope};
 
-/// The transcript API used to derive a challenge.
-///
-/// Multi-value APIs are recorded at draw granularity, mirroring the
-/// production trait defaults: `challenge_vector(len)` is `len` independent
-/// squeezes (one [`ChallengeKind::VectorElement`] record each), and
-/// `challenge_scalar_powers(len)` squeezes only its base scalar (one
-/// [`ChallengeKind::PowersBase`] record) with the powers derived locally.
-/// A verifier refactor that drops or short-consumes an element therefore
-/// registers as a per-element tape divergence instead of hiding inside one
-/// atomic `Vec` record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChallengeKind {
     Challenge,
@@ -28,7 +18,6 @@ pub enum ChallengeKind {
     PowersBase { len: usize },
 }
 
-/// A challenge's verifier scope and ordinal within that scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChallengeId {
     pub scope: FsScope,
@@ -36,14 +25,12 @@ pub struct ChallengeId {
     pub kind: ChallengeKind,
 }
 
-/// One typed challenge call and all values it returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeRecord<F> {
     pub id: ChallengeId,
     pub values: Vec<F>,
 }
 
-/// Challenges produced while verifying one fixture.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeTape<F> {
     pub records: Vec<ChallengeRecord<F>>,
@@ -153,7 +140,6 @@ where
     })
 }
 
-/// Transcript wrapper that records or replays challenge calls for the active session.
 pub struct AuditTranscript<T> {
     inner: T,
 }
@@ -222,7 +208,6 @@ where
     }
 }
 
-/// Runs `verify` with challenge recording enabled.
 pub fn record_challenges<F, R>(verify: impl FnOnce() -> R) -> (R, ChallengeTape<F>)
 where
     F: Field + 'static,
@@ -258,14 +243,12 @@ where
     (result, ChallengeTape { records })
 }
 
-/// Result of verifying with a frozen challenge tape.
 pub struct ReplayResult<R> {
     pub output: R,
     pub consumed: usize,
     pub expected: usize,
 }
 
-/// Runs `verify` while returning the recorded values for every challenge call.
 pub fn replay_challenges<F, R>(
     tape: &ChallengeTape<F>,
     verify: impl FnOnce() -> R,

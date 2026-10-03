@@ -1,13 +1,3 @@
-//! Per-ISA SIMD primitive vocabularies: [`SimdWord`] is the instruction-set
-//! contract the shared packed algebra (`engine.rs`, `fp128.rs`) is written
-//! against, implemented by the [`Neon`], [`Avx2`], and [`Avx512`] markers.
-//!
-//! Only *algorithmic* per-ISA differences live here — e.g. AVX2 has no
-//! 64-bit widening multiply (emulated from 32×32→64 partial products),
-//! AVX-512 comparisons produce mask registers (converted to lane masks),
-//! and only NEON has a 32-bit high-multiply (`mul_pm31`). Comparison
-//! results are all-ones lane masks on every ISA.
-
 #![cfg(any(
     all(target_arch = "aarch64", target_feature = "neon"),
     all(target_arch = "x86_64", target_feature = "avx2")
@@ -25,16 +15,10 @@
 /// - `narrow_pack` is the layout inverse of `widen_mul`: packing the
 ///   (reduced) halves restores the original lane order.
 pub trait SimdWord: 'static {
-    /// Vector of [`W32`](Self::W32) `u32` lanes.
     type V32: Copy + Send + Sync;
-    /// Vector of [`W64`](Self::W64) `u64` lanes.
     type V64: Copy + Send + Sync;
-    /// `u32` lanes per vector.
     const W32: usize;
-    /// `u64` lanes per vector.
     const W64: usize;
-    /// Whether packed `Fp64` multiplication should go lane-by-lane through
-    /// the scalar kernel (no efficient 64×64 vector multiply on this ISA).
     const FP64_MUL_BY_LANES: bool;
 
     fn v32_from_fn(f: impl FnMut(usize) -> u32) -> Self::V32;
@@ -76,16 +60,12 @@ pub trait SimdWord: 'static {
         None
     }
 
-    /// Scalar-lane multiply for 63-bit pseudo-Mersenne primes when the ISA
-    /// has a dedicated carry-preserving sequence.
     #[inline(always)]
     fn mul_pm63(_a: u64, _b: u64, _p: u64, _c: u64) -> Option<u64> {
         None
     }
 }
 
-/// Stamps vocabulary methods whose body is a single (possibly block)
-/// intrinsic expression, wrapped in the requisite `unsafe` block.
 macro_rules! fwd {
     ($($name:ident($($arg:ident: $ty:ty),*) -> $ret:ty = $body:expr;)*) => {
         $(
@@ -116,7 +96,6 @@ mod neon {
     };
     use core::mem::transmute;
 
-    /// AArch64 NEON: 128-bit vectors (4 × u32, 2 × u64).
     pub enum Neon {}
 
     impl SimdWord for Neon {
@@ -124,7 +103,6 @@ mod neon {
         type V64 = uint64x2_t;
         const W32: usize = 4;
         const W64: usize = 2;
-        // No 64×64 vector multiply: per-lane scalar folds win at width 2.
         const FP64_MUL_BY_LANES: bool = true;
 
         fwd! {
@@ -153,14 +131,12 @@ mod neon {
             lt_u64(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t = vcltq_u64(a, b);
             select64(m: uint64x2_t, t: uint64x2_t, f: uint64x2_t) -> uint64x2_t =
                 vbslq_u64(m, t, f);
-            // v*c = (lo32(v)·c) + ((hi32(v)·c) << 32): two vmull widening muls.
             mul_small(v: uint64x2_t, c: u64) -> uint64x2_t = {
                 let c32 = vdup_n_u32(c as u32);
                 let lo = vmull_u32(vmovn_u64(v), c32);
                 let hi = vmull_u32(vmovn_u64(vshrq_n_u64::<32>(v)), c32);
                 vaddq_u64(lo, vshlq_n_u64::<32>(hi))
             };
-            // Cold on NEON (only the vectorized fp64 reduce uses it).
             mul_small_wide(v: uint64x2_t, c: u64) -> [uint64x2_t; 2] = {
                 let p =
                     transmute::<uint64x2_t, [u64; 2]>(v).map(|x| u128::from(x) * u128::from(c));
@@ -169,7 +145,6 @@ mod neon {
                     Self::v64_from_fn(|i| (p[i] >> 64) as u64),
                 ]
             };
-            // Cold on NEON: packed fp64 multiplies go lane-by-lane instead.
             mul64_wide(a: uint64x2_t, b: uint64x2_t) -> [uint64x2_t; 2] = {
                 let x = transmute::<uint64x2_t, [u64; 2]>(a);
                 let y = transmute::<uint64x2_t, [u64; 2]>(b);
@@ -229,7 +204,6 @@ mod neon {
             }
         }
 
-        /// Carry-preserving two-fold reducer for `p = 2^63 - c`.
         #[inline(always)]
         fn mul_pm63(lhs: u64, rhs: u64, _p: u64, c: u64) -> Option<u64> {
             let result: u64;
@@ -345,7 +319,6 @@ mod avx2 {
                 _mm256_cmpgt_epi64(_mm256_xor_si256(b, s), _mm256_xor_si256(a, s))
             };
             select64(m: __m256i, t: __m256i, f: __m256i) -> __m256i = _mm256_blendv_epi8(f, t, m);
-            // No 64-bit multiply: v*c = (v_lo·c) + ((v_hi·c) << 32) mod 2^64.
             mul_small(v: __m256i, c: u64) -> __m256i = {
                 let cv = _mm256_set1_epi64x(c as i64);
                 let lo = _mm256_mul_epu32(v, cv);
@@ -357,13 +330,10 @@ mod avx2 {
                 let lo_p = _mm256_mul_epu32(v, cv);
                 let hi_p = _mm256_mul_epu32(_mm256_srli_epi64::<32>(v), cv);
                 let lo = _mm256_add_epi64(lo_p, _mm256_slli_epi64::<32>(hi_p));
-                // Subtracting an all-ones carry mask adds one.
                 let carry = Self::lt_u64(lo, lo_p);
                 let hi = _mm256_sub_epi64(_mm256_srli_epi64::<32>(hi_p), carry);
                 [lo, hi]
             };
-            // Schoolbook 64×64→128 from 32×32→64 partial products
-            // (plonky2/plonky3 Goldilocks technique).
             mul64_wide(x: __m256i, y: __m256i) -> [__m256i; 2] = {
                 let x_hi = movehdup_epi32(x);
                 let y_hi = movehdup_epi32(y);
@@ -459,7 +429,6 @@ mod avx512 {
                 _mm512_movm_epi64(_mm512_cmplt_epu64_mask(a, b));
             select64(m: __m512i, t: __m512i, f: __m512i) -> __m512i =
                 _mm512_ternarylogic_epi64::<0xCA>(m, t, f);
-            // AVX-512DQ has a true 64-bit low multiply.
             mul_small(v: __m512i, c: u64) -> __m512i =
                 _mm512_mullo_epi64(v, _mm512_set1_epi64(c as i64));
             mul_small_wide(v: __m512i, c: u64) -> [__m512i; 2] = {
@@ -472,8 +441,6 @@ mod avx512 {
                 let hi = _mm512_mask_add_epi64(hi_base, carry, hi_base, _mm512_set1_epi64(1));
                 [lo, hi]
             };
-            // Schoolbook 64×64→128 from 32×32→64 partial products
-            // (plonky3 Goldilocks AVX-512 technique).
             mul64_wide(x: __m512i, y: __m512i) -> [__m512i; 2] = {
                 let x_hi = movehdup_epi32_512(x);
                 let y_hi = movehdup_epi32_512(y);

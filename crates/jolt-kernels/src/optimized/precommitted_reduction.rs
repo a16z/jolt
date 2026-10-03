@@ -72,8 +72,6 @@ use crate::precommitted_reduction::{
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-/// Tables at least this large build in parallel; below it rayon dispatch
-/// costs more than the work.
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
@@ -125,8 +123,6 @@ where
         Ok(Box::new(AddressReductionKernel::new(carry)))
     }
 }
-
-// ---------------------------------------------------------------- advice
 
 impl<F: JoltField> RamInitialOpeningEvaluation<F> for OptimizedPrecommittedCycle {
     #[tracing::instrument(skip_all, name = "OptimizedRamInitialOpeningEvaluation::evaluate")]
@@ -218,12 +214,6 @@ impl<F: JoltField> PrepareKernel<F, UntrustedAdviceCyclePhase<F>> for OptimizedP
     }
 }
 
-/// The advice reduction's cycle-phase kernel: the advice polynomial as the
-/// value table and the eq table of the staged RAM value-check point, both in
-/// Dory opening-round order. The eq table is built from the permuted
-/// challenges directly — the coefficient permute and the challenge permute
-/// are the same LSB relabeling, so `permuted_table[i] · permuted_eq[i]` pairs
-/// exactly as the unpermuted product did.
 fn advice_reduction_kernel<F: JoltField, R>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,
@@ -268,8 +258,6 @@ fn advice_table<F: JoltField>(
     Ok(table)
 }
 
-// --------------------------------------------------------- program image
-
 impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>>
     for OptimizedPrecommittedCycle
 {
@@ -293,9 +281,6 @@ impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>>
     }
 }
 
-/// The program-image reduction's cycle-phase kernel: the padded word vector
-/// (permuted as raw `u64`s, converted in one parallel pass) against the
-/// blocked shifted eq slice.
 fn program_image_reduction_kernel<F: JoltField>(
     layout: &ProgramImageClaimReductionLayout,
     r_addr_rw: &[F],
@@ -333,21 +318,12 @@ fn program_image_reduction_kernel<F: JoltField>(
     CycleReductionKernel::new(reduction, value, shifted_eq, Vec::new())
 }
 
-/// `eq(r_addr, start_index + offset)` for `offset < len`, indices wrapping mod
-/// the RAM domain (the reference tier gathers the same entries out of the full
-/// domain table; the wrapped tail only ever multiplies padding zeros but its
-/// entries still enter the bound tables, so they must match exactly).
-/// Assembled from maximal aligned power-of-two blocks — `O(len)` total work,
-/// never the `O(2^|r_addr|)` full table.
 fn shifted_eq_slice<F: JoltField>(r_addr: &[F], start_index: usize, len: usize) -> Vec<F> {
     let ram_domain = 1usize << r_addr.len();
     let mut out = Vec::with_capacity(len);
     let mut index = start_index & (ram_domain - 1);
     let mut remaining = len;
     while remaining > 0 {
-        // Cap each block at the domain top so alignment never crosses the
-        // wrap; a wrapped continuation restarts at index 0 (aligned to
-        // everything).
         let span = remaining.min(ram_domain - index);
         let (block_size, block_evals) =
             EqPolynomial::<F>::evals_for_max_aligned_block(r_addr, index, span);
@@ -358,7 +334,6 @@ fn shifted_eq_slice<F: JoltField>(r_addr: &[F], start_index: usize, len: usize) 
     out
 }
 
-/// Parallel `u64 → F` conversion of the (already permuted) word vector.
 fn convert_words<F: JoltField>(words: &[u64]) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if words.len() >= PAR_THRESHOLD {
@@ -366,8 +341,6 @@ fn convert_words<F: JoltField>(words: &[u64]) -> Vec<F> {
     }
     words.iter().map(|&word| F::from_u64(word)).collect()
 }
-
-// -------------------------------------------------------------- bytecode
 
 impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
@@ -386,10 +359,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Optimize
     }
 }
 
-/// The committed-bytecode reduction's cycle-phase kernel — the chunk-weight
-/// value fold over the parallel-built per-chunk grids, the lane-weight eq
-/// template, and the raw grids as aux tables (their fully bound coefficients
-/// are the final per-chunk openings).
 fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
@@ -460,10 +429,6 @@ fn bytecode_reduction_kernel<F: JoltField>(
     CycleReductionKernel::new(reduction, value, eq, permuted.collect())
 }
 
-/// The per-chunk committed bytecode grids, one independent build per chunk in
-/// parallel: each chunk's rows are a contiguous instruction slice and the
-/// grid indexing is chunk-local, so a single-chunk build over the slice is
-/// coefficient-identical to that chunk of the full build.
 fn parallel_chunk_coeffs<F: JoltField>(
     bytecode: &[JoltInstructionRow],
     chunk_count: usize,
@@ -497,15 +462,6 @@ fn parallel_chunk_coeffs<F: JoltField>(
     }
 }
 
-/// Byte parity against the reference kernels over a custom trace backend
-/// (advice enabled with nonzero device bytes, multi-row committed bytecode,
-/// nonzero program-image words — none of which the shared sample fixture
-/// carries). Each kind drives the full production shape: cycle-phase
-/// lockstep, `park_residue` into a per-pipeline session, stage-7 reclaim,
-/// address-phase lockstep. The stage-7 kernels are prepared CROSS-TIER (the
-/// reference slot reclaims the optimized pipeline's carry and vice versa),
-/// so the mixed-tier composition promise — either tier's stage 6b feeds
-/// either tier's stage 7 — is the very thing the address-phase parity pins.
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(
     clippy::unwrap_used,
@@ -540,14 +496,10 @@ mod tests {
 
     const LOG_T: usize = 2;
     const LOG_K_CHUNK: usize = 4;
-    /// 16 advice words (4 variables).
     const TRUSTED_ADVICE_MAX_BYTES: usize = 128;
-    /// 8 advice words (3 variables).
     const UNTRUSTED_ADVICE_MAX_BYTES: usize = 64;
     const BYTECODE_CHUNK_COUNT: usize = 2;
     const IMAGE_START_INDEX: usize = 3;
-    /// RAM address point length for the program-image relation: domain 32
-    /// comfortably holds the 8-word image block at `IMAGE_START_INDEX`.
     const IMAGE_RAM_VARS: usize = 5;
 
     const MISSING_TRUSTED: &str =
@@ -651,10 +603,6 @@ mod tests {
         f(&backend, &schedule)
     }
 
-    /// Both phases of one kind in lockstep: cycle-phase parity, a
-    /// `park_residue` into each pipeline's session, cross-tier stage-7
-    /// reclaim, address-phase parity. Kind-specific pieces (relations, claim
-    /// extraction) stay with the callers; this drives the shared shape.
     struct PhasePair<'a, RC: ConcreteSumcheck<Fr>, RA: ConcreteSumcheck<Fr>>
     where
         SumcheckInputClaims<Fr, RC>: InputClaims<Fr>,
@@ -690,10 +638,6 @@ mod tests {
         OptimizedPrecommittedCycle: PrepareKernel<Fr, RC>,
         AddressReductionKernel<Fr, RA>: SumcheckKernel<Fr, Relation = RA>,
     {
-        /// Run the pair; `intermediate` extracts the staged handoff claim
-        /// (the address phase's standalone input claim) from the cycle
-        /// output claims. Returns the final address-phase output claims of
-        /// the reference pipeline for kind-specific scrutiny.
         fn run(
             &self,
             cycle_rounds: usize,
@@ -724,11 +668,6 @@ mod tests {
             )
             .unwrap();
 
-            // The honest standalone input claim off a throwaway reference
-            // kernel: with an address phase scheduled, `output_claims` stages
-            // the intermediate `Σ value·eq·scale`, which before any binding
-            // IS the input claim. (These kernels never round-check, so the
-            // harness's zero-claim probe cannot recover it.)
             let mut throwaway = <ReferenceBackend as PrepareKernel<Fr, RC>>::prepare(
                 &ReferenceBackend,
                 &mut ProofSession::default(),
@@ -775,9 +714,6 @@ mod tests {
                 "cycle kernels parked no carry for the scheduled address phase"
             );
 
-            // Cross-tier stage 7: the reference slot reclaims the OPTIMIZED
-            // pipeline's carry and the optimized slot the reference one's —
-            // the mixed-tier composition is what the address lockstep pins.
             let address_inputs = || ProverInputs {
                 relation: self.address_relation,
                 claims: self.address_claims,
@@ -805,8 +741,6 @@ mod tests {
                 .unwrap();
             assert_eq!(reference_final, optimized_final, "address outputs diverged");
 
-            // Missing-carry contract: both tiers' address slots refuse a
-            // session stage 6b never parked into, with the same diagnostic.
             let Err(optimized_error) = OptimizedPrecommittedAddress::<RA>::new(self.missing_carry)
                 .prepare(&mut ProofSession::default(), self.backend, address_inputs())
             else {
@@ -1031,9 +965,6 @@ mod tests {
         program_image_pair(TracePolynomialOrder::AddressMajor);
     }
 
-    /// The blocked shifted eq slice against the reference tier's full-table
-    /// gather, unaligned starts and wrapped tails included (the wrapped
-    /// entries enter the bound tables, so they must match exactly).
     #[test]
     fn shifted_eq_slice_matches_full_table_gather() {
         let r = synthetic_point(4, 91);
@@ -1054,7 +985,6 @@ mod tests {
     #[test]
     fn initial_ram_openings_preserve_request_order_for_all_presence_combinations() {
         with_fixture(TracePolynomialOrder::CycleMajor, |backend, schedule| {
-            // Address 5 is the fixture's third word (13), after its offset of 3.
             let image_point = [fr(0), fr(0), fr(1), fr(0), fr(1)];
             let trusted_point = synthetic_point(4, 71);
             let untrusted_point = synthetic_point(3, 83);

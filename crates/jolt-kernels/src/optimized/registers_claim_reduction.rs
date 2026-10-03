@@ -47,8 +47,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Per-cycle `[rd write value, rs1 value, rs2 value]`, kept as raw `u64`s so
-/// the eq folds run on small-scalar fused multiply-adds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RegisterValuesRow([u64; 3]);
@@ -97,22 +95,17 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
             });
         }
         let cycles = 1usize << log_t;
-        // Slice-backed witnesses re-extract rows without retaining a vector.
         let values = BundleStore::<RegisterValuesRow>::resolve(witness, cycles)?;
         let access = values.access();
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // τ = τ_hi ‖ τ_lo (big-endian). The prefix (low, bound-first) part
-        // takes the extra variable when log_t is odd, matching legacy.
         let (tau_hi, tau_lo) = tau.split_at(log_t / 2);
         let prefix_vars = tau_lo.len();
         let p = EqPolynomial::<F>::evals(tau_lo, None);
         let eq_suffix = EqPolynomial::<F>::evals(tau_hi, None);
 
-        // Q(x_lo) = Σ_{x_hi} eq(τ_hi)[x_hi] · V(x_hi ‖ x_lo), with the three
-        // value columns folded on u64 accumulators and γ-combined once.
         const BLOCK: usize = 32;
         let build_q_block =
             |(block_index, q_block): (usize, &mut [F])| -> Result<(), WitnessError> {
@@ -175,18 +168,13 @@ struct ClaimReductionKernel<F: JoltField> {
     gamma: F,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_sq: F,
-    /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
     tau: Vec<F>,
-    /// Raw values kept for phase-2 regeneration.
     values: BundleStore<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
 
 impl<F: JoltField> ClaimReductionKernel<F> {
-    /// Regenerate the dense phase from the raw values: the three columns
-    /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
-    /// eq table scaled by the bound-prefix eq factor.
     fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
@@ -217,7 +205,6 @@ impl<F: JoltField> ClaimReductionKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let folds: Vec<[F; 3]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // Release retained raw values after regeneration.
         self.values = BundleStore::Retained(Vec::new());
 
         let (tau_hi, tau_lo) = self.tau.split_at(self.log_t / 2);
@@ -233,8 +220,6 @@ impl<F: JoltField> ClaimReductionKernel<F> {
 
     fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         self.challenges.push(r);
-        // Last prefix variable: regenerate the dense phase from the raw
-        // values instead of binding the exhausted P·Q.
         if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
             return self.transition_to_dense().map_err(|_| {
                 SumcheckError::MissingEvaluationSource {
@@ -278,7 +263,6 @@ impl<F: JoltField> ProveRounds<F> for ClaimReductionKernel<F> {
             self.bind(challenge)?;
         }
 
-        // Degree-2 member: evals at t = 0 and t = 2; s(1) from the hint.
         let evals: [F; 2] = match &self.phase {
             Phase::PrefixSuffix { p, q } => {
                 let mut acc = [F::Accumulator::default(); 2];
@@ -349,8 +333,6 @@ impl<F: JoltField> SumcheckKernel<F> for ClaimReductionKernel<F> {
         })
     }
 
-    /// Pin the regenerated eq table to the verifier's scalar path: its fully
-    /// bound value must equal `derive_output_term(EqSpartan)`.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -436,8 +418,6 @@ mod tests {
 
     #[test]
     fn parity_minimal_single_round() {
-        // log_t = 1: the P·Q phase covers the single round and the dense
-        // phase materializes inside `finish_rounds`.
         let mut fixture = TraceFixture::new();
         fixture.op(Some(6), Some(2), Some(3));
         fixture.op(None, Some(6), Some(6));

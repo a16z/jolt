@@ -37,11 +37,6 @@ fn profile_run_emits_conformant_artifacts() {
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");
-    // Artifacts are grouped into a per-run directory
-    // (benchmark-runs/{timestamp}_modular_fibonacci_13/, suffixed `_akita`
-    // on the packed build), with the `latest_` link pointing at this run;
-    // the directory name carries the run identity, so the files inside use
-    // fixed names.
     let stem = if cfg!(feature = "akita") {
         "modular_fibonacci_akita_13"
     } else {
@@ -68,20 +63,11 @@ fn profile_run_emits_conformant_artifacts() {
         "latest link resolves to this run"
     );
 
-    // Both artifacts exist and parse; the summary parses through the strict
-    // (`deny_unknown_fields`) schema structs — the instance-level validation
-    // against the checked-in JSON Schema, which a fixture test keeps in sync
-    // with those structs.
     let trace: Vec<Value> =
         serde_json::from_str(&std::fs::read_to_string(&trace_path).unwrap()).unwrap();
     let summary: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
 
-    // Every always-present current taxonomy label fired, for the mode this
-    // prover was compiled in — the `zk` feature swaps the uni-skip and
-    // stage-8 opening seams for their committed siblings, and the `akita`
-    // feature swaps the commitment seams for the packed set. (The advice
-    // seams are exempt: fibonacci exercises no advice.)
     let mode = if cfg!(feature = "akita") {
         taxonomy::ProverMode::Akita
     } else if cfg!(feature = "zk") {
@@ -110,8 +96,6 @@ fn profile_run_emits_conformant_artifacts() {
         TAXONOMY_VERSION
     );
 
-    // Headline summary sanity: root present with a positive wall time and
-    // every stage rolled up with boundary RSS from the StageMemoryLayer.
     let root = summary.root.expect("root summary");
     assert_eq!(root.label, taxonomy::ROOT_SPAN);
     assert!(root.wall_time_ns > 0);
@@ -123,8 +107,6 @@ fn profile_run_emits_conformant_artifacts() {
     assert!(summary.peak_rss_gib.is_some());
     assert!(summary.peak_footprint_gib.is_some());
 
-    // The counter rewrite ran: no raw `counters.*` events survive in the
-    // trace, and the monitor's samples aggregated into the summary.
     assert!(trace.iter().all(|e| {
         e.get("args")
             .and_then(Value::as_object)

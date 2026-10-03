@@ -1,8 +1,3 @@
-//! Semantic integration tests for the lattice module: build concrete one-hot
-//! witness data and check the identities the relations claim — native OneHotTrace
-//! member shape and fused-increment chunk semantics against concrete
-//! multilinear evaluations.
-
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::geometry::balanced_inc_value;
 use jolt_claims::protocols::jolt::lattice::{
@@ -15,13 +10,10 @@ fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
-/// MLE evaluation via the library's own (msb-first) convention — the same one
-/// production code uses, so the tests pin the packing against it.
 fn eval_mle(evals: &[Fr], point: &[Fr]) -> Fr {
     Polynomial::new(evals.to_vec()).evaluate(point)
 }
 
-/// A deterministic, non-boolean evaluation point (distinct small primes).
 fn point(len: usize, seed: u64) -> Vec<Fr> {
     const PRIMES: [u64; 16] = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59];
     (0..len)
@@ -29,8 +21,6 @@ fn point(len: usize, seed: u64) -> Vec<Fr> {
         .collect()
 }
 
-/// One-hot evaluations over `(hot value ‖ instance)`: index
-/// `(hot << log_rows) | row`.
 fn one_hot_evals(value_bits: usize, log_rows: usize, hot: &[usize]) -> Vec<Fr> {
     assert_eq!(hot.len(), 1 << log_rows);
     let mut data = vec![fr(0); 1 << (value_bits + log_rows)];
@@ -51,8 +41,6 @@ fn digit_zero_evals(value_bits: usize, log_rows: usize, hot: &[usize]) -> Vec<Fr
     data
 }
 
-/// Every semantic column uses the same `K x T` domain before the digit-zero row is
-/// omitted from the commitment.
 #[test]
 #[expect(clippy::unwrap_used)]
 fn one_hot_trace_columns_share_a_uniform_semantic_domain() {
@@ -158,8 +146,6 @@ fn digit_zero_reconstruction_matches_semantic_one_hot_at_random_points() {
     }
 }
 
-/// Centered radix digits and their signed carry reconstruct the fused
-/// increment when digit-zero entries are absent from the commitment.
 #[test]
 #[expect(clippy::unwrap_used)]
 fn balanced_chunk_decomposition_reconstructs_signed_increments() {

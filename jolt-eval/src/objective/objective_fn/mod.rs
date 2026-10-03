@@ -18,7 +18,6 @@ use super::{
 pub struct ObjectiveFunction {
     /// CLI-visible name (e.g. `"minimize_lloc"`).
     pub name: &'static str,
-    /// The [`OptimizationObjective`]s this function reads.
     pub inputs: &'static [OptimizationObjective],
     /// Combine measurements into a scalar to minimize.
     /// The first HashMap contains the current measurements; the second
@@ -29,7 +28,6 @@ pub struct ObjectiveFunction {
 }
 
 impl ObjectiveFunction {
-    /// All registered objective functions.
     pub fn all() -> &'static [ObjectiveFunction] {
         &[
             MINIMIZE_LLOC,
@@ -49,12 +47,10 @@ impl ObjectiveFunction {
         ]
     }
 
-    /// Look up an objective function by CLI name.
     pub fn by_name(name: &str) -> Option<&'static ObjectiveFunction> {
         Self::all().iter().find(|f| f.name == name)
     }
 
-    /// Derive a [`DiffScope`] from the union of all input objectives' diff paths.
     pub fn diff_scope(&self) -> DiffScope {
         let mut paths = Vec::new();
         for input in self.inputs {
@@ -132,11 +128,6 @@ pub const MINIMIZE_MUL_I128: ObjectiveFunction = ObjectiveFunction {
     inputs: &[MUL_I128],
     evaluate: |m, _| m.get(&MUL_I128).copied().unwrap_or(f64::INFINITY),
 };
-
-// Curated telemetry wrappers over the modular prover's summary.json
-// (fibonacci workload — the cheapest, sensible for optimizer loops). Any
-// other span/workload is reachable via the raw key grammar; see
-// `objective::telemetry`.
 
 pub const MINIMIZE_MODULAR_PROVER_TIME: ObjectiveFunction = ObjectiveFunction {
     name: "minimize_modular_prover_time",
@@ -238,8 +229,6 @@ mod tests {
     fn normalized_composite_objective() {
         use crate::objective::normalized;
 
-        // Baselines are the initial measurements. Normalization divides
-        // each value by its baseline, yielding a dimensionless ratio.
         const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
         let balanced = ObjectiveFunction {
             name: "balanced_quality",
@@ -251,16 +240,13 @@ mod tests {
         baselines.insert(LLOC, 5500.0);
         baselines.insert(HALSTEAD_BUGS, 80.0);
 
-        // At baseline values → normalized = 1.0 for each → score = 1.0
         let score = (balanced.evaluate)(&baselines, &baselines);
         assert!((score - 1.0).abs() < 1e-9, "expected 1.0, got {score}");
 
-        // 10% improvement in LLOC
         let mut m = baselines.clone();
         m.insert(LLOC, 4950.0);
         let score2 = (balanced.evaluate)(&m, &baselines);
         assert!(score2 < score, "10% LLOC improvement should reduce score");
-        // 0.5 * (4950/5500) + 0.5 * (80/80) = 0.5 * 0.9 + 0.5 = 0.95
         assert!((score2 - 0.95).abs() < 1e-9, "expected 0.95, got {score2}");
     }
 }

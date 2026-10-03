@@ -1,7 +1,3 @@
-/// Half-GCD decomposition for P-256 "Fake GLV" scalar multiplication.
-///
-/// Given scalar s, finds (a, b) with b*s ≡ a (mod n) and |a|, |b| <= √n.
-/// Based on the extended GCD algorithm truncated at √n.
 use num_bigint::{BigInt as NBigInt, BigUint as NBigUint, Sign};
 
 use crate::P256_ORDER;
@@ -14,8 +10,6 @@ fn order_bigint() -> NBigInt {
     NBigInt::from_bytes_le(Sign::Plus, &bytes)
 }
 
-/// Decompose scalar `s` via half-GCD: returns `(a, b)` with `b*s ≡ a (mod n)`,
-/// `|a|, |b| <= √n`.
 pub(crate) fn decompose_scalar(s: &NBigInt) -> (NBigInt, NBigInt) {
     let n = order_bigint();
     let sqrt_n: NBigInt = {
@@ -37,7 +31,6 @@ pub(crate) fn decompose_scalar(s: &NBigInt) -> (NBigInt, NBigInt) {
     (u_val, v_val)
 }
 
-/// Decompose scalar and return as `(u128, bool)` pairs (value, is_negative).
 pub(crate) fn decompose_to_u128s(s: &NBigInt) -> (u128, bool, u128, bool) {
     let (a, b) = decompose_scalar(s);
     let to_u128 = |val: &NBigInt| -> (u128, bool) {

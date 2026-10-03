@@ -1,12 +1,3 @@
-//! The stage 6b bytecode read-RAF cycle-phase sumcheck instance.
-//!
-//! The **cycle phase** dispatches at runtime over full-program mode
-//! ([`BytecodeReadRaf`]) and committed-program mode ([`BytecodeReadRafCommitted`])
-//! through [`BytecodeReadRafCycle`], whose `ConcreteSumcheck` impl is anchored on
-//! the committed symbolic (see the invariant note on the impl). Its input claim is
-//! the staged `BytecodeReadRafAddrClaim` intermediate produced by the stage-6a
-//! address phase.
-
 pub use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 #[cfg(feature = "akita")]
 pub use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
@@ -55,16 +46,10 @@ pub type BytecodeReadRafCycleOutputClaims<C> = BytecodeReadRafOutputClaims<C>;
 #[cfg(feature = "akita")]
 pub type BytecodeReadRafCycleOutputClaims<C> = LatticeBytecodeReadRafOutputClaims<C>;
 
-/// Clear-only aux for the full-program cycle relation's bytecode-table fold:
-/// the borrowed table rows plus the register points and per-stage gammas that
-/// weight each row. Consumed at construction ([`BytecodeReadRaf::new`] folds the
-/// table against `eq(r_address)` immediately), so nothing borrowed is stored and
-/// the relation stays lifetime-free.
 pub struct BytecodeReadRafTableFoldInputs<'a, F: JoltField> {
     pub bytecode: &'a [JoltInstructionRow],
     pub register_read_write_point: &'a [F],
     pub register_val_evaluation_point: &'a [F],
-    /// Per-stage (1..=5) Fiat-Shamir gamma powers.
     pub stage_gammas: [&'a [F]; 5],
 }
 
@@ -79,7 +64,6 @@ pub struct BytecodeReadRafCycleInputs<'a, F: JoltField> {
     pub entry_bytecode_index: usize,
     pub committed_chunk_bits: usize,
     pub table_fold: Option<BytecodeReadRafTableFoldInputs<'a, F>>,
-    /// Field-register access points and the stage-4/5 gamma powers.
     #[cfg(feature = "field-inline")]
     pub field_inline: FieldInlineBytecodeFold<F>,
 }
@@ -123,13 +107,7 @@ pub struct BytecodeReadRaf<F: JoltField> {
     stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES],
     entry_bytecode_index: usize,
     committed_chunk_bits: usize,
-    /// The address-only bytecode-table fold: each staged row value (five base
-    /// stages, plus the lattice store stage — whose fold and complement feed
-    /// the four fused-inc consumer stages) folded against
-    /// `eq(r_address, row)` — the pre-cycle half of the read-raf publics.
-    /// `None` in ZK, where `expected_output` never runs.
     stage_values_at_r_address: Option<FoldedStageValues<F>>,
-    /// Field-register access points and the stage-4/5 gamma powers.
     #[cfg(feature = "field-inline")]
     field_inline: FieldInlineBytecodeFold<F>,
 }
@@ -184,11 +162,6 @@ struct FoldedStageValues<F: JoltField> {
     field_registers: [F; 5],
 }
 
-/// The address-only half of the staged read-raf publics: the bytecode rows'
-/// per-stage values (shared `read_raf_stage_values` formula, which carries
-/// the lattice store stage as its last element) folded against
-/// `eq(r_address)`. The cycle-eq factors are attached later, at
-/// `expected_output` time, so the fold can run before the cycle sumcheck.
 fn fold_stage_values<F: JoltField>(
     r_address: &[F],
     fold: BytecodeReadRafTableFoldInputs<'_, F>,
@@ -256,8 +229,6 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-/// The `log_t`-variable cycle suffix of a produced `BytecodeRa` opening point
-/// (`chunk ++ r_cycle`).
 fn r_cycle_suffix<F: JoltField>(log_t: usize, opening_point: &[F]) -> Result<&[F], VerifierError> {
     opening_point
         .len()
@@ -266,8 +237,6 @@ fn r_cycle_suffix<F: JoltField>(log_t: usize, opening_point: &[F]) -> Result<&[F
         .ok_or_else(|| public_input_failed("bytecode cycle opening point shorter than log_t"))
 }
 
-/// Evaluate the full-program bytecode read-RAF output expression at the produced
-/// `BytecodeRa` openings and public values.
 #[cfg(not(feature = "akita"))]
 #[expect(
     clippy::wildcard_enum_match_arm,
@@ -352,9 +321,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
             .stage_values_at_r_address
             .ok_or_else(|| public_input_failed("bytecode table fold is unavailable"))?
             .ordinary;
-        // The cycle-dependent public factors (`stage_cycle_eqs`, the RAF terms,
-        // `entry`) are exactly the committed-mode publics; combining them with the
-        // construction-time address fold reproduces the full-mode publics.
         let committed = bytecode::read_raf_committed_public_values::<F>(
             BytecodeReadRafCommittedEvaluationInputs {
                 r_address: &self.r_address,
@@ -363,8 +329,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                 entry_bytecode_index: self.entry_bytecode_index,
             },
         );
-        // The base monolith publics carry the five gamma'd stages; the
-        // lattice store fold feeds the fused-inc stage resolution below.
         let mut folded_stage_values = [F::zero(); bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len()];
         for ((folded, stage_value), stage_cycle_eq) in folded_stage_values
             .iter_mut()
@@ -379,10 +343,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
             spartan_shift_raf: committed.spartan_shift_raf,
             entry: committed.entry,
         };
-        // The composed publics: the field-register stage values (already
-        // cycle-weighted per stage) add onto the ordinary staged publics, so the same `Σ
-        // γ^stage · StageValue(stage)` output fold carries both families under the existing
-        // outer gamma powers.
         #[cfg(feature = "field-inline")]
         let base_public_values = {
             let field_inline_stage_values = self.field_inline_stage_values(r_cycle)?;
@@ -405,17 +365,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                 challenges.gamma,
             )
         }
-        // The packed fused-inc stages: the store fold (and its complement)
-        // bound to the four consuming relations' cycle points, resolved
-        // through the lattice cycle output expression against the `FusedInc`
-        // opening.
         #[cfg(feature = "akita")]
         {
-            // The four fused-inc consumer stages resolve from the staged store
-            // fold (its complement for the register legs) against their own
-            // cycle eqs; the `FusedInc` factor is the relation's own opening.
             let base_stages = NUM_BYTECODE_VAL_STAGES - 1;
-            // The store stage is the last staged wire (index `base_stages`).
             let store_at_r_address = *stage_values_at_r_address
                 .last()
                 .ok_or_else(|| public_input_failed("bytecode stage fold is empty"))?;
@@ -476,9 +428,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
     }
 }
 
-// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
-// composition is covered by the prover's field-inline stage round-trips and the packed e2e
-// suite.
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(
     clippy::unwrap_used,
@@ -546,13 +495,6 @@ mod field_inline_tests {
         }
     }
 
-    /// The composed full-mode `expected_output` equals the from-scratch fold: the ordinary
-    /// full-program publics (evaluated through the one-shot monolith helper — a different
-    /// assembly path than the relation's construction-time fold plus committed cycle publics)
-    /// with the field-register publics added stage-for-stage, folded through the same
-    /// output expression (spec: `field-inline-protocol.md`, "Stage 6 Composition" — the output
-    /// stays the `BytecodeRa(i)` product, with public stage values augmented by the field-register
-    /// evaluation).
     #[test]
     fn composed_expected_output_matches_from_scratch_public_fold() {
         let log_t = 2usize;
@@ -617,8 +559,6 @@ mod field_inline_tests {
             )
             .unwrap();
 
-        // From scratch: the one-shot monolith publics plus the field-register
-        // publics, stage-for-stage, through the shared output fold.
         let r_cycle: Vec<Fr> = sumcheck_point.iter().rev().copied().collect();
         let mut publics = bytecode::read_raf_public_values(BytecodeReadRafEvaluationInputs {
             bytecode: &bytecode,
@@ -649,8 +589,6 @@ mod field_inline_tests {
             },
         )
         .unwrap();
-        // The active field-inline row contributes to stages 4/5; a vanishing contribution
-        // would make this pin vacuous.
         assert!(field_publics
             .stage_values
             .iter()
@@ -674,9 +612,6 @@ mod field_inline_tests {
     }
 }
 
-/// Derive the cycle-phase produced opening points: one `(chunk ++ r_cycle)`
-/// point per committed `BytecodeRa` chunk, plus (packed) the `FusedInc` cycle
-/// point.
 fn derive_cycle_opening_points<F: JoltField>(
     r_address: &[F],
     committed_chunk_bits: usize,
@@ -831,13 +766,8 @@ enum BytecodeReadRafCycleVariant<F: JoltField> {
     Committed(BytecodeReadRafCommitted<F>),
 }
 
-/// The stage-6b bytecode read-RAF cycle relation, dispatching at runtime over
-/// full-program mode ([`BytecodeReadRaf`]) and committed-program mode
-/// ([`BytecodeReadRafCommitted`]). Lifetime-free so it can be a
-/// `Stage6bSumchecks` member directly.
 #[derive(Clone)]
 pub struct BytecodeReadRafCycle<F: JoltField> {
-    /// The `ConcreteSumcheck` anchor symbolic (see the invariant on the impl).
     anchor: CycleSymbolicCommitted,
     variant: BytecodeReadRafCycleVariant<F>,
 }

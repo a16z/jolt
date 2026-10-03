@@ -1,8 +1,3 @@
-//! Differential tests: jolt-field's BN254 backend against exact
-//! num-bigint modular arithmetic. The canonical value of an element is read
-//! through `to_bytes_le`, whose faithfulness is pinned by the golden
-//! fixtures in golden_bytes.rs.
-
 #![cfg(feature = "bn254")]
 #![expect(clippy::unwrap_used, reason = "test code")]
 
@@ -17,7 +12,6 @@ fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xb254_b254)
 }
 
-/// BN254 scalar-field modulus r.
 fn p_fr() -> BigUint {
     BigUint::parse_bytes(
         b"30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
@@ -26,7 +20,6 @@ fn p_fr() -> BigUint {
     .unwrap()
 }
 
-/// BN254 base-field modulus q.
 fn p_fq() -> BigUint {
     BigUint::parse_bytes(
         b"30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
@@ -35,7 +28,6 @@ fn p_fq() -> BigUint {
     .unwrap()
 }
 
-/// Canonical value of an element via its (fixture-pinned) LE encoding.
 fn val<F: CanonicalEncoding>(x: &F) -> BigUint {
     BigUint::from_bytes_le(&x.to_bytes_le_vec())
 }
@@ -44,14 +36,12 @@ fn assert_val<F: CanonicalEncoding>(x: &F, expected: &BigUint) {
     assert_eq!(val(x), *expected);
 }
 
-/// `v mod p` for a possibly negative BigInt.
 fn imod(v: &BigInt, p: &BigUint) -> BigUint {
     let p_int = BigInt::from_biguint(Sign::Plus, p.clone());
     let r = ((v % &p_int) + &p_int) % &p_int;
     r.to_biguint().unwrap()
 }
 
-/// Sample an element together with its oracle value from the same bytes.
 fn sample_fr(rng: &mut ChaCha20Rng, p: &BigUint) -> (two::Fr, BigUint) {
     let bytes: [u8; 32] = rng.gen();
     let t = <two::Fr as CanonicalEncoding>::from_bytes_le_reduced(&bytes);
@@ -62,8 +52,6 @@ fn sample_fr(rng: &mut ChaCha20Rng, p: &BigUint) -> (two::Fr, BigUint) {
 
 #[test]
 fn moduli_are_consistent() {
-    // The hardcoded moduli agree with the crate: -1 encodes p − 1, and the
-    // reducing decode sends p to zero.
     for (minus_one_bytes, p) in [
         (two::Fr::from_i64(-1).to_bytes_le_vec(), p_fr()),
         (two::Fq::from_i64(-1).to_bytes_le_vec(), p_fq()),
@@ -111,7 +99,6 @@ fn integer_conversions_match() {
             &imod(&BigInt::from(v_i128), &p),
         );
     };
-    // Boundary values, including both sides of the Montgomery precomp table.
     for v in [0u64, 1, 2, 16383, 16384, 16385, u64::MAX] {
         check(v, v as i64, v as u128, v as i128);
     }
@@ -143,7 +130,6 @@ fn scalar_mul_fast_paths_match() {
             &t.mul_i128(si128),
             &imod(&(BigInt::from_biguint(Sign::Plus, v.clone()) * si128), &p),
         );
-        // Low-limb-only u128 exercises the single-round Barrett path.
         assert_val(&t.mul_u128(s64 as u128), &(&v * s64 % &p));
         for edge in [0u64, 1, 2] {
             assert_val(&t.mul_u64(edge), &(&v * edge % &p));
@@ -159,15 +145,12 @@ fn serde_bytes_match() {
     for _ in 0..100 {
         let (t, v) = sample_fr(&mut rng, &p);
         let t_bytes = bincode::serde::encode_to_vec(t, cfg).unwrap();
-        // Wire format is the canonical 32-byte LE encoding (absolute bytes
-        // pinned by the golden fixtures).
         assert_eq!(t_bytes, t.to_bytes_le_vec(), "wire = transcript bytes");
         let (t_back, read): (two::Fr, usize) =
             bincode::serde::decode_from_slice(&t_bytes, cfg).unwrap();
         assert_eq!(read, 32);
         assert_val(&t_back, &v);
     }
-    // Non-canonical wire bytes rejected.
     let bad = bincode::serde::encode_to_vec([0xffu8; 32], cfg).unwrap();
     assert!(bincode::serde::decode_from_slice::<two::Fr, _>(&bad, cfg).is_err());
 }
@@ -215,7 +198,6 @@ fn transcript_surface_matches() {
             &(BigUint::from_bytes_le(&wide) % &p),
         );
     }
-    // Small-value integer views agree with construction.
     for v in [0u64, 1, 999, u64::MAX] {
         assert_eq!(two::Fr::from_u64(v).to_u64_checked(), Some(v));
         assert_eq!(two::Fr::from_u64(v).to_u128_checked(), Some(v as u128));
@@ -241,7 +223,6 @@ fn wide_accumulator_matches() {
     }
     assert_val(&acc.reduce(), &expect);
 
-    // add / small-scalar fmadds / merge, mirrored in exact integers.
     let (t, v) = sample_fr(&mut rng, &p);
     let vi = BigInt::from_biguint(Sign::Plus, v.clone());
     let mut acc = <two::Fr as two::WithAccumulator>::Accumulator::default();
@@ -263,7 +244,6 @@ fn wide_accumulator_matches() {
     acc.merge(other);
     assert_val(&acc.reduce(), &imod(&expect, &p));
 
-    // Empty accumulators reduce to zero.
     let empty = <two::Fr as two::WithAccumulator>::Accumulator::default();
     assert_eq!(empty.reduce(), two::Fr::from_u64(0));
 }

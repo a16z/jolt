@@ -69,14 +69,6 @@ impl From<FormatAssert> for NormalizedOperands {
 mod tests {
     use super::*;
 
-    /// The alignment asserts carry `AddOperands`, so their normalized `imm` is
-    /// compared against a lookup index as a field element. A *negative*
-    /// normalized `imm` would make that index `2^128 - |rs1 + imm|`, which is
-    /// unequal to `rs1 + imm` in any field — and whose only satisfying
-    /// representative, `p - |rs1 + imm|`, sits in the fp128 alias band.
-    ///
-    /// `emit_address` forwards the raw signed load offset, so the wrap has to
-    /// happen here, exactly as `FormatI`/`FormatU`/`FormatJ` do by storing `u64`.
     #[test]
     fn normalized_immediate_is_wrapped_to_u64() {
         for imm in [

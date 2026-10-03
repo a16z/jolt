@@ -1,5 +1,3 @@
-//! Polynomial stored as evaluations over the Boolean hypercube.
-
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 use jolt_field::JoltField;
@@ -9,11 +7,6 @@ use serde::{Deserialize, Serialize};
 use crate::eq::EqPolynomial;
 use crate::BindingOrder;
 
-/// Minimum number of evaluations before parallelizing bind/evaluate.
-///
-/// Below this threshold the overhead of Rayon work-stealing exceeds the
-/// benefit. 1024 field elements is roughly one L1 cache line's worth of
-/// useful work per core, keeping synchronization cost negligible.
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
@@ -42,7 +35,6 @@ pub struct Polynomial<T> {
     num_vars: usize,
 }
 
-/// Wire-format helper for validated deserialization.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "T: for<'a> Deserialize<'a>"))]
 struct PolynomialRaw<T> {
@@ -111,13 +103,11 @@ impl<T> Polynomial<T> {
         self.evals.is_empty()
     }
 
-    /// The raw evaluation table over the Boolean hypercube.
     #[inline]
     pub fn evals(&self) -> &[T] {
         &self.evals
     }
 
-    /// Consumes the polynomial and returns the evaluation vector.
     pub fn into_evals(self) -> Vec<T> {
         self.evals
     }
@@ -148,7 +138,6 @@ impl<T: Copy> Polynomial<T> {
 }
 
 impl<F: JoltField> Polynomial<F> {
-    /// Creates a polynomial with random evaluations.
     pub fn random(num_vars: usize, rng: &mut impl RngCore) -> Self {
         let evals = (0..(1 << num_vars)).map(|_| F::random(rng)).collect();
         Self { evals, num_vars }
@@ -225,7 +214,6 @@ impl<F: JoltField> Polynomial<F> {
         {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
-                // Parallel: write into a new buffer to avoid aliasing
                 let coeffs = &self.evals;
                 let new: Vec<F> = (0..half)
                     .into_par_iter()
@@ -744,7 +732,6 @@ mod tests {
 
     #[test]
     fn parallel_bind_matches_bind_to_field() {
-        // n=11 -> 2048 evaluations, above PAR_THRESHOLD=1024
         let mut rng = ChaCha20Rng::seed_from_u64(201);
         let n = 11;
         let poly = Polynomial::<Fr>::random(n, &mut rng);
@@ -1068,7 +1055,6 @@ mod tests {
         let r2 = Fr::random(&mut rng);
         let remaining: Vec<Fr> = (0..1).map(|_| Fr::random(&mut rng)).collect();
 
-        // bind_to_field(r1) then bind(r2) should match dense evaluate
         let mut bound = compact.bind_to_field::<Fr>(r1);
         bound.bind(r2);
         let result = bound.evaluate(&remaining);
@@ -1131,11 +1117,7 @@ mod tests {
     #[test]
     fn bind_low_to_high_reusing_scratch_matches_plain_bind_across_rounds() {
         let mut rng = ChaCha20Rng::seed_from_u64(600);
-        // One scratch buffer shared across every polynomial and round,
-        // pre-seeded with junk to prove stale contents cannot leak through.
         let mut scratch: Vec<Fr> = vec![Fr::from_u64(0xbad); 7];
-        // n = 12 crosses PAR_THRESHOLD on the first bind, then successive
-        // rounds shrink below it, covering both the parallel and serial paths.
         for n in [1usize, 2, 5, 12] {
             let poly = Polynomial::<Fr>::random(n, &mut rng);
             let mut with_scratch = poly.clone();
@@ -1193,8 +1175,6 @@ mod tests {
         let poly = Polynomial::<Fr>::random(n, &mut rng);
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
-        // HighToLow binds point[0] first (MSB), so binding sequentially
-        // with point[0], point[1], ... should yield evaluate(point).
         let mut hi_to_lo = poly.clone();
         for &r in &point {
             hi_to_lo.bind_with_order(r, BindingOrder::HighToLow);
@@ -1202,8 +1182,6 @@ mod tests {
         assert_eq!(hi_to_lo.len(), 1);
         assert_eq!(hi_to_lo.evaluations()[0], poly.evaluate(&point));
 
-        // LowToHigh binds point[n-1] first (LSB), so to get the same
-        // evaluation we must reverse the order of challenges.
         let mut lo_to_hi = poly.clone();
         for &r in point.iter().rev() {
             lo_to_hi.bind_with_order(r, BindingOrder::LowToHigh);

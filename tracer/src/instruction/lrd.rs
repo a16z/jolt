@@ -26,13 +26,11 @@ impl LRD {
 
         let address = cpu.x[self.operands.rs1 as usize] as u64;
 
-        // Load the doubleword from memory
         let value = cpu.mmu.load_doubleword(address);
 
         let write_value = match value {
             Ok((doubleword, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Doubleword);
-                // Return the 64-bit value
                 doubleword as i64
             }
             Err(_) => panic!("MMU load error"),
@@ -73,8 +71,6 @@ mod tests {
         (0b00010 << 27) | ((rs1 as u32) << 15) | (0b011 << 12) | ((rd as u32) << 7) | 0x2F
     }
 
-    /// LR.D to a non-RAM (I/O) address is rejected by the RAM-range
-    /// constraint. Mirrors SC.D coverage.
     #[test]
     #[should_panic(expected = "assertion failed")]
     fn test_lrd_to_io_rejected() {

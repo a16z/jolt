@@ -21,7 +21,6 @@ use super::state::{AdviceCompute, AdviceJob, GuestState};
 use emitter::EmitterSet;
 use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow};
 
-/// One compiled code body (fast or record) with its dispatch table.
 struct CompiledBody {
     buffer: dynasmrt::ExecutableBuffer,
     entry: AssemblyOffset,
@@ -39,7 +38,6 @@ struct CompiledBody {
 pub struct CompiledProgram {
     fast: CompiledBody,
     record: CompiledBody,
-    /// Same two bodies, with the chunk-boundary pause check emitted.
     fast_pausable: CompiledBody,
     record_pausable: CompiledBody,
     /// Advice computations, one per group that needs them; generated code
@@ -49,7 +47,6 @@ pub struct CompiledProgram {
 }
 
 impl CompiledProgram {
-    /// Compile with the production emitter set (dynasm templates).
     pub fn compile(program: &JoltProgram) -> Result<Self, TraceError> {
         Self::compile_with(program, &EmitterSet::dynasm())
     }
@@ -84,8 +81,6 @@ impl CompiledProgram {
             ));
         }
 
-        // Source rows keyed by address: the expanded bytecode erases the source
-        // kind and inline key, which the per-group advice computations need.
         let sources = Self::source_rows(program)?;
 
         // Four bodies: {execute, record} x {eager, pausable}. Compilation is
@@ -119,13 +114,10 @@ impl CompiledProgram {
         self.fast.code_address()
     }
 
-    /// Run the fast body: execution only, no row materialization.
     pub fn run(&self, state: &mut GuestState) -> Result<(), TraceError> {
         self.fast.run(state)
     }
 
-    /// Run the record body, filling the observation buffer described by
-    /// `GuestState::obs_cursor`/`obs_end`.
     pub fn run_record(&self, state: &mut GuestState) -> Result<(), TraceError> {
         self.record.run(state)
     }
@@ -136,7 +128,6 @@ impl CompiledProgram {
         self.fast_pausable.run(state)
     }
 
-    /// Run the pausable record body, for chunk replay.
     pub fn run_record_pausable(&self, state: &mut GuestState) -> Result<(), TraceError> {
         self.record_pausable.run(state)
     }
@@ -160,19 +151,13 @@ impl CompiledProgram {
     }
 }
 
-/// Which code body is being emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmitMode {
-    /// No row materialization: execute only, for the fast pass.
     Fast,
-    /// Additionally capture each row's dynamic values (see `Observation`).
     Record,
 }
 
-/// Emission context handed to a [`RowEmitter`](emitter::RowEmitter): the
-/// assembler plus the per-group state a row template may need.
 pub struct Emitter {
-    /// Which body this emission belongs to.
     pub mode: EmitMode,
     /// Whether this body can pause at group boundaries. Only the chunked
     /// paths need that; the eager paths must not pay a per-group check.
@@ -183,17 +168,10 @@ pub struct Emitter {
     pub ops: Assembler,
     /// Advice jobs collected so far (index = the job id in generated code).
     pub advice_jobs: Vec<AdviceJob>,
-    /// Next `VirtualAdvice` slot within the current group.
     pub advice_slot: usize,
-    /// Whether the current group emitted an advice computation (i.e. its
-    /// `VirtualAdvice` rows have values to read).
     pub advice_ready: bool,
-    /// Index of the current group's advice job, until the group ends and its
-    /// consumed-slot count is patched in (see [`Self::finish_advice_group`]).
     current_advice_job: Option<usize>,
-    /// Dynamic label per group-start guest address (branch/jump targets).
     labels: BTreeMap<u64, DynamicLabel>,
-    /// Guest addresses that start a compiled group, with their code offsets.
     group_offsets: Vec<(u64, AssemblyOffset)>,
     pub text_base: u64,
     pub text_span: u64,
@@ -247,7 +225,6 @@ impl CompiledBody {
         Ok(())
     }
 
-    /// Emit one code body over every expanded row.
     fn compile(
         rows: &[JoltInstructionRow],
         sources: &SourceMap,
@@ -290,9 +267,6 @@ impl CompiledBody {
             emitter.row_index = row_index;
             let address = row.address as u64;
             if previous_address != Some(address) {
-                // Group start: define the branch-target label, record the jump
-                // table offset, and emit this group's advice computation (which
-                // must observe the pre-group register state) before its rows.
                 let label = emitter.label_for(address);
                 let offset = emitter.ops.offset();
                 emitter.ops.dynamic_label(label);
@@ -321,7 +295,6 @@ impl CompiledBody {
         }
         emitter.finish_advice_group()?;
 
-        // Execution falling off the end of the program is a bad jump.
         emitter.emit_jump_to_bad_jump();
         let stubs = emitter.emit_stubs();
 
@@ -332,8 +305,6 @@ impl CompiledBody {
             .finalize()
             .map_err(|_| TraceError::Backend("x64 assembly finalize failed"))?;
 
-        // Build the halfword-granular dispatch table with the bad-jump stub as
-        // filler.
         let bad_jump = buffer.ptr(stubs.bad_jump) as usize;
         let slots = (text_span / 2) as usize;
         let mut jump_table = vec![bad_jump; slots];
@@ -354,7 +325,6 @@ impl CompiledBody {
 }
 
 impl AdviceCompute {
-    /// The advice computation a source instruction's group needs, if any.
     fn from_source(
         source: &jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>,
     ) -> Result<Option<Self>, TraceError> {

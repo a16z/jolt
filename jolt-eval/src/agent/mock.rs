@@ -29,7 +29,6 @@ pub struct MockAgent {
 }
 
 impl MockAgent {
-    /// Create a mock that always returns `Ok` with the given text and no diff.
     pub fn always_ok(text: &str) -> Self {
         let text = text.to_string();
         Self {
@@ -38,7 +37,6 @@ impl MockAgent {
         }
     }
 
-    /// Create a mock that always returns `Err`.
     pub fn always_err(message: &str) -> Self {
         Self {
             responses: std::sync::Mutex::new(vec![Err(AgentError::new(message))]),
@@ -46,18 +44,15 @@ impl MockAgent {
         }
     }
 
-    /// Create a mock that returns responses from a queue.
-    /// After the queue is exhausted, subsequent calls return an error.
     pub fn from_responses(responses: Vec<Result<AgentResponse, AgentError>>) -> Self {
         let mut reversed = responses;
-        reversed.reverse(); // so we can pop from the back
+        reversed.reverse();
         Self {
             responses: std::sync::Mutex::new(reversed),
             prompts: std::sync::Mutex::new(Vec::new()),
         }
     }
 
-    /// Return all prompts that were passed to `invoke`, in order.
     pub fn recorded_prompts(&self) -> Vec<String> {
         self.prompts.lock().unwrap().clone()
     }
@@ -76,7 +71,6 @@ impl AgentHarness for MockAgent {
         if responses.is_empty() {
             return Err(AgentError::new("MockAgent: no more responses"));
         }
-        // If only one response left, clone it (repeating) instead of popping
         if responses.len() == 1 {
             return match &responses[0] {
                 Ok(r) => Ok(AgentResponse {

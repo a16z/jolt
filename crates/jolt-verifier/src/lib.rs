@@ -21,11 +21,6 @@
 )]
 
 pub(crate) mod num {
-    //! Provably lossless numeric conversions, centralized so the rest of the
-    //! crate stays free of `as` casts (`clippy::as_conversions` is denied
-    //! crate-wide; fallible conversions use `TryFrom` at the call site).
-
-    /// Widens `usize` to `u64`.
     #[expect(
         clippy::as_conversions,
         reason = "usize is at most 64 bits on every supported target, so the cast is lossless"
@@ -34,8 +29,6 @@ pub(crate) mod num {
         value as u64
     }
 
-    /// `value.ilog2()` as `usize`. Panics on zero, exactly as `usize::ilog2`
-    /// does; callers pass validated power-of-two dimensions.
     #[expect(
         clippy::as_conversions,
         reason = "an ilog2 result is below usize::BITS and always fits usize"

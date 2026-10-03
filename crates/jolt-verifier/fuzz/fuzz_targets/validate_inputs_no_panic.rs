@@ -1,18 +1,5 @@
 #![no_main]
 
-//! `validate_inputs_from_parts` performs the verifier's pre-crypto input
-//! checks — memory-layout match, input/output size bounds, trace-length and
-//! RAM-size validity — over attacker-influenced dimensions. It must return a
-//! typed `Ok`/`Err` for any inputs, never panic or over-allocate.
-//!
-//! The honest preprocessing and proof metadata come from the checked-in
-//! fixture; the fuzzer drives the scalar dimensions (trace length, RAM size,
-//! advice presence, ZK flag) and the public I/O buffer sizes.
-//!
-//! `one_hot_config` is held at its fixture value; `rw_config` is not a
-//! parameter of `validate_inputs_from_parts`. Configuration mutations and
-//! the full verifier are outside this target's scope.
-
 use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;
@@ -43,15 +30,12 @@ fuzz_target!(|data: &[u8]| {
     }
     let (preprocessing, public_io, proof, _) = bundle();
 
-    // Fuzzer-chosen dimensions, drawn from the header bytes.
     let trace_length = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
     let ram_k = u64::from_le_bytes(data[8..16].try_into().unwrap()) as usize;
     let trusted_present = data[16] & 1 == 1;
     let untrusted_present = data[16] & 2 == 2;
     let zk = data[16] & 4 == 4;
 
-    // Fuzzer-chosen public I/O sizes, bounded so the harness itself does not
-    // allocate unreasonably; the validator enforces the real limits.
     let input_len = (data[17] as usize) * 64;
     let mut io = public_io.clone();
     io.inputs = vec![0u8; input_len.min(1 << 16)];

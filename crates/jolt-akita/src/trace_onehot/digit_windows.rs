@@ -1,10 +1,3 @@
-//! Output-stationary commit accumulation for K<D trace one-hot rings.
-//!
-//! A K<D ring packs `D/K` trace rows, so each column adds several shifts of
-//! the same `A` entry into one destination. Loading the entry once as
-//! negacyclic windows lets each destination tile sum all of its shifts in
-//! registers and touch memory once, instead of once per shift.
-
 use akita_algebra::CyclotomicRing;
 use jolt_field::{Fp128x8i32, Unreduced};
 
@@ -14,7 +7,6 @@ use crate::AkitaField;
 /// Keep four on other targets to avoid spilling on baseline SSE2.
 const TILE: usize = if cfg!(target_arch = "aarch64") { 8 } else { 4 };
 
-/// One destination ring element as unreduced [`Fp128x8i32`] lanes.
 pub(super) type DigitAccumulator<const D: usize> = [Fp128x8i32; D];
 
 /// Every negacyclic shift of one `A` entry as canonical 16-bit digits.
@@ -38,7 +30,6 @@ impl<const D: usize> DigitWindows<D> {
         }
     }
 
-    /// Replaces the held entry with `src`.
     pub(super) fn load(&mut self, src: &CyclotomicRing<AkitaField, D>) {
         let (negative, positive) = self.digits.split_at_mut(D);
         for ((negative, positive), &value) in negative.iter_mut().zip(positive).zip(&src.coeffs) {
@@ -47,7 +38,6 @@ impl<const D: usize> DigitWindows<D> {
         }
     }
 
-    /// `dst += a · Σ_k X^k` over `shifts`, each `< D`.
     pub(super) fn accumulate(&self, dst: &mut DigitAccumulator<D>, shifts: &[usize]) {
         debug_assert!(shifts.iter().all(|&shift| shift < D));
         if shifts.is_empty() {
@@ -76,7 +66,6 @@ fn canonical_digits(value: AkitaField) -> [u16; 8] {
     Fp128x8i32::from(value).0.map(|lane| lane as u16)
 }
 
-/// Adds every accumulator into its reduced ring element and clears it.
 pub(super) fn flush_digit_accumulators<const D: usize>(
     accumulators: &mut [DigitAccumulator<D>],
     reduced: &mut [CyclotomicRing<AkitaField, D>],

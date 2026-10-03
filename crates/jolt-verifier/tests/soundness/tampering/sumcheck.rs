@@ -97,10 +97,6 @@ fn tampered_stage2_sumcheck_payload_reject() {
 #[test]
 fn tampered_stage2_input_claims_reject() {
     for base in ordinary_tamper_bases() {
-        // The Spartan-outer input openings this stage consumes are already swept by
-        // tampered_stage1_opening_claims_reject (every SPARTAN_OUTER_R1CS_INPUTS
-        // variable). Only the product uni-skip output claim, which lives under the
-        // SpartanProductVirtualization relation, is unique to this stage.
         offset_claim_rejects(
             &base,
             "stage2.claims.product_uniskip_output_claim",
@@ -113,10 +109,6 @@ fn tampered_stage2_input_claims_reject() {
 #[test]
 fn tampered_stage2_output_claims_reject() {
     for base in ordinary_tamper_bases() {
-        // Every wire cell is present (the aliased reduction cells carry
-        // validated-equal copies of the product-remainder values), so a plain offset
-        // suffices; the aliased offsets are rejected by the generated
-        // `validate_aliases`, the rest by the batch fold.
         for (target_name, id) in stage2_formula_output_openings() {
             offset_claim_rejects(&base, target_name, id);
         }
@@ -338,7 +330,6 @@ fn tampered_stage6_sumcheck_payload_reject() {}
 #[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
 fn tampered_stage7_sumcheck_payload_reject() {}
 
-/// Legacy advice fixture: only when field-inline is disabled (see `tampering/mod.rs`).
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "zk"),
@@ -348,7 +339,6 @@ fn real_advice_case() -> VerifierFixtureCase {
     crate::support::verifier_fixtures::standard_advice_consumer_case()
 }
 
-// Field-inline verification currently requires full public bytecode.
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "zk"),

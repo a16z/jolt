@@ -248,9 +248,6 @@ impl<B> ReadRafAddressPhase<B> {
         let stage4_gamma = gamma_public(BytecodeReadRafChallenge::Stage4Gamma);
         let stage5_gamma = gamma_public(BytecodeReadRafChallenge::Stage5Gamma);
 
-        // Stage-4 extension: FieldRdWa/FieldRs1Ra/FieldRs2Ra at powers
-        // `stage4_gamma^(3 + j)` (the ordinary stage-4 power count is 3), riding
-        // the outer γ³.
         let stage4_rows = [
             FieldInlineVirtualPolynomial::FieldRdWa,
             FieldInlineVirtualPolynomial::FieldRs1Ra,
@@ -272,9 +269,6 @@ impl<B> ReadRafAddressPhase<B> {
         }
         let extension = gamma.clone().pow(3) * stage4_extension;
 
-        // Stage-5 extension: the val-evaluation FieldRdWa at the power following
-        // the ordinary stage-5 count (`2 + lookup-table count`), riding the outer
-        // γ⁴.
         let stage5_power = 2 + LookupTableKind::<RISCV_XLEN>::COUNT;
         extension
             + gamma.pow(4)

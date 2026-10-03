@@ -1,5 +1,3 @@
-//! Proof structures for single and batched sumcheck protocols.
-
 use crate::{
     claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement},
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
@@ -84,7 +82,6 @@ impl<F: Field, C> SumcheckProof<F, C> {
         }
     }
 
-    /// Verifies a full-round clear sumcheck proof over `domain`.
     pub fn verify<T, D>(
         &self,
         claim: &SumcheckClaim<F>,

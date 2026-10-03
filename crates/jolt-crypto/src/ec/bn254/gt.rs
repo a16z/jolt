@@ -73,7 +73,6 @@ impl CanonicalSerialize for Bn254GT {
     }
 }
 
-// GT's additive notation maps to Fq12 multiplication by design.
 #[expect(
     clippy::suspicious_arithmetic_impl,
     clippy::suspicious_op_assign_impl,
@@ -133,7 +132,7 @@ const _: () = {
             self.0 *= rhs.0.inverse().expect("GT element has no inverse");
         }
     }
-}; // end #[allow(clippy::suspicious_*)]
+};
 
 impl Mul for Bn254GT {
     type Output = Self;
@@ -186,7 +185,6 @@ impl JoltGroup for Bn254GT {
 
     #[inline]
     fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
-        // GT exponentiation: self^scalar (written additively as scalar * self).
         let fr = field_to_fr(scalar);
         Self(self.0.pow(fr.into_bigint()))
     }
@@ -199,7 +197,6 @@ impl JoltGroup for Bn254GT {
             scalars.len(),
             "msm: bases/scalars length mismatch"
         );
-        // GT "MSM" is Π bases[i]^scalars[i] (written additively as Σ scalars[i] * bases[i]).
         let mut acc = Fq12::ONE;
         for (base, scalar) in bases.iter().zip(scalars.iter()) {
             let fr = field_to_fr(scalar);
@@ -298,7 +295,6 @@ mod tests {
     #[test]
     fn deserialize_rejects_non_unitary_element() {
         let mut rng = ChaCha20Rng::seed_from_u64(7);
-        // A random Fq12 element is unitary with probability ~q^-6.
         let z = Fq12::rand(&mut rng);
         let err = serde_json::from_str::<Bn254GT>(&encode_as_json(&z)).unwrap_err();
         assert!(err.to_string().contains("not unitary"), "{err}");
@@ -307,9 +303,6 @@ mod tests {
     #[test]
     fn deserialize_rejects_unitary_non_r_torsion_element() {
         let mut rng = ChaCha20Rng::seed_from_u64(8);
-        // u = z^(q^6-1) = conj(z)/z is unitary by construction but lies in the
-        // full norm-1 subgroup (order q^6+1), outside GT w.o.p. This must pass
-        // the unitarity pre-filter and be caught by the exact x^r check.
         let z = Fq12::rand(&mut rng);
         let mut conj = z;
         let _ = conj.conjugate_in_place();

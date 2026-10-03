@@ -59,8 +59,6 @@ where
         trusted_advice_commitment,
     )?;
 
-    // Built once for the whole verification and shared by the stages that read
-    // the RA layout (5-8), instead of each rebuilding the same dimensions.
     let formula_dimensions = crate::stages::build_formula_dimensions(
         proof,
         preprocessing,
@@ -195,8 +193,6 @@ where
         trusted_advice_commitment,
     )?;
 
-    // Built once for the whole verification and shared by the stages that read
-    // the RA layout (5-8), instead of each rebuilding the same dimensions.
     let formula_dimensions = crate::stages::build_formula_dimensions(
         proof,
         preprocessing,
@@ -344,7 +340,6 @@ where
     let one_hot_config = proof.one_hot_config;
     #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
-    // The zk axis is fixed at compile time; every branch below const-folds.
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     let vc_capacity = if zk {
         Some(validate_zk_vector_commitment_setup::<PCS, VC>(
@@ -363,7 +358,6 @@ where
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
             got: public_io.inputs.len(),
-            // The failed comparison bounds the maximum below a usize length.
             max: usize::try_from(memory_layout.max_input_size).unwrap_or(usize::MAX),
         });
     }
@@ -371,7 +365,6 @@ where
     if num::u64_from_usize(public_io.outputs.len()) > memory_layout.max_output_size {
         return Err(VerifierError::OutputTooLarge {
             got: public_io.outputs.len(),
-            // The failed comparison bounds the maximum below a usize length.
             max: usize::try_from(memory_layout.max_output_size).unwrap_or(usize::MAX),
         });
     }
@@ -1033,7 +1026,6 @@ where
     if num::u64_from_usize(public_io.inputs.len()) > memory_layout.max_input_size {
         return Err(VerifierError::InputTooLarge {
             got: public_io.inputs.len(),
-            // The failed comparison bounds the maximum below a usize length.
             max: usize::try_from(memory_layout.max_input_size).unwrap_or(usize::MAX),
         });
     }
@@ -1041,7 +1033,6 @@ where
     if num::u64_from_usize(public_io.outputs.len()) > memory_layout.max_output_size {
         return Err(VerifierError::OutputTooLarge {
             got: public_io.outputs.len(),
-            // The failed comparison bounds the maximum below a usize length.
             max: usize::try_from(memory_layout.max_output_size).unwrap_or(usize::MAX),
         });
     }
@@ -1338,9 +1329,6 @@ mod tests {
         assert!(validate_proof_consistency(&proof, false).is_ok());
     }
 
-    /// A zk proof cannot exist on the akita build (`zk` and `akita` are
-    /// mutually exclusive), so the accept case is base-only; the reject cases
-    /// below run on both builds.
     #[cfg(not(feature = "akita"))]
     #[test]
     fn accepts_zk_proof_consistency() {
@@ -1394,7 +1382,6 @@ mod tests {
         use jolt_transcript::LegacyBlake2bTranscript;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
-        // Invalid metadata and layout give independent later-stage failures.
         #[cfg(feature = "field-inline")]
         if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
             let bytecode = &mut Arc::make_mut(full).bytecode.bytecode;
@@ -1476,8 +1463,6 @@ mod tests {
     #[test]
     fn validate_inputs_rejects_zero_based_ram_remap() {
         let mut memory_layout = test_memory_layout();
-        // A layout whose remap is zero-based: `unmap(0) = lowest_address = 0`
-        // would make the RAF identity blind to digit zero.
         memory_layout.trusted_advice_start = 0;
         memory_layout.untrusted_advice_start = 0;
         let preprocessing = test_preprocessing_with_layout(memory_layout);
@@ -1530,10 +1515,6 @@ mod tests {
         ));
     }
 
-    /// The field-inline BlindFold generator budget must fit the largest committed round of the
-    /// composed protocol: the Spartan outer uni-skip first round (degree
-    /// `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient more), or `commit_round`
-    /// fails closed at proving time.
     #[cfg(feature = "field-inline")]
     #[test]
     fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
@@ -1929,8 +1910,6 @@ mod tests {
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        // Use the build's instruction profile when
-        // required, including the all-inactive table for this empty program.
         let program = JoltProgramPreprocessing::new(
             Vec::new(),
             Vec::new(),
@@ -1958,8 +1937,6 @@ mod tests {
         let encoded =
             bincode::serde::encode_to_vec(&preprocessing, bincode::config::standard()).unwrap();
 
-        // The digest is not on the wire: a stale in-memory copy encodes
-        // identically and decoding rebuilds the digest from the program.
         let mut stale = preprocessing.clone();
         stale.preprocessing_digest = [0xa5; 32];
         assert_eq!(

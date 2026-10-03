@@ -22,12 +22,6 @@ use crate::VerifierError;
 pub struct BooleanityAddressPhase<F: JoltField> {
     symbolic: relations::booleanity::BooleanityAddressPhase,
     dimensions: BooleanityDimensions,
-    /// The stage-5 instruction read-RAF opening points (big-endian) the
-    /// reference points derive from: `draw_challenges` reverses the address
-    /// into the little-endian reference address,
-    /// [`reference_cycle`](Self::reference_cycle) the cycle (the same
-    /// construction-geometry idiom as `BytecodeReadRafAddressPhase`'s
-    /// `BytecodeStagePoints`).
     instruction_r_address: Vec<F>,
     instruction_r_cycle: Vec<F>,
 }
@@ -93,7 +87,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
             let missing = chunk_bits.saturating_sub(reference_address.len());
             reference_address.extend(transcript.challenge_vector(missing));
         } else {
-            // Keep the trailing `chunk_bits` entries.
             let excess = reference_address.len().saturating_sub(chunk_bits);
             reference_address = reference_address.split_off(excess);
         }
@@ -108,8 +101,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         sumcheck_point: &[F],
         _input_points: &BooleanityAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<BooleanityAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
-        // The address opening point (`booleanity_r_address`) is the reversed
-        // address sumcheck point; the cycle phase prepends it to its cycle point.
         Ok(BooleanityAddressPhaseOutputClaims {
             intermediate: sumcheck_point.iter().rev().copied().collect(),
         })

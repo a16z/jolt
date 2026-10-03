@@ -1,20 +1,3 @@
-//! Bench gate for the `Fp32` degree-4 extension kernels. It compares the
-//! generic coefficient schedule with a local port of the
-//! baseline's fused u128-accumulation `Fp32` override, on batched degree-4
-//! muls and squares over `Prime32Offset99`. (The original jolt-field
-//! baseline, which shipped the fused override, timed identically to the
-//! local port while both crates coexisted.)
-//!
-//! Outcome recorded in specs/jolt-field-rebuild.md: the fused port LOST on aarch64/Apple M4
-//! (generic ≈ 2.5x faster on mul, ≈ 1.85x on square; the port reproduces
-//! the baseline override's timing exactly), so the override was dropped
-//! and the crate keeps the generic defaults. This harness stays as the
-//! reproducible evidence; rerun it before reintroducing an override.
-//!
-//! Run: `cargo bench -p jolt-field --features solinas --bench ext4_kernels`
-
-// The harness needs the solinas backend; under other feature sets this
-// bench compiles to an empty stub so `cargo bench --bench '*'` succeeds.
 #[cfg(feature = "solinas")]
 #[expect(clippy::print_stdout, reason = "bench harness: stdout is the report")]
 mod harness {
@@ -83,7 +66,7 @@ mod harness {
         ]
     }
 
-    const P: u32 = 4_294_967_197; // 2^32 − 99
+    const P: u32 = 4_294_967_197;
 
     /// Port of the baseline's fused `Fp32` degree-4 multiply: accumulate the
     /// raw products of each output coefficient in a `u128`, reduce once.
@@ -170,7 +153,6 @@ mod harness {
         let pairs: Vec<(E4, E4)> = (0..N)
             .map(|_| (E4::random(&mut rng), E4::random(&mut rng)))
             .collect();
-        // Sanity: the fused port agrees with the wired generic path.
         for (a, b) in pairs.iter().take(64) {
             assert_eq!(
                 generic_mul(a.coeffs, b.coeffs),

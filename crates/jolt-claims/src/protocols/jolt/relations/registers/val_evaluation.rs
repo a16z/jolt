@@ -1,5 +1,3 @@
-//! registers val-evaluation symbolic sumcheck relation.
-
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::registers::{
@@ -26,8 +24,6 @@ pub struct RegistersValEvaluationOutputClaims<C> {
     pub rd_wa: C,
 }
 
-/// Consumed register value-evaluation opening, wired from the upstream register
-/// read-write checking.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct RegistersValEvaluationInputClaims<C> {
     #[opening(RegistersVal, from = RegistersReadWriteChecking)]

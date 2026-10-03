@@ -80,7 +80,6 @@ use z3::{ast::Int, Params, SatResult, Solver};
 
 #[derive(Clone, Debug)]
 struct JoltState<T = Int> {
-    // R1CS cycle inputs
     left_input: T,
     right_input: T,
     product: T,
@@ -231,14 +230,10 @@ impl JoltState {
 
     fn assert_output_differs(&self, solver: &mut Solver, other: &Self) {
         let mut or_terms = vec![
-            // we are currently missing constraints on next_pc
-            //(&self.next_pc).ne(&other.next_pc),
             self.next_is_noop.eq(Int::from(0))
                 & self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
-            // lookup inputs differ
             self.left_lookup.ne(&other.left_lookup),
             self.right_lookup.ne(&other.right_lookup),
-            // write to ram differs
             self.ram_addr.ne(&other.ram_addr),
             (&self.ram_addr.ne(Int::from(0))) & self.ram_write_value.ne(&other.ram_write_value),
         ];
@@ -301,7 +296,6 @@ impl JoltState {
         *solver += self.unexpanded_pc.eq(&other.unexpanded_pc);
         *solver += self.next_is_noop.eq(&other.next_is_noop);
 
-        // for now we don't emulate the lookup table, just use addition arbitrarily for everything
         *solver += self
             .lookup_output
             .eq(&self.left_lookup + &self.right_lookup);
@@ -320,7 +314,6 @@ impl JoltState {
             *solver += other.lookup_output.eq(&advice);
         }
 
-        // Make an artificially memory, placing rv1 at address 8 and rv2 at address 16, rest is 0
         let rv1 = Int::new_const("rv1");
         let rv2 = Int::new_const("rv2");
         let ram_expr = |addr: &Int| {
@@ -373,7 +366,6 @@ struct CompareResult {
 }
 
 impl JoltState<i64> {
-    /// Compare two states, returning lists of differing inputs and outputs
     fn compare(&self, other: &Self) -> (Vec<CompareResult>, Vec<CompareResult>) {
         macro_rules! cmp {
             ($vec:ident, $field:ident) => {
@@ -463,7 +455,6 @@ macro_rules! test_instruction_constraints {
                 let instr = Instruction::$instr($instr {
                     operands: $crate::template_format!($operands),
                     $($field: $value,)*
-                    // unused by solver
                     address: 8,
                     is_compressed: false,
                     is_first_in_sequence: false,

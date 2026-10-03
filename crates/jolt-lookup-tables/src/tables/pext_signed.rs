@@ -23,9 +23,6 @@ use crate::uninterleave_bits;
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct PextSignedTable<const XLEN: usize>;
 
-/// The table's semantics on already-masked `XLEN`-bit operands:
-/// `pext(x, y) + σ·(2^XLEN − 2^popcount(y))` where `σ` is the window sign.
-/// Shared by `materialize_entry` and the instruction's `to_lookup_output`.
 pub(crate) fn pext_signed<const XLEN: usize>(x: u64, y: u64) -> u64 {
     let pc = y.count_ones();
     if pc == 0 {
@@ -56,10 +53,6 @@ impl<const XLEN: usize> LookupTable for PextSignedTable<XLEN> {
         F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
-        // pext:   result·(1+y_i) + x_i·y_i
-        // σ:      Σ_i x_i·y_i·Π_{j<i}(1−y_j)
-        // σ2pc:   multilinear extension of σ·2^popcount(y):
-        //         Σ_i x_i·y_i·2·Π_{j<i}(1−y_j)·Π_{k>i}(1+y_k)
         let mut pext = F::zero();
         let mut sigma = F::zero();
         let mut sig2pc = F::zero();

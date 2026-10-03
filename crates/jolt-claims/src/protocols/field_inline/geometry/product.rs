@@ -79,8 +79,6 @@ pub struct FieldProductLaneFactors<F> {
 }
 
 impl<F: Ring> FieldProductLaneFactors<F> {
-    /// The lane's `(left, right)` factor values, in
-    /// [`FieldRegistersProductLane::factor_openings`] order.
     fn factor_values(&self, lane: FieldRegistersProductLane) -> [F; 2] {
         match lane {
             FieldRegistersProductLane::Product => [self.rs1_value, self.rs2_value],
@@ -185,10 +183,6 @@ mod tests {
         }
     }
 
-    /// The composed helpers weight the selected lanes at the indices following
-    /// the ordinary lanes, and each lane's factor mapping follows
-    /// `FieldRegistersProductLane::factor_openings` (Product: rs1·rs2;
-    /// InverseProduct: rs1·rd — the FINV guarded-inverse witness).
     #[test]
     fn composed_contributions_follow_selected_lane_order() {
         let base_lanes = 3usize;
@@ -211,10 +205,6 @@ mod tests {
         );
     }
 
-    /// The value carriers' per-lane mapping is the id-level lane table read
-    /// back as values: `factor_values(lane)` resolves exactly
-    /// `lane.factor_openings()`, and `input_value(lane)` resolves
-    /// `lane.input_opening()`'s polynomial.
     #[test]
     fn lane_value_mapping_matches_lane_opening_table() {
         let inputs = inputs();
@@ -244,8 +234,6 @@ mod tests {
         }
     }
 
-    /// A weight vector that does not cover the composed lane domain is a miss,
-    /// never a silent truncation.
     #[test]
     fn composed_contributions_reject_short_weight_vectors() {
         let base_lanes = 3usize;

@@ -22,8 +22,6 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Committed length of the program-image polynomial: the initial RAM
-/// bytecode-word slice padded to a power of two (at least two words).
 fn padded_program_image_len_words(program_image_len_words: usize) -> usize {
     program_image_len_words.next_power_of_two().max(2)
 }
@@ -188,19 +186,6 @@ pub fn final_program_image_opening() -> JoltOpeningId {
     )
 }
 
-/// Evaluate the shifted program-image eq slice at the reduction's opening
-/// point without materializing the slice.
-///
-/// The slice is `eq_slice[j] = eq(r_addr, start_index + j)` for `j` in
-/// `0..2^m` where `m = opening_point_be.len()`; this computes its multilinear
-/// extension at `opening_point_be` as the MLE of the binary-addition automaton
-/// for `a = start_index + y`, processing bits LSB first. `dp_c` accumulates
-/// the eq weight of bit paths whose carry into the current position is `c`;
-/// per bit, the transfer coefficients are `eq` (output bit matches the y
-/// bit), `carry_gen` (y-bit 1 produced output 0, generating a carry), and
-/// `carry_use` (y-bit 0 produced output 1, consuming the incoming carry).
-/// Window bits at and above `m` are fixed to zero, so `r_y = 0` there. The
-/// final carry-out is dropped, i.e. addresses wrap mod `2^ell`.
 fn eval_shifted_eq_poly_at_opening_point<F: JoltField>(
     r_addr_be: &[F],
     start_index: usize,
@@ -274,7 +259,6 @@ mod tests {
         let r_addr: Vec<Fr> = [3, 5, 7, 11].into_iter().map(fr).collect();
         let opening_point: Vec<Fr> = [13, 17].into_iter().map(fr).collect();
 
-        // 14 and 15 wrap past 2^ell, exercising the DP's carry-out path.
         for start_index in [0usize, 3, 4, 9, 12, 14, 15] {
             let dp = eval_shifted_eq_poly_at_opening_point(&r_addr, start_index, &opening_point)
                 .unwrap_or_else(|error| panic!("shifted eq should evaluate: {error}"));

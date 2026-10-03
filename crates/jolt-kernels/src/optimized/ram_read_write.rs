@@ -61,8 +61,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Cycle-first starts with raw columns; address-first starts with an address
-/// matrix. Each order transitions to its remaining domain, then bound values.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F: JoltField> {
     AddressFirst {
@@ -85,7 +83,6 @@ enum Phase<F: JoltField> {
     },
     Address {
         matrix: AddressMajorMatrix<F>,
-        /// The cycle-eq factor fully bound by phase 1: a length-1 table.
         merged_eq: Polynomial<F>,
     },
     Done {
@@ -100,10 +97,7 @@ enum Phase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
-    /// The committed per-cycle increment column, bound alongside cycle rounds;
-    /// a scalar once every cycle variable is bound.
     inc: Polynomial<F>,
-    /// The initial-RAM column, bound alongside address rounds.
     val_init: Polynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
@@ -112,7 +106,6 @@ pub(crate) struct RamReadWriteKernel<F: JoltField> {
 }
 
 impl<F: JoltField> Phase<F> {
-    /// The error for a bind or round message arriving outside its phase.
     fn error() -> SumcheckError<F> {
         SumcheckError::MissingEvaluationSource {
             kind: "RAM read-write phase state",
@@ -120,16 +113,12 @@ impl<F: JoltField> Phase<F> {
     }
 }
 
-/// Cycle bind that triggers the late allocator purge.
 const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
 
 impl<F: JoltField> RamReadWriteKernel<F> {
-    /// Bind the challenge of `round` (0-indexed over the member's window),
-    /// advancing the phase machine at the boundaries.
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
         self.phase = Some(match self.phase.take().ok_or_else(Phase::error)? {
             Phase::Round0 { columns, gruen } => {
-                // Create the first matrix already bound at half size.
                 let matrix = round0_bind(&columns, r);
                 drop(columns);
                 self.finish_cycle_bind(matrix, gruen, r, round)
@@ -209,7 +198,6 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         } else {
             Phase::Cycle { matrix, gruen }
         };
-        // Purge after raw columns, late bind tails, and the cycle matrix.
         if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round + 1 == self.log_t {
             crate::mem::purge_retained_memory(self.log_t);
         }
@@ -225,9 +213,6 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         }
     }
 
-    /// Cubic cycle message via Gruen: the quadratic factor's
-    /// `[q(0), q_∞]` over the sparse matrix, lifted by the current linear eq
-    /// factor and the running claim.
     fn cycle_round_message(
         &self,
         round: usize,
@@ -309,8 +294,6 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         })
     }
 
-    /// Quadratic address message: `[s(0), s(2)]` over the sparse matrix,
-    /// weighted by per-row `eq`/`inc`; `s(1)` comes from the claim.
     fn address_round_message(
         &self,
         previous_claim: F,
@@ -379,9 +362,6 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
         })
     }
 
-    /// The hand-maintained cycle-eq factor must equal the verifier's
-    /// `EqCycle` scalar at the bound point — the same cross-check the naive
-    /// tier runs on its tiled eq table.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -425,7 +405,6 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
                 reason: "RAM read-write checking geometry is inconsistent",
             });
         }
-        // Sparse matrix indices are u32.
         if log_t > 32 || log_k > 32 {
             return Err(KernelError::Unsupported {
                 reason: "optimized RAM read-write checking packs indices as u32 \
@@ -488,9 +467,6 @@ mod tests {
     use crate::optimized::parity::ExceptionalEq;
     use crate::ReferenceBackend;
 
-    /// The independently computed true input claim:
-    /// `Σ_{k,j} eq(τ_low, j) · ra(k,j) · (val(k,j) + γ·(val(k,j) + inc(j)))`
-    /// over the dense oracle grids.
     fn dense_input_claim(
         witness: &dyn JoltWitnessPlane<Fr>,
         tau_low: &[Fr],
@@ -630,8 +606,6 @@ mod tests {
 
     #[test]
     fn matches_reference_on_sparse_traffic() {
-        // Long no-access gaps and a single hot address: exercises the
-        // implicit-entry checkpoint paths on both matrix orientations.
         run_parity(
             FixtureShape { log_t: 5, ram_k: 8 },
             vec![
@@ -663,12 +637,6 @@ mod tests {
         }
     }
 
-    /// Nonzero `val_init` with reads BEFORE the first write: the optimized
-    /// `val_init` reconstruction must recover a read-first word's initial
-    /// value from its first access's pre-value, a never-accessed nonzero
-    /// word's from the final state, and stay in parity with the reference
-    /// val grid through both phases. A RAM-silent prefix exercises the initial
-    /// checkpoint in the address-first handoff.
     #[test]
     fn matches_reference_on_read_before_write_with_nonzero_val_init() {
         let shape = FixtureShape {
@@ -677,7 +645,6 @@ mod tests {
         };
         run_parity_init(
             shape,
-            // Words 2..5 start at 7, 5, 11; word 3 is never accessed.
             vec![7, 5, 11],
             vec![
                 RamOp::None,

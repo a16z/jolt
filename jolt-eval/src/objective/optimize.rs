@@ -6,7 +6,6 @@ use crate::agent::{truncate, AgentHarness};
 use super::objective_fn::ObjectiveFunction;
 use super::OptimizationObjective;
 
-/// Configuration for an optimization run.
 pub struct OptimizeConfig {
     pub num_iterations: usize,
     pub hint: Option<String>,
@@ -26,7 +25,6 @@ impl Default for OptimizeConfig {
     }
 }
 
-/// Result of a complete optimization run.
 pub struct OptimizeResult {
     pub attempts: Vec<OptimizationAttempt>,
     pub baseline_score: f64,
@@ -37,12 +35,10 @@ pub struct OptimizeResult {
     pub branch: Option<String>,
 }
 
-/// Record of a single optimization attempt.
 pub struct OptimizationAttempt {
     pub iteration: usize,
     pub score: f64,
     pub invariants_passed: bool,
-    /// Whether this attempt was accepted by the greedy loop.
     pub accepted: bool,
     /// Score change relative to the best score *at the time this attempt
     /// was evaluated* (negative = improvement).
@@ -62,16 +58,13 @@ pub trait OptimizeEnv {
     /// For real runs this is typically an isolated git worktree.
     fn work_dir(&self) -> &Path;
 
-    /// Measure the given objectives. Returns objective -> value.
     fn measure(
         &mut self,
         objectives: &[OptimizationObjective],
     ) -> HashMap<OptimizationObjective, f64>;
 
-    /// Check all invariants. Returns `true` if they all pass.
     fn check_invariants(&mut self) -> bool;
 
-    /// Apply an agent-produced diff to the working tree.
     fn apply_diff(&mut self, diff: &str);
 
     /// Called when a change is accepted. `commit_msg` is a suggested

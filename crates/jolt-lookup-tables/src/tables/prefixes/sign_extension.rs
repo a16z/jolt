@@ -15,13 +15,6 @@ impl<F: JoltField> SparseDensePrefix<F> for SignExtensionPrefix {
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
         let j_start = 2 * XLEN - suffix_len - b.len();
 
-        // sign_extension = sign_bit * sum(2^i for each y_i == 0, i >= 1)
-        //
-        // The sign bit is x_0 (MSB of x). For the first phase (j_start == 0),
-        // we extract x_0 from b and sum over y_1..y_{n-1} (skipping y_0).
-        // For subsequent phases, checkpoint already contains the accumulated
-        // sign_bit * sum, and we add sign_bit * contributions from this phase's y bits.
-
         let (_x, y) = b.uninterleave();
         let y_val = u64::from(y);
         let y_len = y.len();
@@ -34,8 +27,6 @@ impl<F: JoltField> SparseDensePrefix<F> for SignExtensionPrefix {
                 return F::zero();
             }
 
-            // y_0 is paired with x_0 (the sign bit). Sign extension starts
-            // at bit position 1, processing y_1 onwards. Skip y_0 (index 0).
             let mut sum = 0u64;
             for i in 1..y_len {
                 let y_bit = (y_val >> (y_len - 1 - i)) & 1;

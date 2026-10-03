@@ -761,9 +761,6 @@ struct SumcheckTrace {
     point: Vec<F>,
 }
 
-/// Everything needed to drive a prover (harness or real) over the same
-/// protocol-backed instance: the statement-derived protocol plus the real
-/// witness rows, blindings, and final-opening evaluations.
 pub struct ProtocolBackedInstance {
     pub setup: PedersenSetup<Bn254G1>,
     pub protocol: BlindFoldProtocol<F, Bn254G1>,
@@ -779,8 +776,6 @@ pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBacked
     build_protocol_backed_instance_with_bindings(rng, 1)
 }
 
-/// Like [`build_protocol_backed_instance`], with `binding_count` (1 or 2)
-/// final-opening bindings: the second opens stage 2's first output claim.
 pub fn build_protocol_backed_instance_with_bindings<R: RngCore>(
     rng: &mut R,
     binding_count: usize,

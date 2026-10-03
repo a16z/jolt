@@ -27,8 +27,6 @@ mod pipeline {
 
     pub const PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
 
-    /// eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)) over the pairs, the
-    /// host-side reference the guest's FIELD_ASSERT_EQ checks against.
     pub fn eq_mle(pairs: &[[u64; 2]; 4]) -> Fr {
         let one = Fr::from_u64(1);
         pairs.iter().fold(one, |acc, [r, x]| {
@@ -38,8 +36,6 @@ mod pipeline {
         })
     }
 
-    /// Canonical little-endian u64 limbs, which the guest accumulates in
-    /// reverse order using the x-register ingress instruction.
     pub fn limbs(value: Fr) -> [u64; 4] {
         let mut bytes = [0u8; 32];
         value.to_bytes_le(&mut bytes);
@@ -50,8 +46,6 @@ mod pipeline {
         limbs
     }
 
-    /// The generated prover's input encoding: each argument postcard-encoded
-    /// and concatenated.
     pub fn guest_inputs(pairs: &[[u64; 2]; 4]) -> Vec<u8> {
         let mut inputs = jolt::postcard::to_stdvec(pairs).expect("serialize pairs");
         inputs.extend(
@@ -66,12 +60,8 @@ mod pipeline {
         pub program: Arc<JoltProgram>,
     }
 
-    /// Compile the field-inline guest, build profile-aware modular preprocessing,
-    /// and re-trace through the modular tracer backend.
     pub fn compile_and_trace(inputs: &[u8]) -> TracedGuest {
         let target_dir = "/tmp/jolt-guest-targets";
-        // The guest's field-inline feature flows through `compile_eval_eq_mle`,
-        // which switches the program to the field-inline instruction profile.
         let mut program = guest::compile_eval_eq_mle(target_dir);
 
         let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
@@ -126,8 +116,6 @@ mod pipeline {
         rows.iter().filter(|row| row.field_inline.is_some()).count()
     }
 
-    /// Prove with the modular prover and verify through the full verifier
-    /// entry; returns the guest output.
     pub fn prove_and_verify(traced: TracedGuest) -> u64 {
         let TracedGuest {
             preprocessing,
@@ -165,8 +153,6 @@ mod pipeline {
             ),
             JoltVmWitnessInputs::new(&program, &program_preprocessing, witness_output),
         )
-        // field-inline proving needs the field-inline witness view; classic-profile
-        // guests are refused rather than silently proven without field-inline columns.
         .with_field_inline()
         .expect("field-inline witness view");
         let witness = Arc::new(witness);
@@ -236,18 +222,8 @@ fn main() {
 mod tests {
     use super::pipeline::{compile_and_trace, field_inline_rows, guest_inputs, PAIRS};
 
-    /// The guest's static field-inline instruction budget: 2 accumulator seeds,
-    /// 10 per coordinate pair (2 resets, 2 bridge accumulations, 3 muls, 2 subs,
-    /// 1 add), 5 for the expected value (reset + 4 accumulations), the assert,
-    /// 11 for memory ingress, in-place readout and restoration, 4 for inversion,
-    /// and 5 for the result value, AdviceLimb and AssertZero.
     const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 10 * PAIRS.len() + 5 + 1 + 11 + 4 + 5;
 
-    /// Commit-A scope: the guest builds and traces field-active — the tracer
-    /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or
-    /// FIELD_ASSERT_ZERO traps at trace time), so a completed trace
-    /// already pins the eq-MLE math. The full prove/verify e2e lives in
-    /// jolt-prover's field_inline_e2e suite.
     #[test]
     fn guest_traces_field_inline_active() {
         let traced = compile_and_trace(&guest_inputs(&PAIRS));

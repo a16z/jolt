@@ -2,7 +2,6 @@ use crate::emulator::cpu::get_register_name;
 use crate::emulator::Emulator;
 use common::constants::{REGISTER_COUNT, RISCV_REGISTER_COUNT};
 
-/// Represents a single function call for stack trace
 #[derive(Clone, Debug)]
 pub struct CallFrame {
     pub call_site: u64,
@@ -16,7 +15,6 @@ pub struct CallFrame {
     /// at 24 bytes and the `MAX_CALL_STACK_DEPTH`-deep ring buffer — written on
     /// every call instruction — a few cache lines instead of ~33 KiB.
     pub x: Option<Box<[i64; REGISTER_COUNT as usize]>>,
-    /// cycle count at the time of call
     pub cycle_count: usize,
 }
 
@@ -79,7 +77,6 @@ pub fn resolve_frame(loader: &addr2line::Loader, frame: &CallFrame) -> Option<Re
         }
     }
 
-    // Fallback to just symbol name
     if let Some(sym_name) = loader.find_symbol(addr) {
         let demangled = addr2line::demangle_auto(std::borrow::Cow::Borrowed(sym_name), None);
         return Some(ResolvedFrame {
@@ -93,7 +90,7 @@ pub fn resolve_frame(loader: &addr2line::Loader, frame: &CallFrame) -> Option<Re
 }
 
 fn shorten_path(path: &str) -> String {
-    const MAX_LENGTH: usize = 50; // Adjust as needed
+    const MAX_LENGTH: usize = 50;
 
     if path.len() <= MAX_LENGTH {
         return path.to_string();
@@ -107,16 +104,14 @@ fn shorten_path(path: &str) -> String {
     let mut total_len = filename.len();
 
     for component in components.iter().rev().skip(1) {
-        let new_len = total_len + component.len() + 1; // +1 for '/'
+        let new_len = total_len + component.len() + 1;
         if new_len > MAX_LENGTH - 4 {
-            // -4 for ".../""
             break;
         }
         result_components.insert(0, *component);
         total_len = new_len;
     }
 
-    // Add ellipsis if we truncated
     if result_components.len() < components.len() {
         format!(".../{}", result_components.join("/"))
     } else {
@@ -148,7 +143,6 @@ pub fn display_panic_backtrace(emulator_state: &Emulator) {
         }
     };
 
-    // Get panic location from most recent frame
     let panic_info = if !call_stack.is_empty() {
         if let Some(elf_path) = emulator_state.elf_path.as_ref() {
             if let Ok(loader) = addr2line::Loader::new(elf_path) {
@@ -225,7 +219,6 @@ fn print_extended_frame_info(frame: &CallFrame) {
         for i in 0..RISCV_REGISTER_COUNT {
             let i = i as usize;
             if x[i] != 0 || i == 2 {
-                // Always show sp
                 regs.push(format!("{}={:#x}", get_register_name(i), x[i]));
             }
         }

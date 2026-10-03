@@ -1,5 +1,3 @@
-//! RAM symbolic sumcheck relations.
-
 mod hamming_booleanity;
 mod output_check;
 mod ra_claim_reduction;

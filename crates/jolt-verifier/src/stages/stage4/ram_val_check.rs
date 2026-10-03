@@ -1,19 +1,3 @@
-//! The stage 4 `RamValCheck` sumcheck instance.
-//!
-//! A self-contained relation object driven identically by the prover and the
-//! verifier. It owns the RAM value-check point derivation and the
-//! `LtCyclePlusGamma` public-value computation; the decomposition of
-//! `Val_init(r_address)` into a public evaluation plus committed
-//! advice/program-image contributions lives in its `jolt-claims` formula
-//! (`ram::val_check`), so the clear path, the prover, and the BlindFold
-//! constraint all consume the same decomposition.
-//!
-//! WARNING: the advice/program-image openings are dual-role — they are *consumed*
-//! by the input claim (init reconstruction) and *also* appended/serialized as
-//! stage-4 openings. They therefore appear both as [`RamValCheckInputClaims`]
-//! fields and in the serialized `Stage4OutputClaims` aggregate. Only their values feed
-//! the input claim; their staged points are carried for completeness.
-
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
@@ -38,11 +22,6 @@ use crate::VerifierError;
 
 use super::outputs::Stage4OutputClaims;
 
-/// Wire the consumed opening *values* from stage 2's RAM read-write `val` and
-/// output-check `val_final`, plus the reconstructed init contributions (the
-/// same advice / program-image openings the init evaluation is decomposed
-/// into). Only these values feed the input claim; clear-only because the values
-/// come from proof claims.
 pub fn ram_val_check_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     init: &RamValCheckInitialEvaluation<F>,
@@ -60,11 +39,6 @@ pub fn ram_val_check_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Wire the consumed opening *points* from stage 2's RAM read-write and
-/// output-check openings, plus the init contributions' staged opening points
-/// (carried for completeness though only the values feed the input claim).
-/// ZK-agnostic: it reads the stage-2 point aggregate and the pre-branch init
-/// structure, so the same wiring serves both paths.
 pub fn ram_val_check_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     structure: &RamValCheckInitStructure<F>,
@@ -88,26 +62,12 @@ pub struct RamValCheck<F: JoltField> {
     symbolic: RamValCheckSymbolic,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
-    /// `Val_init(r_address)`'s public portion — resolves the `InitEval` input public.
     public_eval: F,
-    /// The negated block selector for each present `Val_init` contribution —
-    /// resolves the `InitSelector`/`InitSelectorProgramImage` input publics.
     init_selectors: Vec<(RamValCheckPublic, F)>,
-    /// The present `Val_init` contribution openings (advice / program image):
-    /// staged on the stage-4 wire but consumed by this relation's *input* `Expr`
-    /// (the init-eval decomposition) and the stage-6/7 reductions, so they extend
-    /// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings) beyond the
-    /// output-`Expr` set.
     contribution_openings: Vec<JoltOpeningId>,
 }
 
 impl<F: JoltField> RamValCheck<F> {
-    /// Build the relation from its per-proof init decomposition. `init` carries
-    /// the public initial-RAM evaluation plus the present advice/program-image
-    /// contributions; their *structure* feeds the symbolic input `Expr` and their
-    /// *values* are supplied as `Derived` symbols via [`derive_input_term`].
-    ///
-    /// [`derive_input_term`]: ConcreteSumcheck::derive_input_term
     pub fn new(
         trace_dimensions: TraceDimensions,
         ram_log_k: usize,
@@ -178,10 +138,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         openings
     }
 
-    /// Reproduces the stage-4 inline RAM value-check gamma draw: the
-    /// `b"ram_val_check_gamma"` domain separator (an empty labeled append) followed
-    /// by `ram_val_check_gamma = challenge_scalar()`. The separator's empty append
-    /// is part of the soundness-critical byte stream, so it is replayed here too.
     fn draw_challenges<T: Transcript<Challenge = F>>(
         &self,
         transcript: &mut T,
@@ -218,10 +174,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             .cycle_opening_point(sumcheck_point)
             .map_err(public_input_failed)?;
         let opening_point = [r_address, cycle.as_slice()].concat();
-        // The advice / program-image points sit at the staged RAM address sub-point,
-        // not the batch sumcheck point; downstream reads them from
-        // `RamValCheckInitialEvaluation` (clear) or BlindFold's own init decomposition
-        // (ZK), so they are left absent here.
         Ok(RamValCheckOutputClaims {
             untrusted_advice: None,
             trusted_advice: None,
@@ -240,8 +192,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The `Val_init` decomposition publics are input publics: the public
-            // initial-RAM evaluation and the negated committed-contribution selectors.
             RamValCheckPublic::InitEval => Ok(self.public_eval),
             RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => {
                 self.init_selectors
@@ -249,7 +199,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
                     .find_map(|(selector, value)| (selector == public_id).then_some(*value))
                     .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
-            // Output public — resolved in `derive_output_term`, never in the input expr.
             RamValCheckPublic::LtCyclePlusGamma => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
@@ -267,9 +216,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation of
-            // the produced cycle point against the fixed read-write cycle. Gamma comes
-            // from the drawn `challenges` (the value `draw_challenges` produced).
             RamValCheckPublic::LtCyclePlusGamma => {
                 let output_cycle =
                     output_points
@@ -292,7 +238,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
                         })?;
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + challenges.gamma)
             }
-            // Input publics — resolved in `derive_input_term`, never in the output expr.
             RamValCheckPublic::InitEval
             | RamValCheckPublic::InitSelector(_)
             | RamValCheckPublic::InitSelectorProgramImage => {
@@ -302,15 +247,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
     }
 }
 
-/// The mode-agnostic *structure* of the verifier's `Val_init(r_address)`
-/// decomposition: the public evaluation plus each present contribution's staged
-/// opening point and block selector. Computable in both proving modes before the
-/// zk/clear branch (it reads only presence flags and layout geometry), so the
-/// [`RamValCheck`] relation can be constructed once via [`decomposition`]; the
-/// clear path attaches the claimed opening *values* afterwards via
-/// `ram_val_check_initial_evaluation`.
-///
-/// [`decomposition`]: Self::decomposition
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckInitStructure<F: JoltField> {
     pub public_eval: F,
@@ -353,10 +289,6 @@ impl<F: JoltField> RamValCheckInitStructure<F> {
     }
 }
 
-/// Build the [`RamValCheckInitStructure`] from the presence flags and layout
-/// geometry. Runs before the zk/clear branch in both modes; the advice selectors
-/// and opening points come from `ram_val_check_advice_block`, the same
-/// computation the prover uses.
 pub fn ram_val_check_init_structure<F: JoltField>(
     checked: &CheckedInputs,
     untrusted_advice_present: bool,
@@ -387,11 +319,6 @@ pub fn ram_val_check_init_structure<F: JoltField>(
     })
 }
 
-/// The verifier's reconstruction of `Val_init(r_address)`: the public initial-RAM
-/// evaluation plus the present advice / program-image contributions (each carrying
-/// its staged opening). Built by `ram_val_check_initial_evaluation` from the
-/// [`RamValCheckInitStructure`] and the proof's claimed opening values; consumed by
-/// the stage-4 input wiring and the downstream stage-6/7 address-phase reductions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamValCheckInitialEvaluation<F: JoltField> {
@@ -418,18 +345,10 @@ impl<F: JoltField> RamValCheckInitialEvaluation<F> {
 pub struct VerifiedRamValCheckAdviceContribution<F: JoltField> {
     pub kind: JoltAdviceKind,
     pub selector: F,
-    /// The advice block opening *point* (the address sub-point it was evaluated
-    /// at) that, with `opening_value`, this contribution weights by `selector`.
     pub opening_point: Vec<F>,
-    /// The advice block opening *value* this contribution weights by `selector`.
     pub opening_value: F,
 }
 
-/// Attach the proof's staged advice / program-image opening *values* to the
-/// pre-branch [`RamValCheckInitStructure`], validating that each claim is present
-/// exactly when its contribution is. Clear-only (the values come from proof
-/// claims); mirrors the prover's own init reconstruction so both decompose
-/// `Val_init` identically.
 pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
     structure: &RamValCheckInitStructure<F>,
     claims: &Stage4OutputClaims<F>,
@@ -483,11 +402,6 @@ pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
     })
 }
 
-/// The advice block's selector and opening point, derived from the memory layout
-/// and the RAM address point.
-///
-/// WARNING: the ZK path recomputes the same geometry in `zk::blindfold`'s
-/// `advice_selector`, so the two must stay in lockstep.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckAdviceBlock<F: JoltField> {
     pub selector: F,
@@ -574,9 +488,6 @@ mod tests {
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use jolt_field::Fr;
 
-    // Overrides the default to prepend the `b"ram_val_check_gamma"` domain separator
-    // (an empty labeled append) before the gamma squeeze; the append is part of the
-    // soundness-critical byte stream, so it must appear in `draw_challenges` too.
     #[test]
     fn draw_challenges_appends_domain_separator_then_draws_gamma() {
         let relation = RamValCheck::<Fr>::new(
@@ -585,8 +496,6 @@ mod tests {
             RamValCheckInit::from(Fr::from(0u64)),
         );
 
-        // Inline (stage4/verify.rs L125-126): domain-separator append, then
-        // `ram_val_check_gamma = challenge_scalar()`.
         let (inline_events, inline_gamma) = record(|t| {
             append_ram_val_check_gamma_domain_separator(t);
             t.challenge_scalar()
@@ -594,8 +503,6 @@ mod tests {
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        // The draw is the domain-separator append(s) followed by exactly one squeeze;
-        // no challenge is squeezed before the gamma.
         assert!(draw_events.len() >= 2);
         let (separator, last) = draw_events.split_at(draw_events.len() - 1);
         assert_eq!(last, [DrawEvent::Squeeze(1)]);

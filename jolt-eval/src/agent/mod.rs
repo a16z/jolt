@@ -9,16 +9,13 @@ use std::path::Path;
 pub use claude::ClaudeCodeAgent;
 pub use mock::MockAgent;
 
-/// Output from an agent invocation.
 #[derive(Debug)]
 pub struct AgentResponse {
-    /// The agent's textual output/analysis.
     pub text: String,
     /// A unified diff of code changes the agent produced, if any.
     pub diff: Option<String>,
 }
 
-/// Error during agent invocation.
 #[derive(Debug, Clone)]
 pub struct AgentError {
     pub message: String,
@@ -43,11 +40,8 @@ impl AgentError {
 /// Git pathspec filter for controlling which files appear in the
 /// captured diff after an agent run.
 pub enum DiffScope {
-    /// Capture all changes.
     All,
-    /// Only include changes under these paths.
     Include(Vec<String>),
-    /// Include everything except changes under these paths.
     Exclude(Vec<String>),
 }
 
@@ -79,7 +73,6 @@ pub trait AgentHarness: Send + Sync {
     }
 }
 
-/// Apply a unified diff to `repo_dir`.
 pub fn apply_diff(repo_dir: &Path, diff: &str) -> Result<(), AgentError> {
     use std::process::Command;
 

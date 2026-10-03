@@ -57,17 +57,6 @@ fn tamper_manifest_target_names_are_unique() {
     assert!(target_names_are_unique());
 }
 
-/// Closes the Active ⇒ test direction: `assert_verifier_fixture_tamper_rejects`
-/// proves an exercised target is Active, but nothing else stops a target from
-/// being flipped Active (inflating the enforced tamper ratio) without a test.
-/// Every tamper test names its target by string literal, so requiring each
-/// Active name to appear in the tampering test sources makes the ratio honest;
-/// deleting a test or its target reference fails here.
-///
-/// Standard-mode only: the akita suite tampers its targets structurally
-/// (destructured field mutation in tampering/akita.rs) without naming them,
-/// so the name-literal convention this audit enforces does not apply to the
-/// akita-gated target arrays.
 #[cfg(not(feature = "akita"))]
 #[test]
 #[expect(

@@ -1,4 +1,3 @@
-//! Error-path and ordering-contract tests for the claim derives.
 #![expect(
     clippy::expect_used,
     reason = "tests should fail loudly on I/O or parse errors"
@@ -14,9 +13,6 @@ fn pretty(tokens: TokenStream2) -> String {
     prettyplease::unparse(&file)
 }
 
-/// Covers the full `OutputClaims` grammar: scalar virtual, payload-carrying
-/// virtual, indexed (`Vec`) family, conditional (`Option`) committed, and
-/// scalar advice openings.
 fn representative_output_struct() -> DeriveInput {
     parse_quote! {
         #[relation(SpartanOuter)]
@@ -35,9 +31,6 @@ fn representative_output_struct() -> DeriveInput {
     }
 }
 
-/// The macro's core contract: the canonical opening order is single-sourced
-/// from field declaration order. The ids must appear in the expansion in the
-/// same order the fields are declared, for both derives.
 #[test]
 fn canonical_order_follows_field_declaration_order() {
     let tokens = expand_output(representative_output_struct()).expect("expansion should succeed");

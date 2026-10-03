@@ -37,7 +37,6 @@ mod tests {
     use crate::emulator::terminal::DummyTerminal;
     use crate::instruction::format::format_assert_align::FormatAssert;
 
-    /// See [`VirtualAssertWordAlignment`] tests for the rationale.
     #[test]
     fn wraps_on_overflow() {
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
@@ -50,8 +49,6 @@ mod tests {
             is_compressed: false,
         };
         let mut ram_access = ();
-        // i64::MAX.wrapping_add(1) == i64::MIN, whose low bit is 0, so this
-        // must execute without panicking.
         instr.execute(&mut cpu, &mut ram_access);
     }
 }

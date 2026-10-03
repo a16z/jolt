@@ -68,7 +68,6 @@ fn row<F: JoltField>(entries: &[(usize, i64)]) -> SparseRow<F> {
         .collect()
 }
 
-/// Radix for folding a 64-bit limb into a field accumulator.
 pub fn limb_radix<F: JoltField>() -> F {
     F::from_u128(1u128 << 64)
 }
@@ -80,13 +79,6 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
 
     let empty = || Vec::new();
 
-    // Eq-conditional constraints (0-9), with arithmetic in the proof field.
-    // Form: guard · (left − right) = 0  →  A=guard, B=left−right, C=0
-
-    // 0: FieldAdd
-    //    guard = IsFieldAdd
-    //    left  = FieldRs1Value + FieldRs2Value
-    //    right = FieldRdValue
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAdd), 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
@@ -95,10 +87,6 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 1: FieldSub
-    //    guard = IsFieldSub
-    //    left  = FieldRs1Value − FieldRs2Value
-    //    right = FieldRdValue
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldSub), 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
@@ -107,37 +95,18 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 2: FieldMulDestination
-    //    guard = IsFieldMul
-    //    left  = FieldProduct
-    //    right = FieldRdValue
-    // FieldProduct = FieldRs1Value · FieldRs2Value is checked separately.
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldMul), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_PRODUCT, 1), (V_FIELD_RD_VALUE, -1)]));
     c_rows.push(empty());
 
-    // 3: FieldInverseProduct
-    //    guard = IsFieldInv
-    //    left  = FieldInvProduct
-    //    right = 1
-    // FieldInvProduct = FieldRs1Value · FieldRdValue is checked separately.
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldInv), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_INV_PRODUCT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
-    // 4: FieldAssertEq
-    //    guard = IsFieldAssertEq
-    //    left  = FieldRs1Value
-    //    right = FieldRs2Value
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAssertEq), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1), (V_FIELD_RS2_VALUE, -1)]));
     c_rows.push(empty());
 
-    // 5: FieldLoadAccumulateFromRegister
-    //    guard = IsFieldLoadAccumulateFromRegister
-    //    left  = FieldRdValue
-    //    right = 2^64 · FieldRs1Value + Rs1Value
-    // Field-register checking binds FieldRs1Value to the destination's old value.
     a_rows.push(row::<F>(&[(
         flag_column(CircuitFlags::FieldLoadAccumulateFromRegister),
         1,
@@ -149,28 +118,14 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]);
     c_rows.push(empty());
 
-    // 6: FieldAssertZero
-    //    guard = IsFieldAssertZero
-    //    left  = FieldRs1Value
-    //    right = 0
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAssertZero), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1)]));
     c_rows.push(empty());
 
-    // 7: FieldLoadImm
-    //    guard = IsFieldLoadImm
-    //    left  = FieldRdValue
-    //    right = Imm
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldLoadImm), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RD_VALUE, 1), (V_IMM, -1)]));
     c_rows.push(empty());
 
-    // 8: FieldLoadAccumulateFromMemory
-    //    guard = IsFieldLoadAccumulateFromMemory
-    //    left  = FieldRdValue
-    //    right = 2^64 · FieldRs1Value + RdWriteValue
-    // RV64 load rows bind RdWriteValue to the loaded word; field-register
-    // checking binds FieldRs1Value to the destination's old value.
     a_rows.push(row::<F>(&[(
         flag_column(CircuitFlags::FieldLoadAccumulateFromMemory),
         1,
@@ -182,12 +137,6 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]);
     c_rows.push(empty());
 
-    // 9: FieldAdviceLimb
-    //    guard = IsFieldAdviceLimb
-    //    left  = FieldRs1Value
-    //    right = RdWriteValue + 2^64 · FieldRdValue
-    // FieldRdValue is a field quotient. RV64/lookup constraints range-check
-    // the limb; canonical integer readout requires checks in the guest.
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAdviceLimb), 1)]));
     b_rows.push(vec![
         (V_FIELD_RS1_VALUE, F::one()),
@@ -458,7 +407,6 @@ mod tests {
         }
     }
 
-    /// Advice fixes a residue relation, not a canonical integer decomposition.
     #[test]
     fn advice_limb_row_binds_the_low_limb_and_quotient() {
         let low = Fr::from_u64(0x1234_5678);

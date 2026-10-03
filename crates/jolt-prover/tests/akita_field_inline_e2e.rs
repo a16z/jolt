@@ -1,12 +1,3 @@
-//! Packed (Akita) field-inline parity and tamper tests over fp128.
-//!
-//! Both kernel backends prove the field-ops guest with full-width `FieldRdInc`
-//! values and muldiv with an identically zero `FieldRdInc`, producing identical
-//! wire objects. The field-increment commitment is present in both cases.
-//! Guest acceptance across modes lives in `e2e_matrix.rs`.
-//! Tamper cases cover the reduced increment claim, commitment layout digest,
-//! batched opening proof, missing commitment, and duplicate batch role.
-
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",
@@ -41,7 +32,6 @@ mod clear {
     use crate::support::field_inline::akita::Proof;
     use crate::support::field_inline::{akita, field_ops, muldiv};
 
-    /// A labeled packed kernel-backend constructor.
     type BackendCase = (
         &'static str,
         fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
@@ -76,7 +66,6 @@ mod clear {
         }
     }
 
-    /// Commit the honest increment polynomial under a supplied layout digest.
     fn commit_inc_with_digest(fixture: &IncFixture, digest: [u8; 32]) -> AkitaCommitment {
         use jolt_openings::TransparentObjectSetup;
         use jolt_poly::Polynomial;
@@ -95,11 +84,9 @@ mod clear {
         commitment
     }
 
-    /// Both backends' packed field-inline proofs must verify AND be equal wire objects.
     #[test]
     fn akita_field_inline_field_ops_backends_have_identical_proofs() {
         let mut case = field_ops();
-        // Exercise a joint opening with both bounded advice and full-width increments.
         case.untrusted_advice = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
@@ -135,8 +122,6 @@ mod clear {
         );
     }
 
-    /// Dense schedules depend on shape, so an inactive field register file
-    /// still carries a commitment and opens its all-zero increment polynomial.
     #[test]
     fn akita_field_inline_muldiv_backends_have_identical_zero_inc_proofs() {
         let mut proofs = Vec::new();
@@ -174,8 +159,6 @@ mod clear {
         );
     }
 
-    /// The packed field-inline tamper matrix: one honest proof, mutations on fresh
-    /// clones, every one rejected.
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
         let (output, inc) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_inc);
@@ -187,7 +170,6 @@ mod clear {
         .expect("base proof must verify before tampering");
         let one = AkitaField::from_u64(1);
 
-        // Bind the layout identity independently of the committed values.
         let wrong_digest_commitment = {
             let honest = output
                 .proof
@@ -195,9 +177,6 @@ mod clear {
                 .as_ref()
                 .expect("packed field-inline proofs carry the field-increment commitment");
             let digest = GroupCommitmentMetadata::layout_digest(honest);
-            // The forgery path reproduces the prover's commit exactly under
-            // the honest digest, so the flipped-digest commitment below
-            // differs from the honest one only in the digest.
             assert_eq!(
                 &commit_inc_with_digest(&inc, digest),
                 honest,
@@ -260,9 +239,6 @@ mod clear {
         }
     }
 
-    /// A spurious second field-inline-role group in the heterogeneous batch statement
-    /// must be rejected by the strictly-ascending role order — the layer that
-    /// makes the verifier-assembled single field-inline entry canonical.
     #[test]
     fn akita_field_inline_duplicate_inc_group_is_rejected() {
         use jolt_claims::protocols::field_inline::lattice::field_inc_group_role;
@@ -298,8 +274,6 @@ mod clear {
             &mut transcript,
         )
         .expect_err("a duplicated field-inline-role group must be rejected");
-        // The rejection must come from the canonical role-order check, not
-        // from the fake statement failing later in the batch.
         assert!(
             error.to_string().contains("canonical ascending order"),
             "duplicated field-inline role rejected for the wrong reason: {error}",

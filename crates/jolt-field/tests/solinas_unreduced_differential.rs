@@ -1,21 +1,3 @@
-//! Differential tests for the deferred-reduction machinery (`Unreduced`,
-//! `Fold`, `MulBaseUnreduced`) against an independent schoolbook oracle
-//! (256-bit limb multiply + binary long division — no Solinas folding, no
-//! shared code).
-//!
-//! Coverage per accumulator type: exactness of delayed sums vs direct
-//! reduced multiplication over random batches AND adversarial batches
-//! (all-max operands, wrap-through add/sub sequences). The extension
-//! accumulators are compared per-term against the ring multiply, which the
-//! ext suite verifies against its own schoolbook oracle.
-//!
-//! Headroom boundaries: the `i32`-lane bound (32768 max-lane accumulations)
-//! is tested exactly, with the one-past case asserted to panic in debug
-//! builds. The `u128`-slot headrooms (≥ 2^61 terms) are analytically
-//! derived in `solinas/unreduced.rs` and computationally untestable; the
-//! adversarial all-max batches here exercise the worst per-term slot
-//! contributions those derivations bound.
-
 #![cfg(feature = "solinas")]
 // NB: no `expect(clippy::unwrap_used)` — every unwrap here sits inside a
 // local `macro_rules!` expansion, where the lint does not fire.
@@ -56,7 +38,6 @@ fn commitment_accumulation_limit_is_the_exact_i32_lane_bound() {
     );
 }
 
-/// Adds the flat lanes of `lanes` into the flat lanes of `wide`.
 fn add_flat_commit_lanes<F: WithCommitAccumulator>(wide: &mut [F::Wide], lanes: &[F::CommitLanes]) {
     let digits = F::flatten_commit_lanes(lanes);
     let wide = F::flatten_wide_mut(wide);
@@ -66,9 +47,6 @@ fn add_flat_commit_lanes<F: WithCommitAccumulator>(wide: &mut [F::Wide], lanes: 
     }
 }
 
-/// Commit lanes are the wide lanes at data width, the flat views share one
-/// element-major layout, and widening flat lanes into wide accumulators
-/// matches adding the wide lifts.
 macro_rules! commit_lanes_suite {
     ($name:ident, $F:ty, $seed:expr) => {
         #[test]
@@ -103,8 +81,6 @@ commit_lanes_suite!(commit_lanes_match_wide_fp32, two::Prime32Offset99, 0xC0);
 commit_lanes_suite!(commit_lanes_match_wide_fp64, two::Prime64Offset59, 0xC1);
 commit_lanes_suite!(commit_lanes_match_wide_fp128, two::Prime128Offset275, 0xC2);
 
-/// `MAX_COMMIT_ACCUMULATIONS` widening adds of the largest canonical element
-/// (`p − 1`, whose lanes are almost all `0xFFFF`) stay exact.
 #[test]
 fn commit_lanes_headroom_boundary_is_exact() {
     type F = two::Prime128Offset275;
@@ -118,8 +94,6 @@ fn commit_lanes_headroom_boundary_is_exact() {
     assert_eq!(<F as Unreduced>::reduce_wide(acc[0]), expect);
 }
 
-/// 128×128 → 256-bit schoolbook multiply over 64-bit halves (independent of
-/// the crate's `mul_wide`).
 fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     let (a0, a1) = (a as u64 as u128, a >> 64);
     let (b0, b1) = (b as u64 as u128, b >> 64);
@@ -131,7 +105,6 @@ fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     [p00 as u64, mid as u64, hi as u64, top as u64]
 }
 
-/// Little-endian limbs mod `p` by binary long division — no Solinas folding.
 fn oracle_mod(limbs: &[u64], p: u128) -> u128 {
     let mut r: u128 = 0;
     for &limb in limbs.iter().rev() {
@@ -162,10 +135,6 @@ fn submod(a: u128, b: u128, p: u128) -> u128 {
     addmod(a, p - b, p)
 }
 
-/// Full `Unreduced` sweep for one base-field instantiation:
-/// product/small-product batch exactness (random, all-max, wrap-through),
-/// wide-lane roundtrip/group-ops/scaling — all against the field ops and
-/// the schoolbook oracle.
 macro_rules! base_field_suite {
     ($name:ident, $F2:ty, $p:expr, $seed:expr) => {
         #[test]
@@ -175,11 +144,8 @@ macro_rules! base_field_suite {
             let f2 = |v: u128| <$F2 as CanonicalEncoding>::from_u128_checked(v).unwrap();
             let val2 = |x: &$F2| x.to_u128_checked().unwrap();
 
-            // Scalar prime fields do not advertise exact delayed sums
-            // (value pinned while the jolt-field baseline coexisted).
             assert!(!<$F2 as Unreduced>::SUM_IS_EXACT);
 
-            // Σ aᵢ·bᵢ: delayed vs per-term vs oracle.
             let check_products = |pairs: &[(u128, u128)]| {
                 let expect = pairs
                     .iter()
@@ -202,7 +168,6 @@ macro_rules! base_field_suite {
             }
             check_products(&vec![(p - 1, p - 1); 512]);
 
-            // Σ aᵢ·bᵢ with raw u64 scalars (including u64::MAX and 0).
             let check_small = |pairs: &[(u128, u64)]| {
                 let expect = pairs.iter().fold(0u128, |acc, &(a, b)| {
                     addmod(acc, mulmod(a, b as u128, p), p)
@@ -225,8 +190,6 @@ macro_rules! base_field_suite {
             check_small(&[(p - 1, u64::MAX), (p - 1, 0), (0, u64::MAX)]);
             check_small(&vec![(p - 1, u64::MAX); 400]);
 
-            // Wrap-through subtraction: t1 − t2 + t2 = t1 must be exact even
-            // though the intermediate slots dip below zero (wrapping group).
             let (a1, b1) = (rng.gen::<u128>() % p, rng.gen::<u128>() % p);
             let t1 = f2(a1).mul_unreduced(f2(b1));
             let t2 = f2(p - 1).mul_unreduced(f2(p - 1));
@@ -244,7 +207,6 @@ macro_rules! base_field_suite {
                 "separate pos/neg accumulators"
             );
 
-            // Wide lanes: roundtrip, group ops, scaling.
             let mut vals: Vec<u128> = vec![0, 1, 2, p / 2, p - 2, p - 1];
             vals.extend((0..200).map(|_| rng.gen::<u128>() % p));
             for &x in &vals {
@@ -269,8 +231,6 @@ macro_rules! base_field_suite {
                 }
             }
 
-            // Mixed-sign wide accumulation (magnitudes stay within lane
-            // headroom: ≤ 300 canonical terms).
             let mut w2 = <<$F2 as Unreduced>::Wide as Zero>::zero();
             let mut expect = 0u128;
             for (i, &x) in vals.iter().enumerate() {
@@ -288,8 +248,6 @@ macro_rules! base_field_suite {
                 "mixed signs"
             );
 
-            // Degree-1 MulBaseUnreduced blanket: default body is the plain
-            // unreduced product.
             let (x, s) = (rng.gen::<u128>() % p, rng.gen::<u128>() % p);
             assert_eq!(
                 val2(&<$F2 as Unreduced>::reduce_product(
@@ -339,12 +297,10 @@ base_field_suite!(
     0x0728_0006
 );
 
-/// The `i32`-lane headroom boundary: 32768 all-max-lane accumulations are
-/// exact (32768 · 0xFFFF = 2147450880 ≤ i32::MAX).
 #[test]
 fn wide_lane_headroom_boundary_is_exact() {
     type F = two::Prime128Offset275;
-    let unit = two::Fp128x8i32([0xFFFF; 8]); // value = 2^128 − 1
+    let unit = two::Fp128x8i32([0xFFFF; 8]);
     let mut acc = two::Fp128x8i32([0; 8]);
     for _ in 0..32768 {
         acc += unit;
@@ -353,9 +309,6 @@ fn wide_lane_headroom_boundary_is_exact() {
     assert_eq!(<F as Unreduced>::reduce_wide(acc), expect);
 }
 
-/// One past the lane headroom overflows an `i32` lane; the non-wrapping
-/// lane ops turn that into a debug-build panic (the only runtime
-/// enforcement the contract has).
 #[cfg(debug_assertions)]
 #[test]
 #[should_panic(expected = "attempt to add with overflow")]
@@ -368,9 +321,6 @@ fn wide_lane_one_past_headroom_panics_in_debug() {
     let _ = std::hint::black_box(acc);
 }
 
-/// `FpExt4<Fp32>` fused accumulator: delayed batch sums vs per-term ring
-/// multiplication (oracle-verified in the ext suite), plus the
-/// coordinate-scaling `MulBaseUnreduced` override.
 macro_rules! ext4_fp32_suite {
     ($name:ident, $F2:ty, $p:expr, $seed:expr) => {
         #[test]
@@ -406,11 +356,8 @@ macro_rules! ext4_fp32_suite {
                     .collect();
                 check(&pairs);
             }
-            // Adversarial: all coefficients at p − 1 maximizes every fused
-            // column sum (the 7·P² per-term worst case).
             check(&vec![([p - 1; 4], [p - 1; 4]); 512]);
 
-            // Wrap-through subtraction on the fused accumulator.
             let (a, b) = (sample(&mut rng), sample(&mut rng));
             let t1 = mk2(a).mul_unreduced(mk2(b));
             let t2 = mk2([p - 1; 4]).mul_unreduced(mk2([p - 1; 4]));
@@ -420,8 +367,6 @@ macro_rules! ext4_fp32_suite {
                 "wrap-through sub/add"
             );
 
-            // MulBaseUnreduced override: vs mul_base and vs the default
-            // lift-then-mul body; batched.
             let mut acc2 = <<E2 as Unreduced>::Product as Zero>::zero();
             let mut per_term = <E2 as Zero>::zero();
             for _ in 0..300 {
@@ -461,9 +406,6 @@ ext4_fp32_suite!(
     0x0E44_0002
 );
 
-/// `FpExt2<Fp64>` carry-tracked accumulator: batch exactness vs per-term
-/// multiplication (both non-residue configs), plus the `AccumPair`
-/// small-product path.
 macro_rules! ext2_fp64_suite {
     ($name:ident, $F2:ty, $C2:ty, $p:expr, $seed:expr) => {
         #[test]
@@ -499,16 +441,11 @@ macro_rules! ext2_fp64_suite {
                     .collect();
                 check(&pairs);
             }
-            // All-max coefficients maximize p00/p11 and force the c0 carry
-            // paths (P² bias wrap for NR = −1, double-add carries for
-            // NR = 2) on every term.
             check(&vec![([p - 1; 2], [p - 1; 2]); 512]);
-            // Single products at the corners of the carry analysis.
             for corner in [[0u128, p - 1], [p - 1, 0], [1, p - 1], [p - 1, 1]] {
                 check(&[(corner, [p - 1; 2])]);
             }
 
-            // Wrap-through subtraction.
             let (a, b) = (sample(&mut rng), sample(&mut rng));
             let t1 = mk2(a).mul_unreduced(mk2(b));
             let t2 = mk2([p - 1; 2]).mul_unreduced(mk2([p - 1; 2]));
@@ -518,7 +455,6 @@ macro_rules! ext2_fp64_suite {
                 "wrap-through sub/add"
             );
 
-            // Small products through the AccumPair path.
             let pairs: Vec<([u128; 2], u64)> = (0..300)
                 .map(|_| (sample(&mut rng), rng.gen::<u64>()))
                 .collect();
@@ -535,7 +471,6 @@ macro_rules! ext2_fp64_suite {
                 "small-product delayed sum"
             );
 
-            // MulBaseUnreduced default body routes through the fused accum.
             let (xv, sv) = (sample(&mut rng), rng.gen::<u128>() % p);
             assert_eq!(
                 <E2 as Unreduced>::reduce_product(mk2(xv).mul_base_unreduced(f2(sv))),
@@ -560,8 +495,6 @@ ext2_fp64_suite!(
     u64::MAX as u128 - 58,
     0x0E22_0002
 );
-// Mersenne-61 is the one convenient u64 prime with p ≡ 3 (mod 4), where
-// NegOneNr is a genuine non-residue — exercises the P²-bias carry branch.
 ext2_fp64_suite!(
     ext2_fp64_m61_neg_one_nr_accum,
     two::Fp64<M61>,
@@ -569,8 +502,6 @@ ext2_fp64_suite!(
     M61 as u128,
     0x0E22_0003
 );
-// A custom non-residue must use the generic reduced-product fallback rather
-// than silently taking the NR=2 carry formula.
 ext2_fp64_suite!(
     ext2_fp64_generic_non_residue_accum,
     two::Fp64<P62>,
@@ -579,9 +510,6 @@ ext2_fp64_suite!(
     0x0E22_0004
 );
 
-/// Fold semantics for one instantiation: `fold_one(precompute(r), e, o)`
-/// must equal the field identity `e + r·(o − e)` (whose operands the ext
-/// and prime-field suites verify against their oracles).
 macro_rules! fold_parity {
     ($name:ident, $E2:ty, $F2:ty, $d:expr, $p:expr, $seed:expr) => {
         #[test]
@@ -669,7 +597,6 @@ fold_parity!(
     u128::MAX - 0xFFFF_A7F6,
     0x0F06
 );
-// FpExt2<Fp64> fold matrices (the specialized EOR fold), all three configs.
 fold_parity!(
     fold_ext2_fp64_prime40,
     two::Ext2<two::Prime40Offset195>,
@@ -694,7 +621,6 @@ fold_parity!(
     M61 as u128,
     0x0F09
 );
-// FpExt2 default folds over the other bases.
 fold_parity!(
     fold_ext2_fp32_prime32,
     two::Ext2<two::Prime32Offset99>,
@@ -711,7 +637,6 @@ fold_parity!(
     u128::MAX - 274,
     0x0F0B
 );
-// FpExt4<Fp32> fold matrix, both reduction paths (P < 2^31 and P ≥ 2^31).
 fold_parity!(
     fold_ext4_fp32_prime24,
     two::FpExt4<two::Prime24Offset3>,
@@ -728,7 +653,6 @@ fold_parity!(
     (1 << 32) - 99,
     0x0F0D
 );
-// FpExt4 default folds over the other bases.
 fold_parity!(
     fold_ext4_fp64_prime40,
     two::FpExt4<two::Prime40Offset195>,
@@ -745,7 +669,6 @@ fold_parity!(
     u128::MAX - 274,
     0x0F0F
 );
-// FpExt8 default folds across all three widths.
 fold_parity!(
     fold_ext8_fp32_prime24,
     two::FpExt8<two::Prime24Offset3>,
@@ -771,9 +694,6 @@ fold_parity!(
     0x0F12
 );
 
-/// Identity-shape extensions: the `MulBaseUnreduced` default body must
-/// match `mul_base`, and the identity `Unreduced` ops must match plain
-/// ring arithmetic.
 macro_rules! identity_unreduced_suite {
     ($name:ident, $E2:ty, $F2:ty, $d:expr, $p:expr, $seed:expr) => {
         #[test]

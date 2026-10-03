@@ -21,8 +21,6 @@ extern "C" {
     static __stack_bottom: u8;
 }
 
-/// Install the trap vector (mtvec = _trap_handler).
-/// This is called during platform bootstrap when os-linux feature is enabled.
 #[inline(always)]
 #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
 fn install_trap_vector() {
@@ -129,7 +127,6 @@ mod console {
     use zeroos::vfs;
 
     pub fn jolt_console_write(_file: *mut u8, buf: *const u8, count: usize) -> isize {
-        // Debug output disabled
         if !buf.is_null() && count > 0 {
             write_bytes(unsafe { core::slice::from_raw_parts(buf, count) });
         }
@@ -137,7 +134,6 @@ mod console {
     }
 
     pub fn register_console_fd(fd: i32, ops: &'static vfs::FileOps) {
-        // Debug output disabled
         let _ = vfs::register_fd(
             fd,
             vfs::FdEntry {

@@ -40,11 +40,6 @@ use crate::{
     VerifierError,
 };
 
-/// Assemble the stage-5 consumed openings from the upstream clear outputs into the
-/// generated `Stage5InputClaims` aggregate. This is the single place the stage's
-/// Outputs→Inputs dataflow is expressed: each per-relation `*_from_upstream` helper
-/// wires which upstream opening feeds which downstream input. Public because the
-/// prover's stage-5 recipe builds its batch inputs through the same wiring.
 pub fn stage5_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
@@ -60,9 +55,6 @@ pub fn stage5_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Assemble the stage-5 consumed opening *points* from the upstream output-points
-/// aggregates. ZK-agnostic: both the clear and ZK stage-2/stage-4 outputs expose
-/// these, so the same wiring builds the input points in either mode.
 pub fn stage5_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
@@ -105,10 +97,6 @@ where
         ),
     };
 
-    // Draw each relation's batching gamma in declaration order (instruction, then RAM);
-    // registers draws nothing, and neither does the `field-inline` value-evaluation member.
-    // The drawn challenges feed the input/output claims and populate the stage aggregate
-    // carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {
@@ -117,10 +105,6 @@ where
         let stage4 = stage4.clear()?;
         sumchecks.validate_output_claims(claims)?;
 
-        // The reduced lookup output aliases the product remainder's lookup output
-        // (same opening point and value); stage 2's generated `validate_aliases`
-        // enforced that equality, so the instruction read-RAF wiring reads the
-        // reduced wire cell directly.
         let input_values =
             stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
         let input_points =
@@ -159,9 +143,6 @@ where
             JoltRelationId::InstructionReadRaf,
         )?;
 
-        // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points; `derive_opening_points` ignores the instruction relation's
-        // input points, so carrying the real claim-reduction point here is harmless.
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
         let output_points =

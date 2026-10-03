@@ -107,7 +107,6 @@ pub(super) fn commit_packed<const D: usize>(
                             for (a, a_row) in a_rows.iter().enumerate() {
                                 windows.load(&a_row[a_col]);
                                 for column in 0..num_columns {
-                                    // Every row writes its shift; only committed rows keep it.
                                     let mut len = 0;
                                     for (row_offset, (row_indices, &committed_zero_mask)) in
                                         selected_rows
@@ -140,7 +139,6 @@ pub(super) fn commit_packed<const D: usize>(
                     flush_digit_accumulators(&mut accumulators, &mut reduced);
                     budget = 0;
                 } else if rank_tiled_k256 {
-                    // Stream one A rank at a time so its destination accumulators fit in cache.
                     let rings_per_row = source.one_hot_k / D;
                     debug_assert!(matches!(rings_per_row, 1 | 2 | 4));
                     debug_assert_eq!(ring_start % rings_per_row, 0);

@@ -1,9 +1,3 @@
-//! Arithmetic benchmark coverage for the 63-bit carry-preserving scalar and
-//! packed kernels introduced by the Akita #427 port.
-//!
-//! Run with:
-//! `cargo bench -p jolt-field --no-default-features --features solinas --bench fp64_kernels`
-
 #[cfg(feature = "solinas")]
 mod harness {
     use criterion::Criterion;

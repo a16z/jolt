@@ -51,11 +51,6 @@ where
             transcript,
         )?;
 
-        // Built after the uni-skip step so the relation carries `tau` and the
-        // uni-skip reduction challenge; the coefficient table completes itself from
-        // the bound point captured by `derive_opening_points`. Construction and the
-        // (no-op) member draw are transcript-neutral, so their position relative to
-        // the uni-skip is immaterial.
         let sumchecks = Stage1BatchSumchecks {
             outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
         };
@@ -64,8 +59,6 @@ where
 
         sumchecks.validate_output_claims(&claims.outer)?;
 
-        // The remainder consumes the uni-skip's reduced opening as its input claim
-        // (the relation's `input_claim` is the bare consumed opening).
         let input_values = Stage1BatchInputClaims {
             outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip_output_claim),
         };
@@ -80,8 +73,6 @@ where
             1,
         )?;
 
-        // Append the 35 produced openings in canonical (declaration) order, matching
-        // the prover's commitment order.
         sumchecks.append_output_claims(transcript, &claims.outer);
 
         return Ok(Stage1Output::Clear(Stage1ClearOutput {
@@ -99,10 +90,6 @@ where
         )?;
         let uniskip_challenge = uniskip.challenge;
 
-        // Built after the uni-skip step so the relation carries `tau` and the
-        // uni-skip reduction challenge (two of its three coefficient-table
-        // inputs); transcript-neutral, since the remainder draws no member
-        // challenges.
         let sumchecks = Stage1BatchSumchecks {
             outer_remainder: OuterRemainder::new(dimensions, tau.clone(), uniskip_challenge),
         };
@@ -110,7 +97,6 @@ where
 
         let remainder_consistency =
             sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
-        // Clear and committed proofs share the composed member's canonical order.
         let output_claim_count = sumchecks.output_claim_count();
         let remainder_output_claims = committed::verify_output_claim_commitments(
             checked,

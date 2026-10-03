@@ -1,6 +1,3 @@
-//! Stored-column backend: the second implementor of the oracle seam —
-//! kernel unit tests and slot-fixture replay run against it without a trace.
-
 use std::collections::HashMap;
 
 #[cfg(feature = "field-inline")]
@@ -134,7 +131,6 @@ impl<F> FixedBackend<F> {
         Ok(())
     }
 
-    /// The proof-payload order reported by [`JoltWitnessOracle::committed_order`].
     pub fn set_committed_order(&mut self, order: Vec<JoltCommittedPolynomial>) {
         self.committed_order = order;
     }
@@ -145,7 +141,6 @@ impl<F> FixedBackend<F> {
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
 
-    /// Attach a field-inline view (see [`FixedFieldInline`]).
     #[cfg(feature = "field-inline")]
     pub fn set_field_inline(&mut self, field_inline: FixedFieldInline<F>) {
         self.field_inline = Some(field_inline);

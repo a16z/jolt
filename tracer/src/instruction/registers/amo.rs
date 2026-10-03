@@ -12,9 +12,9 @@ use super::{normalize_register_value, InstructionRegisterState, RegisterSnapshot
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisterStateAMO {
-    pub rd: (u64, u64), // (old_value, new_value)
-    pub rs1: u64,       // Memory address
-    pub rs2: u64,       // Value to use in atomic operation
+    pub rd: (u64, u64),
+    pub rs1: u64,
+    pub rs2: u64,
 }
 
 impl InstructionRegisterState for RegisterStateAMO {
@@ -23,8 +23,7 @@ impl InstructionRegisterState for RegisterStateAMO {
         use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
         use rand::RngCore;
 
-        // Sample naturally aligned addresses inside the emulated DRAM region.
-        let alignment = 8; // Fits both AMO.W and AMO.D.
+        let alignment = 8;
         let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000) - alignment;
         let offset = (rng.next_u64() % (max_offset / alignment)) * alignment;
         let address = DRAM_BASE + offset;

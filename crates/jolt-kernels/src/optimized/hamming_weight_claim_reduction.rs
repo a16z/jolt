@@ -53,7 +53,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Per-family chunk selectors in canonical layout order.
 struct FamilySelectors {
     instruction: Vec<RaChunkSelector>,
     bytecode: Vec<RaChunkSelector>,
@@ -84,8 +83,6 @@ impl FamilySelectors {
     }
 }
 
-/// All `N` pushforwards from one bundle walk against the shared cycle-eq
-/// table, in canonical (instruction, bytecode, RAM) order.
 fn pushforwards<F: JoltField>(
     rows: &[InstructionCycleRow],
     eq_cycle: &[F],
@@ -157,8 +154,6 @@ fn pushforwards<F: JoltField>(
     }
 }
 
-/// Stage-7 Hamming-weight claim reduction: `PrepareKernel` front of the
-/// optimized kernel.
 pub struct OptimizedHammingWeightClaimReduction;
 
 impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
@@ -251,9 +246,6 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
             })
             .collect::<Result<_, _>>()?;
 
-        // Instruction and bytecode use the paper's digit-zero recentering;
-        // RAM keeps the base three-leg reduction. Increment columns are
-        // recentered and followed by the fused decode power.
         #[cfg(feature = "akita")]
         let weight_tables: Vec<Polynomial<F>> = {
             let chunk_count = dimensions.chunking().chunk_count();
@@ -365,9 +357,7 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct HammingWeightKernel<F: JoltField> {
     progress: RoundProgress,
-    /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
-    /// Combined claim weights `W_i`, index-aligned with `g_tables`.
     weight_tables: Vec<Polynomial<F>>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,
@@ -383,7 +373,6 @@ impl<F: JoltField> HammingWeightKernel<F> {
         self.progress.advance();
     }
 
-    /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
         let mut out = [F::zero(); 2];
@@ -448,11 +437,6 @@ impl<F: JoltField> SumcheckKernel<F> for HammingWeightKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel over the sample backend. All
-/// three families are live at fixture scale (the instruction family alone
-/// contributes 128/log_k_chunk polynomials), so the multi-family pushforward
-/// walk, cold RAM/bytecode cycles, and per-polynomial weight fusion are all
-/// exercised.
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

@@ -6,7 +6,6 @@ use super::{decode_instruction, lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 use crate::RV64_XLEN;
 
-/// Output of the instruction's lookup query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LookupOutput(pub u64);
 
@@ -15,7 +14,6 @@ pub struct LookupOutput(pub u64);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LookupIndex(pub u128);
 
-/// Which lookup table the instruction's lookup targets, if any.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TableIndex(pub Option<usize>);
 

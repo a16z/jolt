@@ -31,9 +31,6 @@ use jolt_witness::{
 
 use crate::ProverError;
 
-/// The per-cycle sources every `OneHotTrace` column derives from: the
-/// instruction's lookup index, the mapped bytecode PC, the remapped RAM word
-/// address, and the fused increment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct OneHotTraceSourceRow {
     lookup_index: LookupIndex,
@@ -42,8 +39,6 @@ struct OneHotTraceSourceRow {
     fused_inc: FusedInc,
 }
 
-/// The RAM access of [`OneHotTraceSourceRow`] alone: whether the RAM columns
-/// commit row zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamAccessRow {
     ram_address: RemappedRamAddress,
@@ -88,14 +83,12 @@ impl ExtractedRows {
 
 enum SelectedRows {
     Extracted(ExtractedRows),
-    /// Materialized for witness planes without random access.
     Packed {
         selected_rows: Vec<u8>,
         ram_active_rows: Vec<u64>,
     },
 }
 
-/// Row-major `OneHotTrace` rows in the plan's canonical semantic-column order.
 pub(super) struct OneHotTraceRows {
     num_rows: usize,
     columns: Vec<OneHotTraceColumn>,
@@ -127,7 +120,6 @@ impl OneHotTraceRows {
         Ok(())
     }
 
-    /// Returns the first extraction error any read has hit.
     pub(super) fn check_extraction(&self) -> Result<(), WitnessError> {
         match &self.selected_rows {
             SelectedRows::Extracted(rows) => {
@@ -197,9 +189,6 @@ impl TraceOneHotRows for OneHotTraceRows {
     }
 }
 
-/// Fills one row's selected-row bytes; returns whether the cycle makes a
-/// remappable RAM access (the only per-row fact the caller still needs — the
-/// bytecode column is total, so no cycle can be missing its slot).
 fn fill_trace_row(
     row: OneHotTraceSourceRow,
     columns: &[OneHotTraceColumn],
@@ -222,9 +211,6 @@ fn fill_trace_row(
     row.ram_address.0.is_some()
 }
 
-/// Builds the row-major source for the native `OneHotTrace` commitment in the
-/// plan's canonical semantic-column order. Witness planes with random access
-/// yield a view that extracts rows on demand; others are materialized once.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
 pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
@@ -286,8 +272,6 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
         .random_access()
         .filter(|access| num_rows <= access.cycles());
     let selected_rows = if let Some(access) = random_access {
-        // Increment commitments precede the trace commitment, so retain only
-        // their shared column; the one-hot rows stay lazy.
         #[cfg(feature = "field-inline")]
         {
             #[cfg(feature = "parallel")]
@@ -390,7 +374,6 @@ fn commit_failed<F: JoltField>(error: impl ToString) -> ProverError<F> {
     )
 }
 
-/// One direct bounded-dense committed-program object.
 #[derive(Clone)]
 pub struct DirectProgramObject<PCS: CommitmentScheme> {
     pub plan: PrefixPackedObjectPlan,
@@ -408,7 +391,6 @@ pub struct DirectProgramObjects<PCS: CommitmentScheme> {
     pub objects: Vec<DirectProgramObject<PCS>>,
 }
 
-/// Assembles and commits the direct bytecode chunks and program-image object.
 pub fn commit_direct_program<PCS>(
     setup_context: &PCS::SetupContext,
     program: &JoltProgramPreprocessing,

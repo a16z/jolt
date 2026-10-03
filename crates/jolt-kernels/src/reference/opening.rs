@@ -68,10 +68,6 @@ impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
     }
 }
 
-/// Embed a trace polynomial cycle-block-strided over the address-major grid:
-/// a one-hot table's native `k · T + t` view permutes to `t · cycle_stride +
-/// k · one_hot_stride`; a dense (per-cycle) table sits at each cycle block's
-/// address slot zero.
 fn address_major_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,
@@ -143,9 +139,6 @@ fn address_major_embed<F: JoltField>(
     Ok(embedded)
 }
 
-/// Embed an advice polynomial's balanced matrix into the grid matrix's
-/// top-left block: advice coefficient `row · 2^σ_a + col` lands at grid index
-/// `row · 2^σ_main + col`.
 fn block_embed<F: JoltField>(
     table: &[F],
     grid: CommitmentGrid,

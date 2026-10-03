@@ -51,9 +51,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Per-cycle shift columns as native small scalars: the two PCs plus the
-/// three flags the summand references (all at cycle `j`, unshifted — the
-/// shift lives in the `eq+1` factors).
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct SpartanShiftRow {
     #[opening(UnexpandedPC)]
@@ -92,7 +89,6 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
             });
         }
         let cycles = 1usize << log_t;
-        // Slice-backed witnesses re-extract rows without retaining a vector.
         let rows = BundleStore::<SpartanShiftRow>::resolve(witness, cycles)?;
         let access = rows.access();
 
@@ -102,9 +98,6 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let product = EqPlusOnePrefixSuffix::new(r_product);
         let prefix_vars = outer.prefix_0.len().trailing_zeros() as usize;
 
-        // Q_b(y_lo) = Σ_{y_hi} S_b(y_hi) · v(y_hi ‖ y_lo): the outer pair
-        // over the γ-combined PC/flag scalar, the product pair over
-        // `1 − is_noop` (γ⁴-scaled once at the end).
         const BLOCK: usize = 32;
         let suffix_rows: Vec<[F; 4]> = (0..outer.suffix_0.len())
             .map(|x_hi| {
@@ -211,19 +204,14 @@ struct ShiftKernel<F: JoltField> {
     log_t: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; 5],
-    /// The two `eq+1` points (big-endian) the summand factors fix.
     r_outer: Vec<F>,
     r_product: Vec<F>,
-    /// Raw values kept for phase-2 regeneration.
     rows: BundleStore<SpartanShiftRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
 
 impl<F: JoltField> ShiftKernel<F> {
-    /// Regenerate the dense phase from the raw values: the five columns
-    /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
-    /// table recombined from its suffix pair and bound-prefix evaluations.
     fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
@@ -269,7 +257,6 @@ impl<F: JoltField> ShiftKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let folds: Vec<[F; 5]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // Release retained raw values after regeneration.
         self.rows = BundleStore::Retained(Vec::new());
 
         let recombine = |point: &[F]| -> Vec<F> {
@@ -298,8 +285,6 @@ impl<F: JoltField> ShiftKernel<F> {
 
     fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         self.challenges.push(r);
-        // Last prefix variable: regenerate the dense phase from the raw
-        // values instead of binding the exhausted P·Q pairs.
         if matches!(&self.phase, Phase::PrefixSuffix { pairs } if pairs[0].0.len() == 2) {
             return self.transition_to_dense().map_err(|_| {
                 SumcheckError::MissingEvaluationSource {
@@ -355,7 +340,6 @@ impl<F: JoltField> ProveRounds<F> for ShiftKernel<F> {
             self.bind(challenge)?;
         }
 
-        // Degree-2 member: evals at t = 0 and t = 2; s(1) from the hint.
         let evals: [F; 2] = match &self.phase {
             Phase::PrefixSuffix { pairs } => {
                 let mut acc = [F::Accumulator::default(); 2];
@@ -451,8 +435,6 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
         })
     }
 
-    /// Pin the regenerated `eq+1` tables to the verifier's scalar path: their
-    /// fully bound values must equal `derive_output_term` at the bound point.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -535,10 +517,6 @@ mod tests {
         }
     }
 
-    /// A PC-varied trace: three bytecode addresses, one two-step virtual
-    /// sequence (exercising the `is_virtual` / `is_first_in_sequence`
-    /// columns), an explicit mid-trace no-op, and no-op padding to `2^log_t`
-    /// (exercising `is_noop`).
     fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
         let plain_a = instruction(0x8000_0000, None, false);
         let virtual_first = instruction(0x8000_0004, Some(1), true);
@@ -551,9 +529,6 @@ mod tests {
         let bytecode = vec![plain_a, virtual_first, virtual_last, plain_b];
 
         let script = [plain_a, virtual_first, virtual_last, noop, plain_b, plain_a];
-        // At log_t = 1 both cycles must be real instructions: the summand
-        // weights only cycle 1 (`eq+1` vanishes at 0), and a no-op there
-        // zeroes the input claim.
         let real_rows = if log_t == 1 { 2 } else { (1 << log_t) - 1 };
         let rows: Vec<TraceRow> = script
             .iter()
@@ -669,8 +644,6 @@ mod tests {
 
     #[test]
     fn parity_minimal_single_round() {
-        // log_t = 1: the P·Q phase covers the single round and the dense
-        // phase materializes inside `finish_rounds`.
         run_parity(1, 229);
     }
 }

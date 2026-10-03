@@ -1,5 +1,3 @@
-//! Per-round sumcheck messages.
-
 use jolt_field::Field;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
@@ -7,7 +5,6 @@ use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 use crate::error::SumcheckError;
 use crate::{SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL};
 
-/// Common interface for one sumcheck round message.
 pub trait RoundMessage {
     fn degree(&self) -> usize;
 
@@ -51,7 +48,6 @@ impl<F: Field + AppendToTranscript> ClearRound<F> for UnivariatePoly<F> {
     }
 }
 
-/// Round polynomial paired with a Fiat-Shamir domain-separation label.
 pub struct LabeledRoundPoly<'a, F: Field> {
     poly: &'a UnivariatePoly<F>,
     label: &'static [u8],
@@ -127,9 +123,6 @@ impl<F: Field + AppendToTranscript> RoundMessage for CompressedLabeledRoundPoly<
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         let coeffs = self.poly.coefficients();
-        // An empty round polynomial would absorb nothing (not even the
-        // label) and silently desynchronize the prover and verifier
-        // transcripts; every construction path produces >= 2 coefficients.
         debug_assert!(!coeffs.is_empty(), "round polynomial has no coefficients");
         let Some((constant, rest)) = coeffs.split_first() else {
             return;

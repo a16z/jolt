@@ -25,8 +25,6 @@ use crate::stages::{
 };
 use crate::VerifierError;
 
-/// Wire the four reduced `Inc` opening *values* from the read-write / value
-/// relations of RAM and registers. Clear-only.
 pub fn inc_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
@@ -40,8 +38,6 @@ pub fn inc_claim_reduction_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Wire the four reduced `Inc` opening *points* from the read-write / value
-/// relations of RAM and registers. ZK-agnostic.
 pub fn inc_claim_reduction_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
@@ -114,8 +110,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for IncClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &IncClaimReductionInputClaims<Vec<F>>,
     ) -> Result<IncClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        // Both reduced openings share the cycle opening point (the reversed
-        // sumcheck point).
         let opening_point = derivations::reversed(sumcheck_point);
         Ok(IncClaimReductionOutputClaims {
             ram_inc: opening_point.clone(),

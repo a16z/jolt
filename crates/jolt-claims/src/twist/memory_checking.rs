@@ -325,8 +325,6 @@ mod tests {
         }
     }
 
-    /// Structural pin: the builders must reproduce the previously hand-written
-    /// term sequence exactly (the BlindFold lowering consumes terms in order).
     #[test]
     fn read_write_checking_terms_match_the_hand_written_construction() {
         let gamma: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Gamma);

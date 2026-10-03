@@ -1,9 +1,3 @@
-//! The canonical `OneHotTrace` commitment-group shape, derived from the
-//! proof config and the program shape alone — what a caller needs to build
-//! the packed scheme's setup params without instantiating any prover (the
-//! params constructor itself is scheme-specific, so this crate exposes only
-//! the shape).
-
 use jolt_claims::protocols::jolt::lattice::{
     OneHotTraceSetupShape, OneHotTraceShape, ONE_HOT_TRACE_LAYOUT,
 };

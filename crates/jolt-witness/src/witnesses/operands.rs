@@ -9,11 +9,9 @@ use super::{lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
 use crate::RV64_XLEN;
 
-/// Left lookup operand of the instruction's lookup query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LeftLookupOperand(pub u64);
 
-/// Right lookup operand of the instruction's lookup query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RightLookupOperand(pub u128);
 
@@ -30,7 +28,6 @@ pub struct RightInstructionInput(pub i128);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Product(pub S128);
 
-/// The instruction's immediate operand.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Imm(pub i128);
 
@@ -103,8 +100,6 @@ impl Extract for RightInstructionInput {
 }
 
 impl ToField for Product {
-    /// The product may exceed `i128`: fall back to the sign/magnitude split
-    /// when the truncated representation does not fit.
     fn to_field<F: JoltField>(self) -> F {
         if let Some(value) = self.0.to_i128() {
             F::from_i128(value)

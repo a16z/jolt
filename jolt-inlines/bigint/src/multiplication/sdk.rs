@@ -1,7 +1,3 @@
-//! BigInt multiplication implementation optimized for Jolt zkVM.
-//!
-//! This module provides 256-bit × 256-bit = 512-bit multiplication.
-
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 
 /// Performs 256-bit × 256-bit multiplication
@@ -44,9 +40,9 @@ pub unsafe fn bigint256_mul_inline(a: *const u64, b: *const u64, result: *mut u6
         opcode = const INLINE_OPCODE,
         funct3 = const BIGINT256_MUL_FUNCT3,
         funct7 = const BIGINT256_MUL_FUNCT7,
-        rd = in(reg) result,  // rd - output address
-        rs1 = in(reg) a,      // rs1 - first operand address
-        rs2 = in(reg) b,      // rs2 - second operand address
+        rd = in(reg) result,
+        rs1 = in(reg) a,
+        rs2 = in(reg) b,
         options(nostack)
     );
 }

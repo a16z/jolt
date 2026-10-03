@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 7 verification.
-
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::JoltField;
@@ -15,49 +13,18 @@ use super::committed_reduction_address_phase::{
 };
 use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 
-/// Source-of-truth for stage 7's sumcheck batch: the instances in Fiat-Shamir
-/// batch order (hamming-weight reduction, then the committed-program-only
-/// bytecode and program-image address phases on Akita; Dory additionally runs
-/// trusted then untrusted advice address phases before committed program — each
-/// address phase present only when its reduction runs one).
-/// `#[derive(SumcheckBatch)]` generates the `Stage7InputClaims<F>`,
-/// `Stage7InputPoints<F>`, `Stage7OutputClaims<F>`, `Stage7OutputPoints<F>`, and
-/// `Stage7Challenges<F>` aggregates — one field per instance, in this declaration
-/// order — plus the Fiat-Shamir absorb plumbing (`opening_values` /
-/// `append_output_claims` on this struct). The field order is load-bearing: it
-/// fixes the canonical opening order absorbed into the transcript, which must
-/// match the prover's commitment order. The optional members contribute only
-/// when their phase ran.
-///
-/// The trusted / untrusted advice reductions are two batch members (each absorbs
-/// its own claimed sum and draws its own batching coefficient), so they are split
-/// into two `Option` fields rather than one — matching the stage-6 cycle-phase
-/// `trusted_advice` / `untrusted_advice` idiom. Each member is its own per-kind
-/// relation type whose produced claims carry a single non-`Option` slot.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage7Sumchecks<F: JoltField> {
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
-    /// Final `TrustedAdvice` claim from the trusted advice reduction's address
-    /// phase; present only when that phase runs. On the prove side the kernel
-    /// is the stage-6b cycle-phase object, reclaimed from its `ProofSession`
-    /// carry and phase-transitioned inside `prepare`.
     #[cfg(not(feature = "akita"))]
     pub trusted_advice: Option<TrustedAdviceAddressPhase<F>>,
-    /// Final `UntrustedAdvice` claim from the untrusted advice reduction's address
-    /// phase; present only when that phase runs.
     #[cfg(not(feature = "akita"))]
     pub untrusted_advice: Option<UntrustedAdviceAddressPhase<F>>,
-    /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
-    /// address phase; present only when that phase runs.
     pub bytecode_address_phase: Option<BytecodeReductionAddressPhase<F>>,
-    /// Final `ProgramImageInit` claim from the program-image reduction's address
-    /// phase; present only when that phase runs.
     pub program_image_address_phase: Option<ProgramImageReductionAddressPhase<F>>,
 }
 
-/// The shared opening-point accessors over the point-only stage-7 aggregate.
-/// Stages 7/8 read each produced opening's point off these cells.
 impl<F: JoltField> Stage7OutputPoints<F> {
     /// The hamming-weight reduction's shared opening point (the own point of the
     /// one-hot `Ra` polynomials): the first non-empty per-family RA cell. `None`
@@ -102,35 +69,15 @@ impl<F: JoltField> Stage7OutputPoints<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage7ClearOutput<F: JoltField> {
-    /// The produced stage-7 opening *values* (wire form); read by later stages and
-    /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage7OutputClaims<F>,
-    /// The produced stage-7 opening *points*, paired field-for-field with
-    /// `output_values`. Stage 8 reads each opening's point off these cells, and
-    /// derives the hamming-weight opening point and the precommitted final openings
-    /// from them.
     pub output_points: Stage7OutputPoints<F>,
 }
 
-/// ZK counterpart of [`Stage7ClearOutput`]. The produced opening *values* stay
-/// committed (in `batch_output_claims`); BlindFold recomputes every per-relation
-/// sumcheck point and public it needs from `batch_consistency`, so the only data
-/// stage 8 consumes in the clear is the produced opening points, off which it reads
-/// the hamming-weight opening point and resolves the precommitted final openings.
-///
-/// The path-agnostically drawn stage-7 challenges are carried so BlindFold can
-/// source the hamming-weight batching gamma from
-/// `challenges.hamming_weight_claim_reduction.gamma`, matching the
-/// `input.stageN.challenges.<relation>.<field>` idiom used by stages 3–5.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage7ZkOutput<F: JoltField, C> {
     pub challenges: Stage7Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    /// The produced opening points, the ZK counterpart of the clear path's
-    /// `Stage7ClearOutput::output_points`, computed as a byproduct of the unified
-    /// `derive_opening_points`. Stage 8 reads the hamming-weight opening point and
-    /// resolves the precommitted final openings off these cells.
     pub output_points: Stage7OutputPoints<F>,
 }
 
@@ -181,14 +128,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// Locks the stage-7 Fiat-Shamir append order against silent drift: the
-    /// hamming-weight reduced openings, then the trusted then untrusted advice
-    /// address-phase openings, then (when present) the committed-bytecode and
-    /// program-image address-phase openings, each member single-sourcing its own
-    /// per-field order from its `OutputClaims` derive. A wrong batch order here
-    /// silently breaks soundness, so it is pinned with distinct sentinels; the
-    /// absent `Option` members drop out of the stream entirely, and each advice
-    /// member carries only its own kind's slot.
     #[cfg(not(feature = "akita"))]
     #[test]
     #[expect(clippy::unwrap_used)]
@@ -234,7 +173,6 @@ mod tests {
             )
         };
 
-        // Sentinels are sequential in canonical append order.
         let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
             (5, 6, 7, 8, 9, 6, 9);
         let hamming = HammingWeightClaimReductionOutputClaims {
@@ -300,11 +238,6 @@ mod tests {
         );
     }
 
-    /// Locks the `output_shape` commitment count against Expr/geometry drift: the
-    /// per-member `expected_output_openings` counts (which the generated
-    /// `output_claim_count` sums) must match the hand-derived opening counts each
-    /// configuration commits. Guards the ZK commitment count switching from the
-    /// old hand count to the Expr-derived sums.
     #[test]
     #[expect(clippy::unwrap_used)]
     fn output_shape_column_counts_match_hand_derived_openings() {

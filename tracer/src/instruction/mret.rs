@@ -27,34 +27,24 @@ use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RIS
 
 declare_riscv_instr!(
     name   = MRET,
-    mask   = 0xffffffff,  // Exact match
-    match  = 0x30200073,  // MRET encoding: priv=0x302, funct3=000, opcode=1110011
+    mask   = 0xffffffff,
+    match  = 0x30200073,
     format = FormatI,
     registers = RegisterStateI,
     ram    = ()
 );
 
-/// CSR address for mepc (Machine Exception Program Counter)
 const CSR_MEPC_ADDRESS: u16 = 0x341;
 
 impl MRET {
     fn exec(&self, cpu: &mut Cpu, _: &mut <MRET as RISCVInstruction>::RAMAccess) {
-        // Read mepc from CSR state and jump to it
         let mepc = cpu.read_csr_raw(CSR_MEPC_ADDRESS);
         cpu.pc = mepc;
-
-        // mstatus is not modified — see module-level docs for why this is
-        // correct in the M-mode-only model.
     }
 }
 
 impl RISCVTrace for MRET {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // Don't call self.execute() - the inline sequence's JALR handles the PC update.
-        // The JALR reads mepc from virtual register vr36 and jumps to it.
-
-        // Generate and execute inline sequence
-        // The inline sequence reads mepc from virtual register (source of truth for proofs)
         super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
     }
 }
@@ -63,7 +53,6 @@ impl RISCVTrace for MRET {
 mod tests {
     use crate::instruction::Instruction;
 
-    /// Test decoding of `mret`
     #[test]
     fn test_mret_decode() {
         let instr: u32 = 0x30200073;

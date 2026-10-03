@@ -89,9 +89,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
-        // Sparse entry construction: one trace pass — the typed rows are
-        // never materialized whole (80 bytes per cycle saved at the stage's
-        // peak moment).
         let CollectRegisterEntries {
             entries,
             rs1_indices,
@@ -106,7 +103,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             rd_inc,
         );
 
-        // Park the rd hot indices for the stage-5 val-evaluation kernel.
         session.park(SharedRdIndices(rd_indices));
 
         Ok(Box::new(ReadWriteKernel {
@@ -125,8 +121,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
 struct ReadWriteKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: ReadWriteDimensions,
-    /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
-    /// cycle→address transition.
     cycle: CycleState<F>,
     gruen: GruenSplitEqPolynomial<F>,
     address: RegisterAddressState<F>,
@@ -136,9 +130,6 @@ struct ReadWriteKernel<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteKernel<F> {
-    /// Cycle-round message via Gruen factoring: the quadratic inner factor's
-    /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
-    /// into the exact cubic by `gruen_poly_deg_3`.
     fn cycle_round_message(
         &self,
         round: usize,
@@ -154,9 +145,6 @@ impl<F: JoltField> ReadWriteKernel<F> {
             })
     }
 
-    /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
-    /// sparse rows; the final cycle bind collapses to the K-sized dense
-    /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
         let mut layout_transitioned = false;
         if self.challenges.bound() < self.dimensions.log_t() {
@@ -168,8 +156,6 @@ impl<F: JoltField> ReadWriteKernel<F> {
         self.challenges.push(r);
 
         if self.challenges.bound() == self.dimensions.log_t() {
-            // Replacing the state frees the entry allocation here rather
-            // than at kernel drop.
             (
                 self.address.ra,
                 self.address.wa,
@@ -179,19 +165,11 @@ impl<F: JoltField> ReadWriteKernel<F> {
             self.address.eq_scalar = self.gruen.current_scalar();
         }
 
-        // Return replaced entry generations immediately.
         if layout_transitioned {
             crate::mem::purge_retained_memory(self.dimensions.log_t());
         }
     }
 
-    /// `Σ_j [index_j hot] · eq(r_address, index_j) · eq(r_cycle, j)` for the
-    /// two read operands in one walk — the direct MLE of a one-hot `(K × T)`
-    /// grid at the bound point.
-    ///
-    /// Ports legacy `compute_rs2_ra_claim`: a 2-way split over the joint
-    /// `(cycle ‖ address)` index keeps both eq tables at ~√(K·T). Big-endian
-    /// joint point `[r_cycle ‖ r_address]`, joint index `(j << addr_bits) | k`.
     fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
         let rs1_indices = &self.rs1_indices;
         let rs2_indices = &self.rs2_indices;
@@ -285,8 +263,6 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
         })
     }
 
-    /// Pin the internally tracked eq factor to the verifier's scalar path:
-    /// the fully bound Gruen scalar must equal `derive_output_term(EqCycle)`.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,

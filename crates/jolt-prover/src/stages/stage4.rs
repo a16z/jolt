@@ -82,7 +82,6 @@ where
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
 
-    // The RAM points, validated exactly as the verifier does.
     let ram_read_write_opening_point = stage2.output_points.ram_read_write_point();
     let ram_output_check_opening_point = stage2.output_points.ram_output_check_point();
     if ram_read_write_opening_point.len() != log_k + log_t {
@@ -104,14 +103,9 @@ where
     }
 
     let public_eval = public_initial_ram_evaluation(checked, &preprocessing.verifier, r_address)?;
-    // The prover-side untrusted-advice presence signal (the verifier reads the
-    // proof's commitment slot).
     let untrusted_advice_present = !checked.public_io.untrusted_advice.is_empty();
     let init_structure =
         ram_val_check_init_structure(checked, untrusted_advice_present, r_address, public_eval)?;
-    // Submit all private contributions together so device backends can share
-    // one batch. Only scalar values cross this seam; geometry and transcript
-    // ordering stay with this coordinator.
     let mut openings = Vec::new();
     if let Some(point) = init_structure.program_image_point.as_ref() {
         let layout =
@@ -184,9 +178,6 @@ where
         ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
-    // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
-    // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
-    // separator (replayed by the relation's `draw_challenges` override).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage4_input_values_from_upstream(
@@ -200,11 +191,6 @@ where
         &init_structure,
     );
 
-    // No curation hook: the staged advice/program-image openings ride in from
-    // the RAM value-check kernel (captured off its own consumed input claims
-    // at prepare), and the stage's `no_opening_values` absorb order is the
-    // batch's hand-written `opening_values` replacement (staged openings
-    // first, then registers, then RAM) — the driver's default curation.
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
@@ -235,15 +221,6 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-4 recipe against the verifier's own
-/// public constituents — `stage4::verify`'s clear body step for step (the
-/// `Val_init` decomposition, the three-member batch with the field-register read-write
-/// member, the generated absorb splicing the five field-inline openings) on a twin
-/// transcript positioned by the stage-1..3 replays. The 32-byte
-/// transcript-state equality pins the absorb order end to end. A second test
-/// drives the field-register read-write kernel directly and ties every extracted opening
-/// to a direct MLE evaluation of the witness oracle's tables at the bound
-/// point.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -307,8 +284,6 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The verifier twin (stage4::verify's clear body, shared as the
-        // stage-5+ twins' replay), positioned by the upstream replays.
         let mut transcript = Blake2bTranscript::new(b"stage4-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
@@ -330,8 +305,6 @@ mod field_inline_round_trip {
         Fr::from_u64(value)
     }
 
-    /// `Σ_i eq(point, i) · evals[i]` — the big-endian MLE the oracle grids and
-    /// opening points share.
     fn mle(evals: &[Fr], point: &[Fr]) -> Fr {
         EqPolynomial::<Fr>::evals(point, None)
             .into_iter()
@@ -340,11 +313,6 @@ mod field_inline_round_trip {
             .sum()
     }
 
-    /// The field-register read-write kernel on the honest field-inline replay: every round message
-    /// passes the engine's running-claim check starting from the relation's
-    /// own input claim, and the extracted openings equal direct MLE
-    /// evaluations of the witness oracle's tables at the derived
-    /// `[address ‖ cycle]` opening point.
     #[test]
     fn field_register_read_write_kernel_outputs_match_direct_mle() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
@@ -396,8 +364,6 @@ mod field_inline_round_trip {
             )
             .unwrap();
 
-        // The engine's round loop: bind the previous draw, check the running
-        // claim, reduce through the returned round polynomial.
         let rounds = relation.rounds();
         let sumcheck_point: Vec<Fr> = (0..rounds as u64).map(|i| fr(200 + i)).collect();
         let mut previous_claim = relation.input_claim(&claims, &challenges).unwrap();
@@ -418,8 +384,6 @@ mod field_inline_round_trip {
             .validate_derived_tables(&relation, &points, &output_points, &challenges)
             .unwrap();
 
-        // Every opening shares the `[address ‖ cycle]` point; each extracted
-        // value must be the direct MLE of its oracle table there.
         let opening_point = output_points.registers_val();
         let grid = |polynomial| cycle_table(polynomial);
         assert_eq!(
@@ -450,16 +414,12 @@ mod field_inline_round_trip {
                 opening_point
             )
         );
-        // `FieldRdInc` is cycle-only; its MLE at the joint point is its MLE at
-        // the cycle sub-point (the address variables integrate out).
         let inc = table(FieldInlinePolynomialId::Committed(
             FieldInlineCommittedPolynomial::FieldRdInc,
         ));
         let (_, cycle_sub_point) = opening_point.split_at(opening_point.len() - LOG_T);
         assert_eq!(outputs.rd_inc, mle(&inc, cycle_sub_point));
 
-        // The relation's own output fold closes the loop: the final running
-        // claim equals `expected_output` at the extracted claims.
         let expected = relation
             .expected_output(&points, &outputs, &output_points, &challenges)
             .unwrap();
@@ -467,10 +427,6 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the stage-4 committed shell carries the curated row count — the
-/// 5 ordinary register openings, the 5 spliced field-register read-write openings, and
-/// the 2 RAM value-check openings (no advice / program-image rows at the
-/// fixture's scale).
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {

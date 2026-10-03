@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 2 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
@@ -31,8 +29,6 @@ pub struct Stage2OutputClaims<F: JoltField> {
 }
 
 impl<F: JoltField> Stage2OutputClaims<F> {
-    /// Combine the product uni-skip claim with the selected batch's output claims.
-    /// Field-inline builds carry mandatory composed product and register-reduction fields.
     pub fn new(product_uniskip_output_claim: F, batch_outputs: Stage2BatchOutputClaims<F>) -> Self {
         Self {
             product_uniskip_output_claim,
@@ -72,48 +68,18 @@ impl<F: JoltField> Stage2BatchOutputClaims<F> {
     }
 }
 
-/// Source-of-truth for stage 2's sumcheck batch, in Fiat-Shamir batch order (RAM read-write,
-/// product remainder, instruction claim-reduction, the field-inline claim-reduction when
-/// composed, RAM RAF evaluation, RAM output check). `#[derive(SumcheckBatch)]` generates the
-/// `Stage2Batch{Input,Output}{Claims,Points}<F>` and `Stage2BatchChallenges<F>` aggregates —
-/// one field per instance, in this declaration order — plus the batched-verify drivers and the
-/// absorb plumbing. The product uni-skip is a separate sub-sumcheck, not part of this batch.
-///
-/// The instruction claim-reduction declares three cross-relation opening aliases
-/// (`lookup_output`, `left`/`right_instruction_input` = the product-remainder
-/// openings; see its `aliased_output_openings`), and the product remainder
-/// declares two staged openings (`write_lookup_output_to_rd` /
-/// `virtual_instruction`, absorbed here but folded downstream by stage 6a). The
-/// batch therefore absorbs 15 openings — 16 expression-referenced, minus the 3
-/// aliases (each absorbed once via its product-remainder source), plus the 2
-/// staged — and the generated absorb, `output_shape` count/validator, and
-/// `validate_aliases` (run by `expected_final_claim`, enforcing the aliased wire
-/// copies equal their sources) all derive from those per-member declarations.
-/// The two RAM relations slice their point at the phase-1 `instance_point_offset`.
-///
-/// With field-inline, the product contributes three more canonical openings;
-/// the field-register reduction aliases those same-polynomial, same-point claims.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage2BatchSumchecks<F: JoltField> {
     pub ram_read_write: RamReadWriteChecking<F>,
-    /// On the prove side the remainder kernel is minted from the state the
-    /// product uni-skip slot parked in the proof session, through its
-    /// regular universal backend slot.
     pub product_remainder: ProductRemainder<F>,
     pub instruction_claim_reduction: InstructionClaimReduction<F>,
-    /// The field-inline claim reduction shares the trace domain (`log_T` rounds) with the
-    /// product remainder, so both bind the same batch suffix — the spec's `r_prod` sharing.
-    /// Declaration position (after the instruction claim-reduction, before RAM RAF evaluation)
-    /// is the spec's batch order and gamma draw order.
     #[cfg(feature = "field-inline")]
     pub field_registers_claim_reduction: FieldRegistersClaimReduction<F>,
     pub ram_raf_evaluation: RamRafEvaluation<F>,
     pub ram_output_check: RamOutputCheck<F>,
 }
 
-/// The shared per-relation opening-point accessors over the point-only stage-2
-/// batch aggregate.
 impl<F: JoltField> Stage2BatchOutputPoints<F> {
     /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
     pub fn ram_read_write_point(&self) -> &[F] {
@@ -144,30 +110,11 @@ impl<F: JoltField> Stage2BatchOutputPoints<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage2ClearOutput<F: JoltField> {
-    /// The produced batch opening *values* (wire form); later stages read each
-    /// opening's value directly off these fields.
     pub output_values: Stage2BatchOutputClaims<F>,
-    /// The produced batch opening *points*, paired field-for-field with
-    /// `output_values`. Later stages read the points through the `*_point()`
-    /// accessors.
     pub output_points: Stage2BatchOutputPoints<F>,
-    /// The product uni-skip `tau_low` (stage 1's remainder point low half,
-    /// reversed), read mode-agnostically via [`Stage2Output::product_tau_low`].
     pub product_tau_low: Vec<F>,
 }
 
-/// Stage 2's ZK output, carrying the Fiat-Shamir values BlindFold sources via
-/// `input.stage2.<field>`. The batch draws are the generated [`Stage2BatchChallenges`] member
-/// structs (`challenges.ram_read_write.gamma`, `challenges.instruction_claim_reduction.gamma`,
-/// under `field-inline` the field-inline claim-reduction gamma, and the RAM output-check
-/// address reference point `challenges.ram_output_check.output_address`; the remaining batch
-/// relations draw nothing — `NoChallenges`). The remaining two are non-batch draws — the
-/// product uni-skip reduction challenge and its freshly-drawn `product_tau_high` scalar (a
-/// separate sub-sumcheck) — so they are not part of the per-instance aggregate.
-/// `product_tau_low` is opening-derived (stage 1's remainder sumcheck point low half), stored
-/// so downstream stage-3 relation construction can read it mode-agnostically via
-/// [`Stage2Output::product_tau_low`]; BlindFold independently recomputes it from
-/// `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage2ZkOutput<F: JoltField, C> {
     pub challenges: Stage2BatchChallenges<F>,
@@ -178,8 +125,6 @@ pub struct Stage2ZkOutput<F: JoltField, C> {
     pub product_uniskip_output_claims: CommittedOutputClaimOutput<C>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    /// The produced batch opening points, the ZK counterpart of the clear path's
-    /// `output_points`. Later stages read them through the same `*_point()` accessors.
     pub output_points: Stage2BatchOutputPoints<F>,
 }
 
@@ -200,7 +145,6 @@ impl<F: JoltField, C> Stage2Output<F, C> {
         }
     }
 
-    /// The produced batch opening points, available regardless of proving mode.
     pub fn batch_output_points(&self) -> &Stage2BatchOutputPoints<F> {
         match self {
             Self::Clear(output) => &output.output_points,
@@ -287,13 +231,6 @@ mod tests {
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the pre-port inline draw: the RAM read-write
-    /// gamma, the instruction claim-reduction gamma (each a single `challenge_scalar`), under
-    /// `field-inline` the field-inline claim-reduction gamma (the spec's draw slot: after the
-    /// instruction claim-reduction gamma, before the RAM output address challenges), then the
-    /// RAM output-check address reference point — one raw `challenge()` per RAM address
-    /// variable, via the last member's `draw_challenges` override (the other members draw
-    /// nothing).
     #[test]
     fn draw_challenges_matches_inline_draw_sequence() {
         let sumchecks = sumchecks();
@@ -337,12 +274,6 @@ mod tests {
         );
     }
 
-    /// A stage-2 batch output whose reduced instruction openings equal the
-    /// product-remainder ones they alias (`lookup_output`,
-    /// `left`/`right_instruction_input`). `validate_aliases` accepts it; the tests
-    /// below perturb one alias each to assert rejection. The aliased cells carry
-    /// the product values; the absorb test overrides them with sentinels to prove
-    /// they are skipped.
     #[cfg_attr(
         not(feature = "field-inline"),
         expect(
@@ -396,11 +327,6 @@ mod tests {
         claims
     }
 
-    /// Locks the stage-2 batch Fiat-Shamir append order against silent drift: the
-    /// generated absorb follows member declaration order and each member's
-    /// `canonical_order`, skipping the reduction's three aliased openings
-    /// (absorbed once via their product-remainder source). The aliased cells carry
-    /// distinct sentinels here to prove the skip is id-driven, not value-driven.
     #[cfg(not(feature = "field-inline"))]
     #[test]
     fn opening_values_follow_canonical_order() {
@@ -415,11 +341,6 @@ mod tests {
         );
     }
 
-    /// Locks the field-inline absorb to the spec's committed output row order
-    /// (`specs/field-inline-protocol.md`, "Stage 2 Composition"): member declaration order
-    /// with the field-inline product claims following the base product claims and before the
-    /// instruction claim-reduction non-aliased outputs. The aliased instruction cells carry
-    /// distinct sentinels to prove the id-driven skip still applies.
     #[cfg(feature = "field-inline")]
     #[test]
     fn opening_values_follow_canonical_field_inline_order() {
@@ -435,20 +356,13 @@ mod tests {
 
         let expected = (1..=11)
             .map(fr)
-            // The field-inline part of the product member.
             .chain([fr(201), fr(202), fr(203)])
-            // The instruction claim-reduction non-aliased outputs.
             .chain([fr(12), fr(13)])
-            // RAM RAF evaluation, RAM output check.
             .chain([fr(14), fr(15)])
             .collect::<Vec<_>>();
         assert_eq!(sumchecks().opening_values(&claims), expected);
     }
 
-    /// The generated `output_claim_count` sums the members' wire sets: 16
-    /// expression-referenced openings, minus the reduction's 3 aliases, plus the product
-    /// remainder's 2 staged openings — plus, under `field-inline`, the product member's 3
-    /// field-inline openings (the field-inline reduction aliases them).
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
@@ -466,12 +380,6 @@ mod tests {
         );
     }
 
-    /// Pins the reduction's alias declarations: each aliased id is distinct and
-    /// referenced by the reduction's own output `Expr` (so the batch fold
-    /// constrains the wire cell), and each canonical source is absorbed by the
-    /// product remainder (so the value the copy is checked against is
-    /// Fiat-Shamir-bound). The point-slice identity the value-only check relies
-    /// on is pinned by `aliased_members_derive_identical_opening_points`.
     #[test]
     #[cfg_attr(
         not(feature = "field-inline"),
@@ -554,12 +462,6 @@ mod tests {
         assert!(sumchecks().validate_aliases(&values).is_err());
     }
 
-    /// Pins the structural invariant the alias declaration relies on:
-    /// `validate_aliases` checks values only, which is sound because the product
-    /// remainder and the instruction claim-reduction bind the same batch-point
-    /// slice (equal rounds, default offsets) and derive the same opening point —
-    /// the aliased pairs are the same polynomial at the same point by
-    /// construction, never by proof content.
     #[test]
     fn aliased_members_derive_identical_opening_points() {
         let sumchecks = sumchecks();
@@ -591,13 +493,6 @@ mod tests {
         );
     }
 
-    /// Pins the spec's `r_prod` sharing (`specs/field-inline-protocol.md`, "Protocol
-    /// Composition And Points"): the field-inline claim reduction and the product remainder
-    /// are both trace-domain (`log_T` rounds, default offsets), so they bind the same
-    /// batch-point suffix and derive the same reversed opening point. This structural
-    /// agreement is what makes the explicit stage-2 equality check between the field-inline
-    /// claim-reduction outputs and the field-inline product outputs a
-    /// same-polynomial-same-point statement.
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_registers_claim_reduction_shares_the_product_remainder_point() {
@@ -635,8 +530,6 @@ mod canonical_batch {
     use serde::ser::SerializeStruct;
     use serde::{Deserializer, Serializer};
 
-    // Alias values remain available to the generic batch evaluator, but are
-    // reconstructed from their canonical source when decoding the wire proof.
     pub fn serialize<F: JoltField, S: Serializer>(
         claims: &Stage2BatchOutputClaims<F>,
         serializer: S,

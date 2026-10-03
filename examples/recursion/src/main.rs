@@ -363,7 +363,6 @@ fn collect_guest_proofs(
 
         let now = Instant::now();
 
-        // Running tracing allows things like JOLT_BACKTRACE=1 to work properly
         info!("  Tracing...");
         let (_, _, _, device_io) = program.trace(&input_bytes, &[], &[]);
         assert!(!device_io.panic, "Guest program panicked during tracing");
@@ -490,10 +489,8 @@ fn generate_proofs(guest: GuestProgram, workdir: &Path, bytecode_chunk_count: Op
 
     let target_dir = "/tmp/jolt-guest-targets";
 
-    // Collect guest proofs
     let all_groups_data = collect_guest_proofs(guest, target_dir, false, bytecode_chunk_count);
 
-    // Save proof data
     save_proof_data(guest, &all_groups_data, workdir);
 
     info!("Proof generation completed for {}", guest.name());
@@ -514,7 +511,6 @@ fn run_recursion_proof(
     program.set_memory_config(memory_config);
     program.build(target_dir);
     if run_config == RunConfig::Trace || run_config == RunConfig::TraceToFile {
-        // shorten the max_trace_length for tracing only. Speeds up setup time for tracing purposes.
         max_trace_length = 0;
     }
     let recursion_prover_preprocessing =

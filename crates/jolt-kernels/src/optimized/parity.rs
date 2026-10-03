@@ -1,12 +1,3 @@
-//! Parity-test harness of the optimized tier: a lockstep round runner that
-//! drives a reference kernel and an optimized kernel from identical
-//! [`ProverInputs`] over identical challenges and asserts byte-equal round
-//! polynomials (`UnivariatePoly` wire form) and equal typed output claims.
-//!
-//! The witness plane is `jolt_witness::testing::with_sample_backend` — a real
-//! `TraceBackend` over a canned trace, the only plane constructible without a
-//! `jolt-program` dependency. Its known weaknesses are documented on the
-//! per-kernel tests.
 #![expect(clippy::expect_used, clippy::panic, reason = "test-only module")]
 
 #[cfg(not(feature = "akita"))]
@@ -19,8 +10,6 @@ use jolt_witness::JoltWitnessOracle;
 
 use crate::SumcheckKernel;
 
-/// Deterministic "random-looking" challenge stream for parity runs: distinct
-/// odd scalars, nothing adversarial (parity is exact for any challenges).
 pub(crate) fn synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
     (0..len as u64)
         .map(|index| {
@@ -51,8 +40,6 @@ impl ExceptionalEq {
             len
         ];
         if matches!(self, Self::ZeroPrefix) {
-            // Solve eq(w, first_bind)=0, then subsequent coordinates still
-            // exercise exceptional endpoints under a vanished prefix.
             let w = (first_bind - F::one())
                 * (first_bind + first_bind - F::one())
                     .inverse()
@@ -63,9 +50,6 @@ impl ExceptionalEq {
     }
 }
 
-/// Probe the committed one-hot family sizes and chunk bits off the backend's
-/// shape surface: family count by scanning indices until the shape errors,
-/// chunk bits from `log(one-hot rows) − log_t`.
 #[cfg(not(feature = "akita"))]
 pub(crate) fn probe_one_hot_family(
     witness: &impl JoltWitnessOracle<Fr>,
@@ -82,10 +66,6 @@ pub(crate) fn probe_one_hot_family(
     (count, chunk_bits)
 }
 
-/// The initial claim of an honest kernel, recovered through its own round
-/// check: probe `prove_round` with a zero claim and read the true domain sum
-/// off the `RoundCheckFailed` error (an `Ok` means the claim really is zero).
-/// `prove_round(None, ..)` binds nothing, so the probe is state-free.
 pub(crate) fn probe_input_claim<F: JoltField, R>(
     kernel: &mut dyn SumcheckKernel<F, Relation = R>,
 ) -> F
@@ -99,11 +79,6 @@ where
     }
 }
 
-/// Drive both kernels through every round with shared challenges, asserting
-/// byte-equal round polynomials, then finish both kernels for output-claim
-/// comparison. `initial_claim` must be the honest input claim (see
-/// [`probe_input_claim`]). Fixture-specific nontriviality checks belong in
-/// callers: a zero claim can still yield nonzero round polynomials.
 pub(crate) fn run_lockstep<F: JoltField, R>(
     reference: &mut dyn SumcheckKernel<F, Relation = R>,
     optimized: &mut dyn SumcheckKernel<F, Relation = R>,

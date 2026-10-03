@@ -5,7 +5,6 @@ use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
-// rd = rs1 & !rs2
 declare_riscv_instr!(
     name   = ANDN,
     mask   = 0xfe00707f,

@@ -26,12 +26,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The five reduced tables, in output-claim declaration order.
 const NUM_TABLES: usize = 5;
 
-/// One cycle's five reduced instruction operands as native scalars — the
-/// compact backing of the γ-combined table build and the post-hoc
-/// output-claim walk.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 pub struct InstructionOperandRow {
     pub lookup_output: LookupOutput,
@@ -42,8 +38,6 @@ pub struct InstructionOperandRow {
 }
 
 impl InstructionOperandRow {
-    /// The row's five operand values as field elements, in output-claim
-    /// declaration order — the exact entries the dense reduced tables hold.
     #[inline]
     fn field_values<F: JoltField>(&self) -> [F; NUM_TABLES] {
         [
@@ -56,8 +50,6 @@ impl InstructionOperandRow {
     }
 }
 
-/// Optimized [`PrepareKernel`] implementor for the
-/// `instruction_claim_reduction` slot.
 pub struct OptimizedInstructionClaimReduction;
 
 impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
@@ -79,12 +71,9 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
-/// Coefficients for combining native scalar limbs in one wide accumulation.
 struct CombineCoefficients<F> {
     gamma_powers: [F; NUM_TABLES],
     right_lookup_hi: F,
-    /// `(lo, hi)` coefficient pairs for the signed lane: `.0` negative, `.1`
-    /// positive.
     right_input_coeffs: ((F, F), (F, F)),
 }
 
@@ -136,10 +125,7 @@ impl<F: JoltField> CombineCoefficients<F> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
-    /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
-    /// table (the summand is linear in the five operands).
     combined: Polynomial<F>,
-    /// Native rows used to recover individual output claims.
     rows: BundleStore<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     bound_challenges: Vec<F>,
@@ -162,7 +148,6 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             }
         }
         let coefficients = CombineCoefficients::new(gamma);
-        // Build once; rounds only bind this table.
         let combined: Vec<F> = {
             let access = rows.access();
             let coefficients = &coefficients;
@@ -189,8 +174,6 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         })
     }
 
-    /// The five individual bound operand values: multilinear evaluations of
-    /// the native rows at the bound point, one split-eq-weighted walk.
     fn operand_claims(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         let reversed: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
         let split = reversed.len() / 2;
@@ -237,9 +220,6 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         }
     }
 
-    /// `s(t) = ℓ(t) · Σ_y E(y) · combo(t, y)` at `t ∈ {0, 1, 2}`, with the
-    /// γ-combination folded before the point interpolation (exact by
-    /// linearity of binding).
     fn message(
         &self,
         round: usize,
@@ -279,7 +259,6 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        // Avoid a fresh half-size table each round.
         let _ = self.combined.bind_low_to_high_in_place(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();
@@ -331,9 +310,6 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
         })
     }
 
-    /// Pin the fully-bound Gruen scalar to the verifier's
-    /// `derive_output_term(EqSpartan)`, exactly as the naive tier's
-    /// materialized eq table is pinned.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -403,9 +379,6 @@ mod tests {
 
     fn assert_parity(log_t: usize, seed: u64) {
         let mut state = seed;
-        // Native operand rows (the production shape), including negative
-        // right instruction inputs; the reference tables are their exact
-        // field images.
         let rows: Vec<InstructionOperandRow> = (0..1usize << log_t)
             .map(|_| InstructionOperandRow {
                 lookup_output: LookupOutput(splitmix(&mut state)),
@@ -479,7 +452,6 @@ mod tests {
         )
         .unwrap();
 
-        // True input claim: the full hypercube sum of the summand.
         let eq = eq_table(&tau_low);
         let gamma_powers = [
             fr(1),

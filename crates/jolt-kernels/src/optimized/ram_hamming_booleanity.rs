@@ -51,12 +51,9 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Low cycle rounds proved from block patterns before `H` is materialized
-/// (a block of `2^STARTUP_ROUNDS` cycles packs into one `u16`).
 const STARTUP_ROUNDS: usize = 4;
 const _: () = assert!(STARTUP_ROUNDS <= 4);
 
-/// Slot front for the stage-6b RAM Hamming-weight booleanity member.
 pub struct OptimizedRamHammingBooleanity;
 
 impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHammingBooleanity {
@@ -135,12 +132,6 @@ enum HammingState<F: JoltField> {
     Dense(Polynomial<F>),
 }
 
-/// `H` during the first `depth` rounds. Block `z` covers cycles
-/// `2^depth·z + u`; bit `u` of `patterns[z]` is `H` there. `histogram[p]`
-/// sums the tail weight `eq(c_{depth..}, z)` over the blocks whose pattern
-/// is `p` or its complement `!p` — both give the same defect, so bins are
-/// keyed by the representative with the top bit clear, and bin 0 (constant
-/// blocks, zero defect) stays empty.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct HammingStartup<F: JoltField> {
     depth: usize,
@@ -236,10 +227,6 @@ impl<F: JoltField> HammingStartup<F> {
         }
     }
 
-    /// Round `j = challenges.len()`: `s(t) = l(t)·Q(t)` with `l` the split-eq
-    /// linear factor and `Q(t) = Σ_p M[p] Σ_v eq(c_{j+1..depth}, v)·(P² − P)`
-    /// at `P = P_p(s_{..j}, t, v)`, the pattern's multilinear extension —
-    /// quadratic in `t`, so the coefficients come out exactly.
     fn round_poly(
         &self,
         eq: &GruenSplitEqPolynomial<F>,
@@ -299,9 +286,6 @@ impl<F: JoltField> HammingStartup<F> {
         ]))
     }
 
-    /// Marginalize the 16-bit pattern histogram to the endpoint bits used by
-    /// this round before multiplying quadratic defects. The first four rounds
-    /// need only 2, 8, 128, and 32,768 complement classes respectively.
     fn marginalized_coefficients(&self, bound: usize, prefix: &[F], suffix: &[F]) -> [F; 3] {
         let endpoint_bits = 1usize << (bound + 1);
         let mask = (1usize << endpoint_bits) - 1;
@@ -351,9 +335,6 @@ impl<F: JoltField> HammingStartup<F> {
         [q_0, q_1, q_2]
     }
 
-    /// `H` bound at `s_{..depth}`: a pattern's multilinear extension is the
-    /// sum of `eq(s, u)` over its set bits, tabulated for every pattern by
-    /// peeling the lowest bit.
     fn materialize(&self) -> Polynomial<F> {
         let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
@@ -368,8 +349,6 @@ impl<F: JoltField> HammingStartup<F> {
     }
 }
 
-/// Histogram bin of a `width`-bit block pattern: the pattern or its
-/// complement, whichever has the top bit clear.
 fn canonical_bin(pattern: u16, width: usize) -> usize {
     let pattern = usize::from(pattern);
     if pattern >> (width - 1) & 1 == 1 {
@@ -448,9 +427,6 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
         })
     }
 
-    /// The split-eq scalar (fully bound `EqCycle`) against the verifier's
-    /// `derive_output_term` — the same drift detector the naive tier runs on
-    /// its hand-materialized derived table.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -493,9 +469,6 @@ mod tests {
             .collect()
     }
 
-    /// Lockstep parity drive against the reference kernel: identical round
-    /// polynomials every round, identical output claims, and the split-eq
-    /// scalar passing the verifier's derived-term cross-check.
     fn parity(backend: &TraceBackend<OwnedTrace>, log_t: usize, stage1_cycle_binding: Vec<Fr>) {
         let relation = RamHammingBooleanity::new(TraceDimensions::new(log_t), stage1_cycle_binding);
         let claims = RamHammingBooleanityInputClaims::default();
@@ -514,7 +487,6 @@ mod tests {
             .prepare(&mut ProofSession::default(), backend, inputs())
             .unwrap();
 
-        // The Hamming indicator is boolean, so the input claim is zero.
         let mut claim = Fr::from_u64(0);
         let mut bind = None;
         let mut drawn = Vec::new();
@@ -545,10 +517,6 @@ mod tests {
             .unwrap();
     }
 
-    /// Rows whose Hamming indicator is `bits`, alternating the RAM shapes
-    /// that realize each value: nonzero-address loads and stores for ones,
-    /// no-ops and address-0 loads (a RAM access, but no Hamming weight) for
-    /// zeros.
     fn hamming_rows(bits: &[bool]) -> Vec<TraceRow> {
         bits.iter()
             .enumerate()
@@ -564,8 +532,6 @@ mod tests {
             .collect()
     }
 
-    /// Parity over a trace whose first cycles carry `bits`; the backend pads
-    /// the rest with no-op rows.
     fn hamming_parity(log_t: usize, bits: &[bool], stage1_cycle_binding: Vec<Fr>) {
         with_trace_backend(log_t, 4, hamming_rows(bits), |backend, _| {
             let mut expected: Vec<Fr> = bits.iter().map(|&bit| Fr::from_bool(bit)).collect();
@@ -587,8 +553,6 @@ mod tests {
         (0..width).map(move |offset| pattern >> offset & 1 == 1)
     }
 
-    /// Compare marginalization against the direct pattern MLE formula, with
-    /// both low and high bits set across each round's endpoint windows.
     #[test]
     fn four_round_marginals_match_direct_pattern_formula() {
         let patterns = [
@@ -653,10 +617,6 @@ mod tests {
         with_booleanity_backend(3, 4, |backend, _| parity(backend, 3, generic_binding(3)));
     }
 
-    /// Short traces use startup messages through the final bind. Exercise
-    /// every pattern through three rounds and representative 16-bit patterns
-    /// at four; enumerating 65,536 full trace backends would obscure the
-    /// actual kernel regression this test guards.
     #[test]
     fn every_pattern_within_startup_depth() {
         for log_t in 1..=STARTUP_ROUNDS.min(3) {
@@ -672,8 +632,6 @@ mod tests {
         }
     }
 
-    /// A trace longer than startup contains varied low and high halves of
-    /// 16-bit patterns, followed by dense rounds checked against reference.
     #[test]
     fn every_pattern_above_startup_depth() {
         let width = 1 << STARTUP_ROUNDS;
@@ -684,9 +642,6 @@ mod tests {
         hamming_parity(log_t, &bits, generic_binding(log_t));
     }
 
-    /// Startup rounds never divide by the cycle coordinate, so `0` and `1`
-    /// coordinates there are fine (the dense Gruen rounds would invert a
-    /// zero one); later coordinates stay generic.
     #[test]
     fn boolean_startup_coordinates() {
         let bits: Vec<bool> = (0..40).map(|cycle| cycle % 3 != 1).collect();
@@ -736,9 +691,6 @@ mod tests {
         let log_t = STARTUP_ROUNDS + 3;
         let bits: Vec<bool> = (0..1 << log_t).map(|row| row % 5 < 2).collect();
         for case in ExceptionalEq::ALL {
-            // `case.point` is the eq table's big-endian point, whose last
-            // coordinate binds first; the kernel reverses the stage-1 binding
-            // to get it.
             let eq_point = case.point(log_t, test_challenge(0));
             if matches!(case, ExceptionalEq::ZeroPrefix) {
                 let mut eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);

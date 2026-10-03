@@ -1,5 +1,3 @@
-//! Lookup-table-related traits.
-
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
@@ -13,7 +11,6 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::interleave::interleave_bits;
 use crate::tables::LookupTableKind;
 
-/// Materialize and MLE-evaluate a single lookup table.
 pub trait LookupTable: Clone + Debug + Send + Sync {
     fn materialize_entry(&self, index: u128) -> u64;
 
@@ -110,7 +107,6 @@ pub trait LookupQuery<const XLEN: usize> {
         interleave_bits(x, y as u64)
     }
 
-    /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
 }
 
@@ -137,7 +133,6 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
-// Only limb advice uses `RangeCheck`; other field-inline ops have no lookup.
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,
@@ -265,8 +260,6 @@ mod tests {
         }
     }
 
-    // `JoltInstructionRowData` requires `TryFrom<JoltInstructionRow>`; the blanket
-    // impl over `Into` supplies it.
     impl From<JoltInstructionRow> for TestCycle {
         fn from(instruction: JoltInstructionRow) -> Self {
             Self {
@@ -337,9 +330,6 @@ mod tests {
                 let mut rng = StdRng::seed_from_u64(0xA11A5);
                 let mut checked = 0usize;
                 for _ in 0..256 {
-                    // Immediates are drawn from `[0, 2^64)`: every format feeding a
-                    // non-interleaved lookup (I / U / J / Assert) stores `imm` as a
-                    // `u64`, so a negative normalized immediate is unreachable.
                     let operands = NormalizedOperands {
                         rd: Some(1),
                         rs1: Some(2),
@@ -352,9 +342,6 @@ mod tests {
                     $(
                         $(#[$meta])*
                         {
-                            // `$variant` is the concrete newtype, so flags and the
-                            // index come from the type; the row only supplies
-                            // operands.
                             let cycle = TestCycle {
                                 instruction: JoltInstructionRow {
                                     operands,
@@ -381,7 +368,6 @@ mod tests {
                         }
                     )*
                 }
-                // Guard against the assertion silently covering nothing.
                 assert!(
                     checked > 0,
                     "no non-interleaved instruction was exercised"

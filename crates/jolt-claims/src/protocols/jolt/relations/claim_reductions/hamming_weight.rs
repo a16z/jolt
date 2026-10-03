@@ -1,5 +1,3 @@
-//! Hamming-weight claim-reduction symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -57,7 +55,6 @@ pub struct HammingWeightClaimReductionInputClaims<C> {
     pub ram_virtualization: Vec<C>,
 }
 
-/// Fiat-Shamir challenge drawn by the hamming-weight claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct HammingWeightClaimReductionChallenges<F> {

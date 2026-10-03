@@ -76,7 +76,6 @@ where
                 .spartan_outer_uniskip
                 .first_round_poly(session, &[], &())
         })?;
-    // The selected jolt-r1cs shape includes the field-inline rows when enabled.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
@@ -86,7 +85,6 @@ where
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type.
     let sumchecks = Stage1BatchSumchecks {
         outer_remainder: OuterRemainder::new(
             SpartanOuterDimensions::rv64(log_t),
@@ -133,14 +131,6 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-1 recipe against the verifier's own
-/// public constituents — `stage1::verify`'s clear body step for step (the
-/// tau draw, `uniskip::verify_clear`, the batch relations, the field-inline seam's
-/// attach, `verify_clear`, and the two-part opening absorb), on a twin
-/// transcript. The full `stage1::verify` entrypoint needs an assembled
-/// `JoltProof`, whose joint-opening slot has no test constructor, so this is
-/// the closest public seam; the 32-byte transcript-state equality pins the
-/// absorb order end to end.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -180,9 +170,6 @@ mod field_inline_round_trip {
 
         let field_inline_outer = &out.claims.outer.outer_remainder.field_inline;
 
-        // The appendage values are honest evaluations: each field-inline cycle-domain
-        // column's MLE at the stage-1 cycle binding (`tau_low`, the point
-        // stage 2's field-inline wiring consumes).
         let tau_low = product_tau_low(&out.clear_output.remainder_point(), LOG_T).unwrap();
         let field_inline_oracle = witness.field_inline().unwrap();
         for (polynomial, value) in FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
@@ -195,34 +182,23 @@ mod field_inline_round_trip {
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }
 
-        // The verifier twin.
         let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
         twins::replay_stage1(&mut transcript, &out);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }
 
-    /// The ADDI-only field-inline trace: every field-inline column is zero, so this pins
-    /// the composed protocol on a field-inline guest that executes no field-inline
-    /// instruction.
     #[test]
     fn addi_only_stage1_round_trips_the_composed_verifier() {
         round_trip(addi_only_backend());
     }
 
-    /// Actual field-inline rows via decoded field-inline instruction words (two field loads and a
-    /// multiply).
     #[test]
     fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
         round_trip(field_arithmetic_backend());
     }
 }
 
-/// ZK with field-inline enabled: the committed stage-1 shell and the verifier replay. Mirrors
-/// `blindfold.rs`'s hard transcript check at stage scope — the replay runs
-/// `stage1::verify`'s zk body over its public constituents (the tau draw,
-/// `uniskip::verify_zk`, the batch `verify_zk`) and must land on the
-/// prover's forward transcript bytes.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
@@ -259,10 +235,6 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The committed shell carries the composed 50 output-claim values
-        // (45 common openings + five field value/product openings), row-committed in
-        // capacity-sized chunks — the shape the verifier's
-        // `composed_output_claim_count` check derives.
         let total: usize = out
             .committed_witness
             .output_claim_rows
@@ -293,7 +265,6 @@ mod field_inline_zk {
             50usize.div_ceil(CAPACITY)
         );
 
-        // The replay.
         let checked = CheckedInputs {
             public_io: JoltDevice::default(),
             zk: true,
@@ -338,9 +309,6 @@ mod field_inline_zk {
 mod tests {
     use super::*;
 
-    /// Without field-inline, the composed jolt-r1cs outer uni-skip constants equal the
-    /// jolt-claims RV64-only constants this recipe previously passed — the
-    /// swap is byte-neutral.
     #[cfg(not(feature = "field-inline"))]
     #[test]
     fn outer_uniskip_constants_match_the_rv64_only_values() {
@@ -355,8 +323,6 @@ mod tests {
         );
     }
 
-    /// With field-inline enabled, the composed outer domain carries the appended field-inline rows
-    /// — the spec's 15-point domain and its degree-42 first round.
     #[cfg(feature = "field-inline")]
     #[test]
     fn outer_uniskip_constants_are_the_composed_field_domains() {

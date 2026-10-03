@@ -39,7 +39,6 @@ impl BindShared {
     }
 }
 
-/// Benchmark `Polynomial::bind_with_order` with `LowToHigh` binding.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BindLowToHighObjective;
 
@@ -74,7 +73,6 @@ impl Objective for BindLowToHighObjective {
     }
 }
 
-/// Benchmark `Polynomial::bind_with_order` with `HighToLow` binding.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BindHighToLowObjective;
 

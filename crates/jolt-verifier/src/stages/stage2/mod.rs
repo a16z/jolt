@@ -18,12 +18,6 @@ use jolt_claims::protocols::jolt::{geometry::dimensions::ReadWriteDimensions, Jo
 
 use crate::VerifierError;
 
-/// The batch-point offset shared by the two stage-2 RAM relations whose openings sit
-/// at the phase-1 sub-point: the active stage-2 window (the RAM read-write leader's
-/// `log_t + log_k` rounds) starts at `batch_num_vars - read_write_rounds`, and each
-/// relation joins it after the leader's `phase1_num_rounds` cycle rounds — the
-/// pre-port verifier's `try_round_offset(log_t + log_k) + phase1_num_rounds()`
-/// slicing. `stage` attributes the underflow error to the calling relation.
 fn phase1_instance_point_offset(
     dimensions: ReadWriteDimensions,
     stage: JoltRelationId,

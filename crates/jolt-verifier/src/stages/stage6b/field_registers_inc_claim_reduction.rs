@@ -74,11 +74,6 @@ impl<F: JoltField> FieldRegistersIncClaimReduction<F> {
     }
 }
 
-// Only the point geometry stays hand-written: the symbolic output expression
-// references the opening point and the Eq-pair publics as opaque `Derived`
-// leaves, so their derivations cannot come from it. Everything else (claim
-// evaluation, struct fill, id projection) is trait defaults + derive-generated
-// code.
 impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
     type Symbolic = ClaimReduction;
 
@@ -91,8 +86,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersIncClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &FieldRegistersIncClaimReductionInputClaims<Vec<F>>,
     ) -> Result<FieldRegistersIncClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        // The reduced opening point is the reversed sumcheck point — the same
-        // derivation as the ordinary increment claim reduction.
         Ok(
             FieldRegistersIncClaimReductionOutputClaims::from_shared_point(derivations::reversed(
                 sumcheck_point,
@@ -144,10 +137,6 @@ mod tests {
         )
     }
 
-    /// The field-inline reduction is trace-domain: `log_t` rounds, the default (suffix-bound)
-    /// instance offset — the same batch window as the ordinary increment claim reduction — and
-    /// its reduced opening point is the same reversed point, so both members bound in the same
-    /// stage-6b batch derive identical opening points.
     #[test]
     fn reduced_opening_point_matches_the_ordinary_inc_reduction() {
         let log_t = 4usize;

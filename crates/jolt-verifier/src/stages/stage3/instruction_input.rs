@@ -31,8 +31,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage2::Stage2BatchOutputClaims;
 use crate::VerifierError;
 
-/// Wire the consumed opening *values* from stage 2's product-remainder left/right
-/// instruction inputs. Takes the ZK-agnostic stage-2 output-claims aggregate.
 pub fn instruction_input_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> InstructionInputInputClaims<F> {
@@ -70,8 +68,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionInput<F> {
     }
 
     fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
-        // The geometry pair is (shift, instruction-input); the shift opening is
-        // the canonical source, so the aliased/source order swaps here.
         let [(shift_unexpanded_pc, instruction_unexpanded_pc)] =
             bytecode::read_raf_consistency_openings();
         vec![(instruction_unexpanded_pc, shift_unexpanded_pc)]
@@ -106,7 +102,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionInput<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // Every instruction-input output shares the one opening point.
             InstructionInputPublic::EqProduct => try_eq_mle(
                 output_points.unexpanded_pc(),
                 &self.product_remainder_opening_point,

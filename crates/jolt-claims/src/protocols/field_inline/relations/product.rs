@@ -1,5 +1,3 @@
-//! field_inline native product symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -36,8 +34,6 @@ pub struct FieldRegistersProductOutputClaims<C> {
     pub rd_value: C,
 }
 
-/// Consumed field-product input: the `FieldProduct` lane claim entering the
-/// product virtualization.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 #[protocol(field_inline)]
 pub struct FieldRegistersProductInputClaims<C> {

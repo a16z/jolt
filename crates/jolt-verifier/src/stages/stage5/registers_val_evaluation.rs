@@ -1,5 +1,3 @@
-//! The stage 5 `RegistersValEvaluation` sumcheck instance.
-
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
@@ -18,8 +16,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::VerifierError;
 
-/// Wire the consumed `RegistersVal` opening *value* from the upstream register
-/// read-write checking (stage 4). Takes the ZK-agnostic output-claims aggregate.
 pub fn registers_val_evaluation_input_values_from_upstream<F: JoltField>(
     stage4: &Stage4OutputClaims<F>,
 ) -> RegistersValEvaluationInputClaims<F> {
@@ -28,8 +24,6 @@ pub fn registers_val_evaluation_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Wire the consumed `RegistersVal` opening *point* from the upstream register
-/// read-write checking (stage 4).
 pub fn registers_val_evaluation_input_points_from_upstream<F: JoltField>(
     stage4: &Stage4OutputPoints<F>,
 ) -> RegistersValEvaluationInputClaims<Vec<F>> {
@@ -92,7 +86,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
             .cycle_opening_point(sumcheck_point)
             .map_err(public_input_failed)?;
         let opening_point = [address, cycle.as_slice()].concat();
-        // rd_inc and rd_wa are opened at the same point.
         Ok(RegistersValEvaluationOutputClaims {
             rd_inc: opening_point.clone(),
             rd_wa: opening_point,

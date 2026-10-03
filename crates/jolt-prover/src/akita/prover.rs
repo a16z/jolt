@@ -1,7 +1,3 @@
-//! The packed top-level prover: the stage recipes run in protocol order on
-//! one transcript and one backend session, and their wire outputs assemble
-//! into the packed-envelope [`JoltProof`].
-
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
@@ -29,7 +25,6 @@ use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
 
-/// See [`super::prove`].
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
 pub fn prove<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
@@ -49,9 +44,6 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
-    // The packed path is transparent-only (`akita` and `zk` are mutually
-    // exclusive), so the mode context carries nothing; the shared stage
-    // recipes still thread it to mint their clear recorders.
     let mode = ProofMode::<VC>::new(None)?;
     let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(

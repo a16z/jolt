@@ -65,8 +65,6 @@ impl TraceOneHotRows for TestRows {
 
 type TestBackend = CpuBackend<AkitaField, AkitaField>;
 
-/// The kernels under test never read the owned setup; the smallest valid
-/// setup only gives them a backend to hang off.
 fn test_backend() -> TestBackend {
     let setup = AkitaProverSetup::<AkitaField>::generate_with_capacity(
         1,
@@ -164,8 +162,6 @@ fn committed_digit_zero_mapping_is_dimension_generic() {
 }
 
 fn digit_window_source<const D: usize>() -> CyclotomicRing<AkitaField, D> {
-    // Mix small, negative, and near-modulus coefficients so both window
-    // halves carry dense 16-bit digits.
     CyclotomicRing::from_coefficients(std::array::from_fn(|index| match index % 3 {
         0 => AkitaField::from_u64((index + 1) as u64),
         1 => -AkitaField::from_u64((index + 1) as u64),
@@ -553,8 +549,6 @@ fn small_k256_blocks_commit_like_materialized_onehot() {
 
     let streamed = commit_packed::<D>(&setup.expanded, &source, plan).unwrap();
 
-    // Oracle: Akita's canonical one-hot table, one ring per D coefficients,
-    // under the single-digit inner map rows[b] = sum_p A[0][p] * ring(b * P + p).
     let a_view = setup
         .expanded
         .shared_matrix()

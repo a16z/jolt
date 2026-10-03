@@ -152,10 +152,6 @@ impl InlineExpansionBuilder {
         self.inner.release_inline(register.temp);
     }
 
-    /// Allocate a fixed-size array of inline registers.
-    ///
-    /// This keeps shipped crypto builders concise while preserving explicit
-    /// release through `release_many` or `release_iter`.
     pub fn allocate_inline_array<const N: usize>(
         &mut self,
     ) -> Result<[InlineRegister; N], ExpansionError> {
@@ -171,21 +167,18 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Release every handle in a fixed-size inline-register array.
     pub fn release_many<const N: usize>(&mut self, registers: [InlineRegister; N]) {
         for register in registers {
             self.release(register);
         }
     }
 
-    /// Release every handle produced by an iterator.
     pub fn release_iter(&mut self, registers: impl IntoIterator<Item = InlineRegister>) {
         for register in registers {
             self.release(register);
         }
     }
 
-    /// Emit or expand an R-format row.
     pub fn emit_r(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -201,7 +194,6 @@ impl InlineExpansionBuilder {
         );
     }
 
-    /// Emit or expand an I-format row with an unsigned immediate.
     pub fn emit_i(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -217,7 +209,6 @@ impl InlineExpansionBuilder {
         );
     }
 
-    /// Emit or expand a load-shaped I-format row with a signed byte offset.
     pub fn emit_ld(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -233,19 +224,16 @@ impl InlineExpansionBuilder {
         );
     }
 
-    /// Emit or expand a J-format row.
     pub fn emit_j(&mut self, instruction_kind: impl Into<SourceInstructionKind>, rd: u8, imm: u64) {
         self.inner
             .emit_j(instruction_kind, Self::register_operand(rd), imm as i128);
     }
 
-    /// Emit or expand a U-format row.
     pub fn emit_u(&mut self, instruction_kind: impl Into<SourceInstructionKind>, rd: u8, imm: u64) {
         self.inner
             .emit_u(instruction_kind, Self::register_operand(rd), imm as i128);
     }
 
-    /// Emit or expand an S-format row with a signed byte offset.
     pub fn emit_s(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -261,7 +249,6 @@ impl InlineExpansionBuilder {
         );
     }
 
-    /// Emit or expand a B-format row with a signed branch offset.
     pub fn emit_b(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -277,7 +264,6 @@ impl InlineExpansionBuilder {
         );
     }
 
-    /// Emit an address-form alignment assertion with a signed byte offset.
     pub fn emit_align(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -339,7 +325,6 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Emit or constant-fold a 32-bit rotate-right operation.
     pub fn rotri32(&mut self, rs1: Value, shamt: u32, rd: u8) -> Value {
         debug_assert!(shamt <= 32, "rotri32 shift amount must be at most 32");
         if shamt == 0 || shamt == 32 {
@@ -356,7 +341,6 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Emit or constant-fold the XOR of two 32-bit rotate-right operations.
     pub fn rotri_xor_rotri32(
         &mut self,
         rs1: Value,
@@ -370,17 +354,14 @@ impl InlineExpansionBuilder {
         self.xor(r1, r2, rd)
     }
 
-    /// Emit or constant-fold bitwise XOR.
     pub fn xor(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         self.bin(Kind::XOR, Kind::XORI, rs1, rs2, rd, |x, y| x ^ y)
     }
 
-    /// Emit or constant-fold bitwise AND.
     pub fn and(&mut self, rs1: Value, rs2: Value, rd: u8) -> Value {
         self.bin(Kind::AND, Kind::ANDI, rs1, rs2, rd, |x, y| x & y)
     }
 
-    /// Emit or constant-fold a 64-bit rotate-right operation.
     pub fn rotri(&mut self, rs1: Value, imm: u64, rd: u8) -> Value {
         match rs1 {
             Value::Reg(rs1) => {
@@ -394,7 +375,6 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Emit or constant-fold a 64-bit rotate-right by `amount` bits.
     pub fn rotr64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
         debug_assert!(amount <= 64, "rotr64 shift amount must be at most 64");
         if amount == 0 || amount == 64 {
@@ -411,7 +391,6 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Emit or constant-fold a 64-bit rotate-left by `amount` bits.
     pub fn rotl64(&mut self, rs1: Value, amount: u32, rd: u8) -> Value {
         debug_assert!(amount <= 64, "rotl64 shift amount must be at most 64");
         self.rotr64(rs1, 64 - amount, rd)

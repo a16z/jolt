@@ -34,7 +34,6 @@ pub struct TrustedAdviceAddressPhaseOutputClaims<C> {
     pub trusted: C,
 }
 
-/// Consumed cycle-phase trusted-advice opening.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct TrustedAdviceAddressPhaseInputClaims<C> {
     #[opening(trusted_advice, from = AdviceClaimReductionCyclePhase)]
@@ -54,7 +53,6 @@ pub struct UntrustedAdviceAddressPhaseOutputClaims<C> {
     pub untrusted: C,
 }
 
-/// Consumed cycle-phase untrusted-advice opening.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct UntrustedAdviceAddressPhaseInputClaims<C> {
     #[opening(untrusted_advice, from = AdviceClaimReductionCyclePhase)]

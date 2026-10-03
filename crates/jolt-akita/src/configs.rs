@@ -11,8 +11,6 @@ use akita_types::sis::CommittedSourceClass;
 
 use crate::AKITA_ONE_HOT_K16;
 
-/// Delegate one Jolt policy to an upstream preset while assigning a distinct
-/// external schedule-family identity.
 macro_rules! delegate_preset {
     (
         $(#[$doc:meta])*

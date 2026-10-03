@@ -1,10 +1,7 @@
-//! Sumcheck claim: the public statement that the protocol proves.
-
 use jolt_field::Field;
 
 pub use jolt_poly::EvaluationClaim;
 
-/// Round count and degree bound for a sumcheck instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumcheckStatement {
     pub num_vars: usize,
@@ -47,11 +44,8 @@ impl<F: Field> From<&SumcheckClaim<F>> for SumcheckStatement {
 /// * `claimed_sum` -- the value $C$ that the prover claims the sum equals.
 #[derive(Clone, Debug)]
 pub struct SumcheckClaim<F: Field> {
-    /// Number of Boolean variables in the summation.
     pub num_vars: usize,
-    /// Maximum degree of each round polynomial.
     pub degree: usize,
-    /// The claimed value of the sum $\sum_{x \in \{0,1\}^n} g(x)$.
     pub claimed_sum: F,
 }
 

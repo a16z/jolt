@@ -14,6 +14,5 @@ pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = 0;
 
 pub const SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE: usize =
     SPARTAN_PRODUCT_BASE_LANES + SPARTAN_PRODUCT_FIELD_INLINE_LANES;
-// The weighting kernel and both factors have degree at most domain_size - 1.
 pub const SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize =
     3 * (SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE - 1);

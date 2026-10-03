@@ -12,11 +12,8 @@ use jolt_field::JoltField;
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::PointGeometryError;
 
-/// Degree bound shared by all two-phase precommitted reduction sumchecks.
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
 
-/// Round counts of a two-phase precommitted claim reduction, shared by the
-/// advice, committed-bytecode, and program-image reductions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PrecommittedReductionDimensions {
     cycle_phase_total_rounds: usize,
@@ -57,9 +54,6 @@ impl PrecommittedReductionDimensions {
     }
 }
 
-/// Common two-phase schedule surface of the per-reduction layout types
-/// (advice, committed bytecode, program image), forwarding to the shared
-/// [`PrecommittedClaimReduction`].
 pub trait PrecommittedReductionLayout {
     fn precommitted(&self) -> &PrecommittedClaimReduction;
 
@@ -92,8 +86,6 @@ pub trait PrecommittedReductionLayout {
     }
 }
 
-/// Shared scheduling dimensions derived from the main trace domain and all
-/// precommitted candidate domains.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrecommittedSchedulingReference {
     pub main_total_vars: usize,
@@ -103,12 +95,6 @@ pub struct PrecommittedSchedulingReference {
     pub joint_col_vars: usize,
 }
 
-/// Per-polynomial two-phase round schedule projected from the shared reference
-/// domain.
-///
-/// Unlike core's stateful counterpart, this layout is pure: the verifier passes
-/// the recorded cycle-phase challenges explicitly when completing the address
-/// phase.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrecommittedClaimReduction {
     scheduling_reference: PrecommittedSchedulingReference,
@@ -120,14 +106,6 @@ pub struct PrecommittedClaimReduction {
 }
 
 impl PrecommittedClaimReduction {
-    /// Compute shared scheduling dimensions from the main trace domain and
-    /// precommitted candidate total-var counts.
-    ///
-    /// `joint_col_vars` mirrors core's
-    /// `max(configured_main_num_columns().log_2(), reference_sigma)`: after the
-    /// stage 6 Dory re-embedding the main matrix is balanced over
-    /// `reference_total_vars`, so both operands equal
-    /// `ceil(reference_total_vars / 2)`.
     pub fn scheduling_reference(
         main_total_vars: usize,
         candidates: &[usize],
@@ -544,10 +522,7 @@ mod tests {
         let two_inv = Fr::from_u64(2).inv_or_zero();
         assert_eq!(precommitted.cycle_phase_rounds(), &[0]);
         assert_eq!(precommitted.num_address_phase_rounds(), 0);
-        // The cycle-phase handoff scale excludes the address rounds this
-        // polynomial never participates in...
         assert_eq!(precommitted.cycle_phase_skip_scale::<Fr>(), two_inv);
-        // ...while the full final scale counts both phase gaps.
         assert_eq!(
             precommitted_skip_round_scale::<Fr>(&precommitted),
             two_inv * two_inv * two_inv
@@ -586,10 +561,6 @@ mod tests {
 
     #[test]
     fn cycle_phase_permuted_recovers_from_opening_point() {
-        // A precommitted-dominant, cycle-completed schedule: the Dory permutation
-        // reorders the cycle rounds, so the permuted opening point differs from
-        // the produced (reverse-ordered) cycle opening point — exercising the
-        // recovery rather than a trivial reverse.
         let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(2, &[5], 0);
         let precommitted = PrecommittedClaimReduction::new(
             2,
@@ -610,7 +581,6 @@ mod tests {
         let from_challenges = precommitted
             .cycle_phase_permuted_opening_point(&challenges)
             .unwrap_or_else(|error| panic!("permuted from challenges: {error}"));
-        // Guard against a vacuous test: the permutation is not just the reverse.
         assert_ne!(from_challenges, opening_point);
         assert_eq!(
             precommitted

@@ -26,8 +26,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
 
-/// Wire the per-virtual reduced `InstructionRa` opening *values* from the stage-5
-/// instruction read-RAF. Clear-only.
 pub fn instruction_ra_virtualization_input_values_from_upstream<F: JoltField>(
     stage5: &Stage5OutputClaims<F>,
 ) -> InstructionRaVirtualizationInputClaims<F> {
@@ -36,8 +34,6 @@ pub fn instruction_ra_virtualization_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Wire the per-virtual reduced `InstructionRa` opening *points* from the stage-5
-/// instruction read-RAF. ZK-agnostic.
 pub fn instruction_ra_virtualization_input_points_from_upstream<F: JoltField>(
     stage5: &Stage5OutputPoints<F>,
 ) -> InstructionRaVirtualizationInputClaims<Vec<F>> {
@@ -50,10 +46,7 @@ pub fn instruction_ra_virtualization_input_points_from_upstream<F: JoltField>(
 pub struct InstructionRaVirtualization<F: JoltField> {
     symbolic: relations::instruction::RaVirtualization,
     dimensions: InstructionRaVirtualizationDimensions,
-    /// The stage-5 instruction address point, chunked into the per-chunk committed
-    /// opening points.
     instruction_address: Vec<F>,
-    /// The stage-5 instruction read-RAF cycle that `EqCycle` compares against.
     instruction_read_raf_cycle: Vec<F>,
     committed_chunk_bits: usize,
 }
@@ -172,10 +165,6 @@ mod tests {
         InstructionRaVirtualization::new(dimensions, Vec::new(), Vec::new(), 1)
     }
 
-    // Inherits the default `draw_challenges`: one `challenge_scalar` squeeze
-    // storing the squeezed scalar — the same draw the prover's
-    // `InstructionRaSumcheckParams::new` performs and stage 6b's hand-assembled
-    // `Stage6bChallenges` mirrors.
     #[test]
     fn default_draw_challenges_matches_inline_instruction_ra_gamma() {
         let relation = relation(2);

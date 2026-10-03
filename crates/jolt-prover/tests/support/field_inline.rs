@@ -1,5 +1,3 @@
-//! Field-profile cases shared by acceptance, backend parity, and tamper tests.
-
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaField as Field;
 #[cfg(not(feature = "akita"))]

@@ -7,9 +7,6 @@ use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_program::execution::{JoltProgram, TraceError};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
-/// The row-emission seam, re-exported so emitter A/B experiments (benches,
-/// integration tests, the Alternative 11 stencil spike) can build their own
-/// `EmitterSet` and compile with it.
 pub use super::compile::emitter::{EmitOutcome, EmitterSet, RowEmitter};
 pub use super::compile::CompiledProgram;
 use super::memory::MemoryPlane;
@@ -22,7 +19,6 @@ pub const TEST_ADDR: u64 = RAM_START_ADDRESS + 0x1000;
 /// RAM scratch region seeded identically on both sides for memory-op rows.
 pub const SCRATCH_START: u64 = RAM_START_ADDRESS + 0x2000;
 pub const SCRATCH_DWORDS: usize = 512;
-/// Plane/interpreter memory capacity for harness runs.
 pub const MEM_CAPACITY: u64 = 1 << 20;
 
 pub fn memory_config() -> MemoryConfig {
@@ -33,8 +29,6 @@ pub fn memory_config() -> MemoryConfig {
     }
 }
 
-/// An always-taken self-branch: `Beq x0, x0, 0`. Terminates via PC-stall
-/// with no register or memory effects.
 fn terminal_row(address: u64) -> JoltInstructionRow {
     JoltInstructionRow {
         instruction_kind: JoltInstructionKind::BEQ,
@@ -90,7 +84,6 @@ pub fn straight_line_program(mut row: JoltInstructionRow, count: usize) -> JoltP
     )
 }
 
-/// Compile without running (fail-fast coverage checks).
 pub fn compile_only(program: &JoltProgram) -> Result<(), TraceError> {
     CompiledProgram::compile(program).map(|_| ())
 }
@@ -123,7 +116,6 @@ impl Prepared {
         })
     }
 
-    /// Run once from the initial register state; returns the row count.
     pub fn run_once(&mut self) -> Result<u64, TraceError> {
         let mut host = HostContext {
             device: JoltDevice::new(&memory_config()),

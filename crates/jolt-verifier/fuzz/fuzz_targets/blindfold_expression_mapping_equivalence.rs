@@ -1,12 +1,5 @@
 #![no_main]
 
-//! Differential oracle for Jolt claim expressions crossing into BlindFold.
-//!
-//! Verifier-side BlindFold construction remaps `JoltChallengeId` factors into
-//! public inputs while leaving openings and derived values in their respective
-//! source families. This target generates bounded production-shaped claim
-//! expressions and checks that the remapped expression evaluates identically.
-
 use jolt_claims::{
     protocols::jolt::{
         AdviceClaimReductionPublic, BooleanityChallenge, BytecodeClaimReductionChallenge,

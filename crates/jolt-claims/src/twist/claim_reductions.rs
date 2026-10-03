@@ -58,7 +58,6 @@ pub struct IncrementReductionGroup<O, P> {
     pub consumed: [O; 2],
     /// Eq publics paired index-for-index with [`consumed`](Self::consumed).
     pub eq_publics: [P; 2],
-    /// The produced reduced opening the group folds into.
     pub reduced: O,
 }
 
@@ -290,8 +289,6 @@ mod tests {
         }
     }
 
-    /// Two-group supplier shaped like the jolt increments reduction (RAM then
-    /// registers); the one-group field-inline shape is its prefix.
     struct TwoGroups;
 
     impl IncrementReductionIds for TwoGroups {
@@ -318,8 +315,6 @@ mod tests {
         }
     }
 
-    /// Structural pin: the builders must reproduce the previously hand-written
-    /// term sequence exactly (the BlindFold lowering consumes terms in order).
     #[test]
     fn value_reduction_terms_match_the_hand_written_construction() {
         let gamma: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Gamma);
@@ -335,9 +330,6 @@ mod tests {
         assert_eq!(value_reduction_output::<Fr, Toy>(), expected_output);
     }
 
-    /// Structural pin against the previously hand-written jolt construction (the four-way
-    /// γ-fold input and the two-group output fold): group 0 carries no γ
-    /// offset factors, group 1 rides γ².
     #[test]
     fn increment_reduction_terms_match_the_hand_written_construction() {
         let gamma: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Gamma);

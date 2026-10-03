@@ -48,19 +48,16 @@ const X86_64_BMI2_ADX_BACKEND: u8 = 2;
 #[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
 static LAST_X86_64_MUL_BACKEND: AtomicU8 = AtomicU8::new(0);
 
-/// Pack two `u64` limbs into little-endian `[lo, hi]`.
 #[inline(always)]
 const fn pack(lo: u64, hi: u64) -> [u64; 2] {
     [lo, hi]
 }
 
-/// Split a `u128` into little-endian `[u64; 2]` limbs.
 #[inline(always)]
 const fn split(x: u128) -> [u64; 2] {
     [x as u64, (x >> 64) as u64]
 }
 
-/// Join little-endian `[u64; 2]` limbs into a `u128`.
 #[inline(always)]
 const fn join(x: [u64; 2]) -> u128 {
     x[0] as u128 | (x[1] as u128) << 64
@@ -89,12 +86,8 @@ impl<const P: u128> Fp128<P> {
         c
     };
 
-    /// Low 64 bits of `C` (always equals `C` since `C < 2^32`).
     pub const C_LO: u64 = Self::C as u64;
 
-    /// `+1` means `C = 2^a + 1`, `-1` means `C = 2^a − 1`, `0` means generic.
-    /// (`C < 2^32` is const-asserted, so `C + 1` cannot overflow and the
-    /// shift is at most 32.)
     const C_SHIFT_KIND: i8 = {
         let c = Self::C_LO;
         if c > 1 && (c - 1).is_power_of_two() {
@@ -194,7 +187,6 @@ impl<const P: u128> Fp128<P> {
         Self::fold2_canonicalize(t0, t1, t2)
     }
 
-    /// Adds a canonical 128-bit value to a 256-bit product.
     #[cfg(any(
         test,
         feature = "fuzzing",
@@ -323,9 +315,6 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    /// Portable multiply: schoolbook 2×2 widening product, then the two
-    /// Solinas folds. Assembly builds retain it for tests and fuzzing as the
-    /// differential oracle for the architecture kernel.
     #[cfg(any(
         test,
         feature = "fuzzing",
@@ -337,9 +326,6 @@ impl<const P: u128> Fp128<P> {
         Self::reduce_4(r0, r1, r2, r3)
     }
 
-    /// x86-64 multiplication dispatch. Builds that enable both BMI2 and ADX
-    /// use the matching A7F7 specialization. Every other case uses the
-    /// parameterized baseline assembly sequence.
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
@@ -432,15 +418,6 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
-    /// 35-instruction AArch64 inline-asm multiply with Solinas reduction.
-    ///
-    /// Saves 6 instructions vs LLVM's codegen of the portable path by:
-    ///   - Fold-1 carry chain: direct adds/adcs/adc (5 vs 8 instructions),
-    ///     avoiding intermediate cset/cinc shuttling of carries.
-    ///   - Fold-2 + canonicalize: `ccmp` folds the overflow predicate with
-    ///     the ≥p check (8 vs 10 instructions).
-    ///
-    /// Benchmarked at 1.29x throughput improvement on Apple M4.
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn mul_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
@@ -495,8 +472,6 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    /// Portable squaring (see [`mul_raw_portable`](Self::mul_raw_portable)
-    /// for the AArch64 `cfg(test)` role).
     #[cfg(any(
         test,
         feature = "fuzzing",
@@ -541,10 +516,6 @@ impl<const P: u128> Fp128<P> {
         [r0, r1, r2, r3]
     }
 
-    /// 31-instruction AArch64 inline-asm squaring with Solinas reduction:
-    /// 3 widening multiplies (vs 4 for general mul), the cross term doubled
-    /// via shifted-register operands, then the same fold-1 + ccmp
-    /// canonicalize as the parameterized multiplication kernel.
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sqr_raw_aarch64(a: [u64; 2]) -> [u64; 2] {
@@ -555,7 +526,6 @@ impl<const P: u128> Fp128<P> {
         // the same `C < 2^32` fold-2 invariant as the multiplication kernel.
         unsafe {
             asm!(
-                // Squaring schoolbook: 3 widening muls
                 "mul     {p00l}, {a0}, {a0}",
                 "umulh   {p00h}, {a0}, {a0}",
                 "mul     {p01l}, {a0}, {a1}",
@@ -563,8 +533,6 @@ impl<const P: u128> Fp128<P> {
                 "mul     {p11l}, {a1}, {a1}",
                 "umulh   {p11h}, {a1}, {a1}",
 
-                // Carry accumulation with doubled cross term
-                // row1 = p00h + 2*p01l, row2 = 2*p01h + p11l, r3 = p11h + carries
                 "lsr    {t0}, {p01l}, #63",
                 "lsr    {t1}, {p01h}, #63",
                 "adds   {p01h}, {p11l}, {p01h}, lsl #1",
@@ -573,9 +541,6 @@ impl<const P: u128> Fp128<P> {
                 "adcs   {p01h}, {p01h}, {t0}",
                 "adc    {p11h}, {p11h}, {t1}",
 
-                // At this point: r0=p00l, r1=p00h, r2=p01h, r3=p11h
-
-                // Fold-1: [t0,t1,t2] = [r0,r1] + C·[r2,r3]
                 "mul    {t0}, {p01h}, {c}",
                 "umulh  {t1}, {p01h}, {c}",
                 "mul    {p01l}, {p11h}, {c}",
@@ -587,7 +552,6 @@ impl<const P: u128> Fp128<P> {
                 "adds   {p00h}, {p00h}, {p01l}",
                 "adc    {p11h}, {p11l}, {t0}",
 
-                // Fold-2 + canonicalize via ccmp (C < 2^32 ⇒ C·t2 fits in 64 bits)
                 "mul    {t0}, {p11h}, {c}",
                 "adds   {p00l}, {p00l}, {t0}",
                 "adcs   {p00h}, {p00h}, xzr",
@@ -642,13 +606,11 @@ impl<const P: u128> Fp128<P> {
         Self(split(x))
     }
 
-    /// Return the canonical representative in `[0, P)`.
     #[inline]
     pub fn to_canonical_u128(self) -> u128 {
         join(self.0)
     }
 
-    /// Extract the canonical `[lo, hi]` limb representation.
     #[inline(always)]
     pub fn to_limbs(self) -> [u64; 2] {
         self.0
@@ -896,9 +858,7 @@ impl<const P: u128> Fp128<P> {
             0 => Self(pack(0, 0)),
             // A single limb is always canonical: 2^64 < p.
             1 => Self(pack(limbs[0], 0)),
-            // Any u128 < 2^128 = p + C needs at most one subtraction of p.
             2 => Self::from_u128_reduced(join([limbs[0], limbs[1]])),
-            // fold2_canonicalize accepts any u64 third limb (see its bounds).
             3 => Self(Self::fold2_canonicalize(limbs[0], limbs[1], limbs[2])),
             4 => Self(Self::reduce_4(limbs[0], limbs[1], limbs[2], limbs[3])),
             5 => {
@@ -972,8 +932,6 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    /// Cross-checks every architecture-specific kernel against its portable
-    /// implementation. This is public only for the out-of-crate fuzz target.
     #[cfg(all(
         feature = "fuzzing",
         any(target_arch = "aarch64", target_arch = "x86_64")
@@ -1082,7 +1040,6 @@ impl<const P: u128> Field for Fp128<P> {
         }
     }
 
-    /// Fermat inversion with branchless zero-masking.
     #[inline(always)]
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow_u128(P.wrapping_sub(2));
@@ -1092,9 +1049,6 @@ impl<const P: u128> Field for Fp128<P> {
         Self(split(join(candidate.0) & mask))
     }
 
-    /// Canonical rejection sampling: each attempt reads exactly 16
-    /// little-endian bytes and rejects non-canonical candidates (probability
-    /// `C / 2^128 < 2^-96` per draw).
     #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self(split(super::sample_uniform_below(rng, P, u128::BITS)))
@@ -1191,8 +1145,6 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
     const OFFSET: u128 = Self::C;
 }
 
-// Cross-check the inline-asm kernels against the portable arithmetic on every
-// supported architecture.
 #[cfg(all(
     test,
     feature = "asm",
@@ -1252,8 +1204,8 @@ mod tests {
 
     #[test]
     fn fp128_asm_matches_portable() {
-        check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
-        check::<{ u128::MAX - 274 }>(); // C = 275
+        check::<{ u128::MAX - 172 }>();
+        check::<{ u128::MAX - 274 }>();
         check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
     }
 }

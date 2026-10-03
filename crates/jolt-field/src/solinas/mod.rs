@@ -1,9 +1,3 @@
-//! Solinas backend: pseudo-Mersenne prime fields `p = 2^k − c`.
-//!
-//! `word.rs` stamps the `u32`- and `u64`-backed field types from one fold
-//! algebra; `fp128.rs` is the hand-written two-limb field; this module holds
-//! the family trait, the `2^k − offset` registry, and shared helpers.
-
 mod ext;
 mod fp128;
 mod packed;
@@ -28,20 +22,14 @@ pub use word::{Fp32, Fp64};
 
 use crate::Ring;
 
-/// Maximum supported offset in the `2^k − offset` specialization.
 pub const PRIME_OFFSET_MAX: u128 = 1 << 16;
 
-/// Current active bit-size bound for concrete field aliases.
 pub const PRIME_OFFSET_IMPLEMENTED_MAX_BITS: u32 = 128;
 
-/// Metadata describing a registered `2^k − offset` pseudo-Mersenne modulus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrimeOffsetSpec {
-    /// `k` in `2^k − offset`.
     pub bits: u32,
-    /// `offset` in `2^k − offset`.
     pub offset: u16,
-    /// Modulus value.
     pub modulus: u128,
 }
 
@@ -57,8 +45,6 @@ pub const fn pseudo_mersenne_modulus(bits: u32, offset: u128) -> Option<u128> {
     }
 }
 
-/// `2^k − offset` as the storage word for a registered alias; fails at
-/// compile time on invalid parameters.
 #[expect(
     clippy::panic,
     reason = "CTFE-only: all call sites are const registry entries"
@@ -70,13 +56,6 @@ const fn pm(bits: u32, offset: u128) -> u128 {
     }
 }
 
-/// Sample uniformly from `[0, modulus)` with canonical byte consumption.
-///
-/// `modulus_bits` is the significant bit length of `modulus`. Each attempt
-/// reads exactly `ceil(modulus_bits / 8)` little-endian bytes, clears unused
-/// high bits, and rejects candidates greater than or equal to `modulus`. This
-/// byte-consumption contract is deterministic for a fixed
-/// [`rand_core::RngCore`] stream.
 #[inline]
 pub(crate) fn sample_uniform_below<R: rand_core::RngCore>(
     rng: &mut R,
@@ -109,7 +88,6 @@ const fn spec(bits: u32, offset: u16) -> PrimeOffsetSpec {
     }
 }
 
-/// `2^k − offset` profiles currently enabled in-code.
 pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
     spec(24, 3),
     spec(30, 35),
@@ -122,7 +100,6 @@ pub const PRIME_OFFSET_SPECS: [PrimeOffsetSpec; 9] = [
     spec(128, 275),
 ];
 
-/// Return the registered prime spec for exactly `(bits, offset)`.
 pub const fn registered_prime_offset_spec(bits: u32, offset: u128) -> Option<PrimeOffsetSpec> {
     let mut i = 0;
     while i < PRIME_OFFSET_SPECS.len() {
@@ -134,30 +111,20 @@ pub const fn registered_prime_offset_spec(bits: u32, offset: u128) -> Option<Pri
     None
 }
 
-/// Check whether `(k, offset)` is an explicitly registered `2^k − offset` prime.
 pub const fn is_registered_prime_offset(bits: u32, offset: u128) -> bool {
     offset <= PRIME_OFFSET_MAX
         && bits <= PRIME_OFFSET_IMPLEMENTED_MAX_BITS
         && registered_prime_offset_spec(bits, offset).is_some()
 }
 
-/// Prime field for `2^24 - 3`.
 pub type Prime24Offset3 = Fp32<{ pm(24, 3) as u32 }>;
-/// Prime field for `2^30 - 35`.
 pub type Prime30Offset35 = Fp32<{ pm(30, 35) as u32 }>;
-/// Prime field for `2^31 - 19`.
 pub type Prime31Offset19 = Fp32<{ pm(31, 19) as u32 }>;
-/// Prime field for `2^32 - 99`.
 pub type Prime32Offset99 = Fp32<{ pm(32, 99) as u32 }>;
-/// Prime field for `2^40 - 195`.
 pub type Prime40Offset195 = Fp64<{ pm(40, 195) as u64 }>;
-/// Prime field for `2^48 - 59`.
 pub type Prime48Offset59 = Fp64<{ pm(48, 59) as u64 }>;
-/// Prime field for `2^56 - 27`.
 pub type Prime56Offset27 = Fp64<{ pm(56, 27) as u64 }>;
-/// Prime field for `2^64 - 59`.
 pub type Prime64Offset59 = Fp64<{ pm(64, 59) as u64 }>;
-/// Prime field for `2^128 − 275`.
 pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// Prime field for `2^128 − 2^32 + 22537` (`C = 0xFFFF_A7F7`): smooth
 /// multiplicative subgroup of order `2^3 · 3^7 = 17496` (pure radix-3
@@ -180,9 +147,6 @@ pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {
     })
 }
 
-/// Horner reduction of arbitrary-length little-endian bytes modulo the field
-/// order (the >16-byte path of
-/// [`from_bytes_le_reduced`](crate::CanonicalEncoding::from_bytes_le_reduced)).
 #[inline(always)]
 pub(crate) fn reduce_le_bytes_mod_order<F: Ring>(bytes: &[u8]) -> F {
     let base = F::from_u64(256);
@@ -244,8 +208,6 @@ mod sampling_tests {
 
     #[test]
     fn non_byte_aligned_modulus_masks_unused_high_bits() {
-        // 0xff_ff_ff_ff becomes 0x3f_ff_ff_ff at a 30-bit modulus width, then
-        // is rejected. The following little-endian candidate 42 is accepted.
         let mut rng = ScriptedRng::new(vec![0xff, 0xff, 0xff, 0xff, 42, 0, 0, 0]);
         assert_eq!(sample_uniform_below(&mut rng, (1u128 << 30) - 35, 30), 42);
         assert_eq!(rng.cursor, 8);

@@ -1,5 +1,3 @@
-//! The full (monolithic) booleanity symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -25,17 +23,12 @@ pub struct BooleanityOutputClaims<C> {
     pub ram_ra: Vec<C>,
 }
 
-/// The `BooleanityAddrClaim` intermediate consumed from the address phase.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BooleanityInputClaims<C> {
     #[opening(BooleanityAddrClaim, from = Booleanity)]
     pub address_phase: C,
 }
 
-/// Fiat-Shamir challenge drawn by the full booleanity sumcheck. The `gamma`
-/// folding the RA family is built inside the `booleanity_cycle_output` geometry
-/// helper rather than appearing as a literal `challenge(..)` here, so this set is
-/// derived from `required_challenges()`, not a textual scan of the expressions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BooleanityChallenges<F> {
@@ -171,10 +164,6 @@ mod tests {
         assert_eq!(relation.degree(), 3);
     }
 
-    /// The `gamma` is folded inside `booleanity_cycle_output`, so it never appears
-    /// as a literal `challenge(..)` in this file. This guards that the
-    /// `Challenges` struct's field set still matches the challenge the relation
-    /// actually draws (per `required_challenges`).
     #[test]
     fn challenges_resolve_helper_built_gamma() {
         let challenges = BooleanityChallenges {

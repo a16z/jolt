@@ -1,9 +1,5 @@
 use super::*;
 
-/// Lowers variable `SLLW` through the word-sized power-of-two helper.
-///
-/// `VirtualPow2W` uses `rs2 & 0x1f`, matching the RV64 word shift rule. The
-/// `MULW` truncates and sign-extends the product in the second row.
 pub(in crate::expand) fn expand_sllw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

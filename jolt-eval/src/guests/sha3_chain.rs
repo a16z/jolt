@@ -1,6 +1,5 @@
 use super::GuestConfig;
 
-/// SHA-3 chain guest: iteratively hashes input `num_iters` times.
 pub struct Sha3Chain {
     pub input: [u8; 32],
     pub num_iters: u32,
@@ -8,7 +7,6 @@ pub struct Sha3Chain {
 
 impl Default for Sha3Chain {
     fn default() -> Self {
-        // e2e_profiling.rs default
         Self {
             input: [5u8; 32],
             num_iters: 20,

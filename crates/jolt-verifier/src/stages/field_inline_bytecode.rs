@@ -1,5 +1,3 @@
-//! Field-register access points and challenges for bytecode read-RAF.
-
 use jolt_claims::protocols::field_inline::geometry::bytecode::{
     FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT, FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS,
 };
@@ -69,8 +67,6 @@ pub struct FieldInlineBytecodeFold<F> {
     pub gammas: FieldInlineBytecodeStageGammas<F>,
 }
 
-/// [`crate::stages::stage6_checked_split`] for field-inline opening points, attributing the
-/// failure to the field-inline relation consuming the split.
 pub(crate) fn field_inline_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],

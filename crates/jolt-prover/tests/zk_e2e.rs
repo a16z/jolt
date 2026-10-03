@@ -1,8 +1,3 @@
-//! ZK end-to-end coverage for the modular prover and verifier: the
-//! mode-specific checks (BlindFold tampering, the reference backend, the
-//! unaligned SHA3 inline expansion, committed programs). Plain acceptance
-//! across guests is `e2e_matrix.rs`.
-
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "zk",
@@ -38,11 +33,7 @@ mod zk {
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
 
-    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
     const KECCAK_ROTRI_ROWS: usize = 576;
-    // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
-    // `digest` takes its unaligned path: two fused absorb-permute blocks staged
-    // through stack copies, then a padded final block.
     const SHA3_INPUT_LEN: usize = 300;
     const SHA3_PERMUTATIONS: usize = 3;
 
@@ -81,7 +72,6 @@ mod zk {
         let run = support::prepare(&case);
         inspect_trace(run.trace.trace.as_slice());
         let mut config = derive_config(&run);
-        // Exercise inactive cycle rounds and RAF claim scaling through BlindFold.
         config.rw_config.ram_rw_phase1_num_rounds = 0;
         config.rw_config.registers_rw_phase1_num_rounds = 0;
         let shared = JoltSharedPreprocessing::new(run.preprocessing).expect("shared preprocessing");
@@ -136,8 +126,6 @@ mod zk {
         )
     }
 
-    /// The reference kernel tier under the ZK envelope; the optimized tier is
-    /// covered by the guest matrix.
     #[test]
     fn zk_muldiv_reference_backend_proof_is_accepted() {
         with_zk_stack(|| {

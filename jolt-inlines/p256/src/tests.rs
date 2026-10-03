@@ -9,7 +9,6 @@ mod p256_tests {
     use tracer::emulator::mmu::DRAM_BASE;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
-    // Helper: convert [u64; 4] little-endian limbs to BigUint
     fn limbs_to_biguint(limbs: &[u64; 4]) -> BigUint {
         let mut bytes = [0u8; 32];
         for (i, &limb) in limbs.iter().enumerate() {
@@ -18,7 +17,6 @@ mod p256_tests {
         BigUint::from_bytes_le(&bytes)
     }
 
-    // Helper: convert BigUint back to [u64; 4] little-endian limbs
     fn biguint_to_limbs(v: &BigUint) -> [u64; 4] {
         let bytes = v.to_bytes_le();
         let mut padded = [0u8; 32];
@@ -31,7 +29,6 @@ mod p256_tests {
         limbs
     }
 
-    // Reference modular arithmetic via BigUint
     fn bigint_mulmod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
         let a_big = limbs_to_biguint(a);
         let b_big = limbs_to_biguint(b);
@@ -44,14 +41,12 @@ mod p256_tests {
         let a_big = limbs_to_biguint(a);
         let b_big = limbs_to_biguint(b);
         let m_big = limbs_to_biguint(modulus);
-        // b^{-1} = b^{m-2} mod m  (Fermat's little theorem)
         let exp = &m_big - BigUint::from(2u64);
         let b_inv = b_big.modpow(&exp, &m_big);
         let result = (a_big * b_inv) % m_big;
         biguint_to_limbs(&result)
     }
 
-    // Inline harness wrappers
     fn assert_mulq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         let expected = bigint_mulmod(a, b, &P256_MODULUS);
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
@@ -111,7 +106,6 @@ mod p256_tests {
     /// result against itself and any value would be accepted.
     fn assert_div_trace_equiv_aliased(funct3: u32, a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) {
         let expected = bigint_divmod(a, b, modulus);
-        // rs1 == rs3: dividend and result share one 32-byte region
         let layout = InlineMemoryLayout {
             output_base: DRAM_BASE,
             ..InlineMemoryLayout::two_inputs(32, 32, 32)
@@ -202,15 +196,11 @@ mod p256_tests {
         assert_eq!(result, expected, "p256_divr result mismatch");
     }
 
-    // 1. test_p256_mulq -- base field multiplication
     #[test]
     fn test_p256_mulq() {
-        // 7 * 7 = 49  (small values, no reduction)
         let seven = [7u64, 0, 0, 0];
         assert_mulq_trace_equiv(&seven, &seven);
 
-        // Generator.x * Generator.x -- compare against Python-computed value
-        // GX^2 mod p = 0x98f6b84d29bef2b281819a5e0e3690d833b699495d694dd1002ae56c426b3f8c
         assert_mulq_trace_equiv(&P256_GENERATOR_X, &P256_GENERATOR_X);
         {
             let expected_gx2: [u64; 4] = [
@@ -226,7 +216,6 @@ mod p256_tests {
             );
         }
 
-        // Near-modulus values: (p-1) * (p-1) and (p-1) * 2
         let pm1: [u64; 4] = [
             P256_MODULUS[0].wrapping_sub(1),
             P256_MODULUS[1],
@@ -238,7 +227,6 @@ mod p256_tests {
         let two = [2u64, 0, 0, 0];
         assert_mulq_trace_equiv(&pm1, &two);
 
-        // Arbitrary large values
         let a = [
             0x123456789ABCDEF0,
             0x0FEDCBA987654321,
@@ -253,30 +241,23 @@ mod p256_tests {
         ];
         assert_mulq_trace_equiv(&a, &b);
 
-        // Small values
         let a = [1u64, 2, 3, 4];
         let b = [5u64, 6, 7, 8];
         assert_mulq_trace_equiv(&a, &b);
 
-        // Identity: a * 1 = a
         let one = [1u64, 0, 0, 0];
         assert_mulq_trace_equiv(&P256_GENERATOR_X, &one);
     }
 
-    // 2. test_p256_squareq -- base field squaring
     #[test]
     fn test_p256_squareq() {
-        // Small value
         let seven = [7u64, 0, 0, 0];
         assert_squareq_trace_equiv(&seven);
 
-        // Generator x-coordinate
         assert_squareq_trace_equiv(&P256_GENERATOR_X);
 
-        // Generator y-coordinate
         assert_squareq_trace_equiv(&P256_GENERATOR_Y);
 
-        // Near-modulus: (p-1)^2
         let pm1: [u64; 4] = [
             P256_MODULUS[0].wrapping_sub(1),
             P256_MODULUS[1],
@@ -285,7 +266,6 @@ mod p256_tests {
         ];
         assert_squareq_trace_equiv(&pm1);
 
-        // Arbitrary values
         let a = [
             0x123456789ABCDEF0,
             0x0FEDCBA987654321,
@@ -301,14 +281,11 @@ mod p256_tests {
         assert_squareq_trace_equiv(&a);
     }
 
-    // 3. test_p256_divq -- base field division
     #[test]
     fn test_p256_divq() {
-        // a / 1 = a
         let one = [1u64, 0, 0, 0];
         assert_divq_trace_equiv(&P256_GENERATOR_X, &one);
 
-        // a * b then result / b = a
         {
             let a = [
                 0x123456789ABCDEF0,
@@ -328,7 +305,6 @@ mod p256_tests {
             assert_divq_trace_equiv(&ab, &b);
         }
 
-        // Arbitrary test vectors
         let a = [
             0x123456789ABCDEF0,
             0x0FEDCBA987654321,
@@ -352,15 +328,12 @@ mod p256_tests {
         assert_divq_trace_equiv(&a, &b);
     }
 
-    // 4. test_p256_mulr -- scalar field multiplication
     #[test]
     fn test_p256_mulr() {
-        // Small values
         let a = [0u64, 0, 0, 1];
         let b = [0u64, 1, 0, 0];
         assert_mulr_trace_equiv(&a, &b);
 
-        // Arbitrary large values
         let a = [
             0x123456789ABCDEF0,
             0x0FEDCBA987654321,
@@ -383,7 +356,6 @@ mod p256_tests {
         let b = [1u64, 1, 1, 1];
         assert_mulr_trace_equiv(&a, &b);
 
-        // Near-order: (n-1) * (n-1)
         let nm1: [u64; 4] = [
             P256_ORDER[0].wrapping_sub(1),
             P256_ORDER[1],
@@ -392,7 +364,6 @@ mod p256_tests {
         ];
         assert_mulr_trace_equiv(&nm1, &nm1);
 
-        // Identity: a * 1 = a
         let one = [1u64, 0, 0, 0];
         let a = [
             0xAAAAAAAAAAAAAAAA,
@@ -403,7 +374,6 @@ mod p256_tests {
         assert_mulr_trace_equiv(&a, &one);
     }
 
-    // 5. test_p256_squarer -- scalar field squaring
     #[test]
     fn test_p256_squarer() {
         let a = [0u64, 0, 0, 1];
@@ -423,7 +393,6 @@ mod p256_tests {
         let a = [1u64, 1, 1, 1];
         assert_squarer_trace_equiv(&a);
 
-        // Near-order: (n-1)^2
         let nm1: [u64; 4] = [
             P256_ORDER[0].wrapping_sub(1),
             P256_ORDER[1],
@@ -433,10 +402,8 @@ mod p256_tests {
         assert_squarer_trace_equiv(&nm1);
     }
 
-    // 6. test_p256_divr -- scalar field division
     #[test]
     fn test_p256_divr() {
-        // a / 1 = a
         let one = [1u64, 0, 0, 0];
         let a = [
             0x123456789ABCDEF0,
@@ -446,7 +413,6 @@ mod p256_tests {
         ];
         assert_divr_trace_equiv(&a, &one);
 
-        // a * b then result / b = a
         {
             let a = [
                 0x123456789ABCDEF0,
@@ -466,7 +432,6 @@ mod p256_tests {
             assert_divr_trace_equiv(&ab, &b);
         }
 
-        // Arbitrary test vectors
         let a = [
             0x123456789ABCDEF0,
             0x0FEDCBA987654321,
@@ -490,7 +455,6 @@ mod p256_tests {
         assert_divr_trace_equiv(&a, &b);
     }
 
-    // 7. test_p256_point_on_curve -- verify generator is on y^2 = x^3 - 3x + b
     #[test]
     fn test_p256_point_on_curve() {
         let p = limbs_to_biguint(&P256_MODULUS);
@@ -498,18 +462,14 @@ mod p256_tests {
         let gy = limbs_to_biguint(&P256_GENERATOR_Y);
         let b = limbs_to_biguint(&P256_CURVE_B);
 
-        // LHS: y^2 mod p
         let lhs = gy.modpow(&BigUint::from(2u64), &p);
 
-        // RHS: x^3 - 3x + b mod p
         let x3 = gx.modpow(&BigUint::from(3u64), &p);
         let three_x = (&gx * BigUint::from(3u64)) % &p;
-        // x^3 - 3x + b mod p  =  (x^3 + p - 3x + b) mod p
         let rhs = (x3 + &p - &three_x + &b) % &p;
 
         assert_eq!(lhs, rhs, "P-256 generator is not on the curve");
 
-        // Also verify via the Python-computed GX^2 intermediate
         let gx2 = gx.modpow(&BigUint::from(2u64), &p);
         let expected_gx2_limbs: [u64; 4] = [
             0x002ae56c426b3f8c,
@@ -524,30 +484,24 @@ mod p256_tests {
         );
     }
 
-    // 8. test_p256_point_add_double -- point arithmetic via BigUint reference
     #[test]
     fn test_p256_point_add_double() {
         let p = limbs_to_biguint(&P256_MODULUS);
         let gx = limbs_to_biguint(&P256_GENERATOR_X);
         let gy = limbs_to_biguint(&P256_GENERATOR_Y);
 
-        // a = p - 3 (P-256 uses a = -3)
         let a_coeff = &p - BigUint::from(3u64);
 
-        // ---- Point doubling: compute 2G ----
-        // s = (3 * x^2 + a) / (2 * y) mod p
         let x2 = gx.modpow(&BigUint::from(2u64), &p);
         let numerator = (BigUint::from(3u64) * &x2 + &a_coeff) % &p;
         let denominator = (BigUint::from(2u64) * &gy) % &p;
         let denom_inv = denominator.modpow(&(&p - BigUint::from(2u64)), &p);
         let s = (&numerator * &denom_inv) % &p;
 
-        // x3 = s^2 - 2*x mod p
         let s2 = s.modpow(&BigUint::from(2u64), &p);
         let two_gx = (BigUint::from(2u64) * &gx) % &p;
         let x3 = (&s2 + &p - &two_gx) % &p;
 
-        // y3 = s * (x - x3) - y mod p
         let diff = if gx >= x3 {
             (&gx - &x3) % &p
         } else {
@@ -555,15 +509,12 @@ mod p256_tests {
         };
         let y3 = (&s * &diff % &p + &p - &gy) % &p;
 
-        // ---- Verify 2G is on the curve ----
         let lhs_2g = y3.modpow(&BigUint::from(2u64), &p);
         let x3_cubed = x3.modpow(&BigUint::from(3u64), &p);
         let b = limbs_to_biguint(&crate::P256_CURVE_B);
         let rhs_2g = (&x3_cubed + &p - (BigUint::from(3u64) * &x3 % &p) + &b) % &p;
         assert_eq!(lhs_2g, rhs_2g, "2G is not on the P-256 curve");
 
-        // ---- Point addition: G + 2G = 3G ----
-        // Use the standard addition formula with different x-coordinates
         let dx = if x3 >= gx {
             (&x3 - &gx) % &p
         } else {
@@ -586,13 +537,11 @@ mod p256_tests {
         };
         let y_3g = (&s_add * &diff_3g % &p + &p - &gy) % &p;
 
-        // Verify 3G is on the curve
         let lhs_3g = y_3g.modpow(&BigUint::from(2u64), &p);
         let x_3g_cubed = x_3g.modpow(&BigUint::from(3u64), &p);
         let rhs_3g = (&x_3g_cubed + &p - (BigUint::from(3u64) * &x_3g % &p) + &b) % &p;
         assert_eq!(lhs_3g, rhs_3g, "3G is not on the P-256 curve");
 
-        // Verify 2G and 3G have different coordinates from G
         assert_ne!(
             biguint_to_limbs(&x3),
             P256_GENERATOR_X,
@@ -622,7 +571,6 @@ mod p256_tests {
         let b = limbs_to_biguint(&P256_CURVE_B);
         let a_coeff = &p - BigUint::from(3u64);
 
-        // Helper closures for point operations on the curve
         let point_double = |px: &BigUint, py: &BigUint| -> (BigUint, BigUint) {
             if py.bits() == 0 {
                 return (BigUint::from(0u64), BigUint::from(0u64));
@@ -665,7 +613,6 @@ mod p256_tests {
                 (x3, y3)
             };
 
-        // Scalar multiplication: k * P using double-and-add
         let scalar_mul = |k: &BigUint, px: &BigUint, py: &BigUint| -> (BigUint, BigUint) {
             let zero = BigUint::from(0u64);
             let mut rx = zero.clone();
@@ -684,8 +631,6 @@ mod p256_tests {
             (rx, ry)
         };
 
-        // Known test vector (derived from RFC 6979, P-256):
-        // Private key d:
         let d_bytes: [u8; 32] = [
             0xC9, 0xAF, 0xA9, 0xD8, 0x45, 0xBA, 0x75, 0x16, 0x6B, 0x5C, 0x21, 0x57, 0x67, 0xB1,
             0xD6, 0x93, 0x4E, 0x50, 0xC3, 0xDB, 0x36, 0xE8, 0x9B, 0x12, 0x7B, 0x8A, 0x62, 0x2B,
@@ -693,16 +638,13 @@ mod p256_tests {
         ];
         let d = BigUint::from_bytes_be(&d_bytes);
 
-        // Q = d * G (public key)
         let (qx, qy) = scalar_mul(&d, &gx, &gy);
 
-        // Verify Q is on the curve
         let lhs_q = qy.modpow(&BigUint::from(2u64), &p);
         let qx3 = qx.modpow(&BigUint::from(3u64), &p);
         let rhs_q = (&qx3 + &p - (BigUint::from(3u64) * &qx % &p) + &b) % &p;
         assert_eq!(lhs_q, rhs_q, "Public key Q is not on the curve");
 
-        // Use a known message hash z:
         let z_bytes: [u8; 32] = [
             0x48, 0x47, 0xBE, 0x4A, 0xC2, 0x1F, 0xE6, 0x8A, 0x06, 0xD6, 0x36, 0x4B, 0xD7, 0x84,
             0x67, 0xC1, 0x83, 0xF3, 0x0A, 0x85, 0x7A, 0xD8, 0xF6, 0x56, 0x21, 0x9F, 0x7C, 0x40,
@@ -710,8 +652,6 @@ mod p256_tests {
         ];
         let z = BigUint::from_bytes_be(&z_bytes);
 
-        // Sign with known nonce k (RFC 6979 deterministic for this key + message):
-        // We compute r, s directly for a self-contained test.
         let k_nonce_bytes: [u8; 32] = [
             0xA6, 0xE3, 0xC5, 0x7D, 0xD0, 0x1A, 0xBE, 0x90, 0x08, 0x65, 0x38, 0x39, 0x83, 0x55,
             0xDD, 0x4C, 0x3B, 0x17, 0xAA, 0x87, 0x33, 0x82, 0xB0, 0xF2, 0x4D, 0x61, 0x29, 0x49,
@@ -719,34 +659,26 @@ mod p256_tests {
         ];
         let k_nonce = BigUint::from_bytes_be(&k_nonce_bytes);
 
-        // R = k * G
         let (rx, _ry) = scalar_mul(&k_nonce, &gx, &gy);
         let r = &rx % &n;
         assert_ne!(r, BigUint::from(0u64), "r must not be zero");
 
-        // s = k^{-1} * (z + r*d) mod n
         let k_inv = k_nonce.modpow(&(&n - BigUint::from(2u64)), &n);
         let s = (&k_inv * ((&z + &r * &d) % &n)) % &n;
         assert_ne!(s, BigUint::from(0u64), "s must not be zero");
 
-        // ---- ECDSA verification ----
-        // u1 = z * s^{-1} mod n
         let s_inv = s.modpow(&(&n - BigUint::from(2u64)), &n);
         let u1 = (&z * &s_inv) % &n;
         let u2 = (&r * &s_inv) % &n;
 
-        // R' = u1*G + u2*Q
         let (r1x, r1y) = scalar_mul(&u1, &gx, &gy);
         let (r2x, r2y) = scalar_mul(&u2, &qx, &qy);
         let (rpx, _rpy) = point_add(&r1x, &r1y, &r2x, &r2y);
 
-        // Verify: R'.x mod n == r
         let rx_mod_n = &rpx % &n;
         assert_eq!(rx_mod_n, r, "ECDSA verification failed: R'.x mod n != r");
     }
 
-    /// Test the actual `ecdsa_verify()` function from sdk.rs (with Fake GLV).
-    /// Uses the same test vector derived from the RFC 6979 private key as above.
     #[test]
     fn test_p256_ecdsa_verify_sdk() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
@@ -756,7 +688,6 @@ mod p256_tests {
         let gx = limbs_to_biguint(&P256_GENERATOR_X);
         let gy = limbs_to_biguint(&P256_GENERATOR_Y);
 
-        // BigUint point operations for key/sig generation
         let point_double = |px: &BigUint, py: &BigUint| -> (BigUint, BigUint) {
             if py.bits() == 0 {
                 return (BigUint::from(0u64), BigUint::from(0u64));
@@ -814,7 +745,6 @@ mod p256_tests {
             (rx, ry)
         };
 
-        // Generate key and signature
         let d_bytes: [u8; 32] = [
             0xC9, 0xAF, 0xA9, 0xD8, 0x45, 0xBA, 0x75, 0x16, 0x6B, 0x5C, 0x21, 0x57, 0x67, 0xB1,
             0xD6, 0x93, 0x4E, 0x50, 0xC3, 0xDB, 0x36, 0xE8, 0x9B, 0x12, 0x7B, 0x8A, 0x62, 0x2B,
@@ -839,7 +769,6 @@ mod p256_tests {
         let k_inv = k_nonce.modpow(&(&n - BigUint::from(2u64)), &n);
         let s_big = (&k_inv * ((&z + &r_big * &d) % &n)) % &n;
 
-        // Convert to SDK types and call ecdsa_verify
         let q_point = P256Point::from_u64_arr(&{
             let qx_l = biguint_to_limbs(&qx);
             let qy_l = biguint_to_limbs(&qy);
@@ -858,7 +787,6 @@ mod p256_tests {
         assert!(result.is_ok(), "ecdsa_verify failed: {:?}", result.err());
     }
 
-    /// Test double_and_add when 2P + Q = O (the infinity edge case fix).
     #[test]
     fn test_double_and_add_infinity() {
         use crate::sdk::P256Point;
@@ -866,44 +794,36 @@ mod p256_tests {
         let two_g = g.double();
         let neg_two_g = two_g.neg();
 
-        // 2*G + (-2G) = O
         let result = g.double_and_add(&neg_two_g);
         assert!(result.is_infinity(), "2G + (-2G) should be infinity");
 
-        // Verify matches naive: double().add()
         let naive = g.double().add(&neg_two_g);
         assert!(naive.is_infinity(), "naive 2G + (-2G) should be infinity");
     }
 
-    /// Test double_and_add edge cases: infinity inputs, P == Q, P == -Q.
     #[test]
     fn test_double_and_add_edge_cases() {
         use crate::sdk::P256Point;
         let g = P256Point::generator();
         let inf = P256Point::infinity();
 
-        // infinity.double_and_add(Q) = Q
         let r = inf.double_and_add(&g);
         assert_eq!(r.x().e(), g.x().e());
 
-        // P.double_and_add(infinity) = 2P
         let r = g.double_and_add(&inf);
         let expected = g.double();
         assert_eq!(r.x().e(), expected.x().e());
 
-        // P.double_and_add(P) = 3P
         let r = g.double_and_add(&g);
         let expected = g.double().add(&g);
         assert_eq!(r.x().e(), expected.x().e());
 
-        // P.double_and_add(-P) = P (since 2P + (-P) = P)
         let neg_g = g.neg();
         let r = g.double_and_add(&neg_g);
         assert_eq!(r.x().e(), g.x().e());
         assert_eq!(r.y().e(), g.y().e());
     }
 
-    /// Negative ECDSA tests: invalid inputs should be rejected.
     #[test]
     fn test_ecdsa_verify_rejects_invalid() {
         use crate::sdk::{ecdsa_verify, P256Error, P256Fq, P256Fr, P256Point};
@@ -913,62 +833,49 @@ mod p256_tests {
         let r = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
         let s = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
 
-        // Q = infinity → QAtInfinity
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), P256Point::infinity());
         assert!(matches!(result, Err(P256Error::QAtInfinity)));
 
-        // r = 0 → ROrSZero
         let zero = P256Fr::from_u64_arr(&[0, 0, 0, 0]).unwrap();
         let result = ecdsa_verify(z.clone(), zero.clone(), s.clone(), g.clone());
         assert!(matches!(result, Err(P256Error::ROrSZero)));
 
-        // s = 0 → ROrSZero
         let result = ecdsa_verify(z.clone(), r.clone(), zero, g.clone());
         assert!(matches!(result, Err(P256Error::ROrSZero)));
 
-        // Non-canonical scalar (z >= n) → InvalidFrElement
         let bad_z = P256Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let result = ecdsa_verify(bad_z, r.clone(), s.clone(), g.clone());
         assert!(matches!(result, Err(P256Error::InvalidFrElement)));
 
-        // Non-canonical scalar (r >= n) → InvalidFrElement
         let bad_r = P256Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let result = ecdsa_verify(z.clone(), bad_r, s.clone(), g.clone());
         assert!(matches!(result, Err(P256Error::InvalidFrElement)));
 
-        // Non-canonical scalar (s >= n) → InvalidFrElement
         let bad_s = P256Fr::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let result = ecdsa_verify(z.clone(), r.clone(), bad_s, g.clone());
         assert!(matches!(result, Err(P256Error::InvalidFrElement)));
 
-        // Non-canonical coordinate (q.x >= p) → InvalidFqElement
         let bad_x = P256Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let bad_q = P256Point::new_unchecked(bad_x, g.y());
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
         assert!(matches!(result, Err(P256Error::InvalidFqElement)));
 
-        // Non-canonical coordinate (q.y >= p) → InvalidFqElement
         let bad_y = P256Fq::from_u64_arr_unchecked(&[u64::MAX; 4]);
         let bad_q = P256Point::new_unchecked(g.x(), bad_y);
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
         assert!(matches!(result, Err(P256Error::InvalidFqElement)));
 
-        // Off-curve point → NotOnCurve
         let off_curve_y = P256Fq::from_u64_arr(&[1, 0, 0, 0]).unwrap();
         let bad_q = P256Point::new_unchecked(g.x(), off_curve_y);
         let result = ecdsa_verify(z.clone(), r.clone(), s.clone(), bad_q);
         assert!(matches!(result, Err(P256Error::NotOnCurve)));
     }
 
-    /// Verify a signature produced by the RustCrypto `p256` crate.
-    /// This is the critical interop test — ensures our inline ECDSA
-    /// verifier accepts real-world P-256 signatures.
     #[test]
     fn test_interop_with_p256_crate() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
         use p256::ecdsa::{signature::Signer, Signature, SigningKey};
 
-        // Generate a key and sign a message using the p256 crate
         let signing_key = SigningKey::from_bytes(
             &[
                 0xC9, 0xAF, 0xA9, 0xD8, 0x45, 0xBA, 0x75, 0x16, 0x6B, 0x5C, 0x21, 0x57, 0x67, 0xB1,
@@ -982,22 +889,18 @@ mod p256_tests {
         let message = b"test message for p256 interop";
         let signature: Signature = signing_key.sign(message);
 
-        // Extract r, s as big-endian bytes
         let r_bytes = signature.r().to_bytes();
         let s_bytes = signature.s().to_bytes();
 
-        // Get public key as uncompressed point (0x04 || x || y)
         use p256::ecdsa::VerifyingKey;
         let verifying_key = VerifyingKey::from(&signing_key);
         let pubkey_point = verifying_key.to_encoded_point(false);
         let qx_bytes = pubkey_point.x().unwrap();
         let qy_bytes = pubkey_point.y().unwrap();
 
-        // Hash the message with SHA-256 (what the p256 crate does internally)
         use sha2::{Digest, Sha256};
         let z_bytes: [u8; 32] = Sha256::digest(message).into();
 
-        // Convert from big-endian bytes to little-endian u64 limbs
         let be_to_limbs = |bytes: &[u8]| -> [u64; 4] {
             let mut padded = [0u8; 32];
             let start = 32 - bytes.len().min(32);
@@ -1021,14 +924,12 @@ mod p256_tests {
         q_arr[4..].copy_from_slice(&qy_limbs);
         let q = P256Point::from_u64_arr(&q_arr).unwrap();
 
-        // Our inline verifier must accept a signature from the p256 crate
         assert!(
             ecdsa_verify(z, r, s, q).is_ok(),
             "Failed to verify p256-crate signature"
         );
     }
 
-    /// Test with multiple different messages to catch any message-dependent bugs.
     #[test]
     fn test_interop_multiple_messages() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
@@ -1083,7 +984,6 @@ mod p256_tests {
         }
     }
 
-    /// Test that a corrupted signature is rejected.
     #[test]
     fn test_interop_corrupted_signature_rejected() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
@@ -1130,15 +1030,12 @@ mod p256_tests {
         q_arr[4..].copy_from_slice(&qy_limbs);
         let q = P256Point::from_u64_arr(&q_arr).unwrap();
 
-        // Valid signature should pass
         assert!(ecdsa_verify(z.clone(), r.clone(), s.clone(), q.clone()).is_ok());
 
-        // Wrong message hash should fail
         let wrong_z_bytes: [u8; 32] = Sha256::digest(b"wrong message").into();
         let wrong_z = P256Fr::from_u64_arr(&be_to_limbs(&wrong_z_bytes)).unwrap();
         assert!(ecdsa_verify(wrong_z, r.clone(), s.clone(), q.clone()).is_err());
 
-        // Corrupted r (flip a bit) should fail
         let mut r_limbs = r.e();
         r_limbs[0] ^= 1;
         if let Ok(bad_r) = P256Fr::from_u64_arr(&r_limbs) {
@@ -1192,7 +1089,6 @@ mod p256_tests {
         }
         let r_fr = P256Fr::from_u64_arr(&biguint_to_limbs(&r_big)).unwrap();
 
-        // u1 = z/s = 1, u2 = r/s = 2 (with s = r/2, z = s)
         let _ = verify_ecdsa_inner(
             &one, &two, &r_fr, &g, two_g, 1, false, 1, false, // R1=2G, a1=1, b1=1
             three_g, 2, true, 1, true, // R2=3G, a2=-2, b2=-1

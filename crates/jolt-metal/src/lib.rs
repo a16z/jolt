@@ -13,8 +13,6 @@
 //! Objective-C exceptions are caught with `objc2::exception::catch`, which
 //! relies on unwinding: do not build consumers with `panic = "abort"`.
 
-// Off macOS every backend type is uninhabited: code past a backend call is
-// unreachable and Metal-only helpers are unused. macOS builds lint both.
 #![cfg_attr(
     not(target_os = "macos"),
     expect(

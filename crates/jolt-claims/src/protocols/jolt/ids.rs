@@ -5,9 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Expr;
 
-/// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
-/// families (openings, deriveds, challenges). Each relation's `input`/`output`
-/// expression is a `JoltExpr<F>`.
 pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -175,7 +172,6 @@ pub enum JoltAdviceKind {
 }
 
 impl JoltAdviceKind {
-    /// Role descriptor for the final heterogeneous Akita opening.
     pub const fn group_role(self) -> CommitmentGroupRole {
         match self {
             Self::Untrusted => CommitmentGroupRole::new(0, b"untrusted_advice", "untrusted-advice"),

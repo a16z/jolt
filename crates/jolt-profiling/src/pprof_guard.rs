@@ -1,20 +1,3 @@
-//! Scoped CPU profiler guard for `pprof` integration.
-//!
-//! Use the [`pprof_scope!`] macro to create a guard that starts a CPU profiler
-//! on creation and writes a `.pb` flamegraph file on drop.
-//!
-//! Requires the `pprof` feature. Without it, the macro expands to `None::<PprofGuard>`.
-//!
-//! ```no_run
-//! use jolt_profiling::pprof_scope;
-//!
-//! let _guard = pprof_scope!("my_function");
-//! // ... profiled code ...
-//! // guard drops here, writing benchmark-runs/pprof/my_function.pb
-//! ```
-//!
-//! View with: `go tool pprof -http=:8080 benchmark-runs/pprof/my_function.pb`
-
 /// Guard that holds a running pprof profiler and writes output on drop.
 #[cfg(feature = "pprof")]
 pub struct PprofGuard {
@@ -43,7 +26,6 @@ impl PprofGuard {
     }
 }
 
-/// Stub type when `pprof` feature is not enabled.
 #[cfg(not(feature = "pprof"))]
 pub struct PprofGuard;
 

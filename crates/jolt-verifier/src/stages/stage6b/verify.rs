@@ -88,15 +88,10 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    // The bytecode fold gamma shares stage 6a's squeeze; it and the booleanity
-    // gamma ride on the stage-6a output as typed upstream values. The post-6a
-    // draws and the challenges aggregate are the promoted two-front helpers.
     let carried = stage6a.challenges();
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
     let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some());
 
-    // The batch is built after the post-6a draws, directly from the upstream stage
-    // outputs; `build` derives every mode-agnostic constructor leg internally.
     let sumchecks = Stage6bSumchecks::build(
         checked,
         preprocessing,
@@ -120,18 +115,12 @@ where
         stage5.output_points(),
     );
 
-    // No zk protocol exists over the packed axis, so the committed arm (and its
-    // runtime point-alias dedup arithmetic) is base-only.
     #[cfg(not(feature = "akita"))]
     if checked.zk {
         let consistency = sumchecks.verify_zk(&proof.stages.stage6b_sumcheck_proof, transcript)?;
         let cycle_points =
             sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
 
-        // The committed-claim count is the derived output-point-cell total minus the
-        // runtime aliases between the booleanity bytecode-RA openings and the
-        // bytecode read-RAF openings — a point-equality dedup that is not expressible
-        // from the output Exprs, so it stays hand-written.
         let booleanity_opening_point =
             cycle_points.booleanity_opening_point().ok_or_else(|| {
                 VerifierError::StageClaimPublicInputFailed {
@@ -179,13 +168,6 @@ where
     let claims_6a = &stage6a.clear()?.output_values;
     let claims = &proof.clear_claims()?.stage6b;
 
-    // Reject cycle-phase output claims whose presence disagrees with the member's
-    // layout: a present reduction missing its claims, or claims supplied for a
-    // reduction that did not run. Instance presence mirrors layout presence (see
-    // `Stage6bSumchecks::build`). Hand-listed because 6b curates its own shape
-    // checks (`no_output_shape`, so no generated validator runs these guards
-    // itself); one call per `Option` member. Transcript-free (runs before the
-    // batched verify); the tampering suite asserts generic rejection.
     #[cfg(not(feature = "akita"))]
     validate_member_presence(
         sumchecks.trusted_advice.as_ref(),
@@ -307,8 +289,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.booleanity.ram_ra.len(),
     )?;
 
-    // The packed increment digit claims: one per chunk of the shared
-    // one-hot chunking.
     #[cfg(feature = "akita")]
     {
         let expected_chunks =
@@ -353,9 +333,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.bytecode_reduction.as_ref(),
     ) {
         let has_address_phase = layout.dimensions().has_address_phase();
-        // The wire shape must match the reduction mode: an `intermediate` (no
-        // chunks) when an address phase follows, else exactly `chunk_count`
-        // chunks (no intermediate).
         let shape_ok = match (
             &output_claims.intermediate,
             output_claims.chunks.is_empty(),
@@ -378,7 +355,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
     Ok(())
 }
 
-/// Reject a wire claim vector whose length disagrees with its formula-dimension count.
 fn require_claim_count(
     stage: JoltRelationId,
     label: &str,
@@ -394,11 +370,6 @@ fn require_claim_count(
     Ok(())
 }
 
-/// Assemble the stage-6b consumed opening *values* from the address-phase claims
-/// and the upstream clear outputs into the generated `Stage6bInputClaims`
-/// aggregate. The `Option` cells track member presence, so a present member always
-/// has its input cell populated. Public because the prover's stage-6b recipe
-/// builds its batch inputs through the same wiring.
 pub fn stage6b_input_values_from_upstream<F: JoltField>(
     sumchecks: &Stage6bSumchecks<F>,
     address_claims: &Stage6aOutputClaims<F>,
@@ -463,12 +434,6 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
     })
 }
 
-/// Assemble the stage-6b consumed opening *points*. ZK-agnostic: only the RA / inc
-/// members read the upstream output-points aggregates (which both modes expose); the
-/// remaining seven members derive their produced points from their own sumcheck point
-/// and read no input point, so their cells come from the generated
-/// `empty_input_points` (empty, and present for present `Option` members exactly as
-/// the generated `derive_opening_points` requires).
 pub fn stage6b_input_points_from_upstream<F: JoltField>(
     sumchecks: &Stage6bSumchecks<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
@@ -529,8 +494,6 @@ pub fn stage6b_opening_values<F: JoltField>(
     values.extend(claims.inc_claim_reduction.opening_values());
     #[cfg(feature = "field-inline")]
     super::field_inline::splice_inc_values(&mut values, claims);
-    // Each advice member is a single-slot per-kind claims struct, so it
-    // contributes exactly its own kind's opening.
     #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.trusted_advice {
         values.extend(advice.opening_values());
@@ -588,8 +551,6 @@ fn append_opening_claims<F, T>(
     F: JoltField,
     T: Transcript<Challenge = F>,
 {
-    // Single-sourced with the prover-curation order: both fronts absorb the
-    // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
     for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
         transcript.append_labeled(b"opening_claim", &value);
     }
@@ -619,10 +580,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// Per-mode sample claims with sentinel values in the canonical append order: base
-    /// interleaves the inc member after the RA virtualizations (and, under `field-inline`, the
-    /// field-inline inc member after it); Akita carries the read-raf `FusedInc` cell and the
-    /// lattice booleanity digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
         let last = 10;
@@ -681,8 +638,6 @@ mod tests {
                 },
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
-                    // The field-inline member appends last in canonical order on both
-                    // commitment axes.
                     rd_inc: fr(last),
                 },
                 #[cfg(not(feature = "akita"))]
@@ -712,7 +667,6 @@ mod tests {
         .unwrap()
     }
 
-    /// Claims whose every wire vector length matches `formula_dimensions` exactly.
     fn shape_matched_claims(formula_dimensions: &JoltFormulaDimensions) -> Stage6bOutputClaims<Fr> {
         let bytecode_ra_len =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf)
@@ -814,10 +768,6 @@ mod tests {
         }
     }
 
-    /// Every stage-6b wire claim vector is exact-length-pinned: padding or
-    /// truncating any of them must be rejected before the claims reach the
-    /// Fiat-Shamir absorb (v12 #116402 — trailing entries were absorbed,
-    /// admitting non-canonical padded proofs).
     #[test]
     fn cycle_phase_claim_shape_pins_every_wire_vector_length() {
         let formula_dimensions = shape_formula_dimensions();
@@ -870,11 +820,6 @@ mod tests {
         }
     }
 
-    /// Locks the stage-6b cycle-phase Fiat-Shamir append order against silent drift.
-    /// The full relations are single-sourced via their `OutputClaims` derive;
-    /// `booleanity` (conditional `bytecode_ra` dedup) and the optional reductions
-    /// stay explicit. Points are empty so no `bytecode_ra` element is deduped;
-    /// the `None` reductions carry absent sentinels to prove they are not appended.
     #[test]
     fn append_opening_claims_follows_canonical_order() {
         let (claims, last) = sample_claims();

@@ -1,14 +1,3 @@
-//! The trait spine: the algebraic ladder, the canonical (transcript)
-//! representation, and deferred-reduction accumulators.
-//!
-//! ```text
-//! AdditiveGroup -> Ring -> Field
-//! ```
-//!
-//! [`CanonicalEncoding`] and [`WithAccumulator`] are orthogonal capabilities;
-//! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
-//! protocol stack requires of a scalar field.
-
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use num_traits::{One, Zero};
@@ -21,7 +10,6 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::signed::S256;
 
-/// Minimal additive group shared by fields, rings, and wide accumulators.
 pub trait AdditiveGroup:
     Sized
     + Clone
@@ -102,13 +90,11 @@ pub trait Ring:
         Self::from_i64(v as i64)
     }
 
-    /// Returns `self * self`.
     #[inline]
     fn square(&self) -> Self {
         *self * *self
     }
 
-    /// Returns the ring element `2^exponent`.
     #[inline]
     fn pow2(exponent: usize) -> Self {
         let mut result = Self::one();
@@ -126,31 +112,26 @@ pub trait Ring:
         result
     }
 
-    /// Multiplies by a `u64`.
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
 
-    /// Multiplies by an `i64`.
     #[inline(always)]
     fn mul_i64(&self, n: i64) -> Self {
         *self * Self::from_i64(n)
     }
 
-    /// Multiplies by a `u128`.
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
         *self * Self::from_u128(n)
     }
 
-    /// Multiplies by an `i128`.
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
     }
 
-    /// Multiplies this ring element by the integer `2^pow`.
     #[inline]
     fn mul_pow_2(&self, pow: usize) -> Self {
         assert!(pow <= 255, "pow > 255");
@@ -164,12 +145,10 @@ pub trait Ring:
     }
 }
 
-/// Algebraic field: ring arithmetic plus inversion, sampling, and halving.
 pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
-    /// Multiplicative inverse with zero mapped to zero.
     #[inline]
     fn inv_or_zero(self) -> Self {
         self.inverse().unwrap_or_else(Self::zero)
@@ -204,7 +183,6 @@ pub trait Field: Ring {
             .expect("field has characteristic two")
     }
 
-    /// Divides this element by two.
     #[inline]
     fn half(self) -> Self {
         self * Self::two_inv()
@@ -217,7 +195,6 @@ pub trait Field: Ring {
 /// this contract lights up the generic machinery bounded on it (extension
 /// towers, packed backends).
 pub trait PseudoMersenne: Field + CanonicalEncoding {
-    /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
 
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.
@@ -265,13 +242,10 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
 /// - [`to_bytes_le`](Self::to_bytes_le) always writes exactly
 ///   [`NUM_BYTES`](Self::NUM_BYTES) bytes of the unique representative.
 pub trait CanonicalBytes {
-    /// Byte length of the fixed-size canonical encoding.
     const NUM_BYTES: usize;
 
-    /// Writes the canonical little-endian encoding into `out`.
     fn to_bytes_le(&self, out: &mut [u8]);
 
-    /// Returns the canonical little-endian encoding as a vector.
     #[inline]
     fn to_bytes_le_vec(&self) -> Vec<u8> {
         let mut out = vec![0u8; Self::NUM_BYTES];
@@ -309,16 +283,13 @@ pub trait CanonicalEncoding:
     /// coefficients are zero.
     fn to_u128_checked(&self) -> Option<u128>;
 
-    /// Returns the canonical representative if it fits in a `u64`.
     #[inline]
     fn to_u64_checked(&self) -> Option<u64> {
         self.to_u128_checked().and_then(|v| u64::try_from(v).ok())
     }
 
-    /// Constructs an element when `v` is a canonical representative.
     fn from_u128_checked(v: u128) -> Option<Self>;
 
-    /// Constructs an element by reducing `v` modulo the field order.
     fn from_u128_reduced(v: u128) -> Self;
 
     /// Borrows canonical `u32` representatives without per-element conversion.
@@ -346,7 +317,6 @@ pub trait CanonicalEncoding:
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
 
-    /// Constructs a Fiat-Shamir challenge from squeezed transcript bytes.
     #[inline]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         Self::from_bytes_le_reduced(bytes)
@@ -372,46 +342,36 @@ pub trait CanonicalEncoding:
 /// - [`reduce`](Self::reduce) must return the element equal to the
 ///   accumulated sum of products.
 pub trait Accumulator: Default + Copy + Send + Sync {
-    /// The element type this accumulator reduces to.
     type Element: Ring;
 
-    /// Adds one element into the accumulator.
     fn add(&mut self, value: Self::Element);
 
-    /// Merges another accumulator's partial sum into this one.
     fn merge(&mut self, other: Self);
 
-    /// Finalizes: reduces the accumulated value to an element.
     fn reduce(self) -> Self::Element;
 
-    /// Fused multiply-add: `self += a * b` without intermediate reduction.
     fn fmadd(&mut self, a: Self::Element, b: Self::Element);
 
-    /// Fused multiply-add with a `u8` scalar: `self += a * F::from(b)`.
     #[inline]
     fn fmadd_u8(&mut self, a: Self::Element, b: u8) {
         self.fmadd(a, Self::Element::from_u8(b));
     }
 
-    /// Fused multiply-add with a `u64` scalar: `self += a * F::from(b)`.
     #[inline]
     fn fmadd_u64(&mut self, a: Self::Element, b: u64) {
         self.fmadd(a, Self::Element::from_u64(b));
     }
 
-    /// Fused multiply-add with a `u128` scalar: `self += a * F::from(b)`.
     #[inline]
     fn fmadd_u128(&mut self, a: Self::Element, b: u128) {
         self.fmadd(a, Self::Element::from_u128(b));
     }
 
-    /// Fused multiply-add with an `i64` scalar: `self += a * F::from(b)`.
     #[inline]
     fn fmadd_i64(&mut self, a: Self::Element, b: i64) {
         self.fmadd(a, Self::Element::from_i64(b));
     }
 
-    /// Fused multiply-add with a sign-and-magnitude `u64` scalar.
     #[inline]
     fn fmadd_signed_u64(&mut self, value: Self::Element, magnitude: u64, is_positive: bool) {
         if is_positive {
@@ -421,11 +381,6 @@ pub trait Accumulator: Default + Copy + Send + Sync {
         }
     }
 
-    /// Fused multiply-add with a signed 256-bit scalar.
-    ///
-    /// The fallback embeds the magnitude one limb at a time. Specialized
-    /// accumulators can override this to defer reduction across the full
-    /// product sum.
     #[inline]
     fn fmadd_s256(&mut self, value: Self::Element, scalar: &S256) {
         let mut magnitude = Self::Element::zero();
@@ -439,7 +394,6 @@ pub trait Accumulator: Default + Copy + Send + Sync {
         }
     }
 
-    /// Fused multiply-add with a `bool` scalar: `self += a` when `b` is true.
     #[inline]
     fn fmadd_bool(&mut self, a: Self::Element, b: bool) {
         if b {
@@ -448,7 +402,6 @@ pub trait Accumulator: Default + Copy + Send + Sync {
     }
 }
 
-/// Associates a deferred-reduction accumulator with an element type.
 pub trait WithAccumulator: Ring {
     /// General field-product accumulator.
     type Accumulator: Accumulator<Element = Self>;
@@ -460,8 +413,6 @@ pub trait WithAccumulator: Ring {
     type SignedProductAccumulator: Accumulator<Element = Self>;
 }
 
-/// Fallback accumulator using standard ring arithmetic: every
-/// [`fmadd`](Accumulator::fmadd) performs a full multiply and add.
 #[derive(Clone, Copy)]
 pub struct NaiveAccumulator<R: Ring>(R);
 
@@ -507,8 +458,6 @@ impl<R: Ring> Accumulator for NaiveAccumulator<R> {
 pub trait MaybeAllocative: Allocative {}
 #[cfg(feature = "allocative")]
 impl<T: Allocative + ?Sized> MaybeAllocative for T {}
-/// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
-/// is on, vacuous otherwise.
 #[cfg(not(feature = "allocative"))]
 pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]

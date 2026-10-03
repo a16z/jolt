@@ -504,8 +504,6 @@ where
                     actual: opened,
                 });
             }
-            // Absorb per binding (output, then blinding), in the order the
-            // verifier reads them.
             append_vector_opening(
                 transcript,
                 b"bf_eval_out_open",

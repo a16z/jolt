@@ -1,7 +1,3 @@
-//! Differential tests for the Solinas word fields (`Fp32`/`Fp64`) across
-//! every registered ≤64-bit prime offset, with u128 modular arithmetic (and
-//! num-bigint for oversized byte decodes) as the independent oracle.
-
 #![cfg(feature = "solinas")]
 // NB: no `expect(clippy::unwrap_used)` — every unwrap here sits inside a
 // local `macro_rules!` expansion, where the lint does not fire.
@@ -20,17 +16,12 @@ fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0x5011_a5a5)
 }
 
-/// Little-endian bytes mod `p`, via exact bigint arithmetic.
 fn bytes_mod(bytes: &[u8], p: u128) -> u128 {
     let mut v = (BigUint::from_bytes_le(bytes) % p).to_u64_digits();
     v.resize(2, 0);
     v[0] as u128 | (v[1] as u128) << 64
 }
 
-/// Full oracle sweep for one (field type, modulus) pair. All expected
-/// values come from u128/bigint modular arithmetic; wire and transcript
-/// bytes are checked structurally against the canonical LE encoding
-/// (absolute bytes are pinned by the golden fixtures in golden_bytes.rs).
 macro_rules! check_prime {
     ($two:ty, $p:expr, $bytes:expr, $rng:expr) => {{
         let p: u128 = $p;
@@ -42,7 +33,6 @@ macro_rules! check_prime {
             (t, v)
         };
 
-        // Metadata: modulus bit width, pseudo-Mersenne offset, byte width.
         let bits = 128 - p.leading_zeros();
         assert_eq!(<$two as CanonicalEncoding>::MODULUS_BITS, bits);
         assert_eq!(<$two as PseudoMersenne>::OFFSET, (1u128 << bits) - p);
@@ -53,7 +43,6 @@ macro_rules! check_prime {
             let (ta, va) = sample($rng);
             let (tb, vb) = sample($rng);
 
-            // Arithmetic vs the u128 oracle.
             let cases: [($two, u128); 4] = [
                 (ta + tb, (va + vb) % p),
                 (ta - tb, (va + p - vb) % p),
@@ -66,20 +55,16 @@ macro_rules! check_prime {
             assert_eq!(Ring::square(&ta).to_u128_checked(), Some((va * va) % p));
             let half = if va % 2 == 0 { va / 2 } else { (va + p) / 2 };
             assert_eq!(ta.half().to_u128_checked(), Some(half));
-            // Inverse is unique given the oracle-verified multiply, so
-            // `ti * ta == 1` pins the value; None only at zero (p prime).
             match ta.inverse() {
                 Some(ti) => assert_eq!((ti * ta).to_u128_checked(), Some(1)),
                 None => assert_eq!(va, 0, "inverse must exist for nonzero"),
             }
 
-            // Widening multiply + explicit reduction round-trip.
             assert_eq!(
                 <$two>::solinas_reduce(ta.mul_wide(tb)).to_u128_checked(),
                 Some((va * vb) % p)
             );
 
-            // Integer conversions.
             let x64: u64 = $rng.gen();
             let xi: i64 = $rng.gen();
             assert_eq!(
@@ -100,7 +85,6 @@ macro_rules! check_prime {
                 Some(va * (x64 as u128 % p) % p)
             );
 
-            // Transcript surface: bytes, reducing decodes, challenges.
             assert_eq!(ta.to_bytes_le_vec(), va.to_le_bytes()[..$bytes].to_vec());
             assert_eq!(
                 CanonicalEncoding::num_bits(&ta),
@@ -128,7 +112,6 @@ macro_rules! check_prime {
                 );
             }
 
-            // Wire bytes: canonical LE encoding, decode round-trip.
             let t_bytes = bincode::serde::encode_to_vec(ta, cfg).unwrap();
             assert_eq!(
                 t_bytes,
@@ -140,7 +123,6 @@ macro_rules! check_prime {
             assert_eq!(t_back.to_u128_checked(), Some(va));
         }
 
-        // Boundary values through every arithmetic path.
         let boundaries: Vec<u128> = vec![0, 1, 2, p - 2, p - 1, p / 2, p / 2 + 1];
         for &x in &boundaries {
             for &y in &boundaries {
@@ -163,9 +145,6 @@ macro_rules! check_prime {
             "i128::MIN vs oracle"
         );
 
-        // Identical exact-uniform sampling stream: each attempt reads the
-        // minimal whole-byte candidate width covering the modulus, clears
-        // unused high bits, and rejects non-canonical candidates.
         {
             let seed: u64 = $rng.gen();
             let mut r1 = ChaCha20Rng::seed_from_u64(seed);
@@ -192,7 +171,6 @@ macro_rules! check_prime {
             }
         }
 
-        // Non-canonical wire encodings rejected (encode p itself).
         let n = <$two as CanonicalBytes>::NUM_BYTES;
         let p_bytes = &p.to_le_bytes()[..n];
         assert_eq!(
@@ -214,7 +192,6 @@ fn fp32_offsets_match() {
     check_prime!(two::Prime30Offset35, (1 << 30) - 35, 4, &mut rng);
     check_prime!(two::Prime31Offset19, (1 << 31) - 19, 4, &mut rng);
     check_prime!(two::Prime32Offset99, (1 << 32) - 99, 4, &mut rng);
-    // Ad hoc small prime and Mersenne31 (unregistered but instantiable).
     check_prime!(two::Fp32<251>, 251, 4, &mut rng);
     check_prime!(two::Fp32<{ (1 << 31) - 1 }>, (1 << 31) - 1, 4, &mut rng);
 }
@@ -226,10 +203,7 @@ fn fp64_offsets_match() {
     check_prime!(two::Prime48Offset59, (1 << 48) - 59, 8, &mut rng);
     check_prime!(two::Prime56Offset27, (1 << 56) - 27, 8, &mut rng);
     check_prime!(two::Prime64Offset59, (1 << 64) - 59, 8, &mut rng);
-    // Mersenne61: sub-word u64 prime exercising C = 1.
     check_prime!(two::Fp64<{ (1 << 61) - 1 }>, (1 << 61) - 1, 8, &mut rng);
-    // Test-only 63-bit primes exercise the carry-preserving wide sub-word
-    // reducer with two distinct offsets.
     check_prime!(two::Fp64<{ (1 << 63) - 259 }>, (1 << 63) - 259, 8, &mut rng);
     check_prime!(two::Fp64<{ (1 << 63) - 25 }>, (1 << 63) - 25, 8, &mut rng);
 }

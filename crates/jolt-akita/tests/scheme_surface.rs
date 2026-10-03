@@ -1,6 +1,3 @@
-//! Trait-surface tests for `AkitaScheme`: setup parameter validation,
-//! hint-free openings, and the flavor-restricted `one_hot_only` setup.
-
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 #[expect(
@@ -18,9 +15,7 @@ use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial, setup_for};
 
-/// The smallest dense dimension the checked-in catalog schedules.
 const DENSE_VARS: usize = 14;
-/// The smallest K=16 one-hot dimension (`log2(K) + 8`).
 const ONE_HOT_VARS: usize = 12;
 
 fn one_hot_indices() -> Vec<Option<u8>> {
@@ -67,8 +62,6 @@ fn setup_rejects_unsupported_one_hot_chunk_sizes() {
     }
 }
 
-/// A `one_hot_only` setup skips the dense-flavor backend entirely, so a
-/// dense polynomial cannot be committed through it.
 #[test]
 fn one_hot_only_setup_rejects_dense_commits() {
     let (prover_setup, _) = k16_setup();
@@ -81,9 +74,6 @@ fn one_hot_only_setup_rejects_dense_commits() {
     );
 }
 
-/// `commit` routes a row-major K=16 one-hot polynomial through the K=16
-/// backend; the proof must verify against a serde-transported verifier setup,
-/// which re-derives its one-hot backend key from shape alone.
 #[test]
 fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
     let (prover_setup, verifier_setup) = k16_setup();
@@ -124,8 +114,6 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
-/// Without a commit-time hint, `open` re-commits internally; the resulting
-/// proof must still verify against the original commitment.
 #[test]
 fn open_without_hint_recommits_deterministically() {
     let (prover_setup, verifier_setup) = setup_for(DENSE_VARS, 1, layout(7));
@@ -158,8 +146,6 @@ fn open_without_hint_recommits_deterministically() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
-/// The hiding commitment binds the committed evaluation bytes into the
-/// transcript: equal evaluations bind identically, distinct ones diverge.
 #[test]
 fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
     let (prover_setup, _) = setup_for(DENSE_VARS, 1, layout(7));

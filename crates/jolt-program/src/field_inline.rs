@@ -41,7 +41,6 @@ impl FieldEncodedValue {
     }
 }
 
-/// Validate field and integer operand roles at the ordinary bytecode boundary.
 pub fn validate_field_inline_instruction(
     row: &JoltInstructionRow,
 ) -> Result<(), FieldInlineInstructionError> {

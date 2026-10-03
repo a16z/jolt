@@ -1,19 +1,3 @@
-//! Prover-side witness assembly against a built [`BlindFoldProtocol`]: turn
-//! recorder-retained sumcheck secrets into the row matrix [`crate::prove`]
-//! consumes, using only the protocol's public parts (layout, matrices,
-//! consistency, dimensions).
-//!
-//! No statement or claim expressions are needed. Layout variables (round
-//! coefficients, the claim chain, output-claim rows, final-opening scalars)
-//! are assigned directly; the claim chain is *derived* — each stage's input
-//! claim is the domain round-sum of its first committed round, each chained
-//! claim the round polynomial evaluated at the Fiat-Shamir challenge already
-//! carried in the consistency. Every remaining private value is a product
-//! auxiliary from the claim-expression lowering, whose constraint has the
-//! canonical `A · B = 1·v_fresh` shape (`R1csBuilder::multiply`), so one
-//! forward pass over the constraint matrices solves them in emission order.
-//! Unconstrained slots are the layout's zero padding.
-
 use jolt_field::JoltField;
 use jolt_r1cs::SparseRow;
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomain, SumcheckDomainSpec};
@@ -200,10 +184,6 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
             for (variable, &coefficient) in round_layout.coefficients.iter().zip(coefficients) {
                 assign(witness, variable.index(), coefficient)?;
             }
-            // The chain: claim_out = s(r) becomes the next round's claim_in.
-            // The next round's round-sum against this value is a constraint,
-            // not an assignment — inconsistent data fails satisfaction, never
-            // silently reassigns.
             claim = evaluate_at(coefficients, verified.challenge);
             assign(witness, round_layout.claim_out.index(), claim)?;
         }
@@ -245,10 +225,6 @@ impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
         Ok(())
     }
 
-    /// Slice the flat R1CS witness into the protocol's row grid and pair each
-    /// row with its blind: retained round blinds, retained output-claim
-    /// blinds, fresh blinds for auxiliary rows, zero for padding (padding
-    /// rows are all-zero, so their Pedersen commitment is the identity).
     #[expect(
         clippy::indexing_slicing,
         reason = "the row-grid slice bounds derive from the same WitnessDimensions that sized the flat witness vector"

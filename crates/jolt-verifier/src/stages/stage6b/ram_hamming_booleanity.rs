@@ -24,8 +24,6 @@ use crate::VerifierError;
 pub struct RamHammingBooleanity<F: JoltField> {
     symbolic: relations::ram::HammingBooleanity,
     trace_dimensions: TraceDimensions,
-    /// The stage-1 Spartan-outer cycle binding that `EqCycle` compares the raw
-    /// sumcheck point against.
     stage1_cycle_binding: Vec<F>,
 }
 
@@ -85,8 +83,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         let JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
-        // `cycle_opening_point` reverses the sumcheck point, so recover the raw
-        // sumcheck point (what `EqCycle` compares against) by reversing back.
         let sumcheck_point = output_points
             .ram_hamming_weight()
             .iter()

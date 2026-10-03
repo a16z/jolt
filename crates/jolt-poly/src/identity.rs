@@ -1,5 +1,3 @@
-//! Identity polynomial evaluating to the integer index on the Boolean hypercube.
-
 use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +66,6 @@ pub struct IdentityPolynomial {
 }
 
 impl IdentityPolynomial {
-    /// Creates an identity polynomial over $n$ variables.
     pub fn new(num_vars: usize) -> Self {
         Self { num_vars }
     }

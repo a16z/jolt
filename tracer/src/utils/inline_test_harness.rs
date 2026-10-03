@@ -1,8 +1,3 @@
-//! Generic test harness for inline instructions.
-//!
-//! Provides a unified testing framework for all inline instructions,
-//! eliminating the need for inline-specific test harnesses.
-
 use crate::emulator::cpu::Cpu;
 use crate::emulator::default_terminal::DefaultTerminal;
 use crate::emulator::mmu::DRAM_BASE;
@@ -25,15 +20,12 @@ pub struct InlineMemoryLayout {
     pub input2_size: Option<usize>,
     pub output_base: u64,
     pub output_size: usize,
-    // Register mappings: which memory region does each register point to
     pub rs1_mapping: RegisterMapping,
     pub rs2_mapping: RegisterMapping,
     pub rs3_mapping: Option<RegisterMapping>,
 }
 
 impl InlineMemoryLayout {
-    /// Single input, single output with default mapping (rs1=output, rs2=input)
-    /// Used by Sha2, Blake2, Blake3, Keccak256
     pub fn single_input(input_size: usize, output_size: usize) -> Self {
         Self {
             input_base: DRAM_BASE,
@@ -48,7 +40,6 @@ impl InlineMemoryLayout {
         }
     }
 
-    /// Two inputs, single output for BigInt (rs1=input, rs2=input2, rs3=output)
     pub fn two_inputs(input_size: usize, input2_size: usize, output_size: usize) -> Self {
         Self {
             input_base: DRAM_BASE,
@@ -64,7 +55,6 @@ impl InlineMemoryLayout {
     }
 }
 
-// Standard register indices used by inline instructions
 pub const INLINE_RS1: u8 = 10;
 pub const INLINE_RS2: u8 = 11;
 pub const INLINE_RS3: u8 = 12;
@@ -225,7 +215,6 @@ impl InlineTestHarness {
     }
 
     pub fn setup_registers(&mut self) {
-        // Set up registers based on the layout's mappings
         self.cpu.x[INLINE_RS1 as usize] =
             self.get_address_for_mapping(self.layout.rs1_mapping) as i64;
         self.cpu.x[INLINE_RS2 as usize] =

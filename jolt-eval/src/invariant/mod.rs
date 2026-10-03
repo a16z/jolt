@@ -17,7 +17,6 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-/// What to synthesize from an invariant definition.
 #[derive(Debug, EnumSetType)]
 pub enum SynthesisTarget {
     Test,
@@ -25,7 +24,6 @@ pub enum SynthesisTarget {
     RedTeam,
 }
 
-/// Error indicating an invariant was violated.
 #[derive(Debug, Clone)]
 pub struct InvariantViolation {
     pub message: String,
@@ -60,10 +58,8 @@ impl InvariantViolation {
     }
 }
 
-/// Result of checking an invariant against a single input.
 #[derive(Debug)]
 pub enum CheckError {
-    /// The invariant was violated.
     Violation(InvariantViolation),
     /// The input is degenerate or uninteresting and should be skipped.
     InvalidInput(String),
@@ -98,7 +94,6 @@ pub trait Invariant: Send + Sync {
     /// Human-readable description, also used as context for AI red-teaming.
     fn description(&self) -> String;
 
-    /// One-time setup (e.g. preprocessing, generating an honest proof).
     fn setup(&self) -> Self::Setup;
 
     /// Check the invariant for a single input against the pre-computed setup.
@@ -133,7 +128,6 @@ pub trait InvariantTargets {
     }
 }
 
-/// Enum collecting all Jolt invariants. Methods dispatch via match.
 pub enum JoltInvariants {
     SplitEqBindLowHigh(split_eq_bind::SplitEqBindLowHighInvariant),
     SplitEqBindHighLow(split_eq_bind::SplitEqBindHighLowInvariant),
@@ -247,11 +241,9 @@ fn run_checks_impl<I: Invariant>(
     results
 }
 
-/// Record of a red-team attempt that failed to find a violation.
 pub struct FailedAttempt {
     pub description: String,
     pub approach: String,
-    /// Short summary of the approach (at most 4 sentences).
     pub approach_summary: String,
     pub failure_reason: String,
     /// Path to the persisted attempt directory (relative to repo root).
@@ -262,7 +254,6 @@ pub struct FailedAttempt {
 /// ````json` code block first, then falls back to the last `{…}` that
 /// parses as valid JSON.
 pub fn extract_json(text: &str) -> Option<String> {
-    // 1. ```json ... ```
     if let Some(start) = text.find("```json") {
         let json_start = start + "```json".len();
         if let Some(end) = text[json_start..].find("```") {
@@ -273,7 +264,6 @@ pub fn extract_json(text: &str) -> Option<String> {
         }
     }
 
-    // 2. Last balanced {…} that is valid JSON
     let bytes = text.as_bytes();
     let mut i = bytes.len();
     while i > 0 {

@@ -16,9 +16,6 @@ declare_riscv_instr!(
 
 impl SRAW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <SRAW as RISCVInstruction>::RAMAccess) {
-        // SLLW, SRLW, and SRAW are RV64I-only instructions that are analogously defined but operate
-        // on 32-bit values and sign-extend their 32-bit results to 64 bits. The shift amount is
-        // given by rs2[4:0].
         let shamt = (cpu.x[self.operands.rs2 as usize] & 0x1f) as u32;
         cpu.write_register(
             self.operands.rd as usize,

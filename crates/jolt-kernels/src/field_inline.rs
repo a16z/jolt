@@ -1,5 +1,3 @@
-//! Proof-local ownership of the field-register increment column.
-
 use crate::optimized::support::map_indices;
 use crate::{KernelError, ProofSession};
 use jolt_claims::protocols::field_inline::{
@@ -81,8 +79,6 @@ impl<F: JoltField> FieldIncrementColumn<F> {
     }
 }
 
-/// The unbound round reads shared storage; its first bind allocates only T/2
-/// values. All-zero columns stay allocation-free throughout the sumcheck.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),

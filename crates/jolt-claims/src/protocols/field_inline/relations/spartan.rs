@@ -43,9 +43,6 @@ mod tests {
     use crate::protocols::field_inline::geometry::spartan::outer_output_openings;
     use jolt_field::{Fr, Ring};
 
-    /// The struct's field (declaration) order is the appended-column order the
-    /// composed R1CS exposes, so the stage-1 absorb reproduces the column order
-    /// byte-identically.
     #[test]
     fn claim_struct_field_order_matches_appended_column_order() {
         let value = Fr::from_u64(1);

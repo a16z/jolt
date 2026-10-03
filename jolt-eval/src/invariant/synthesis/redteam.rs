@@ -3,9 +3,7 @@ use std::path::Path;
 use super::super::{CheckError, FailedAttempt, Invariant};
 use crate::agent::{AgentHarness, DiffScope};
 
-/// Result of a red-team session.
 pub enum RedTeamResult {
-    /// The agent produced a counterexample that violates the invariant.
     Violation {
         approach: String,
         input_json: String,
@@ -34,7 +32,6 @@ impl Default for RedTeamConfig {
     }
 }
 
-/// Run an AI red-team session against a single invariant.
 pub fn auto_redteam<I: Invariant>(
     invariant: &I,
     config: &RedTeamConfig,
@@ -184,11 +181,8 @@ pub fn auto_redteam<I: Invariant>(
             }
         };
 
-        // Let the invariant fill in fields from the agent's worktree diff
-        // (e.g. SoundnessInvariant uses it to populate the patch field).
         let input = invariant.enrich_input(input, response.diff.as_deref());
 
-        // Serialize the enriched input so we persist exactly what was checked.
         let normalized_input =
             serde_json::to_string_pretty(&input).unwrap_or_else(|_| counterexample_json.clone());
 
@@ -274,7 +268,6 @@ pub fn auto_redteam<I: Invariant>(
     }
 }
 
-/// All available data for a single red-team attempt, used for persistence.
 struct AttemptRecord<'a> {
     prompt: &'a str,
     raw_response: &'a str,
@@ -285,7 +278,6 @@ struct AttemptRecord<'a> {
     outcome: &'a str,
 }
 
-/// Persist a red-team attempt to disk and return the relative path.
 fn persist_redteam_attempt(
     repo_dir: &Path,
     invariant_name: &str,
@@ -337,7 +329,6 @@ fn build_envelope_schema(input_schema: &serde_json::Value) -> serde_json::Value 
     })
 }
 
-/// Parsed envelope: (analysis, approach_summary, counterexample_json).
 fn parse_envelope(text: &str) -> Option<(String, String, String)> {
     let val: serde_json::Value = serde_json::from_str(text).ok()?;
     let analysis = val.get("analysis")?.as_str()?.to_string();

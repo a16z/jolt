@@ -3,9 +3,6 @@ use std::fmt::Debug;
 
 use super::{InstructionFormat, NormalizedOperands};
 
-/// Format for advice load instructions
-/// ADVICE_LB, ADVICE_LH, ADVICE_LW, ADVICE_LD
-/// Similar to FormatI but only uses rd (value comes from advice tape), not rs1 (address is implicit).
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatAdviceLoadI {
     pub rd: u8,
@@ -14,7 +11,7 @@ pub struct FormatAdviceLoadI {
 impl InstructionFormat for FormatAdviceLoadI {
     fn parse(word: u32) -> Self {
         FormatAdviceLoadI {
-            rd: ((word >> 7) & 0x1f) as u8, // [11:7]
+            rd: ((word >> 7) & 0x1f) as u8,
         }
     }
 

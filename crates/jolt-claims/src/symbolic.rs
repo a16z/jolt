@@ -48,10 +48,8 @@ pub trait SymbolicSumcheck {
         SumcheckDomain::BooleanHypercube
     }
 
-    /// The sumcheck round count, derived from [`Shape`](Self::Shape).
     fn rounds(&self) -> usize;
 
-    /// The per-round degree bound, derived from [`Shape`](Self::Shape).
     fn degree(&self) -> usize;
 
     fn input_expression<F: Ring>(
@@ -108,9 +106,6 @@ mod tests {
         Gamma,
     }
 
-    /// Zero-round mock: empty input sum, nested product-of-sums output mixing
-    /// all three leaf kinds plus constants. `A` appears in several expanded
-    /// terms so the produced-opening derivation must deduplicate.
     struct Mock;
 
     impl SymbolicSumcheck for Mock {
@@ -145,7 +140,6 @@ mod tests {
 
         fn output_expression<F: Ring>(&self) -> Expr<F, Opening, Derived, Challenge> {
             let two = constant::<F, _, _, _>(F::one() + F::one());
-            // (2*A + gamma) * (B + 1) - offset * A
             (two * opening(Opening::A) + challenge(Challenge::Gamma))
                 * (opening(Opening::B) + Expr::one())
                 - derived(Derived::Offset) * opening(Opening::A)
@@ -167,16 +161,12 @@ mod tests {
         )
     }
 
-    /// (2*3 + 7) * (5 + 1) - 11*3 = 13*6 - 33 = 45, with each leaf kind
-    /// resolved through its own resolver.
     #[test]
     fn nested_output_expression_evaluates_to_hand_computed_value() {
         let output = resolve(&Mock::new(()).output_expression::<Fr>());
         assert_eq!(output, Fr::from_u64(45));
     }
 
-    /// An empty sum evaluates to zero without consulting any resolver, and
-    /// derives an empty produced-opening set.
     #[test]
     fn empty_input_sum_evaluates_to_zero_and_produces_no_openings() {
         let relation = Mock::new(());
@@ -222,9 +212,6 @@ mod tests {
             .is_empty());
     }
 
-    /// The produced-opening derivation walks every expanded term's factors:
-    /// it deduplicates the repeated `A`, keeps `B`, and never reports
-    /// challenge, derived, or constant leaves as openings.
     #[test]
     fn expected_output_openings_deduplicate_and_skip_non_opening_leaves() {
         let openings = Mock::new(()).expected_output_openings::<Fr>();
@@ -232,8 +219,6 @@ mod tests {
         assert_eq!(openings, expected);
     }
 
-    /// `try_evaluate` surfaces the resolver's error verbatim instead of a
-    /// value; a fully resolvable expression matches `evaluate` exactly.
     #[test]
     fn try_evaluate_propagates_resolver_errors_and_agrees_with_evaluate() {
         let expr = Mock::new(()).output_expression::<Fr>();
@@ -267,7 +252,6 @@ mod tests {
         assert_eq!(succeeded, Ok(resolve(&expr)));
     }
 
-    /// Relations that do not override `domain` run on the Boolean hypercube.
     #[test]
     fn default_domain_is_boolean_hypercube() {
         assert_eq!(Mock::new(()).domain(), SumcheckDomain::BooleanHypercube);

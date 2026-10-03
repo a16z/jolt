@@ -22,8 +22,6 @@ use crate::adapters::{
     AkitaCommitment, AkitaField,
 };
 
-/// Deserializes the backend commitment only after its declared shape has been
-/// derived from the trusted resolved schedule.
 pub(crate) fn deserialize_checked_backend_payload<Cfg>(
     schedules: &TrustedScheduleCatalog<Cfg>,
     commitment: &AkitaCommitment,
@@ -48,8 +46,6 @@ where
     Ok(backend_commitment)
 }
 
-/// Guard and decode the ordered grouped root in public order
-/// `[auxiliary dense groups.., final streamed one-hot]`.
 pub(crate) fn deserialize_checked_grouped_backend_payload<Cfg>(
     schedules: &TrustedScheduleCatalog<Cfg>,
     auxiliary_groups: &[&AkitaCommitment],

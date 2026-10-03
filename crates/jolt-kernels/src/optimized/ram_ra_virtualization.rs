@@ -76,13 +76,9 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         }
 
         let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        // Last RAM consumer: release the session's address handle.
         let _ = session.take::<SharedRamAddresses>();
         super::ram_trace::validate_addresses(&addresses, 1usize << ram_reduced_address.len())?;
 
-        // One eq table per committed chunk point (each `2^w` entries); the
-        // point-mass fold stays lazy — one table lookup per accessed cycle —
-        // instead of materializing `N × T` dense selectors up front.
         let chunk_tables: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
@@ -101,7 +97,6 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
     }
 }
 
-/// Address chunk `i`, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
     addresses: Arc<Vec<u32>>,
@@ -133,17 +128,11 @@ impl ChunkIndexSource for RamAddressChunks {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
-    /// Address-folded committed RA selectors, one per committed chunk:
-    /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
-    /// cycles, served lazily off the shared columns for the first four
-    /// binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
 
 impl<F: JoltField> RamRaVirtualizationKernel<F> {
-    /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
-    /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
     fn message(
         &self,
         round: usize,
@@ -167,7 +156,6 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                     evals[position] = hi;
                     steps[position] = hi - lo;
                 }
-                // Absorb the row weight into one factor before deferred accumulation.
                 evals[0] *= e_in;
                 steps[0] *= e_in;
                 accumulate_product_grid(evals, steps, lanes);
@@ -208,7 +196,6 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        // The relation degree: one eq factor plus the committed-RA product.
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 
@@ -221,7 +208,6 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
-                // With no committed RA polynomials, the product is one.
                 if num_committed == 0 {
                     for value in acc.iter_mut() {
                         *value += e_in;
@@ -305,9 +291,6 @@ impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
         })
     }
 
-    /// The Gruen scalar after full binding is the bound `EqCycle` value; pin
-    /// it to the verifier's `derive_output_term`, exactly as the naive tier's
-    /// materialized eq table is pinned.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -347,7 +330,6 @@ mod tests {
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
 
-    /// The fixture's one-hot chunk width (`JoltOneHotConfig.log_k_chunk`).
     const CHUNK_BITS: usize = 4;
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
@@ -386,8 +368,6 @@ mod tests {
                 CHUNK_BITS,
             );
 
-            // The honest reduced claim: the eq-weighted sum of the committed
-            // chunk products, straight off the oracle grids.
             let chunks = committed_address_chunks(&ram_reduced_address, CHUNK_BITS);
             let folded: Vec<Vec<Fr>> = chunks
                 .iter()
@@ -433,8 +413,6 @@ mod tests {
                 },
             )
             .unwrap();
-            // Pre-warm the session so the kernel exercises the shared-columns
-            // reclaim path (the real pipeline parks them in stage 2).
             let mut session = ProofSession::default();
             let _ = SharedRamAddresses::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
             let optimized = PrepareKernel::<Fr, _>::prepare(
@@ -481,8 +459,6 @@ mod tests {
 
     #[test]
     fn parity_two_committed_chunks() {
-        // log_k = 8 with 4-bit chunks: two committed RA polynomials, hot
-        // words on both sides of the chunk boundary.
         run_parity(
             FixtureShape {
                 log_t: 4,
@@ -542,7 +518,6 @@ mod tests {
         }
     }
 
-    /// Covers the empty committed-RA product when `ram_k = 1`.
     #[test]
     fn zero_committed_chunks_prove_in_parity_and_fail_closed() {
         let seed = 443;
@@ -588,8 +563,6 @@ mod tests {
 
     #[test]
     fn parity_padded_chunk_count() {
-        // log_k = 6 with 4-bit chunks: `committed_address_chunks` front-pads
-        // the reduced address, so chunk 0 spans only two real address bits.
         run_parity(
             FixtureShape {
                 log_t: 3,

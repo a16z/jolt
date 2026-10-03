@@ -1,5 +1,3 @@
-//! Return allocator-retained pages to the OS at memory lifetime boundaries.
-
 #[cfg(target_os = "macos")]
 extern "C" {
     /// NULL zone targets all zones; zero goal releases as much as possible.
@@ -25,7 +23,6 @@ fn pump_large_cache() {
     }
 }
 
-/// Minimum cycle-domain size for allocator purges.
 const PURGE_MIN_LOG_T: usize = 22;
 
 /// Purge after a large allocation generation dies.
@@ -35,8 +32,6 @@ pub fn purge_retained_memory(log_t: usize) {
     }
 }
 
-/// Return allocator-retained pages to the OS. Only macOS pressure relief
-/// reports a byte count.
 fn release_retained_memory() -> usize {
     #[cfg(target_os = "macos")]
     {

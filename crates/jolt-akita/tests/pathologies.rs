@@ -141,10 +141,6 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
 fn akita_forged_commitment_metadata_rejects_before_shape_backed_allocation() {
     let (verifier_setup, statement, proof) = native_proof_fixture(b"akita-forged-metadata");
 
-    // Forge the commitment's declared coefficient count to the upstream
-    // deserializer's 2^25 cap: without the shape guard this would reserve
-    // ~512 MiB before hitting EOF. The statement must be internally
-    // consistent, so every claim carries the forged commitment.
     let mut forged =
         serde_json::to_value(&statement[0].commitment).expect("commitment should serialize");
     *forged

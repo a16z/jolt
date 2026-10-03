@@ -122,7 +122,7 @@ impl JoltDevice {
         if self.is_panic(address) {
             self.panic as u8
         } else if self.is_termination(address) {
-            0 // Termination bit should never be loaded after it is set
+            0
         } else if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
             self.inputs.get(internal_address).copied().unwrap_or(0)
@@ -143,7 +143,7 @@ impl JoltDevice {
             self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
             assert!(address <= RAM_START_ADDRESS - 8);
-            0 // zero-padding
+            0
         }
     }
 
@@ -351,7 +351,6 @@ impl MemoryLayout {
             "MemoryLayout requires bytecode size to be set"
         );
 
-        // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
         #[inline]
         fn align_up(val: u64, align: u64) -> u64 {
             if align == 0 {
@@ -384,8 +383,6 @@ impl MemoryLayout {
             "Untrusted advice size must be a power of two (got {max_untrusted_advice_size})",
         );
 
-        // Adds 16 to account for panic bit and termination bit
-        // (they each occupy one full 8-byte word)
         let io_region_bytes = max_input_size
             .checked_add(max_trusted_advice_size)
             .and_then(|s| s.checked_add(max_untrusted_advice_size))
@@ -393,23 +390,18 @@ impl MemoryLayout {
             .and_then(|s| s.checked_add(16))
             .expect("I/O region size overflow");
 
-        // Padded so that the witness index corresponding to `input_start`
-        // has the form 0b11...100...0
         let io_region_words = (io_region_bytes / 8).next_power_of_two();
-        // let io_region_words = (io_region_bytes / 8 + 1).next_power_of_two() - 1;
 
         let io_bytes = io_region_words
             .checked_mul(8)
             .expect("I/O region byte count overflow");
 
-        // Place the larger or equal-sized advice region first in memory (at the lower address).
         let (
             trusted_advice_start,
             trusted_advice_end,
             untrusted_advice_start,
             untrusted_advice_end,
         ) = if max_trusted_advice_size >= max_untrusted_advice_size {
-            // Trusted advice goes first
             let trusted_start = RAM_START_ADDRESS
                 .checked_sub(io_bytes)
                 .expect("I/O region exceeds RAM_START_ADDRESS");
@@ -422,7 +414,6 @@ impl MemoryLayout {
                 .expect("untrusted_advice_end overflow");
             (trusted_start, trusted_end, untrusted_start, untrusted_end)
         } else {
-            // Untrusted advice goes first
             let untrusted_start = RAM_START_ADDRESS
                 .checked_sub(io_bytes)
                 .expect("I/O region exceeds RAM_START_ADDRESS");
@@ -450,7 +441,6 @@ impl MemoryLayout {
 
         let program_size = config.program_size.unwrap();
 
-        // stack grows downwards (decreasing addresses) from the top of the stack down to stack_end
         let stack_end = RAM_START_ADDRESS
             .checked_add(program_size)
             .expect("stack_end overflow");
@@ -459,7 +449,6 @@ impl MemoryLayout {
             .and_then(|s| s.checked_add(stack_size))
             .expect("stack_start overflow");
 
-        // heap grows *up* (increasing addresses) from the top of the stack
         let heap_end = stack_start
             .checked_add(heap_size)
             .expect("heap_end overflow");
@@ -488,7 +477,6 @@ impl MemoryLayout {
         }
     }
 
-    /// Returns the start address memory.
     pub fn get_lowest_address(&self) -> u64 {
         self.trusted_advice_start.min(self.untrusted_advice_start)
     }
@@ -534,8 +522,6 @@ mod tests {
             ..Default::default()
         };
         let mut device = JoltDevice::new(&memory_config);
-        // Use io_end which bypasses panic/termination early returns
-        // but still lands past the output region in convert_write_address
         let overflow_address = device.memory_layout.io_end;
         device.store(overflow_address, 0x42);
     }
@@ -609,9 +595,6 @@ mod tests {
 
     #[test]
     fn layout_packs_io_regions_contiguously_below_ram_start() {
-        // trusted (4096) < untrusted (8192) forces the untrusted-first branch.
-        // io_region_bytes = 4096 + 8192 + 4096 + 4096 + 16 = 20496 bytes
-        //   => 2562 words => padded to 4096 words => 32768 bytes below RAM_START.
         let layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 4096,
@@ -664,8 +647,6 @@ mod tests {
         assert_eq!(layout.stack_size, 104);
         assert_eq!(layout.heap_size, 16);
 
-        // Stack grows down from stack_start; the canary sits between the
-        // program image and the stack.
         assert_eq!(layout.stack_end, RAM_START_ADDRESS + 1000);
         let stack_start = layout.stack_end + STACK_CANARY_SIZE + 104;
         assert_eq!(layout.heap_end, stack_start + 16);

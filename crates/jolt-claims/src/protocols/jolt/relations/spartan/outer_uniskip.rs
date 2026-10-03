@@ -1,5 +1,3 @@
-//! Spartan outer univariate-skip symbolic sumcheck relation.
-
 use core::marker::PhantomData;
 
 use jolt_field::{JoltField, Ring};
@@ -117,9 +115,6 @@ mod tests {
         }
     }
 
-    /// The uni-skip's input claim is the constant zero: the expression carries
-    /// no leaves at all, so evaluation never consults any resolver (resolvers
-    /// here panic to prove it) and returns zero.
     #[test]
     fn input_expression_is_leafless_constant_zero() {
         let relation = OuterUniskip::new(dimensions());
@@ -133,9 +128,6 @@ mod tests {
         assert_eq!(input, Fr::from_u64(0));
     }
 
-    /// The output claim is the single reduced uni-skip opening passed through
-    /// verbatim (coefficient one, no other sources), and the symbolically
-    /// derived produced-opening set contains exactly that id.
     #[test]
     fn output_expression_is_the_uniskip_opening_verbatim() {
         let relation = OuterUniskip::new(dimensions());
@@ -157,8 +149,6 @@ mod tests {
         );
     }
 
-    /// Pins the uni-skip sumcheck spec: a single round over the centered-integer
-    /// domain, with the shared geometry constants for size and degree.
     #[test]
     fn sumcheck_spec_matches_uniskip_geometry_constants() {
         let relation = OuterUniskip::new(dimensions());
@@ -171,9 +161,6 @@ mod tests {
         );
     }
 
-    /// The hand-written `InputClaims` impl (the derive requires at least one
-    /// field) must present an empty consumed-claim surface: no canonical ids
-    /// and no resolvable values, not even for this relation's own opening.
     #[test]
     fn input_claims_resolve_nothing() {
         let claims = OuterUniskipInputClaims::<Fr>::default();

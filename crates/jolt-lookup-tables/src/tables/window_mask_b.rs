@@ -33,8 +33,6 @@ impl<const XLEN: usize> LookupTable for WindowMaskBTable<XLEN> {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let eighth = XLEN / 8;
         let mask = F::from_u128((1u128 << eighth) - 1);
-        // mask · 2^(eighth·offset) with offset = 4·b2 + 2·b1 + b0, as the
-        // product of per-bit factors (1 + (2^(eighth·2^i) − 1)·b_i).
         let mut result = mask;
         for i in 0..3 {
             let b_i: F = r[r.len() - 1 - i].into();
@@ -86,9 +84,6 @@ mod tests {
         prefix_suffix_test::<XLEN, Fr, WindowMaskBTable<XLEN>>();
     }
 
-    /// Two-round phases put a phase boundary inside the low three index bits
-    /// (suffix_len hits 2), exercising every placement of bits 2-0 relative
-    /// to the phase window in the Pow2OffsetB prefix/suffix pair.
     #[test]
     fn prefix_suffix_small_phases() {
         prefix_suffix_materialization_test::<XLEN, Fr, WindowMaskBTable<XLEN>>(2, 3);

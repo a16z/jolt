@@ -79,7 +79,6 @@ impl LibrarySpec {
         self
     }
 
-    /// Declares a non-template kernel function.
     pub fn kernel(mut self, name: &str) -> Self {
         self.kernels.push(KernelDecl::Plain(name.to_owned()));
         self
@@ -95,7 +94,6 @@ impl LibrarySpec {
         self
     }
 
-    /// Validates the declaration and produces the complete MSL source.
     fn assemble(&self) -> Result<String, MetalError> {
         let invalid = |reason: String| MetalError::InvalidLibrary { reason };
         if self.kernels.is_empty() {
@@ -108,7 +106,6 @@ impl LibrarySpec {
                     "source name {name:?} is not a #line file name"
                 )));
             }
-            // Writing to a `String` cannot fail.
             let _ = writeln!(source, "#line 1 \"{name}\"\n{text}");
         }
         let _ = writeln!(source, "#line 1 \"jolt-metal instantiations\"");
@@ -152,24 +149,19 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// A buffer argument of a kernel, from pipeline reflection.
 #[derive(Clone, Debug)]
 pub(crate) struct ArgumentSlot {
     pub(crate) name: String,
     pub(crate) index: usize,
-    /// Size of the pointee (`device T*`) or referent (`constant T&`).
     pub(crate) data_size: usize,
 }
 
-/// What the platform backend reads from a newly created pipeline.
 pub(crate) struct PipelineInfo {
     pub(crate) max_total_threads_per_threadgroup: usize,
     pub(crate) thread_execution_width: usize,
-    /// Buffer arguments in declaration order.
     pub(crate) slots: Vec<ArgumentSlot>,
 }
 
-/// A compiled compute kernel.
 pub struct Pipeline {
     pub(crate) sys: RawPipeline,
     pub(crate) name: Arc<str>,
@@ -182,7 +174,6 @@ impl Pipeline {
         &self.name
     }
 
-    /// The largest threadgroup this pipeline can be dispatched with.
     pub fn max_total_threads_per_threadgroup(&self) -> usize {
         self.info.max_total_threads_per_threadgroup
     }
@@ -209,8 +200,6 @@ impl ShaderLibrary {
             let kernel = decl.host_name();
             let (sys, mut info) = library.pipeline(&device.sys, kernel)?;
             info.slots.sort_by_key(|slot| slot.index);
-            // Bindings are positional, so buffer arguments must occupy
-            // indices 0..n with no gaps.
             if let Some((position, slot)) = info
                 .slots
                 .iter()

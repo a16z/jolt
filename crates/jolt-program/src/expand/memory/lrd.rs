@@ -15,7 +15,6 @@ pub(in crate::expand) fn expand_lrd(
     let mut asm = ExpansionBuilder::new(*instruction);
     let ram_start = asm.allocate()?;
 
-    // LR/SC reservations are only modeled for ordinary RAM.
     asm.emit_u(
         SourceInstructionKind::LUI,
         ram_start.operand(),

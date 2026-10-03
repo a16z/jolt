@@ -144,8 +144,6 @@ where
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 
-    // The field-register value-evaluation member (declared last, no instance challenge) and
-    // its baked `LtCycle` public, at the same source-values position as before.
     #[cfg(feature = "field-inline")]
     let field_registers_claims = super::field_inline::stage5_val_evaluation(
         values,
@@ -207,9 +205,6 @@ fn stage5_output_ids<F: JoltField>(
         }
         .canonical_order(),
     ));
-    // The two field-register value-evaluation rows, after the ordinary register
-    // value-evaluation outputs — the clear absorb order (the field-inline member is declared
-    // last, so the generated absorb appends them at the tail).
     #[cfg(feature = "field-inline")]
     output_ids.extend(super::field_inline::stage5_output_ids());
     output_ids
@@ -244,10 +239,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// The stage-5 committed row order is the clear absorb order (the generated
-    /// member-declaration `opening_values`), locked entry-for-entry over sentinel-valued
-    /// claims (with field-inline enabled: the two field-register value-evaluation rows at the
-    /// tail).
     #[test]
     fn stage5_output_ids_match_the_clear_absorb_order() {
         let log_t = 3usize;

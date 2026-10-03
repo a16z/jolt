@@ -1,8 +1,3 @@
-//! 4D GLV scalar decomposition for BN254 G2.
-//!
-//! Uses a precomputed lookup table of power-of-2 decompositions to split a scalar
-//! into four ~64-bit components for the Frobenius-based 4D GLV multiplication.
-
 use super::constants::POWER_OF_2_DECOMPOSITIONS;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
@@ -13,12 +8,6 @@ fn fr_to_bigint(fr: Fr) -> BigInt {
     BigInt::from_bytes_be(Sign::Plus, &bytes)
 }
 
-/// Table-based 4-dimensional scalar decomposition.
-/// Decomposes k into (k0, k1, k2, k3) such that
-/// k ≡ k0 + k1·λ + k2·λ² + k3·λ³ (mod r).
-/// Each coefficient is at most ~66 bits.
-/// Returns `(|kᵢ|, signsᵢ)` with `signsᵢ = true` meaning positive — matching
-/// the 2D convention in [`super::decomp_2d::decompose_scalar_2d`].
 fn decompose_scalar_table_based(scalar: &BigInt) -> ([u128; 4], [bool; 4]) {
     // Sign detection via `(k as i128) < 0` is sound only when |k| < 2^127.
     // For BN254, each table row contributes at most ~66 bits and the loop
@@ -143,16 +132,10 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    /// The 4D GLV eigenvalue: on G2 the twisted Frobenius ψ acts as
-    /// multiplication by q mod r (the base-field characteristic reduced into
-    /// the scalar field). Anchored against the group in
-    /// [`lambda_powers_match_frobenius_powers_on_g2`].
     fn lambda() -> Fr {
         Fr::from(BigUint::from_bytes_be(&Fq::MODULUS.to_bytes_be()))
     }
 
-    // Ties the scalar-field lambda used by the reconstruction check to the
-    // actual psi powers the table test verifies the table against.
     #[test]
     fn lambda_powers_match_frobenius_powers_on_g2() {
         let lambda = lambda();
@@ -172,10 +155,6 @@ mod tests {
     fn decomposition_reconstructs_scalar_within_documented_bounds() {
         let lambda = lambda();
 
-        // Worst-case per-component magnitude: each scalar bit adds at most one
-        // table row, so |k_i| is bounded by the column-wise sum of row
-        // magnitudes. The sum must stay far below 2^100, the documented
-        // sign-detection safety margin.
         let mut bounds = [0u128; 4];
         for &(k0, k1, k2, k3, ..) in &POWER_OF_2_DECOMPOSITIONS {
             bounds[0] += k0;
@@ -195,12 +174,11 @@ mod tests {
         scalars.extend([
             Fr::from(0u64),
             Fr::from(1u64),
-            -Fr::from(1u64), // r - 1
+            -Fr::from(1u64),
             lambda,
             lambda * lambda,
             lambda * lambda * lambda,
             lambda - Fr::from(1u64),
-            // magnitudes at the ~64-66 bit component boundary
             Fr::from(u64::MAX),
             Fr::from((1u128 << 66) - 1),
             Fr::from(1u128 << 66),
@@ -230,9 +208,6 @@ mod tests {
         }
     }
 
-    // Independent per-row verification of the power-of-2 table. Catches table
-    // corruption that end-to-end GLV tests can miss when wrong rows cancel out
-    // for random scalars.
     #[test]
     fn power_of_2_decomposition_table_matches_reference() {
         let g = G2Affine::generator().into_group();

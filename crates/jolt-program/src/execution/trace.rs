@@ -21,15 +21,10 @@ pub use row::{
 #[derive(Debug, Clone)]
 pub struct JoltProgram {
     elf_bytes: Vec<u8>,
-    /// Final Jolt bytecode rows after expanding decoded RV64 instructions.
     pub expanded_bytecode: Vec<JoltInstructionRow>,
-    /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
-    /// End address of the loaded program image.
     pub program_end: u64,
-    /// ELF entry point.
     pub entry_address: u64,
-    /// Selected instruction legality/profile for this program.
     pub profile: JoltInstructionProfile,
 }
 
@@ -98,11 +93,6 @@ impl JoltProgram {
         }
     }
 
-    /// Creates a Jolt program from an RV64 program image and its expanded bytecode.
-    ///
-    /// `Rv64ProgramImage` contains the rows and memory decoded directly from
-    /// the ELF. The caller supplies `expanded_bytecode`, which is the result of
-    /// expanding those decoded rows into the bytecode used by Jolt.
     #[cfg(feature = "image")]
     pub fn from_rv64_image(
         elf_bytes: Vec<u8>,

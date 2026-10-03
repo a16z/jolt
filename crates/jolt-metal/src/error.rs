@@ -1,5 +1,3 @@
-//! Typed runtime failures and the recovery class each one permits.
-
 use thiserror::Error;
 
 /// What a consumer may do after a [`MetalError`].
@@ -68,7 +66,6 @@ pub enum CommandBufferError {
 }
 
 impl CommandBufferError {
-    /// Decodes an `NSError` code from `MTLCommandBufferErrorDomain`.
     pub(crate) fn from_code(code: isize) -> Self {
         match code {
             1 => Self::Internal,
@@ -98,7 +95,6 @@ impl CommandBufferError {
     }
 }
 
-/// The device limit a [`MetalError::CapacityExceeded`] request ran into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapacityLimit {
     /// The request's byte size does not fit in `usize`.
@@ -196,7 +192,6 @@ impl MetalError {
 mod tests {
     use super::*;
 
-    /// Codes and names from `MTLCommandBuffer.h` (macOS 26 SDK).
     #[test]
     fn command_buffer_codes_match_sdk_header() {
         let header = [

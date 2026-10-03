@@ -39,17 +39,10 @@ use crate::emulator::{
     Emulator,
 };
 
-/// Initial trace capacity, in rows (`JOLT_TRACER_CAPACITY_ROWS` overrides —
-/// the same knob the parallel path uses): the default covers the standard
-/// 2^23-cycle proving scale without Vec regrowth (each doubling past the
-/// hundreds of MB memcpys the whole trace). Reserved address space is only
-/// faulted in as rows are pushed.
 fn trace_capacity_reserve() -> usize {
     env_rows("JOLT_TRACER_CAPACITY_ROWS", parallel::DEFAULT_CAPACITY_ROWS)
 }
 
-/// Positive row-count env override; unset, unparsable, or zero falls back to
-/// `default`.
 fn env_rows(name: &str, default: usize) -> usize {
     std::env::var(name)
         .ok()
@@ -135,9 +128,6 @@ pub fn trace(
     )
 }
 
-/// Shared teardown for every execution path (eager [`trace`], execute-only
-/// [`execute`], and the chunked fast pass): report a guest panic (log +
-/// backtrace), then extract the advice tape, final memory, and device.
 #[expect(clippy::expect_used)]
 pub(crate) fn finish_emulator(mut emulator: Emulator) -> (cpu::AdviceTape, Memory, JoltDevice) {
     if emulator
@@ -328,9 +318,6 @@ fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
 
 fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
     let pc = emulator.get_cpu().read_pc();
-    // This is a trick to see if the program has terminated by throwing itself
-    // into an infinite loop. It seems to be a good heuristic for now but we
-    // should eventually migrate to an explicit shutdown signal.
     if *prev_pc == pc {
         return;
     }
@@ -353,7 +340,7 @@ fn setup_emulator(
         untrusted_advice,
         trusted_advice,
         memory_config,
-        None, // No advice tape by default
+        None,
     )
 }
 
@@ -374,7 +361,6 @@ pub fn create_emulator(
 ) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
-    // Set the advice tape if provided
     if let Some(tape) = advice_tape {
         emulator.set_advice_tape(tape);
     }
@@ -410,19 +396,15 @@ pub fn create_emulator(
     emulator
 }
 
-/// A type that can be used to lazily generate a trace, one [`Cycle`] at a time.
 pub trait LazyTracer {
-    /// Check if the program execution has terminated.
     fn has_terminated(&self) -> bool;
 
-    /// Check if the program execution has panicked.
     fn has_panicked(&self) -> bool;
 
     /// Returns whether the next execution of [`LazyTracer::lazy_step_cycle`] will emulate a new
     /// instruction or return the next [`Cycle`] in the last executed instruction.
     fn at_tick_boundary(&self) -> bool;
 
-    /// Print a backtrace, assuming the program has panicked.
     fn print_panic_log(&self);
 
     /// Get the next [`Cycle`] in the program execution. If the program is at a tick boundary, this
@@ -430,7 +412,6 @@ pub trait LazyTracer {
     /// executed instruction.
     fn lazy_step_cycle(&mut self) -> Option<Cycle>;
 
-    /// Take the [`JoltDevice`] from this tracer, consuming the tracer.
     fn get_jolt_device(self) -> JoltDevice;
 }
 
@@ -453,22 +434,6 @@ unsafe impl<T: Send> Send for GeneralizedLazyTraceIter<T> {}
 impl<T: LazyTracer> Iterator for GeneralizedLazyTraceIter<T> {
     type Item = Cycle;
 
-    /// Advances the iterator and returns the next trace entry.
-    ///
-    /// # Returns
-    ///
-    /// * `Some(Cycle)` - The next instruction trace in the execution sequence
-    /// * `None` - If program execution has completed.
-    ///
-    /// # Details
-    ///
-    /// The function follows this sequence:
-    /// 1. Returns any remaining traces from the previous emulator tick
-    /// 2. If buffer `current_traces` is empty, and the number of ticks
-    ///    is not reached, executes another emulator tick``
-    /// 3. Checks for program termination using the heuristic of PC not changing
-    /// 4. Buffers new traces in FIFO order
-    /// 5. Returns the next trace or None if execution is complete
     fn next(&mut self) -> Option<Self::Item> {
         if self.lazy_tracer.has_terminated() {
             return None;
@@ -495,9 +460,7 @@ pub struct Checkpoint {
     emulator_state: Emulator,
     prev_pc: u64,
     current_traces: Vec<Cycle>,
-    /// The remaining number of cycles that can be replayed for this checkpoint
     trace_steps_remaining: usize,
-    /// The total number of cycles executed so far, including the ones prior to this checkpoint
     cycle_count: usize,
 }
 
@@ -638,8 +601,6 @@ impl CheckpointingTracer {
         Self::new(emulator_state)
     }
 
-    /// Start recording memory accesses so that checkpoints can be saved using
-    /// [`CheckpointingTracer::save_checkpoint`].
     pub fn start_saving_checkpoints(&mut self) {
         self.saved_processor_state = Some(Checkpoint::new_with_empty_memory(
             &self.emulator_state,
@@ -672,7 +633,6 @@ impl CheckpointingTracer {
             .data
             .is_saving_checkpoints());
 
-        // Save the processor state at the start of the current chunk
         let mut new_processor_state = Checkpoint::new_with_empty_memory(
             &self.emulator_state,
             self.prev_pc,
@@ -684,7 +644,6 @@ impl CheckpointingTracer {
             &mut new_processor_state,
         );
 
-        // Store the hashmap of memory assignments since the last chunk
         let mmu = self.emulator_state.get_mut_cpu().get_mut_mmu();
         let data = mmu.memory.memory.data.save_checkpoint();
         // The next interval's first-touch map must see each PC's first fetch
@@ -696,7 +655,6 @@ impl CheckpointingTracer {
         new_processor_state
     }
 
-    /// Take ownership of the advice tape from the emulator, replacing it with an empty one
     pub fn take_advice_tape(&mut self) -> cpu::AdviceTape {
         self.emulator_state.take_advice_tape()
     }
@@ -830,8 +788,6 @@ impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
 
 #[cfg(test)]
 pub(crate) mod test_utils {
-    /// Build the muldiv guest and return the ELF bytes.
-    /// Mirrors the pattern used by `jolt_host::Program::build()`.
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";
@@ -960,10 +916,6 @@ mod tests {
     const INPUTS: [u8; 6] = [0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c];
 
     #[test]
-    /// Test that the trace function produces the expected number of cycles for a given ELF input.
-    /// Test the checkpointing functionality by verifying the number of checkpoints created and
-    /// if the traces from checkpoints match the overall execution trace.
-    /// The test is based on the muldiv benchmark.
     fn test_checkpoints() {
         let elf = build_muldiv_guest();
         let n = 50;
@@ -992,7 +944,6 @@ mod tests {
 
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
 
-    /// addi x1, x0, 1 ; addi x2, x1, 2 ; j .  — terminates via PC stall.
     fn tiny_guest_elf() -> Vec<u8> {
         build_elf64(
             &[0x0010_0093, 0x0020_8113, 0x0000_006f],
@@ -1016,26 +967,19 @@ mod tests {
             trace(&elf, None, &[], &[], &[], &memory_config, None);
 
         assert!(cycles.len() >= 3, "two ADDIs plus the jump expansion");
-        // addi x1, x0, 1
         assert_eq!(cycles[0].rd_write(), Some((1, 0, 1)));
-        // addi x2, x1, 2 observes x1 = 1
         assert_eq!(cycles[1].rs1_read(), Some((1, 1)));
         assert_eq!(cycles[1].rd_write(), Some((2, 0, 3)));
 
         assert!(!device.panic);
         assert!(device.outputs.is_empty());
-        // The final memory state contains the loaded program image
         assert!(!final_memory.materialized_nonzero_bytes().is_empty());
 
-        // The returned lazy iterator replays the identical trace
         let replayed: Vec<Cycle> = lazy.collect();
         assert_eq!(replayed, cycles);
     }
 
     #[test]
-    /// Execute-mode CPU state must be bit-identical to trace-mode state at
-    /// every tick boundary (foundation of two-pass parallel tracing: pass-1
-    /// runs execute-mode and its checkpoints seed trace-mode chunk replays).
     fn test_execute_trace_state_lockstep() {
         let elf = build_muldiv_guest();
         let memory_config = MemoryConfig {
@@ -1065,8 +1009,6 @@ mod tests {
             tick_idx += 1;
         }
         assert!(tick_idx > 0, "program did not execute");
-        // trace_len is row-uniform across modes (execute mode counts
-        // suppressed rows).
         assert_eq!(em_trace.get_cpu().trace_len, em_exec.get_cpu().trace_len);
         assert_eq!(
             em_trace
@@ -1085,8 +1027,6 @@ mod tests {
         );
     }
 
-    /// Serial trace-mode reference: all rows plus per-tick row counts
-    /// (termination identical to `trace()`).
     fn serial_reference(elf: &[u8], memory_config: &MemoryConfig) -> (Vec<Cycle>, Vec<usize>) {
         let mut emulator = setup_emulator(elf, &INPUTS, &[], &[], memory_config);
         let mut rows: Vec<Cycle> = Vec::new();
@@ -1109,9 +1049,6 @@ mod tests {
     }
 
     #[test]
-    /// Capture a chunk checkpoint at tick N of an execute-mode pass, replay
-    /// M ticks in a fresh worker, and require the emitted rows to be
-    /// bit-exact against the serial trace's rows for ticks N..N+M.
     fn test_chunk_capture_replay() {
         use crate::parallel::{ChunkWorker, PassOne, SnapshotPool};
 
@@ -1155,10 +1092,6 @@ mod tests {
     }
 
     #[test]
-    /// Cut the whole program into fixed-tick chunks from a single continuous
-    /// execute-mode pass, replay every chunk through one resident worker,
-    /// and require (a) each boundary state to match the next checkpoint
-    /// exactly and (b) the concatenated rows to equal the serial trace.
     fn test_chunked_replay_reconstructs_full_trace() {
         use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 
@@ -1202,8 +1135,6 @@ mod tests {
                 let previous = worker.install_chunk(checkpoint, image.clone());
                 pool.put(previous);
                 worker.run_ticks(*ticks, &mut replayed);
-                // Boundary paranoia: worker end state must equal the next
-                // chunk's captured start state.
                 if let Some((next, _, _)) = chunks.get(idx + 1) {
                     if let Some(diff) = next.diff_vs_cpu(worker.cpu()) {
                         panic!("boundary mismatch after chunk {idx} (size {chunk_ticks}): {diff}");
@@ -1218,9 +1149,6 @@ mod tests {
     }
 
     #[test]
-    /// The threaded two-pass pipeline must reproduce the serial trace
-    /// bit-exactly across chunk sizes (many tiny chunks → single-chunk
-    /// degenerate) and worker counts.
     fn test_run_two_pass_matches_serial() {
         use crate::parallel::{run_two_pass, TwoPassConfig};
 
@@ -1231,8 +1159,6 @@ mod tests {
         };
         let (serial_rows, _) = serial_reference(&elf, &memory_config);
 
-        // capacity_rows=100 forces the overflow fallback path on muldiv's
-        // 473 rows (windowed prefix, then copy-assembled suffix).
         for (workers, chunk_rows, capacity_rows) in [
             (1usize, 64usize, 1usize << 24),
             (4, 64, 1 << 24),
@@ -1301,10 +1227,6 @@ mod tests {
         }
     }
 
-    /// A count-preserving replay divergence must trip the boundary-state
-    /// verification. Fault injection corrupts one worker register after
-    /// replay (row counts stay equal), so only the boundary check can catch
-    /// it; without it the trace would be assembled silently.
     fn boundary_divergence_panics(workers: usize) {
         use crate::parallel::{run_two_pass, TwoPassConfig, TEST_CORRUPT_BOUNDARY_STATE};
         use std::sync::atomic::Ordering;

@@ -25,9 +25,6 @@ fn evaluate_state<F: JoltField>(
     let y_top = (y >> (phase_pairs - 1)) & 1;
     let x_bottom = x & 1;
 
-    // Output bit 0 is `x_0 ^ y_{XLEN-1}`. The first phase seeds `acc` with
-    // `y_{XLEN-1}` and carries `wrap = 1 - 2*y_{XLEN-1}`, so `acc += wrap * x_0`
-    // completes the XOR in whichever phase binds `x_0`.
     let (mut acc, wrap) = if first_phase {
         (F::from_u64(y_top), F::one() - F::from_u64(2 * y_top))
     } else {
@@ -91,9 +88,6 @@ mod tests {
     use crate::tables::virtual_xor_rotl1::VirtualXORROTL1Table;
     use crate::traits::LookupTable;
 
-    /// One phase spanning all `2 * XLEN` bits: no suffix, no checkpoints, so
-    /// `acc` alone must equal the table entry. The phased materialization
-    /// tests never reach this geometry.
     #[test]
     fn single_phase_acc_is_table_entry() {
         let checkpoints: Vec<PrefixEval<Fr>> = ALL_PREFIXES

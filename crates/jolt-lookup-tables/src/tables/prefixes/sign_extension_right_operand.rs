@@ -22,9 +22,6 @@ impl<F: JoltField> SparseDensePrefix<F> for SignExtensionRightOperandPrefix {
             return checkpoints[Prefixes::SignExtensionRightOperand];
         }
 
-        // Sign bit is the y-bit at position XLEN (the first y-bit in the lower half).
-        // Extract it from b: it's the MSB of the y portion after uninterleaving
-        // the bits that include position XLEN and XLEN+1.
         let (_, y) = b.uninterleave();
         let sign_bit = u64::from(y) >> (y.len() - 1);
         F::from_u128((1u128 << XLEN) - (1u128 << (XLEN / 2))).mul_u64(sign_bit)

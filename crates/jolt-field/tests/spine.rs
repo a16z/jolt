@@ -1,9 +1,3 @@
-//! Spine conformance: a third-party Mersenne-61 field implemented with no
-//! arkworks dependency, driven through the exported stamping macros.
-//!
-//! This is the implementability proof for the trait spine: everything a
-//! non-BN254, non-Solinas field must provide, and nothing more.
-
 #![expect(clippy::unwrap_used, reason = "test code")]
 
 use jolt_field::{
@@ -221,17 +215,14 @@ fn canonical_surface() {
             Some(a)
         );
     }
-    // Non-canonical and wrong-length encodings are rejected.
     assert_eq!(M61::from_bytes_le_checked(&P.to_le_bytes()), None);
     assert_eq!(M61::from_bytes_le_checked(&u64::MAX.to_le_bytes()), None);
     assert_eq!(M61::from_bytes_le_checked(&[0u8; 7]), None);
-    // Reducing decode agrees with integer reduction on oversized input.
     let wide = [0xabu8; 16];
     assert_eq!(
         M61::from_bytes_le_reduced(&wide),
         M61::from_u128_reduced(u128::from_le_bytes(wide))
     );
-    // Challenge derivation defaults to the reducing decode.
     assert_eq!(
         M61::from_challenge_bytes(&wide),
         M61::from_bytes_le_reduced(&wide)
@@ -256,11 +247,9 @@ fn serde_bytes_format() {
         let (back, read): (M61, usize) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
         assert_eq!((back, read), (a, bytes.len()));
     }
-    // A vector pays exactly one length prefix.
     let v = vec![M61(1), M61(2), M61(3)];
     let bytes = bincode::serde::encode_to_vec(&v, cfg).unwrap();
     assert_eq!(bytes.len(), 1 + 3 * M61::NUM_BYTES);
-    // Non-canonical wire bytes are rejected.
     let bad = bincode::serde::encode_to_vec(P.to_le_bytes(), cfg).unwrap();
     assert!(bincode::serde::decode_from_slice::<M61, _>(&bad, cfg).is_err());
 }
@@ -313,8 +302,6 @@ fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
 
 #[test]
 fn jolt_field_blanket() {
-    // M61 satisfies the JoltField bundle from the component traits alone —
-    // the derive above is the `allocative` feature's supertrait, not a JoltField impl.
     let xs = [M61(2), M61(3)];
     let ys = [M61(5), M61(7)];
     assert_eq!(inner_product(&xs, &ys), M61(31));

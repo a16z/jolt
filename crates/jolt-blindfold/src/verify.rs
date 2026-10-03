@@ -946,10 +946,6 @@ mod tests {
         assert_eq!(transcript.state(), manual_transcript.state());
     }
 
-    /// Regression: a proof with fewer `folded_eval_outputs` than the layout's
-    /// eval coordinates previously reached `folded_eval_outputs[index]` and
-    /// panicked; both the eager length gate and the per-coordinate lookup
-    /// must surface the same typed length error instead.
     #[test]
     fn verify_rejects_truncated_folded_eval_outputs_without_panicking() {
         let setup = setup();

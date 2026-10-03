@@ -1,15 +1,3 @@
-//! Shared packed Solinas algebra for the word-sized fields, written once
-//! against the [`SimdWord`] vocabulary and instantiated per ISA through the
-//! marker type parameter `I` — the one source of truth for the packed
-//! fold/canonicalize structure across NEON, AVX2, and AVX-512.
-//!
-//! [`PackedFp32`] is the u32-lane engine (widen to 64-bit products, two or
-//! three Solinas folds, fused deferred-reduction dot products for the
-//! degree-4 extension kernels); [`PackedFp64`] is the u64-lane engine
-//! (128-bit products folded through `2^BITS ≡ C`). The fold constants are
-//! taken from the scalar field types, so the `C(C+1) < P` precondition is
-//! asserted in exactly one place per width (`word.rs`).
-
 #![cfg(any(
     all(target_arch = "aarch64", target_feature = "neon"),
     all(target_arch = "x86_64", target_feature = "avx2")
@@ -21,8 +9,6 @@ use crate::{Ext2NonResidueKind, Packed};
 
 pub(crate) use super::fp128::PackedFp128;
 
-/// Stamps `Clone`/`Copy` and the operator matrix from `add_raw`/`sub_raw`/
-/// `mul_raw` inherent methods. Shared by all three packed engines.
 macro_rules! impl_packed_arith {
     (impl[$($g:tt)*] $ty:ty) => {
         impl<$($g)*> Clone for $ty {
@@ -75,9 +61,6 @@ macro_rules! impl_packed_arith {
 }
 pub(crate) use impl_packed_arith;
 
-/// `c·v` on 64-bit lanes for a compile-time-constant offset `c < 2^32`:
-/// shift/add when `c = 2^a ± 1`, otherwise the ISA's small multiply.
-/// Callers guarantee the exact product fits 64 bits.
 #[inline(always)]
 fn mul_by_offset<I: SimdWord>(v: I::V64, c: u64) -> I::V64 {
     if c == 1 {
@@ -91,7 +74,6 @@ fn mul_by_offset<I: SimdWord>(v: I::V64, c: u64) -> I::V64 {
     }
 }
 
-/// Packed `Fp32` lanes over ISA `I` (`I::W32` lanes).
 #[repr(transparent)]
 pub struct PackedFp32<const P: u32, I: SimdWord>(I::V32);
 
@@ -114,7 +96,6 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
     fn add_raw(a: Self, b: Self) -> Self {
         let t = I::add32(a.0, b.0);
         let t = if Self::BITS == 32 {
-            // The carry out of u32 is 2^32 ≡ C; fold it before canonicalizing.
             I::select32(I::lt_u32(t, a.0), I::add32(t, I::splat32(Self::C)), t)
         } else {
             t
@@ -126,7 +107,6 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
     fn sub_raw(a: Self, b: Self) -> Self {
         let t = I::sub32(a.0, b.0);
         if Self::BITS == 32 {
-            // A wrap adds 2^32 ≡ C, so subtract C where a < b.
             Self(I::select32(
                 I::lt_u32(a.0, b.0),
                 I::sub32(t, I::splat32(Self::C)),
@@ -140,8 +120,6 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
     #[inline(always)]
     fn mul_raw(a: Self, b: Self) -> Self {
         if Self::BITS == 31 {
-            // ISAs with a 32-bit high-multiply reduce 31-bit primes without
-            // ever widening to 64-bit lanes.
             if let Some(r) = I::mul_pm31(a.0, b.0, P, Self::C) {
                 return Self(r);
             }
@@ -149,7 +127,6 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
         Self(Self::reduce(I::widen_mul(a.0, b.0)))
     }
 
-    /// One Solinas fold: `(v & MASK) + C·(v >> BITS)`.
     #[inline(always)]
     fn fold(v: I::V64) -> I::V64 {
         I::add64(
@@ -158,8 +135,6 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
         )
     }
 
-    /// Two/three-fold reduction of widened products (or sums of up to four
-    /// products, pre-folded when `BITS == 32`) to canonical 32-bit lanes.
     #[inline(always)]
     fn reduce(x: [I::V64; 2]) -> I::V32 {
         let f = x.map(|v| Self::fold(Self::fold(v)));
@@ -224,8 +199,6 @@ impl<const P: u32, I: SimdWord> Packed for PackedFp32<P, I> {
         Self(I::splat32(value.0))
     }
 
-    /// Fused kernel: each output coefficient is one deferred-reduction dot
-    /// product instead of six independently reduced multiplies.
     #[inline(always)]
     fn ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         let [b0, b1, b2, b3] = b;
@@ -237,7 +210,6 @@ impl<const P: u32, I: SimdWord> Packed for PackedFp32<P, I> {
         ]
     }
 
-    /// Fused kernel: squaring via three- and four-term dot products.
     #[inline(always)]
     fn ext4_square(a: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
@@ -251,7 +223,6 @@ impl<const P: u32, I: SimdWord> Packed for PackedFp32<P, I> {
     }
 }
 
-/// Packed `Fp64` lanes over ISA `I` (`I::W64` lanes).
 #[repr(transparent)]
 pub struct PackedFp64<const P: u64, I: SimdWord>(I::V64);
 
@@ -269,14 +240,12 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
     const EXT2_TWO_FUSION_SAFE: bool =
         Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
 
-    /// Reduces a scalar sum of up to three products for lane-wise backends.
     #[inline(always)]
     fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
         debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
         Fp64::<P>::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
     }
 
-    /// Adds lane-wise 128-bit values represented as `[lo, hi]`.
     #[inline(always)]
     fn add128(a: [I::V64; 2], b: [I::V64; 2]) -> [I::V64; 2] {
         let lo = I::add64(a[0], b[0]);
@@ -334,7 +303,6 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
         }
     }
 
-    /// Solinas reduction of per-lane 128-bit products `hi·2^64 + lo`.
     #[inline(always)]
     fn reduce128(lo: I::V64, hi: I::V64) -> I::V64 {
         let p = I::splat64(P);
@@ -364,9 +332,6 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
         }
     }
 
-    /// Two-fold sub-word reduction that retains the carry out of the first
-    /// `C * (product >> BITS)` fold. It also accepts sums of up to three
-    /// products when [`Self::EXT2_TWO_FUSION_SAFE`] holds.
     #[inline(always)]
     fn reduce128_sub_word_wide(lo: I::V64, hi: I::V64) -> I::V64 {
         let mask = I::splat64(Self::MASK);

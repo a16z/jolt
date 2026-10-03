@@ -16,9 +16,6 @@ declare_riscv_instr!(
 
 impl REMW {
     fn exec(&self, cpu: &mut Cpu, _: &mut <REMW as RISCVInstruction>::RAMAccess) {
-        // REMW and REMUW are RV64 instructions that provide the corresponding signed and unsigned
-        // remainder operations. Both REMW and REMUW always sign-extend the 32-bit result to 64 bits,
-        // including on a divide by zero.
         let dividend = cpu.x[self.operands.rs1 as usize] as i32;
         let divisor = cpu.x[self.operands.rs2 as usize] as i32;
         cpu.write_register(
@@ -36,7 +33,6 @@ impl REMW {
 
 impl RISCVTrace for REMW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // REMW operands
         let x = cpu.x[self.operands.rs1 as usize] as i32;
         let y = cpu.x[self.operands.rs2 as usize] as i32;
 

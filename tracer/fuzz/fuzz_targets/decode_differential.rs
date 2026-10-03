@@ -167,8 +167,6 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let word = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    // A fixed word-aligned address keeps PC-relative operands comparable
-    // without spending fuzzer entropy on the address.
     let address: u64 = 0x8000_0000;
 
     let program_result = decode_instruction(word, address, false, RV64IMAC_JOLT);

@@ -40,7 +40,6 @@ impl<const XLEN: usize> LookupTable for VirtualRev8WTable<XLEN> {
             )
         });
 
-        // SAFETY: `bytes` is an infinite iterator via `iter::from_fn` returning `Some`
         #[expect(clippy::unwrap_used)]
         let [a, b, c, d, e, f, g, h] = array::from_fn(|_| bytes.next().unwrap());
         [d, c, b, a, h, g, f, e]

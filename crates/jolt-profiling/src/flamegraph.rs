@@ -23,7 +23,6 @@ pub fn set_flamegraph_prefix(prefix: impl Into<String>) {
     let _ = FLAMEGRAPH_PREFIX.set(prefix.into());
 }
 
-/// The configured prefix, if the harness opted in.
 pub fn flamegraph_prefix() -> Option<&'static str> {
     FLAMEGRAPH_PREFIX.get().map(String::as_str)
 }
@@ -41,7 +40,6 @@ pub fn capture_heap_snapshot(label: &str, visit: impl FnOnce(&mut FlameGraphBuil
     write_flamegraph_folded(snapshot, format!("{prefix}{label}.folded"));
 }
 
-/// Logs the heap allocation size of an `Allocative`-instrumented value.
 pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {
     if tracing::enabled!(tracing::Level::DEBUG) {
         let memory_gib = allocative::size_of_unique_allocated_data(data) as f64 / BYTES_PER_GIB;

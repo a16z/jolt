@@ -1,20 +1,11 @@
 #![no_main]
 
-//! Boundary-biased canonical decoding: 32-byte encodings constructed around
-//! the BN254 modulus (`< r`, `= r`, `r + small`, `2^256 − 1`, raw) must
-//! decode to the `num-bigint` reference reduction and re-encode canonically.
-//!
-//! Complements `from_bytes`, which covers arbitrary-length inputs: random
-//! bytes essentially never land within `[r, 2·r)`, so the wraparound branch
-//! of the reduction needs deliberate biasing.
-
 use std::sync::OnceLock;
 
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigUint;
 
-/// BN254 scalar-field modulus `r`.
 fn modulus() -> &'static BigUint {
     static R: OnceLock<BigUint> = OnceLock::new();
     R.get_or_init(|| {
@@ -42,15 +33,10 @@ fuzz_target!(|data: &[u8]| {
     let raw: [u8; 32] = data[2..34].try_into().unwrap();
 
     let candidate: [u8; 32] = match class % 5 {
-        // Just below the modulus: r − 1 − (small delta); delta < 2^64 < r.
         0 => to_le_32(&(modulus() - 1u8 - BigUint::from(delta))),
-        // Exactly the modulus (must reduce to zero).
         1 => to_le_32(modulus()),
-        // Just above the modulus: the wraparound branch.
         2 => to_le_32(&(modulus() + BigUint::from(delta))),
-        // All-ones ceiling.
         3 => [0xFF; 32],
-        // Raw fuzzer bytes.
         _ => raw,
     };
 

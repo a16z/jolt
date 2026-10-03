@@ -1,12 +1,3 @@
-//! Convenience trait bounds for challenge-field arithmetic in prefix/suffix evaluation.
-//!
-//! During the sumcheck protocol, prefix MLEs are evaluated using challenge values
-//! drawn from the Fiat-Shamir transcript. These traits capture the arithmetic bounds
-//! needed for prefix/suffix MLE computation.
-//!
-//! Since challenges are now just field elements (`C = F`), these traits are trivially
-//! satisfied by any `F: JoltField`. They remain as named bounds for readability at use sites.
-
 use jolt_field::JoltField;
 use std::ops::{Add, Mul, Sub};
 
@@ -48,10 +39,6 @@ impl<F: JoltField, C> ChallengeOps<F> for C where
 {
 }
 
-/// A field element that accepts arithmetic with a challenge type `C`.
-///
-/// Enables expressions like `F::from_u64(n) * challenge` where the field element
-/// is on the left-hand side.
 pub trait FieldOps<C>:
     Add<C, Output = Self>
     + for<'a> Add<&'a C, Output = Self>

@@ -1,10 +1,6 @@
 use super::SparseDenseSuffix;
 use crate::lookup_bits::LookupBits;
 
-/// `pext(x, y)`: packs `x`'s bits at `y`'s set positions toward bit 0,
-/// preserving order (the window's top bit lands at `popcount(y) − 1`). This
-/// is the faithful form of the right-shift recurrence
-/// `entry = entry·(1+y_i) + x_i·y_i`, valid for any mask shape.
 #[inline]
 pub(crate) fn pext(x: u64, y: u64) -> u64 {
     if y == 0 {
@@ -13,11 +9,8 @@ pub(crate) fn pext(x: u64, y: u64) -> u64 {
     let tz = y.trailing_zeros();
     let normalized = y >> tz;
     if normalized & normalized.wrapping_add(1) == 0 {
-        // Contiguous mask (every mask the window-mask tables produce):
-        // extract is a shift plus truncate.
         return (x >> tz) & normalized;
     }
-    // General mask: gather one bit per set position, lowest first.
     let mut bits = y;
     let mut out = 0u64;
     let mut k = 0;

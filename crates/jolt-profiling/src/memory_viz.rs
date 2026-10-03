@@ -21,8 +21,6 @@ use crate::summary::{ProfileSummary, SummaryError, TraceAggregate};
 /// The page template; `__DATA_JSON__` is replaced by the run's payload.
 const TEMPLATE: &str = include_str!("memory_viz.html");
 
-/// Cap on inlined RSS samples — beyond this the series is stride-decimated
-/// (the envelope's shape survives; per-sample detail stays in the trace).
 const MAX_RSS_POINTS: usize = 1500;
 
 /// Derives `memory.html` next to the trace, mirroring
@@ -32,9 +30,6 @@ pub fn memory_viz_path(trace_path: &Path) -> PathBuf {
     trace_path.with_file_name("memory.html")
 }
 
-/// Renders and writes the page. Call with the flush-time aggregate of the
-/// same event stream the summary was built from — both renderings derive
-/// from one stream by construction.
 pub(crate) fn write_memory_viz(
     trace_path: &Path,
     summary: &ProfileSummary,
@@ -90,8 +85,6 @@ pub(crate) fn write_memory_viz(
         .collect();
 
     let payload = json!({
-        // Page title: the run directory's name ({timestamp}_{trace_name})
-        // identifies both the workload and the specific run.
         "trace_name": trace_path
             .parent()
             .and_then(Path::file_name)

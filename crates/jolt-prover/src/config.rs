@@ -16,23 +16,15 @@ use rayon::prelude::*;
 
 use crate::ProverError;
 
-/// The full instruction lookup key width: two `XLEN`-bit operands.
 const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
 #[cfg(feature = "parallel")]
 const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
 
-/// The minimum padded trace length — the compiled protocol's PCS floor
-/// (legacy's `PCS::MIN_PADDED_TRACE_LENGTH`). Dory needs `T >= K^(1/D)`
-/// (256); Akita's folded-only protocol cannot schedule the K=16
-/// `OneHotTrace` group below 16 variables, and column arity is
-/// `log_k_chunk + log_T`, so the packed pipeline pads every trace to at
-/// least 2^12 cycles.
 #[cfg(not(feature = "akita"))]
 const MIN_PADDED_TRACE_LENGTH: usize = 256;
 #[cfg(feature = "akita")]
 const MIN_PADDED_TRACE_LENGTH: usize = 1 << 12;
 
-/// The proof-shape configuration for one proving run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(non_snake_case)]
 pub struct ProverConfig {
@@ -79,7 +71,6 @@ impl ProverConfig {
         )
     }
 
-    /// Derives the proof shape from compact proof rows.
     #[tracing::instrument(
         skip_all,
         name = "ProverConfig::derive_compact",
@@ -197,8 +188,6 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     Some((address - lowest) / 8)
 }
 
-/// Read-write checking phase splits: cycle variables in phase 1, address
-/// variables in phase 2 (registers have a fixed 2^7 address space).
 #[expect(non_snake_case)]
 pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
     JoltReadWriteConfig {
@@ -209,9 +198,6 @@ pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWrite
     }
 }
 
-/// Akita uses 4-bit committed chunks at every trace length. Other PCS modes
-/// use 4-bit chunks below `log_T = 25` and 8-bit chunks above it. Virtual-RA
-/// chunks remain 16 bits below that threshold and 32 bits at or above it.
 #[expect(non_snake_case)]
 pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
@@ -227,18 +213,12 @@ pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     }
 }
 
-/// The committed one-hot chunk width [`one_hot_config`] selects for a
-/// `2^log_T`-cycle trace. The committed preprocessing digest and the Dory
-/// setup sizing read it from here so they keep describing the chunking the
-/// prover actually uses.
 #[cfg(not(feature = "akita"))]
 #[expect(non_snake_case)]
 pub(crate) fn committed_log_k_chunk(log_T: usize) -> u8 {
     one_hot_config(log_T).log_k_chunk
 }
 
-/// The committed-program precommitted candidates' variable counts, folded
-/// into the shared commitment grid alongside the advice candidates.
 #[derive(Clone, Copy, Debug)]
 pub struct CommittedProgramCandidates {
     pub bytecode_chunk_vars: usize,
@@ -259,7 +239,6 @@ impl CommittedProgramCandidates {
     }
 }
 
-/// A word-aligned advice buffer's balanced Dory matrix variable count.
 pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
     let words = (max_advice_size_bytes / 8) as usize;
     words.next_power_of_two().max(1).ilog2() as usize

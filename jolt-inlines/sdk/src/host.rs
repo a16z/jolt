@@ -45,7 +45,6 @@ pub fn nbiguint_to_limbs(n: &NBigUint) -> Vec<u64> {
     limbs
 }
 
-/// Type of multiplication-style modular operation (multiply, square, or divide).
 pub enum MulqType {
     Mul,
     Square,
@@ -245,14 +244,10 @@ impl InlineAdvice for GlvDecompositionAdvice {
 }
 
 pub trait InlineOp: Send + Sync {
-    /// Typed runtime advice values produced by this inline.
     type Advice: InlineAdvice;
 
-    /// RISC-V custom opcode used to identify this inline.
     const OPCODE: u32;
-    /// RISC-V funct3 selector used with `OPCODE`.
     const FUNCT3: u32;
-    /// RISC-V funct7 selector used with `OPCODE` and `FUNCT3`.
     const FUNCT7: u32;
     /// Human-readable registration name used in diagnostics and fixtures.
     const NAME: &'static str;
@@ -290,7 +285,6 @@ pub trait InlineOp: Send + Sync {
     }
 }
 
-/// Write the default inline trace for a single `InlineOp` to `file` with the given `mode`.
 pub fn store_trace<T: InlineOp>(file: &str, mode: AppendMode) -> Result<(), String> {
     let inline_info = InlineDescriptor::new(T::NAME.to_string(), T::OPCODE, T::FUNCT3, T::FUNCT7);
     let inputs = SequenceInputs::default();
@@ -421,31 +415,18 @@ impl InlineBuilderExt for InlineExpansionBuilder {
 /// All methods take raw virtual register IDs (`u8`) and emit instructions via
 /// `self.emit_r`.
 pub trait MulAccExt {
-    // (c2, c1) = lower(a * b) + c1; clobbers aux
     fn mac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // (c2, c1) = upper(a * b) + c1; clobbers aux
     fn mac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // (c2, c1) += lower(a * b); clobbers aux
     fn mac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // (c2, c1) += upper(a * b); clobbers aux
     fn mac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // if carry_exists: mac_low_w_carry, else: mac_low
     fn mac_low_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // if carry_exists: mac_high_w_carry, else: mac_high
     fn mac_high_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // (c2, c1) = 2*lower(a * b) + c1; clobbers aux
     fn m2ac_low(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // (c2, c1) = 2*upper(a * b) + c1; clobbers aux
     fn m2ac_high(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8);
-    // (c2, c1) += 2*lower(a * b); clobbers aux, aux2
     fn m2ac_low_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8);
-    // (c2, c1) += 2*upper(a * b); clobbers aux, aux2
     fn m2ac_high_w_carry(&mut self, c2: u8, c1: u8, a: u8, b: u8, aux: u8, aux2: u8);
-    // (c2, c1) = c1 + val; sets c2 = carry (no multiply, for p[0]=1 case)
     fn adc(&mut self, c2: u8, c1: u8, val: u8);
-    // (c2, c1) += val with existing carry; clobbers aux
     fn adc_w_carry(&mut self, c2: u8, c1: u8, val: u8, aux: u8);
-    // if carry_exists: adc_w_carry, else: adc
     fn add_conditional(&mut self, carry_exists: bool, c2: u8, c1: u8, val: u8, aux: u8);
 }
 
@@ -606,7 +587,6 @@ macro_rules! register_inlines {
     };
 }
 
-/// Helper macro to submit a single `InlineOp` to inventory.
 #[macro_export]
 macro_rules! __submit_inline_op {
     ($op:ty, $extension:expr) => {

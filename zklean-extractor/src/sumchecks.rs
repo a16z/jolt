@@ -19,8 +19,6 @@ use crate::{
     util::indent,
 };
 
-/// The per-cycle identities underlying the four relations exported to ZKLean.
-/// The runtime sumchecks fold this same metadata by their gamma challenges.
 fn extracted_claims() -> Vec<RelationClaims> {
     vec![
         RamReadWriteChecking::unbatched_relation(),

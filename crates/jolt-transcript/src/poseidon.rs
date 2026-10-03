@@ -259,9 +259,6 @@ mod tests {
         assert_eq!(x, y, "ratchet must be deterministic");
         assert_ne!(x, baseline, "ratchet must advance the state");
 
-        // A ratchet after a partial squeeze must not resume the pending
-        // block: the remaining 27 bytes of the pre-ratchet block would be
-        // `baseline[5..]`.
         let mut partial = PoseidonSponge::new();
         partial.absorb(b"m");
         let mut consumed = [0u8; 5];

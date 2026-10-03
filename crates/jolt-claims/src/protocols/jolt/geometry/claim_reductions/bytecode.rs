@@ -29,9 +29,6 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Number of staged `BytecodeValClaim(i)` claims batched into the reduction:
-/// the five base flag stages, plus (akita) the `OpFlags(Store)` stage the
-/// `IncVirtualization` phase consumes as its destination selector.
 #[cfg(not(feature = "akita"))]
 pub const NUM_BYTECODE_VAL_STAGES: usize = 5;
 #[cfg(feature = "akita")]
@@ -39,7 +36,6 @@ pub const NUM_BYTECODE_VAL_STAGES: usize = 6;
 
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
-/// Total number of lanes encoded by committed-bytecode rows.
 pub const fn total_lanes() -> usize {
     3 * REGISTER_COUNT
         + 2
@@ -49,7 +45,6 @@ pub const fn total_lanes() -> usize {
         + 1
 }
 
-/// Fixed lane capacity for committed bytecode rows.
 pub const COMMITTED_BYTECODE_LANE_CAPACITY: usize = total_lanes().next_power_of_two();
 
 pub const fn committed_lane_vars() -> usize {
@@ -67,14 +62,6 @@ pub const fn is_valid_committed_program_immediate(immediate: i128) -> bool {
     immediate.unsigned_abs() <= u64::MAX as u128
 }
 
-/// Committed bytecode chunking is valid when the chunk count is a nonzero
-/// power of two no larger than [`MAX_COMMITTED_BYTECODE_CHUNK_COUNT`] that
-/// divides the power-of-two bytecode length.
-///
-/// Deliberately stricter than core's same-named predicate: core leaves
-/// `bytecode_len` unchecked because preprocessing pads it to a power of two,
-/// while the chunk-size log derivations here rely on that invariant
-/// explicitly.
 #[inline(always)]
 pub fn is_valid_committed_bytecode_chunking_for_len(
     bytecode_len: usize,
@@ -85,8 +72,6 @@ pub fn is_valid_committed_bytecode_chunking_for_len(
         && bytecode_len.is_multiple_of(chunk_count)
 }
 
-/// Chunk-count half of the chunking rules, shared with the formula
-/// constructors that validate a chunk count without the bytecode length.
 const fn is_valid_chunk_count(chunk_count: usize) -> bool {
     chunk_count > 0
         && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
@@ -296,9 +281,6 @@ impl BytecodeClaimReductionLayout {
         self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
     }
 
-    /// Evaluate the gamma-weighted lane selector against the chunk opening
-    /// point: `(sum_lane lane_weights[lane] * eq(r_lane)[lane]) * eq(r_cycle,
-    /// r_bc)`, with the lane/cycle split determined by the trace layout.
     fn eq_combined<F: JoltField>(
         &self,
         inputs: &BytecodeOutputWeightInputs<'_, F>,
@@ -377,7 +359,6 @@ pub struct BytecodeAddressPoint<F> {
     pub r_bc: Vec<F>,
 }
 
-/// Stage-6b inputs to the final committed-bytecode output weights.
 pub struct BytecodeOutputWeightInputs<'a, F> {
     pub r_bc: &'a [F],
     pub chunk_rbc_weights: &'a [F],
@@ -488,11 +469,6 @@ pub fn lane_weights<F: JoltField>(
             weights[layout.lookup_start + i] += coeff * g[2 + i];
         }
     }
-    // The lattice store stage: one raw circuit-flag lane at η^5, no gamma fold
-    // (mirrors the read-raf sixth staged val, which consumes the
-    // `IncVirtualization` store selector claim directly). Anchored on the fixed
-    // base count so it lands at η^5 while `eta_powers` is sized by the active
-    // (cfg'd) `NUM_BYTECODE_VAL_STAGES` (= 6 here).
     #[cfg(feature = "akita")]
     {
         weights[layout.circuit_start + (CircuitFlags::Store as usize)] +=
@@ -549,9 +525,6 @@ pub fn final_bytecode_chunk_opening(chunk_idx: usize) -> JoltOpeningId {
     )
 }
 
-/// Backstop for the formula constructors that take a raw chunk count without
-/// the bytecode length needed for full chunking validation; layouts are the
-/// validated source of this value.
 pub(crate) fn assert_valid_chunk_count(chunk_count: usize) {
     assert!(
         is_valid_chunk_count(chunk_count),
@@ -598,8 +571,6 @@ mod tests {
         powers
     }
 
-    /// Sparse `(lane, value)` encoding of one committed bytecode row, mirroring
-    /// core's `for_each_active_lane_value`.
     fn lane_values(instruction: &JoltInstructionRow) -> Vec<(usize, Fr)> {
         let decoded = JoltInstruction::try_from(*instruction)
             .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
@@ -862,9 +833,6 @@ mod tests {
         assert_eq!(point.r_bc, r_bc_full);
     }
 
-    /// `eq_combined` must factorize the MLE of the coefficient grid
-    /// `lane_weights[lane] * eq(r_bc)[cycle]` laid out in the active trace
-    /// order, for any opening point of matching length.
     #[test]
     fn final_output_weights_match_naive_grid_evaluation() {
         for trace_order in [

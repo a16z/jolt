@@ -16,13 +16,9 @@ use crate::ProgramError;
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub struct Rv64ProgramImage {
-    /// Source instructions decoded from executable text sections.
     pub instructions: Vec<SourceInstruction>,
-    /// Initial byte values for memory-backed ELF sections.
     pub memory_init: Vec<(u64, u8)>,
-    /// End address of the loaded program image.
     pub program_end: u64,
-    /// ELF entry point.
     pub entry_address: u64,
 }
 
@@ -172,7 +168,6 @@ mod tests {
         flags: u64,
         address: u64,
         data: Vec<u8>,
-        /// Overrides sh_size, e.g. to point past the end of the file.
         size_override: Option<u64>,
     }
 
@@ -229,8 +224,6 @@ mod tests {
         push_u64(out, 0); // sh_entsize
     }
 
-    /// Hand-assembles a minimal ELF64 image: header, section header table
-    /// (null + user sections + .shstrtab), then section contents.
     fn build_elf64(sections: &[TestSection]) -> Vec<u8> {
         let section_count = sections.len() as u64 + 2;
         let shstrtab_offset = 64 + section_count * 64;
@@ -289,7 +282,6 @@ mod tests {
         out
     }
 
-    /// Minimal valid ELF32 header (class = ELFCLASS32, no sections).
     fn build_elf32() -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&[0x7f, b'E', b'L', b'F', 1, 1, 1, 0]);
@@ -325,14 +317,10 @@ mod tests {
 
     #[test]
     fn merge_ranges_coalesces_overlapping_adjacent_and_nested_ranges() {
-        // adjacent ranges must merge or text decoding would split an
-        // instruction stream at the seam
         assert_eq!(merge_ranges(vec![(0, 10), (10, 20)]), vec![(0, 20)]);
         assert_eq!(merge_ranges(vec![(0, 15), (10, 20)]), vec![(0, 20)]);
-        // a nested range must not extend the enclosing end
         assert_eq!(merge_ranges(vec![(0, 100), (10, 20)]), vec![(0, 100)]);
         assert_eq!(merge_ranges(vec![(5, 9), (5, 9)]), vec![(5, 9)]);
-        // out-of-order chain collapses into one range
         assert_eq!(
             merge_ranges(vec![(20, 30), (0, 10), (10, 20)]),
             vec![(0, 30)]

@@ -18,8 +18,6 @@ pub(in crate::expand) fn expand_scw(
     super::shared::expand_ram_region_assertion(&mut asm, reg(rs1(instruction)?), ram_start)?;
 
     let v_success = asm.allocate()?;
-    // v_success is Boolean advice supplied by the tracer's LR/SC reservation
-    // check: 1 means the SC succeeds, 0 means it fails.
     asm.emit_j(
         SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
         v_success.operand(),
@@ -59,8 +57,6 @@ pub(in crate::expand) fn expand_scw(
     );
     asm.release(v_addr_diff);
 
-    // Keep the success bit in the reservation register so it can gate the
-    // conditional memory value below.
     asm.emit_i(
         SourceInstructionKind::ADDI,
         reg(v_reservation),
@@ -78,8 +74,6 @@ pub(in crate::expand) fn expand_scw(
     );
 
     let v_diff = asm.allocate()?;
-    // v_diff = old_mem + success * (rs2 - old_mem), so failure stores the
-    // previous memory value and success stores rs2.
     asm.emit_r(
         SourceInstructionKind::SUB,
         v_diff.operand(),

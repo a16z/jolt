@@ -1,5 +1,3 @@
-//! Spartan product univariate-skip symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -100,10 +98,6 @@ mod tests {
     use crate::protocols::jolt::SpartanProductVirtualizationPublic;
     use jolt_field::{Fr, Ring};
 
-    /// The input claim is the Lagrange-reweighted sum of the three consumed
-    /// Spartan-outer openings: `w0*product + w1*should_branch + w2*should_jump`.
-    /// Distinct primes per source make any dropped, duplicated, or swapped term
-    /// change the total.
     #[test]
     fn input_expression_evaluates_like_lagrange_weighted_sum() {
         let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
@@ -136,9 +130,6 @@ mod tests {
         );
     }
 
-    /// The output claim is the single reduced uni-skip opening passed through
-    /// verbatim (coefficient one, no other sources), and the symbolically
-    /// derived produced-opening set contains exactly that id.
     #[test]
     fn output_expression_is_the_uniskip_opening_verbatim() {
         let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
@@ -160,8 +151,6 @@ mod tests {
         );
     }
 
-    /// Pins the uni-skip sumcheck spec: a single round over the centered-integer
-    /// domain, with the shared geometry constants for size and degree.
     #[test]
     fn sumcheck_spec_matches_uniskip_geometry_constants() {
         let relation = ProductUniskip::new(SpartanProductDimensions::new(7));
@@ -177,9 +166,6 @@ mod tests {
         );
     }
 
-    /// The derived `InputClaims` wiring: each consumed opening resolves under
-    /// its Spartan-outer id in field-declaration order, and an id from a
-    /// different relation resolves to `None`.
     #[test]
     fn input_claims_resolve_by_spartan_outer_ids_in_declaration_order() {
         let claims = ProductUniskipInputClaims {

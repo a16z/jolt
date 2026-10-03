@@ -40,8 +40,6 @@ where
         .try_instance_point(shift.rounds())
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let shift_opening_point = shift_point.iter().rev().copied().collect::<Vec<_>>();
-    // Stage 1's remainder cycle point (low half), read from the stage-2 carrier's
-    // `product_tau_low`.
     let product_tau_low = input.stage2.product_tau_low.clone();
     let eq_plus_one_outer =
         EqPlusOnePolynomial::new(product_tau_low.clone()).evaluate(&shift_opening_point);
@@ -90,12 +88,6 @@ where
             .map_err(|error| public_error(JoltRelationId::RegistersClaimReduction, error))?,
     )?;
 
-    // Single-sourced from the relations' declared alias pairs
-    // (`ConcreteSumcheck::aliased_output_openings`): the committed output rows
-    // absorb each member's canonical openings minus its aliased ids, and the
-    // `OpeningAlias` rows mirror the same `(aliased, source)` pairs — so
-    // BlindFold's row layout cannot drift from the clear path's generated absorb
-    // and `validate_aliases`.
     let alias_pairs: Vec<_> = <crate::stages::stage3::outputs::InstructionInput<PCS::Field> as
         crate::stages::relations::ConcreteSumcheck<PCS::Field>>::aliased_output_openings()
         .into_iter()

@@ -34,9 +34,6 @@ pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = JoltDenseBounded;
 pub(crate) type AkitaOneHotK16Config = JoltOneHotK16;
 pub(crate) type AkitaOneHotK256Config = JoltOneHotK256;
-/// Smallest A dimension accepted by the delegated adaptive policy. Source
-/// objects use this only for dimension-independent flat storage metadata;
-/// each generated schedule still selects its exact per-role dimensions.
 pub(crate) const AKITA_SOURCE_RING_DIMENSION: usize =
     akita_config::proof_optimized::fp128::Dense::A_RING_DIMENSIONS[0];
 const _: () = assert!(
@@ -46,10 +43,6 @@ const _: () = assert!(
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
 
-/// Runtime bytes for Jolt's four base schedule families.
-///
-/// These bytes are ordinary input data. They are intentionally neither
-/// generated Rust nor embedded with `include_bytes!`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaScheduleArtifacts {
@@ -76,7 +69,6 @@ impl AkitaScheduleArtifacts {
         }
     }
 
-    /// Load Jolt's checked-in artifacts from a normal filesystem directory.
     pub fn from_directory(directory: impl AsRef<Path>) -> Result<Self, OpeningsError> {
         let directory = directory.as_ref();
         let read = |family: &str| {
@@ -105,9 +97,6 @@ impl AkitaScheduleArtifacts {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules")
     }
 
-    /// Loads from `JOLT_AKITA_SCHEDULE_DIR`, or from the packaged `schedules/`
-    /// directory when the variable is unset. Protocol setup and verification
-    /// never consult the environment.
     fn from_default_directory() -> Result<Self, OpeningsError> {
         let directory = std::env::var_os(Self::DIRECTORY_ENV)
             .map_or_else(Self::packaged_directory, PathBuf::from);
@@ -189,8 +178,6 @@ pub(crate) type AkitaBackendHint = CommitmentHandle<AkitaField, AkitaBackendExtF
 pub(crate) type AkitaBackendVerifierSetup = BackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
-/// The owning CPU backend: prepared setup transforms plus every commitment
-/// handle's source. Handles only prove on the backend that committed them.
 pub(crate) type AkitaBackend = CpuBackend<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProverSetup = BackendProverSetup<AkitaField>;
 
@@ -269,7 +256,6 @@ fn with_profile_backend_pool<R>(selection: ProfileBackendPool, f: impl FnOnce() 
     f()
 }
 
-/// Runs verifier backend calls in `f` on an explicit host-sized pool.
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
 pub fn with_host_parallel_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
@@ -277,7 +263,6 @@ pub fn with_host_parallel_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
     with_profile_backend_pool(ProfileBackendPool::HostParallel, f)
 }
 
-/// Runs verifier backend calls in `f` on exactly one worker.
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
 pub fn with_single_threaded_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
@@ -317,21 +302,12 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
 pub struct AkitaSetupParams {
     pub(crate) max_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
-    /// Capacity of the complete ordered group batch. This is passed to
-    /// Akita's setup constructor; commitment entry points still enforce the
-    /// separate group-local limit above.
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
     pub(crate) flavor: AkitaSetupFlavor,
-    /// Recipe for the dynamic grouped rows accepted by this setup.
-    ///
-    /// Replaying serialized setup parameters intentionally reruns schedule
-    /// planning. Verifier transport serializes [`AkitaVerifierSetup`]
-    /// instead, which contains the finalized catalog and never replans.
     #[serde(default, rename = "advice_schedule")]
     pub(crate) grouped_schedule: Option<GroupedScheduleParams>,
-    /// Immutable base catalogs loaded once by application preprocessing.
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
 }
 
@@ -406,8 +382,6 @@ impl AkitaSetupParams {
         }
     }
 
-    /// Setup parameters for objects that use only the dense flavor, omitting
-    /// the one-hot backend setup.
     pub fn dense_only(
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
@@ -529,7 +503,6 @@ pub struct AkitaVerifierSetup {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    /// Exact setup-owned catalogs, including any program-specific grouped rows.
     pub(crate) schedule_artifacts: AkitaVerifierScheduleArtifacts,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
@@ -580,8 +553,6 @@ impl AkitaVerifierSetup {
         self.one_hot_k
     }
 
-    /// Primes the lazy verifier cache from freshly built backend keys, so
-    /// in-process setups never pay the shape→key re-derivation.
     pub(crate) fn prime_backend_cache(
         &self,
         dense: Option<AkitaBackendVerifierSetup>,
@@ -667,12 +638,6 @@ impl AkitaVerifierSetup {
             .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
     }
 
-    /// Variables the one-hot backend setup covers: the exact final arity, or
-    /// the largest precommitted group of this setup's grouped rows when that
-    /// is larger. Akita sizes a setup only from the catalog rows whose every
-    /// group fits its capacity (`SetupRequirements::from_catalog`), and an
-    /// advice or committed-program object may exceed the trace group it is
-    /// opened with.
     pub(crate) fn one_hot_backend_num_vars(&self) -> Result<usize, OpeningsError> {
         let largest_precommitted = match self.one_hot_k {
             AKITA_ONE_HOT_K16 => {
@@ -690,10 +655,6 @@ impl AkitaVerifierSetup {
         Ok(self.max_num_vars.max(largest_precommitted))
     }
 
-    /// Dense backend verifier, cached after the first use.
-    /// [`AkitaScheme::setup`](crate::AkitaScheme) primes the cache with the
-    /// freshly built key; a serde-transported setup re-derives it from the
-    /// shape on first use (one-time, setup-class cost).
     pub(crate) fn dense_verifier(&self) -> Result<&AkitaVerifier<AkitaConfig>, OpeningsError> {
         if let Some(verifier) = self.backend_cache.dense.get() {
             return Ok(verifier);
@@ -708,7 +669,6 @@ impl AkitaVerifierSetup {
         Ok(self.backend_cache.dense.get_or_init(|| verifier))
     }
 
-    /// K=16 one-hot backend verifier; see [`Self::dense_verifier`] for caching.
     pub(crate) fn one_hot_k16_verifier(
         &self,
     ) -> Result<&AkitaVerifier<AkitaOneHotK16Config>, OpeningsError> {
@@ -724,7 +684,6 @@ impl AkitaVerifierSetup {
         Ok(self.backend_cache.one_hot_k16.get_or_init(|| verifier))
     }
 
-    /// K=256 one-hot backend verifier; see [`Self::dense_verifier`] for caching.
     pub(crate) fn one_hot_k256_verifier(
         &self,
     ) -> Result<&AkitaVerifier<AkitaOneHotK256Config>, OpeningsError> {
@@ -750,9 +709,6 @@ impl AkitaVerifierSetup {
     }
 }
 
-/// Lazily built backend verifiers (admitted rows plus their prepared
-/// terminal matrices). Derived state: ignored by equality and skipped by
-/// serde; clones share the cache.
 #[derive(Clone, Default)]
 pub(crate) struct BackendVerifierCache {
     dense: Arc<OnceLock<AkitaVerifier<AkitaConfig>>>,
@@ -810,8 +766,6 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     Ok(())
 }
 
-/// Binds the batch statement (commitment group, point, per-claim data) into
-/// the transcript.
 pub(crate) fn append_batch_statement<T: Transcript>(
     transcript: &mut T,
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
@@ -967,9 +921,6 @@ impl AppendToTranscript for AkitaCommitment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
-    /// Fixed-width public identity of the exact generated row selected by the
-    /// prover. The verifier resolves this digest under its configured catalog;
-    /// the backend proof body does not encode the selection itself.
     pub(crate) schedule_selection: [u8; SCHEDULE_SELECTION_BYTES],
     pub(crate) backend_proof: Vec<u8>,
 }
@@ -988,7 +939,6 @@ impl AkitaBatchProof {
         }
     }
 
-    /// Headerless backend proof body: Akita's Spongefish argument bytes.
     pub fn backend_proof_body_size(&self) -> usize {
         self.backend_proof.len()
     }
@@ -1026,15 +976,10 @@ impl AppendToTranscript for AkitaHidingCommitment {
 #[derive(Clone, Debug, Default)]
 pub struct AkitaProverHint {
     pub(crate) commitment: AkitaCommitment,
-    /// The public committed group and the backend handle retaining its exact
-    /// source, produced at commit time and consumed when opening.
     pub(crate) backend: Option<(AkitaBackendCommitment, AkitaBackendHint)>,
     pub(crate) source: AkitaHintSource,
 }
 
-/// Shape of the source the backend handle retains. The variant doubles as the
-/// source-kind discriminator, so a hint can never pair one kind's metadata
-/// with another kind's commitment.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AkitaHintSource {
     Dense { poly_count: usize },
@@ -1072,7 +1017,6 @@ impl AkitaHintSource {
     }
 }
 
-/// `2^num_vars`, or `None` when it does not fit in `usize`.
 pub(crate) fn domain_size(num_vars: usize) -> Option<usize> {
     u32::try_from(num_vars)
         .ok()
@@ -1130,8 +1074,6 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
     }
 }
 
-/// The one-hot backend prover setup `setup` describes, sized by
-/// [`AkitaVerifierSetup::one_hot_backend_num_vars`].
 pub(crate) fn one_hot_setup_prover(
     setup: &AkitaVerifierSetup,
 ) -> Result<AkitaBackendProverSetup, OpeningsError> {
@@ -1237,8 +1179,6 @@ pub fn jolt_to_akita_evals(
     Ok(akita_evals)
 }
 
-/// Materializes a polynomial's evaluations directly in Akita's (bit-reversed)
-/// index order, avoiding a second full-size buffer for the reorder pass.
 #[expect(
     clippy::indexing_slicing,
     reason = "jolt_to_akita_index keeps num_vars bits of the reversal, so the index is < 2^num_vars = evals.len(); for num_vars = 0 the single index for_each_row yields is 0"
@@ -1352,12 +1292,6 @@ mod tests {
         AkitaField::from_u64(value)
     }
 
-    /// Jolt indexes MLE evaluations big-endian (variable `j` carries index
-    /// weight `2^(n-1-j)`, see the `eq_table` convention in `scheme.rs`);
-    /// Akita indexes them little-endian (variable `j` carries weight `2^j`).
-    /// The tables below are derived by hand from those weight conventions —
-    /// e.g. for n = 3, jolt index 1 is the assignment (0, 0, 1), whose Akita
-    /// index is 1 * 2^2 = 4 — not by re-running any bit arithmetic.
     #[test]
     fn jolt_to_akita_index_matches_hand_derived_tables() {
         let three_vars = [0, 4, 2, 6, 1, 5, 3, 7];
@@ -1383,8 +1317,6 @@ mod tests {
         assert_eq!(jolt_to_akita_index(0, 0), 0);
     }
 
-    /// Reversing a reversal is the identity, and the map permutes the whole
-    /// domain (every Akita index is hit exactly once).
     #[test]
     fn jolt_to_akita_index_is_a_self_inverse_permutation() {
         let num_vars = 4;
@@ -1402,8 +1334,6 @@ mod tests {
     fn jolt_to_akita_evals_permutes_an_explicit_two_var_vector() {
         let jolt = [af(10), af(20), af(30), af(40)];
         let akita = jolt_to_akita_evals(2, &jolt).expect("well-formed evaluations convert");
-        // Jolt index 1 = assignment (0, 1) = Akita index 2, and vice versa;
-        // the all-zero and all-one corners are fixed points.
         assert_eq!(akita, vec![af(10), af(30), af(20), af(40)]);
     }
 
@@ -1447,11 +1377,6 @@ mod tests {
         assert!(reverse_point(&[]).is_empty());
     }
 
-    /// The identity the backend hand-off relies on: transforming the
-    /// evaluations with `jolt_to_akita_evals` AND the opening point with
-    /// `reverse_point` leaves the multilinear evaluation unchanged. Checked
-    /// against a hand-rolled big-endian MLE evaluator, so a bug in either
-    /// transform (or applying only one of them) fails this test.
     #[test]
     fn eval_and_point_transforms_together_preserve_mle_evaluation() {
         fn mle_big_endian(evals: &[AkitaField], point: &[AkitaField]) -> AkitaField {
@@ -1480,8 +1405,6 @@ mod tests {
             mle_big_endian(&transformed, &reverse_point(&point)),
             mle_big_endian(&evals, &point),
         );
-        // Applying only the evaluation transform must NOT preserve the value
-        // at this off-hypercube point — otherwise the check above is vacuous.
         assert_ne!(
             mle_big_endian(&transformed, &point),
             mle_big_endian(&evals, &point),
@@ -1516,7 +1439,6 @@ mod tests {
 
     #[test]
     fn deserialize_akita_rejects_trailing_bytes() {
-        // The wire form carries coefficients only, so the fixture stays D-free.
         let payload = AkitaBackendCommitmentPayload::new(RingVec::from_coeffs(
             (1..=64).map(AkitaField::from_u64).collect(),
         ));

@@ -1,21 +1,3 @@
-//! Sparse `(K × T)` read-write matrix for the RAM read-write-checking
-//! kernel. RAM entries have no one-hot coefficient lookup tables.
-//!
-//! `ra(k, j)` and `val(k, j)` are conceptually `K × T` matrices, far too
-//! large to materialize. One entry exists per RAM access; everything else is
-//! implicit: `ra` is 0 off-entry, and `val` is the step function carried
-//! between entries — `prev_val`/`next_val` checkpoints (raw `u64`s while
-//! binding cycle variables, field elements once address binding starts)
-//! recover any implicit coefficient from a neighbor.
-//!
-//! Cycle-major entries are sorted `(row, col)` and bind cycle variables
-//! low-to-high by merging adjacent row pairs; address-major entries are
-//! sorted `(col, row)` and bind address variables low-to-high by merging
-//! adjacent column pairs against `val_init` checkpoints. Round messages come
-//! out as the quadratic factor's evaluations, exactly like the legacy
-//! prover; summation order differs from legacy where convenient (field
-//! addition is exact, so the values are identical).
-
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
@@ -30,21 +12,14 @@ use super::ram_trace::{RamAccessColumns, NO_ACCESS};
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct CycleMajorEntry<F> {
-    /// Cycle index; in `[0, T)` before binding.
     pub row: u32,
-    /// Address index; in `[0, K)` (columns never bind in this phase).
     pub col: u32,
-    /// The unbound memory value right before this entry's row range.
     pub prev_val: u64,
-    /// The unbound memory value right after this entry's row start.
     pub next_val: u64,
     pub val: F,
     pub ra: F,
 }
 
-/// One explicit matrix entry while address variables bind (column-major
-/// order). Checkpoints are field elements: address binding interpolates
-/// them across column pairs.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct AddressMajorEntry<F> {
@@ -68,9 +43,6 @@ impl<F: JoltField> CycleMajorEntry<F> {
         }
     }
 
-    /// Bind a `(row 2j, row 2j+1)` pair of same-column entries; a `None`
-    /// side is implicit (`ra = 0`, `val` recovered from the present side's
-    /// checkpoint).
     fn bind(even: Option<&Self>, odd: Option<&Self>, r: F) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {
@@ -110,10 +82,6 @@ impl<F: JoltField> CycleMajorEntry<F> {
         }
     }
 
-    /// The pair's contribution to the phase-1 quadratic factor:
-    /// `[q(0), q_∞]` (evaluation at 0 and the quadratic coefficient) of
-    /// `ra(t) · (val(t) + γ·(inc(t) + val(t)))` over the pair's row
-    /// variable, `inc_evals = [inc(0), inc_slope]`.
     fn quadratic_evals(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -145,14 +113,11 @@ impl<F: JoltField> CycleMajorEntry<F> {
     }
 }
 
-/// `val + γ·(inc + val)` — the shared value factor of the summand.
 #[inline]
 pub(super) fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
     val + gamma * (inc + val)
 }
 
-/// Merge two sorted-by-column adjacent rows into `out`, binding entries
-/// pairwise (the legacy `seq_bind_rows`).
 fn merge_bind_rows<F: JoltField>(
     even: &[CycleMajorEntry<F>],
     odd: &[CycleMajorEntry<F>],
@@ -186,8 +151,6 @@ fn merge_bind_rows<F: JoltField>(
     }
 }
 
-/// The pair contribution of two sorted-by-column adjacent rows (the legacy
-/// `seq_prover_message_contribution`).
 fn merge_quadratic_evals<F: JoltField>(
     even: &[CycleMajorEntry<F>],
     odd: &[CycleMajorEntry<F>],
@@ -252,8 +215,6 @@ fn merge_quadratic_evals<F: JoltField>(
     acc
 }
 
-/// Split a row-pair group (entries sharing `row / 2`) into its even and odd
-/// row slices.
 fn split_row_pair<F>(
     group: &[CycleMajorEntry<F>],
 ) -> (&[CycleMajorEntry<F>], &[CycleMajorEntry<F>]) {
@@ -261,14 +222,12 @@ fn split_row_pair<F>(
     group.split_at(odd_start)
 }
 
-/// The cycle-major sparse matrix: entries sorted by `(row, col)`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct CycleMajorMatrix<F> {
     pub entries: Vec<CycleMajorEntry<F>>,
 }
 
 impl<F: JoltField> CycleMajorMatrix<F> {
-    /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
         #[cfg(feature = "parallel")]
         let bound: Vec<CycleMajorEntry<F>> = self
@@ -293,10 +252,6 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         self.entries = bound;
     }
 
-    /// The quadratic factor `[q(0), q_∞]` of the phase-1 round message:
-    /// `q(t) = Σ_pairs eq_head(pair) · Σ_cols ra(t)·(val(t) + γ(inc(t)+val(t)))`,
-    /// with `eq_head` supplied per pair index (the Gruen head weight) and
-    /// `inc` the bound committed increment column.
     pub fn quadratic_coefficients(
         &self,
         eq_head: impl Fn(usize) -> F + Sync,
@@ -345,9 +300,6 @@ impl<F: JoltField> CycleMajorMatrix<F> {
             })
     }
 
-    /// Reinterpret as address-major once every cycle variable is bound: all
-    /// rows are 0, so `(row, col)` order IS `(col, row)` order and only the
-    /// checkpoint representation changes.
     pub fn into_address_major(self) -> AddressMajorMatrix<F> {
         debug_assert!(self.entries.iter().all(|entry| entry.row == 0));
         #[cfg(feature = "parallel")]
@@ -366,7 +318,6 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     }
 }
 
-/// Reconstructs a round-0 entry from the access columns.
 #[inline]
 fn round0_entry<F: JoltField>(
     columns: &RamAccessColumns,
@@ -408,7 +359,6 @@ pub(crate) fn round0_q_at_one<F: JoltField>(
         })
 }
 
-/// Round-0 quadratic coefficients read directly from access columns.
 pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F + Sync,
@@ -452,8 +402,6 @@ pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     }
 }
 
-/// First bind, producing the first entry vector at half size.
-/// Entries remain ordered by cycle, then column.
 pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> CycleMajorMatrix<F> {
     let pairs = columns.addresses.len() / 2;
     let per_pair = |pair: usize| -> [Option<CycleMajorEntry<F>>; 2] {
@@ -490,8 +438,6 @@ pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> Cyc
 }
 
 impl<F: JoltField> AddressMajorEntry<F> {
-    /// Bind a `(col 2k, col 2k+1)` pair of same-row entries; a `None` side
-    /// is implicit (`ra = 0`, `val` recovered from its column checkpoint).
     fn bind(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -531,9 +477,6 @@ impl<F: JoltField> AddressMajorEntry<F> {
         }
     }
 
-    /// The pair's contribution `[s(0), s(2)]` to the phase-2 (address)
-    /// round message `eq · ra(t) · (val(t) + γ·(inc + val(t)))`, where the
-    /// cycle-bound `eq` and `inc` are scalars per row.
     fn address_round_evals(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -572,8 +515,6 @@ impl<F: JoltField> AddressMajorEntry<F> {
     }
 }
 
-/// Split a column-pair group (entries sharing `col / 2`) into its even and
-/// odd column slices.
 fn split_col_pair<F>(
     group: &[AddressMajorEntry<F>],
 ) -> (&[AddressMajorEntry<F>], &[AddressMajorEntry<F>]) {
@@ -581,8 +522,6 @@ fn split_col_pair<F>(
     group.split_at(odd_start)
 }
 
-/// Merge two sorted-by-row adjacent columns, binding entries pairwise and
-/// walking the value checkpoints forward (the legacy `seq_bind_cols`).
 fn merge_bind_cols<F: JoltField>(
     even: &[AddressMajorEntry<F>],
     odd: &[AddressMajorEntry<F>],
@@ -654,8 +593,6 @@ fn merge_bind_cols<F: JoltField>(
     }
 }
 
-/// The column pair's round contribution `[s(0), s(2)]` (the legacy
-/// `seq_prover_message_contribution`), checkpoints walked forward per row.
 fn merge_address_round_evals<F: JoltField>(
     even: &[AddressMajorEntry<F>],
     odd: &[AddressMajorEntry<F>],
@@ -744,7 +681,6 @@ fn merge_address_round_evals<F: JoltField>(
     acc
 }
 
-/// The address-major sparse matrix: entries sorted by `(col, row)`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct AddressMajorMatrix<F> {
     pub entries: Vec<AddressMajorEntry<F>>,
@@ -764,8 +700,6 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         Self { entries }
     }
 
-    /// After binding every address, fill the remaining cycle tables using
-    /// checkpoints for untouched cycles. This allocates O(T), never O(K*T).
     pub fn into_cycle_tables(self, cycles: usize, initial: F) -> (Polynomial<F>, Polynomial<F>) {
         let mut ra = vec![F::zero(); cycles];
         let mut val = Vec::with_capacity(cycles);
@@ -782,8 +716,6 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         (Polynomial::new(ra), Polynomial::new(val))
     }
 
-    /// Bind one address variable low-to-high: merge every adjacent column
-    /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {
         #[cfg(feature = "parallel")]
         let bound: Vec<AddressMajorEntry<F>> = self
@@ -825,8 +757,6 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         val_init.bind_with_order(r, BindingOrder::LowToHigh);
     }
 
-    /// The `[s(0), s(2)]` evaluations of the phase-2 round message over all
-    /// column pairs.
     pub fn address_round_evals(
         &self,
         val_init: &Polynomial<F>,
@@ -864,8 +794,6 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         }
     }
 
-    /// The fully bound `(ra, val)` pair once every variable is bound: at
-    /// most one entry remains (none when the trace makes no RAM access).
     pub fn final_values(&self, val_init: &Polynomial<F>) -> (F, F) {
         debug_assert!(self.entries.len() <= 1);
         debug_assert_eq!(val_init.len(), 1);

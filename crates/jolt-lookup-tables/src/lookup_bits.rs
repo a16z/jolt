@@ -67,19 +67,16 @@ impl LookupBits {
         msb as u8
     }
 
-    /// Number of bits in this bitvector.
     #[inline]
     pub fn len(&self) -> usize {
         self.len as usize
     }
 
-    /// Returns `true` if this bitvector is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Number of trailing zero bits.
     pub fn trailing_zeros(&self) -> u32 {
         std::cmp::min(
             u128::from_le_bytes(self.bytes).trailing_zeros(),
@@ -87,14 +84,12 @@ impl LookupBits {
         )
     }
 
-    /// Number of leading one bits.
     pub fn leading_ones(&self) -> u32 {
         u128::from_le_bytes(self.bytes)
             .wrapping_shl(128 - self.len as u32)
             .leading_ones()
     }
 
-    /// Returns the raw bits as `u128`.
     #[inline]
     fn as_u128(&self) -> u128 {
         u128::from_le_bytes(self.bytes)

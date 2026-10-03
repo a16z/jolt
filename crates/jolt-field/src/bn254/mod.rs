@@ -1,11 +1,3 @@
-//! BN254 backend: `#[repr(transparent)]` newtypes over arkworks decoupling
-//! the public API from the arkworks types.
-//!
-//! Byte formats are frozen: serde and transcript encodings are the 32-byte
-//! little-endian canonical form (identical to jolt-field), and challenge
-//! derivation reproduces the legacy 125-bit shifted / big-endian-scalar
-//! conventions exactly.
-
 mod mont;
 
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
@@ -25,8 +17,6 @@ macro_rules! from_primitives {
     };
 }
 
-/// Stamps a BN254 field wrapper: operators, conversions, serde (canonical
-/// 32-byte LE), ark-serialize interop, and the canonical-encoding surface.
 macro_rules! wrap_bn254 {
     ($(#[$doc:meta])* $ty:ident, $inner:ty, accumulators($accum:ty, $small_accum:ty, $signed_accum:ty), challenge($low:ident, $high:ident): $challenge:expr) => {
         $(#[$doc])*
@@ -56,8 +46,6 @@ macro_rules! wrap_bn254 {
             }
         }
 
-        // Primitive-integer From conversions (reducing), matching the surface
-        // the plain arkworks types exposed to consumers.
         from_primitives!($ty: from_u128[bool, u8, u16, u32, u64, u128]);
         from_primitives!($ty: from_i128[i8, i16, i32, i64, i128]);
 
@@ -247,7 +235,6 @@ macro_rules! wrap_bn254 {
 }
 
 wrap_bn254!(
-    /// BN254 scalar field element (`#[repr(transparent)]` over `ark_bn254::Fr`).
     Fr,
     ark_bn254::Fr,
     accumulators(WideAccumulator, FrSmallScalarAccumulator, FrSignedProductAccumulator),
@@ -255,7 +242,6 @@ wrap_bn254!(
 );
 
 wrap_bn254!(
-    /// BN254 base field element (`#[repr(transparent)]` over `ark_bn254::Fq`).
     Fq,
     ark_bn254::Fq,
     accumulators(NaiveAccumulator<Fq>, NaiveAccumulator<Fq>, NaiveAccumulator<Fq>),

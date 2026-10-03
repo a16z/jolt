@@ -1,7 +1,3 @@
-//! A grouped opening whose precommitted object is larger than the final trace
-//! group, as when a program's advice capacity exceeds its trace: the setup
-//! must cover the larger group, in process and after verifier transport.
-
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 #[expect(
@@ -25,8 +21,6 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial};
 
 const FINAL_NUM_VARS: usize = 16;
-/// Six variables above this one-column trace group. The canonical Jolt trace
-/// adds selector variables; this smaller adapter fixture isolates capacity.
 const ADVICE_NUM_VARS: usize = 22;
 const TRUSTED_ADVICE: CommitmentGroupRole =
     CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice");

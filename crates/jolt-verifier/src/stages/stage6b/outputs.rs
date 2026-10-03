@@ -1,6 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 6b (cycle-phase)
-//! verification.
-
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -8,9 +5,6 @@ use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-// The per-relation produced-claim structs live in their relation modules
-// (cell-generic, `#[derive(OutputClaims)]`); re-export them so consumers and the
-// generated stage-6b aggregates keep resolving them through `stage6b::outputs`.
 pub use super::booleanity::BooleanityOutputClaims;
 pub use super::bytecode_read_raf::BytecodeReadRafOutputClaims;
 pub use super::committed_reduction_cycle_phase::{
@@ -46,36 +40,6 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims;
 
-/// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
-/// Fiat-Shamir batch order. `#[derive(SumcheckBatch)]` generates the
-/// `Stage6b{Input,Output}{Claims,Points}<F>` and `Stage6bChallenges<F>`
-/// aggregates — one field per instance, in this declaration order — plus the
-/// batched-verify drivers. The four `Option` members are present exactly when
-/// their precommitted layout is committed, in BOTH proving modes, so the
-/// coefficient count matches the prover's instance count.
-///
-/// `bytecode_read_raf` is the runtime dispatch [`BytecodeReadRafCycle`], whose
-/// `ConcreteSumcheck` impl is anchored on the committed cycle symbolic (see the
-/// invariant on that impl); the aggregates project through the anchor, which both
-/// variants share cell-for-cell.
-///
-/// The generated `draw_challenges` is suppressed (`no_draw_challenges` — this
-/// batch is its only production user): the members' challenges have
-/// stage-level provenance (the bytecode gamma shares stage 6a's squeeze and
-/// the booleanity gamma is drawn by stage 6a's aggregate, via its booleanity
-/// member's `draw_challenges` override), so `verify` hand-assembles
-/// `Stage6bChallenges` from the stage-6a carried draws — a generated
-/// per-member draw would squeeze at the wrong transcript position if it
-/// existed to be called.
-///
-/// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
-/// absorb methods: booleanity's `bytecode_ra` openings
-/// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
-/// order is curated by [`stage6b_opening_values`](super::verify::stage6b_opening_values)
-/// which threads the dedup points (the verifier absorbs its output; the
-/// prover's recorder absorbs the same sequence). `no_output_shape`: shape methods are inapplicable — the committed
-/// bytecode output `Expr` consumes the 6a-produced `BytecodeValClaim` openings
-/// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(
     no_opening_values,
@@ -89,19 +53,10 @@ pub struct Stage6bSumchecks<F: JoltField> {
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
-    /// Absent on the packed path: the inc claims are discharged inside the
-    /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
-    /// The field-register increment reduction. Declaration position (after the ordinary
-    /// increment reduction, before the optional advice cycle-phase members) is the spec's
-    /// stage-6 batch order and gamma draw order (`specs/field-inline-protocol.md`, "Stage 6
-    /// Composition").
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReduction<F>,
-    /// On the prove side the precommitted reduction kernels span the 6b→7 batch
-    /// boundary as `ProofSession` carries: each cycle kernel parks the shared
-    /// two-phase state at prepare, and stage 7's address-phase members reclaim it.
     #[cfg(not(feature = "akita"))]
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
     #[cfg(not(feature = "akita"))]
@@ -110,11 +65,6 @@ pub struct Stage6bSumchecks<F: JoltField> {
     pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
 }
 
-/// Opening-point accessors over the point-only form of the stage-6b produced
-/// claims. Stages 7 and 8 read each relation's produced opening point off these
-/// cells. The per-reduction `cycle_phase_variables` are recovered as
-/// `reverse(opening_point)` (see `cycle_phase_opening_point` in `jolt-claims`
-/// `claim_reductions::precommitted`).
 impl<F: JoltField> Stage6bOutputPoints<F> {
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
@@ -234,7 +184,6 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
                 .committed_instruction_ra
                 .len()
             + 2
-            // The field-register increment reduction's single reduced `FieldRdInc` cell.
             + usize::from(cfg!(feature = "field-inline"))
             + usize::from(self.trusted_advice.is_some())
             + usize::from(self.untrusted_advice.is_some())
@@ -333,37 +282,21 @@ fn reversed<F: JoltField>(point: &[F]) -> Vec<F> {
     point.iter().rev().copied().collect()
 }
 
-/// The stage-6b Fiat-Shamir challenges drawn after the stage-6a batch: the
-/// instruction-RA and increment gammas, and (committed-program only) the bytecode
-/// claim-reduction `eta`. Kept as field names greppable from BlindFold.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6bCarriedChallenges<F: JoltField> {
     pub instruction_ra_gamma: F,
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
-    /// The field-register increment-reduction batching challenge (the spec's `eta`),
-    /// member-drawn after `inc_gamma`.
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_gamma: F,
-    /// Committed program mode only: bytecode claim-reduction batching
-    /// challenge (the prover's `eta`).
     pub bytecode_reduction_eta: Option<F>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage6bClearOutput<F: JoltField> {
-    /// The produced opening *values* (wire form); read by later stages and the
-    /// Fiat-Shamir opening-claim encoder.
     pub output_values: Stage6bOutputClaims<F>,
-    /// The produced opening *points*, paired field-for-field with `output_values`.
-    /// Stages 7 and 8 read each relation's opening point off these cells (via the
-    /// `Stage6bOutputPoints<F>` accessors).
     pub output_points: Stage6bOutputPoints<F>,
-    /// Committed-program mode only: the bytecode claim-reduction's per-chunk
-    /// weights (`r_bc`, chunk weights, gamma-folded lane weights). These are
-    /// public derived data (not openings), so stage 7's bytecode address phase
-    /// reads them here rather than recomputing them.
     pub bytecode_reduction_weights: Option<BytecodeReductionWeights<F>>,
 }
 
@@ -372,16 +305,9 @@ pub struct Stage6bZkOutput<F: JoltField, C> {
     pub challenges: Stage6bCarriedChallenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    /// The produced opening *points*, the ZK counterpart of the clear path's
-    /// `Stage6bClearOutput::output_points`. Stages 7/8 and BlindFold read each
-    /// relation's opening point off these cells through the same
-    /// `Stage6bOutputPoints<F>` accessors. (BlindFold recomputes the bytecode
-    /// reduction weights locally, so the ZK output carries no weights aux.)
     pub output_points: Stage6bOutputPoints<F>,
 }
 
-// The clear variant carries the located opening claims read on the hot path; the
-// ZK variant carries committed consistency plus the point-only `output_points`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage6bOutput<F: JoltField, C> {
     Clear(Stage6bClearOutput<F>),
@@ -389,7 +315,6 @@ pub enum Stage6bOutput<F: JoltField, C> {
 }
 
 impl<F: JoltField, C> Stage6bOutput<F, C> {
-    /// The produced opening *points*, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage6bOutputPoints<F> {
         match self {
             Self::Clear(output) => &output.output_points,
@@ -426,8 +351,6 @@ pub struct BytecodeReductionWeights<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReductionWeights<F> {
-    /// Borrow the weights as the jolt-claims `BytecodeOutputWeightInputs` the
-    /// bytecode reduction's output-weight publics resolve against.
     pub(crate) fn as_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
         BytecodeOutputWeightInputs {
             r_bc: &self.r_bc,

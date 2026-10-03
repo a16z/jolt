@@ -1,11 +1,3 @@
-//! The per-stage [`StageProver`](crate::driver::StageProver) /
-//! [`KernelSource`](crate::driver::KernelSource) impl expansions: one
-//! member-list callback invocation per stage batch, each in a module that
-//! imports the batch's relation and aggregate names so the derive-emitted
-//! tokens resolve. This file is the prove side's complete stage-driver
-//! surface — no stage's member list, order, or presence appears anywhere
-//! else in this crate.
-
 mod stage1 {
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage1::outputs::{
@@ -60,10 +52,6 @@ mod stage4 {
 
     use crate::driver::impl_stage_prover;
 
-    // Stage 4's `no_opening_values` replacement keeps the generated
-    // signature (the claims aggregate's hand-ordered `opening_values`, which
-    // splices the field-inline openings under `field-inline`), so the driver's default
-    // curation serves both feature arms unchanged.
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }
 
@@ -109,8 +97,6 @@ mod stage6b {
     };
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
-    // The packed batch has no inc member — the fused-inc read-raf stages
-    // discharge the reduced inc claims instead.
     #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -125,9 +111,6 @@ mod stage6b {
 
     use crate::driver::impl_stage_prover;
 
-    // The stage's `no_opening_values` curation: the promoted verifier
-    // helper's canonical order, including the runtime dedup of booleanity's
-    // `BytecodeRa` claims against the bytecode read-RAF points.
     jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover
         curate = |_batch, claims, points| {
             let booleanity_opening_point =
@@ -165,18 +148,6 @@ mod stage7 {
     jolt_verifier::stage7_sumchecks_members!(impl_stage_prover);
 }
 
-/// Twin locks for the macro-expanded [`StageProver`](crate::driver::StageProver)
-/// driver against a hand-rolled toy stage: three self-consistent dense
-/// relations — a plain member, an `Option` member (exercised absent and
-/// present), and a session-carried member whose kernel is reclaimed from a
-/// [`ProofSession`](jolt_kernels::ProofSession) carry (the uni-skip-remainder
-/// / precommitted-span pattern) — driven end to end (head → prepare → round
-/// loop → typed extraction → per-member `park_residue` → shape validation →
-/// final-claim self-check → finish) and byte-compared against the generated
-/// `verify_clear` on a twin transcript. A second toy batch pairs a
-/// full-window member with a head-aligned shorter member (`offset = 0`,
-/// trailing dummy rounds), locking the engine's delayed `finish_rounds`
-/// bookkeeping through the generated driver.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::panic)]
 mod twin_tests {
@@ -207,10 +178,6 @@ mod twin_tests {
     use crate::driver::{impl_stage_prover, Proved};
     use crate::{ProverError, StageProver as _};
 
-    /// Declare one toy dense relation: a single produced opening, a single
-    /// consumed claim carrying the true table sum, no challenges, degree 1.
-    /// The optional `head_pad` marks the relation head-aligned (`offset = 0`)
-    /// with that many trailing dummy rounds in its batch.
     macro_rules! toy_relation {
         (
             $symbolic:ident, $relation:ident, $inputs:ident, $outputs:ident,
@@ -232,9 +199,6 @@ mod twin_tests {
                 serde::Serialize,
                 serde::Deserialize,
             )]
-            // The SumcheckBatch derive's aggregates require Allocative of
-            // every member's outputs under the expanding crate's
-            // `allocative` feature (the profile harness's flamegraphs).
             #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
             #[relation($rel)]
             struct $outputs<C> {
@@ -328,10 +292,6 @@ mod twin_tests {
                         Ok(0)
                     }
 
-                    /// The engine halves an inactive member's claim once per
-                    /// round, so the head-aligned member's final batch claim
-                    /// is the fully bound (padded-scale) table value with the
-                    /// trailing dummy rounds halved back out.
                     fn expected_output(
                         &self,
                         _input_points: &$inputs<Vec<F>>,
@@ -392,9 +352,6 @@ mod twin_tests {
         gamma: ToyGamma<F>,
     }
 
-    /// The head-aligned twin batch: a full-window member plus a shorter
-    /// member active from round 0, whose final bind the engine delivers only
-    /// after the trailing dummy rounds (the delayed `finish_rounds` path).
     #[derive(SumcheckBatch)]
     struct ToyHeadSumchecks<F: JoltField> {
         alpha: ToyAlpha<F>,
@@ -406,9 +363,6 @@ mod twin_tests {
     toy_driver_sumchecks_members!(impl_stage_prover);
     toy_head_sumchecks_members!(impl_stage_prover);
 
-    /// A dense multilinear kernel with a prescribed total sum (HighToLow
-    /// binding, degree 1): the single produced opening is the fully bound
-    /// table value, which is exactly the relation's `expected_output`.
     struct DenseKernel<R> {
         evals: Vec<Fr>,
         num_rounds: usize,
@@ -473,8 +427,6 @@ mod twin_tests {
         jolt_verifier::stages::relations::SumcheckInputClaims<Fr, R>: jolt_claims::InputClaims<Fr>,
         jolt_verifier::stages::relations::ConcreteSumcheckChallenges<Fr, R>:
             jolt_claims::SumcheckChallenges<Fr, jolt_claims::protocols::jolt::JoltChallengeId>,
-        // `log_residue` records a typed `JoltRelationId`, so the toy kernel is
-        // pinned to jolt-family relations.
         R::Symbolic: SymbolicSumcheck<RelationId = JoltRelationId>,
     {
         type Relation = R;
@@ -495,9 +447,6 @@ mod twin_tests {
         }
     }
 
-    /// The prepare call order, recorded through the proof session (the
-    /// universal `prepare` takes `&self`, so the log rides on the session's
-    /// backend-private state instead of preparer mutability).
     #[derive(Default)]
     struct PrepareCallLog(Vec<&'static str>);
 
@@ -508,9 +457,6 @@ mod twin_tests {
             .push(member);
     }
 
-    /// The `park_residue` call order — the toy kernels' residue is a log
-    /// entry, pinning that the driver consumes every present member into the
-    /// session hook after extraction.
     #[derive(Default)]
     struct ResidueCallLog(Vec<JoltRelationId>);
 
@@ -521,8 +467,6 @@ mod twin_tests {
             .push(member);
     }
 
-    /// Mints a fresh dense kernel whose table sums to the member's consumed
-    /// claim, read off the `ProverInputs` bundle like a real backend slot.
     struct DensePrepare {
         member: &'static str,
         seed: u64,
@@ -553,10 +497,6 @@ mod twin_tests {
 
     impl_dense_prepare!(ToyAlpha, ToyBeta);
 
-    /// Mints the head-aligned member's kernel at the dummy-round padding
-    /// scale: a head-aligned member is active from round 0 at
-    /// `input_claim · 2^(max − rounds)`, so its table must sum to the padded
-    /// claim (see `BatchPrelude::new`).
     struct HeadDensePrepare {
         seed: u64,
     }
@@ -577,13 +517,8 @@ mod twin_tests {
         }
     }
 
-    /// The gamma kernel is a `ProofSession` carry, parked by the toy front
-    /// before `prove` — the uni-skip-remainder / precommitted-span pattern. A
-    /// missing carry is a proof-time `KernelError`.
     struct ParkedToyGamma(DenseKernel<ToyGamma<Fr>>);
 
-    // Session-inserted test state must be `MaybeAllocative`; self-sized
-    // visitation is plenty for twin-lock scaffolding.
     #[cfg(feature = "allocative")]
     mod carry_visitation {
         use super::*;
@@ -599,8 +534,6 @@ mod twin_tests {
         }
         impl_self_sized_allocative!(PrepareCallLog, ResidueCallLog, ParkedToyGamma);
 
-        // The toy kernel is a `SumcheckKernel`, so the mid-stage snapshot's
-        // `MaybeAllocative` supertrait reaches it too.
         impl<R> allocative::Allocative for DenseKernel<R> {
             fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
                 let mut visitor = visitor.enter_self_sized::<Self>();
@@ -633,8 +566,6 @@ mod twin_tests {
         }
     }
 
-    // The toy registry, resolved exactly like `JoltBackend`: one derived
-    // delegating `PrepareKernel` impl per `Box<dyn PrepareKernel<..>>` slot.
     #[derive(KernelSlots)]
     struct ToyKernels {
         alpha: Box<dyn PrepareKernel<Fr, ToyAlpha<Fr>>>,
@@ -662,7 +593,6 @@ mod twin_tests {
         delta: Box<dyn PrepareKernel<Fr, ToyDelta<Fr>>>,
     }
 
-    /// A witness plane the toy kernels never read: every access errors.
     struct NoWitness;
 
     impl NoWitness {
@@ -722,8 +652,6 @@ mod twin_tests {
     const GAMMA_ROUNDS: usize = 3;
     const GAMMA_SUM: u64 = 4242;
     const HEAD_ROUNDS: usize = 2;
-    /// The head-aligned member's trailing dummy rounds in the head twin batch
-    /// (alpha is its full-window member).
     const HEAD_PAD: usize = ALPHA_ROUNDS - HEAD_ROUNDS;
 
     fn fixture(beta: bool) -> ToyDriverSumchecks<Fr> {
@@ -749,9 +677,6 @@ mod twin_tests {
         }
     }
 
-    /// Drive the macro-expanded `prove` and its `verify_clear` twin, assert
-    /// byte-identical transcript states, and return the driver's output plus
-    /// the recorded prepare and residue call orders.
     #[expect(
         clippy::type_complexity,
         reason = "the twin driver's aggregate return: the proved carrier plus the two recorded call orders"
@@ -790,9 +715,6 @@ mod twin_tests {
             )
             .unwrap();
 
-        // Verifier twin: generated draw + composed verify_clear (which runs the
-        // derive-opening-points and expected-final-claim checks internally) +
-        // output-claim absorbs.
         let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let _ = sumchecks
@@ -818,13 +740,10 @@ mod twin_tests {
     #[test]
     fn driver_twin_with_present_option_member() {
         let (proved, calls, residues) = drive(true);
-        // Prepare ran in declaration order.
         assert_eq!(calls, vec!["alpha", "beta", "gamma"]);
         assert!(proved.output_claims.beta.is_some());
-        // Typed extraction filled every slot, the session carry included.
         assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
         assert_eq!(proved.output_claims.gamma.opening_values().len(), 1);
-        // The driver parked every member's residue, in declaration order.
         assert_eq!(
             residues,
             vec![
@@ -849,12 +768,6 @@ mod twin_tests {
         );
     }
 
-    /// The head-aligned driver path: a shorter member active from the batch's
-    /// FIRST round alongside a full-window member. Its final bind arrives only
-    /// through the engine's delayed `finish_rounds` delivery — after the
-    /// trailing dummy rounds — yet typed extraction and `park_residue` see the
-    /// kernel fully bound, and the twin `verify_clear` reproduces the
-    /// transcript byte for byte.
     #[test]
     fn driver_twin_with_head_aligned_member() {
         let sumchecks = ToyHeadSumchecks {
@@ -912,8 +825,6 @@ mod twin_tests {
 
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
         assert_eq!(verified_points, proved.output_points);
-        // The head member is bound on the batch point's PREFIX: its opening
-        // point is the leading entries of the full-window member's point.
         assert_eq!(
             proved.output_points.delta.value.as_slice(),
             &proved.output_points.alpha.value[..HEAD_ROUNDS]
@@ -932,9 +843,6 @@ mod twin_tests {
         );
     }
 
-    /// A session-carried member with no parked carry fails at prepare with a
-    /// kernel error — the accepted cost of session carries over v1's
-    /// compile-time-visible external members.
     #[test]
     fn missing_session_carry_fails_at_prepare() {
         let sumchecks = fixture(false);
@@ -962,9 +870,6 @@ mod twin_tests {
         ));
     }
 
-    /// Cells populated for a member the batch did not instantiate fail at
-    /// prepare, attributed to the member's relation id — the mirror of the
-    /// present-instance-with-missing-cell check.
     #[test]
     fn populated_cells_for_absent_member_fail_at_prepare() {
         let kernels = toy_kernels();
@@ -994,8 +899,6 @@ mod twin_tests {
         assert_eq!(*stage, format!("{:?}", JoltRelationId::RamValCheck));
     }
 
-    /// `prove` is generic over the recorder: this compiles it against the
-    /// committed recorder even though nothing wires the ZK path yet.
     #[expect(dead_code, reason = "compile-only recorder-generality witness")]
     #[expect(clippy::too_many_arguments, reason = "the driver's protocol signature")]
     fn prove_type_checks_with_committed_recorder(

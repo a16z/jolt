@@ -86,8 +86,6 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
-    // Committed-program mode needs the prover-retained full program + hints;
-    // require presence to agree with the verifier preprocessing's mode.
     if preprocessing.verifier.program.committed().is_some()
         != preprocessing.committed_program.is_some()
     {
@@ -95,9 +93,6 @@ where
             reason: "committed-program prover data presence disagrees with the preprocessing mode",
         });
     }
-    // The chunk commitments bake their trace order in at preprocessing time;
-    // a disagreeing proof config would transpose the rebuilt chunk tables
-    // against the absorbed commitments and fail only at verification.
     if preprocessing
         .committed_program
         .as_ref()
@@ -108,21 +103,11 @@ where
         });
     }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
-    // Trusted-advice presence rides on the external commitment argument;
-    // require it to agree with the advice bytes so a mismatch fails here
-    // rather than as an opaque stage-4 sumcheck error (bytes without a
-    // commitment) or as a nonstandard proof over the zero advice polynomial
-    // (a commitment without bytes).
     if trusted_advice.is_some() == public_io.trusted_advice.is_empty() {
         return Err(ProverError::Unsupported {
             reason: "trusted-advice commitment presence disagrees with the trusted advice bytes",
         });
     }
-    // The verifier's own input validation doubles as the prover's self-check
-    // and produces the normalized `CheckedInputs` the preamble absorbs. The
-    // zk axis is the compiled feature — the co-compiled verifier's
-    // `SELECTED_ZK_CONFIG` flips with the same feature, so both sides always
-    // agree.
     let checked = validate_inputs_from_parts(
         &preprocessing.verifier,
         public_io,
@@ -135,11 +120,6 @@ where
         cfg!(feature = "zk"),
     )?;
 
-    // The dominant-advice regime (an advice grid wider than every other
-    // commitment-grid candidate) has no e2e coverage anywhere; guard it off
-    // until an oracle-backed test exists. Committed-program candidates count
-    // toward the grid width, so advice wider than the main matrix but inside
-    // a committed candidate is fine.
     {
         let mut grid_without_advice =
             config.one_hot_config.committed_chunk_bits() + config.trace_length.ilog2() as usize;
@@ -181,9 +161,6 @@ where
             )
         })
         .collect();
-    // Stage-0 validation: every id the proof will request — the committed
-    // set and each bundle's annotated set — must be servable by the backend
-    // before witness generation starts.
     let requested = ids
         .iter()
         .map(|&id| JoltPolynomialId::Committed(id))
@@ -239,10 +216,6 @@ where
         )
     };
 
-    // The untrusted advice polynomial is committed at prove time in its OWN
-    // balanced grid (its variable count comes from the memory layout's maximum
-    // advice size, independent of the main grid); the trusted commitment
-    // arrived from preprocessing.
     let untrusted_advice_commitment = if untrusted_advice_present {
         let advice_grid = CommitmentGrid {
             total_vars: advice_total_vars(public_io.memory_layout.max_untrusted_advice_size),
@@ -273,8 +246,6 @@ where
     if let Some(trusted) = trusted_advice {
         hints.push((JoltCommittedPolynomial::TrustedAdvice, trusted.hint.clone()));
     }
-    // The committed-program hints ride from preprocessing (the chunk/image
-    // commitments were produced there, before any proving).
     if let Some(committed) = &preprocessing.committed_program {
         let expected_chunks = checked
             .precommitted
@@ -320,10 +291,6 @@ where
     })
 }
 
-/// Commit the field-inline columns off the plane's field-inline oracle and
-/// assemble the proof's field-inline commitment payload. Fails closed when the plane
-/// serves no field-inline oracle: a field-inline build proves only field-inline
-/// witnesses (a non-field-inline guest has no honest field-inline columns to commit).
 #[cfg(feature = "field-inline")]
 #[expect(
     clippy::type_complexity,
@@ -382,7 +349,6 @@ where
     ))
 }
 
-/// Split the kernel's flat id-ordered output into the proof's wire shape.
 #[expect(
     clippy::type_complexity,
     reason = "the wire aggregate paired with its opening hints"
@@ -441,8 +407,6 @@ fn assemble_commitments<PCS: CommitmentScheme>(
     ))
 }
 
-// Transparent mode only: the zk streaming finishes blind their commitments,
-// so two independent commits of the same column are not comparable.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_tests {
@@ -466,8 +430,6 @@ mod field_inline_tests {
         }
     }
 
-    /// Commit `values` directly through the streaming PCS calls the dense
-    /// grid columns use — the placement spec the kernel must match.
     fn direct_dense_commitment(
         values: &[Fr],
         setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
@@ -479,11 +441,6 @@ mod field_inline_tests {
         finish_streamed::<DoryScheme>(partial, setup).0
     }
 
-    /// The prover attaches the field-inline payload and absorbs it through the
-    /// verifier's own `absorb_transcript_commitments` — pinned by asserting
-    /// the payload is `Some`, that both sides' absorbs agree byte-for-byte
-    /// (equal challenge streams), and that stripping the payload diverges
-    /// (the field-inline commitment is Fiat-Shamir-bound).
     #[test]
     fn stage0_attaches_and_absorbs_the_field_inline_payload() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
@@ -523,8 +480,6 @@ mod field_inline_tests {
             vec![FieldInlineCommittedPolynomial::FieldRdInc]
         );
 
-        // The field-inline commitment is the dense trace-domain column committed with
-        // the same placement as the jolt increment columns.
         let column = witness
             .field_inline_witness()
             .unwrap()
@@ -547,8 +502,6 @@ mod field_inline_tests {
             direct_dense_commitment(&column, &setup)
         );
 
-        // Byte-for-byte absorb parity between the prover-side call and the
-        // verifier's own absorb (the same shared fn on the same payload).
         let mut prover_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
         absorb_transcript_commitments(&commitments, None, None, &mut prover_transcript);
         let mut verifier_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
@@ -574,8 +527,6 @@ mod field_inline_tests {
         );
     }
 
-    /// Zero-short-circuit sanity: a field-inline guest with no field-inline instructions
-    /// still serves the field-inline committed order and commits the all-zero column.
     #[test]
     fn field_inline_guest_without_field_instructions_commits_the_zero_column() {
         let witness = addi_only_backend().with_field_inline().unwrap();
@@ -609,8 +560,6 @@ mod field_inline_tests {
         );
     }
 
-    /// D1 fail-closed: a plane without the field-inline oracle cannot start
-    /// a field-inline proof.
     #[test]
     fn stage0_fails_closed_without_the_field_inline_oracle() {
         let witness = field_arithmetic_backend();

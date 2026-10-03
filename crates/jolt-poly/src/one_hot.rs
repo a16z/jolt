@@ -1,12 +1,3 @@
-//! One-hot multilinear polynomial — sparse representation where each row has
-//! at most one nonzero entry with value 1.
-//!
-//! Used for Jolt's RA (random access) lookup index polynomials, where each
-//! cycle selects exactly one of `k` possible values. Storing the hot index
-//! per row instead of a dense `T × k` evaluation table reduces memory by
-//! a factor of `k` and enables ~254× faster commitment via generator lookup
-//! instead of full MSM.
-
 use jolt_field::JoltField;
 
 use crate::multilinear::MultilinearPoly;
@@ -70,10 +61,6 @@ impl OneHotPolynomial {
             k <= u8::MAX as usize + 1,
             "k exceeds u8 index range ({k} > 256)"
         );
-        // WARNING: hot indices >= k address positions outside the declared
-        // (T × k) grid, silently corrupting fold/commitment results. Debug-only:
-        // production witness generation masks indices below k, and a release
-        // scan would add an O(T) pass per committed polynomial.
         debug_assert!(
             indices.iter().flatten().all(|&col| (col as usize) < k),
             "one-hot column index out of range (must be < k = {k})"
@@ -104,7 +91,6 @@ impl OneHotPolynomial {
         &self.indices
     }
 
-    /// Consumes the polynomial and returns its row-wise hot indices.
     #[inline]
     pub fn into_indices(self) -> Vec<Option<u8>> {
         self.indices
@@ -115,10 +101,6 @@ impl OneHotPolynomial {
         self.indices.len()
     }
 
-    /// Number of variables $n$. The polynomial has $2^n$ evaluations.
-    ///
-    /// Inherent method avoids trait disambiguation since [`MultilinearPoly`]
-    /// is generic over `F`.
     #[inline]
     pub fn num_vars(&self) -> usize {
         self.num_vars
@@ -161,7 +143,6 @@ impl<F: JoltField> MultilinearPoly<F> for OneHotPolynomial {
         let total_len = 1usize << self.num_vars;
         let num_rows = total_len / num_cols;
 
-        // Pre-index nonzero entries by matrix row.
         let mut row_hot_cols: Vec<Vec<usize>> = vec![Vec::new(); num_rows];
         for (cycle, &opt_col) in self.indices.iter().enumerate() {
             if let Some(col) = opt_col {
@@ -180,8 +161,6 @@ impl<F: JoltField> MultilinearPoly<F> for OneHotPolynomial {
         }
     }
 
-    /// O(T) sparse fold — accumulates `left[row]` into `result[col]` only at
-    /// nonzero positions, avoiding the O(T × K) dense iteration.
     fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
         let num_cols = 1usize << sigma;
         let mut result = jolt_utils::unsafe_allocate_zero_vec(num_cols);
@@ -315,7 +294,6 @@ mod tests {
         <OneHotPolynomial as MultilinearPoly<Fr>>::for_each_one(&oh, &mut |idx| entries.push(idx));
 
         assert_eq!(entries.len(), 3);
-        // cycle 0, col 2; cycle 2, col 0; cycle 3, col 3
         assert_eq!(entries[0], 2);
         assert_eq!(entries[1], 2 * 4);
         assert_eq!(entries[2], 3 * 4 + 3);
@@ -343,7 +321,6 @@ mod tests {
     #[cfg_attr(not(debug_assertions), ignore = "index validation is debug-only")]
     #[should_panic(expected = "one-hot column index out of range")]
     fn out_of_range_column_rejected_in_debug() {
-        // k = 4 but a hot index of 7 is representable in u8.
         let _ = OneHotPolynomial::new(4, vec![Some(7), None, Some(1), Some(0)]);
     }
 

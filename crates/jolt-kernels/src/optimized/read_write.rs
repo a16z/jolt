@@ -1,5 +1,3 @@
-//! Supported sparse read/write orders and inactive RAM address rounds.
-
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
@@ -44,9 +42,6 @@ impl ReadWriteOrder {
     }
 }
 
-/// Keeps address tables compact while the relation sums over unused cycles.
-/// The canonical opening indices locate active rounds; each inactive bind
-/// removes one factor of two without touching a table or an opening point.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),

@@ -91,7 +91,6 @@ where
     Ok(())
 }
 
-/// Validate the layout identity and shape of an independently committed object.
 fn validate_group_commitment_metadata<C>(
     commitment: &C,
     layout_digest: [u8; 32],
@@ -137,7 +136,6 @@ where
     )
 }
 
-/// One resolved commitment object and its canonical packing.
 struct ResolvedObject<'a, PCS: CommitmentScheme> {
     plan: PrefixPackedObjectPlan,
     commitment: &'a PCS::Output,
@@ -161,7 +159,6 @@ where
         .map_err(batch_failed)
 }
 
-/// Resolve one advice object's packing and commitment when both are present.
 fn advice_object<'a, PCS: CommitmentScheme>(
     leaf: Option<&EvaluationClaim<PCS::Field>>,
     commitment: Option<&'a PCS::Output>,
@@ -185,8 +182,6 @@ fn advice_object<'a, PCS: CommitmentScheme>(
     Ok(Some(ResolvedObject { plan, commitment }))
 }
 
-/// Bind the existing stage-6b reduced claim directly to the full-field commitment.
-/// Shared by the prover and verifier so they consume the same claim and point.
 #[cfg(feature = "field-inline")]
 pub fn field_inc_claim<F: JoltField, C: Clone>(
     commitment: &C,
@@ -239,10 +234,6 @@ where
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
-    // (field-inline) the always-present field-increment commitment, then the direct
-    // committed-program objects. Optional objects join exactly when their direct final
-    // reductions exist; presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
     let one_hot_trace_shape = OneHotTraceShape {
         ra_layout: formula_dimensions.ra_layout,
@@ -415,9 +406,6 @@ pub fn one_hot_trace_packed_claims<F: JoltField>(
     Ok(plan.packed_claims(common_point, evaluations))
 }
 
-/// One precommitted object's leaf claims: each of the plan's canonical columns
-/// paired with its resolved leaf claim. Shared verbatim by the packed
-/// prover's stage 8, so both sides fail on the same missing leaf.
 pub fn object_leaf_claims<F: JoltField>(
     plan: &PrefixPackedObjectPlan,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
@@ -439,10 +427,6 @@ pub fn object_leaf_claims<F: JoltField>(
         .collect()
 }
 
-/// Every packed column's single leaf claim, resolved from stage 4, the
-/// precommitted reductions, and stage 7, keyed by committed polynomial. The
-/// canonical object plans check coverage, point arity, and suffix compatibility.
-/// Shared verbatim by the packed prover's stage 8.
 pub fn leaf_claims<F: JoltField>(
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<F>,

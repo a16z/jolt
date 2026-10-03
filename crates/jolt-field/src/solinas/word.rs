@@ -1,13 +1,3 @@
-//! Single-word pseudo-Mersenne prime fields: one Solinas fold algebra
-//! stamped at `u32` ([`Fp32`]) and `u64` ([`Fp64`]) storage.
-//!
-//! The fold point `k` and offset `c = 2^k − p` are computed at compile time
-//! from the const-generic modulus; the `C(C+1) < P` precondition for the
-//! fused two-fold-plus-canonicalize reduction is const-asserted in exactly
-//! one place. Per-width differences enter only through the `mul`/`random`
-//! macro arguments (the `u64` width has a fold-entirely-in-`u64` product
-//! path for sub-word primes, with a BMI2 variant on x86-64).
-
 use crate::PseudoMersenne;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 use rand_core::RngCore;
@@ -49,7 +39,6 @@ macro_rules! define_solinas_prime {
         pub struct $name<const P: $word>(pub(crate) $word);
 
         impl<const P: $word> $name<P> {
-            /// Fold point: smallest `k` such that `P <= 2^k`.
             pub(crate) const BITS: u32 = <$word>::BITS - P.leading_zeros();
 
             /// Offset `c = 2^k − P`. Instantiating with a modulus that
@@ -73,7 +62,6 @@ macro_rules! define_solinas_prime {
                 c
             };
 
-            /// Mask for the low `BITS` bits of a double word.
             const MASK: $double = if Self::BITS == <$word>::BITS {
                 <$word>::MAX as $double
             } else {
@@ -82,7 +70,6 @@ macro_rules! define_solinas_prime {
 
             const MASK128: u128 = Self::MASK as u128;
 
-            /// Conditional subtract of a folded value down to `[0, P)`.
             #[inline(always)]
             fn canonicalize_folded(v: $double) -> $word {
                 if Self::BITS < <$word>::BITS {
@@ -95,7 +82,6 @@ macro_rules! define_solinas_prime {
                 }
             }
 
-            /// Loop-fold Solinas reduction of an arbitrary double word.
             #[inline(always)]
             fn reduce_double(x: $double) -> $word {
                 let mut v = x;
@@ -105,7 +91,6 @@ macro_rules! define_solinas_prime {
                 Self::canonicalize_folded(v)
             }
 
-            /// Loop-fold Solinas reduction of an arbitrary `u128`.
             #[inline(always)]
             fn reduce_u128(x: u128) -> $word {
                 let mut v = x;
@@ -115,7 +100,6 @@ macro_rules! define_solinas_prime {
                 Self::canonicalize_folded(v as $double)
             }
 
-            /// Two-fold Solinas reduction for products `< 2^{2·BITS}`.
             #[inline(always)]
             fn reduce_product(x: $double) -> $word {
                 let c = Self::C as $double;
@@ -130,7 +114,6 @@ macro_rules! define_solinas_prime {
                     let s = a.wrapping_add(b);
                     s.min(s.wrapping_sub(P))
                 } else {
-                    // Full-word: fold the carry with 2^k ≡ C, then subtract.
                     let (s, overflow) = a.overflowing_add(b);
                     let folded = s.wrapping_add((overflow as $word).wrapping_neg() & Self::C);
                     folded.min(folded.wrapping_sub(P))
@@ -140,8 +123,6 @@ macro_rules! define_solinas_prime {
             #[inline(always)]
             fn sub_raw(a: $word, b: $word) -> $word {
                 let (d, underflow) = a.overflowing_sub(b);
-                // If subtraction borrowed, subtracting -P modulo the word
-                // adds P. At full width, -P is the small Solinas offset C.
                 d.wrapping_sub(
                     (underflow as $word).wrapping_neg() & P.wrapping_neg()
                 )
@@ -180,13 +161,11 @@ macro_rules! define_solinas_prime {
                 Self(x)
             }
 
-            /// Return the canonical representative in `[0, P)`.
             #[inline]
             pub fn $to_canon(self) -> $word {
                 self.0
             }
 
-            /// Extract the canonical value.
             #[inline(always)]
             pub fn to_limbs(self) -> $word {
                 self.0
@@ -204,7 +183,6 @@ macro_rules! define_solinas_prime {
                 (self.0 as $double) * (other as $double)
             }
 
-            /// Reduce a double word via Solinas folding to a canonical element.
             #[inline(always)]
             pub fn solinas_reduce(x: $double) -> Self {
                 Self(Self::reduce_double(x))
@@ -272,7 +250,6 @@ macro_rules! define_solinas_prime {
                 }
             }
 
-            /// Fermat inversion with branchless zero-masking.
             #[inline(always)]
             fn inv_or_zero(self) -> Self {
                 let candidate = self.pow((P as u64).wrapping_sub(2));
@@ -456,7 +433,6 @@ impl<const P: u64> PseudoMersenne for Fp64<P> {
 }
 
 impl<const P: u64> Fp64<P> {
-    /// Mask for the low `BITS` bits in a word.
     pub(crate) const MASK64: u64 = if Self::BITS < 64 {
         (1u64 << Self::BITS) - 1
     } else {
@@ -467,7 +443,6 @@ impl<const P: u64> Fp64<P> {
     pub(crate) const FOLD_IN_U64: bool =
         Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
 
-    /// Reduces a product supplied as exact low and high words.
     #[inline(always)]
     pub(crate) fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
         if Self::FOLD_IN_U64 {
@@ -483,8 +458,6 @@ impl<const P: u64> Fp64<P> {
         }
     }
 
-    /// Two-fold sub-word reduction. `high_overflow` is the portion of
-    /// `x >> BITS` above one word, which can be nonzero for three products.
     #[inline(always)]
     pub(super) fn reduce_sub_word_wide(lo: u64, hi: u64, high_overflow: u64) -> u64 {
         let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));

@@ -63,23 +63,14 @@ use jolt_verifier::stages::relations::SumcheckInputClaims;
 
 use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 
-/// Tables at least this large run their round loops in parallel; below it
-/// rayon dispatch costs more than the work (the naive tier drives these
-/// kernels at harness scale, where the tables are tiny).
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
-/// The bound-table state both phase kernels drive: the summand tables, the
-/// aux tables riding alongside, and the running inactive-round scale.
-/// `Polynomial`-backed so binds take the library's threshold-gated parallel
-/// path (byte-identical fold: `lo + r·(hi − lo)` pairwise, exact field ops).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct PrecommittedTables<F> {
     value: Polynomial<F>,
     eq: Polynomial<F>,
     aux: Vec<Polynomial<F>>,
-    /// `(1/2)^k` over the `k` inactive rounds ingested so far — the factor the
-    /// running claim accumulated relative to the true bound product.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     scale: F,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -89,14 +80,6 @@ struct PrecommittedTables<F> {
 }
 
 impl<F: JoltField> PrecommittedTables<F> {
-    /// The round polynomial for member-local state: the constant `claim/2` on
-    /// an inactive round, else the hinted `{0,1,2}` interpolation (see the
-    /// module doc for why the padded claim, not the true sum, feeds `s(1)`).
-    ///
-    /// The eval loop runs on rayon above [`PAR_THRESHOLD`] — the summand is a
-    /// sum of exact field products, so the reduction order cannot change the
-    /// value (legacy parallelizes the same loop,
-    /// `PrecommittedProver::compute_message_unscaled`).
     fn round_message(&self, active: bool, previous_claim: F) -> UnivariatePoly<F> {
         if !active {
             return UnivariatePoly::new(vec![previous_claim * self.two_inv]);
@@ -136,11 +119,6 @@ impl<F: JoltField> PrecommittedTables<F> {
         UnivariatePoly::new(vec![eval_0 * self.scale, c1 * self.scale, c2 * self.scale])
     }
 
-    /// Drive one head-aligned round against the phase's active-round
-    /// schedule: bind the pending challenge — it belongs to the previous
-    /// round; the member is head-aligned and consulted every round of its
-    /// window, so `bind` is `Some` exactly when `round >= 1` — then emit this
-    /// round's message.
     fn prove_round(
         &mut self,
         active_rounds: &[usize],
@@ -154,13 +132,10 @@ impl<F: JoltField> PrecommittedTables<F> {
         self.round_message(is_active(active_rounds, round), previous_claim)
     }
 
-    /// Ingest the final round's challenge for the phase's schedule.
     fn finish_rounds(&mut self, active_rounds: &[usize], total_rounds: usize, bind: F) {
         self.bind_round(is_active(active_rounds, total_rounds - 1), bind);
     }
 
-    /// Bind a round's challenge: on an active round bind every table, on an
-    /// inactive one fold the halving into the running `scale` instead.
     fn bind_round(&mut self, active: bool, challenge: F) {
         if !active {
             self.scale *= self.two_inv;
@@ -175,8 +150,6 @@ impl<F: JoltField> PrecommittedTables<F> {
         }
     }
 
-    /// The intermediate claim staged at the cycle→address handoff:
-    /// `Σ_i value(i) · eq(i) · scale` over the bound tables.
     fn intermediate_claim(&self) -> F {
         let value = self.value.evals();
         let eq = self.eq.evals();
@@ -205,17 +178,11 @@ impl<F: JoltField> PrecommittedTables<F> {
         Ok(())
     }
 
-    /// The fully bound value coefficient — the reduction's final opening
-    /// value (the advice/program-image polynomial's own opening; for the
-    /// bytecode reduction, the chunk-weighted fold the per-chunk claims sum
-    /// to). Errors while any variable remains unbound.
     fn final_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.value.evals()[0])
     }
 
-    /// The fully bound `aux` coefficients — the per-chunk `BytecodeChunk(i)`
-    /// opening values. Errors while any variable remains unbound.
     fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.aux.iter().map(|table| table.evals()[0]).collect())
@@ -302,12 +269,6 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
         self.reduction.num_address_phase_rounds() > 0
     }
 
-    /// The schedule-resolved scalar wire claim: the intermediate handoff
-    /// claim when the address phase continues, else the final opening. The
-    /// single source of the intermediate-vs-final resolution for the
-    /// scalar-shaped kinds (advice, program image); the bytecode kind's
-    /// chunked wire shape spells the same resolution out in its own
-    /// `output_claims`.
     fn scalar_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         if self.has_address_phase() {
             Ok(self.tables.intermediate_claim())
@@ -316,9 +277,6 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
         }
     }
 
-    /// Park the post-cycle bound state under `RA`'s carry key — the shared
-    /// body of the per-kind `park_residue` overrides. A cycle-completed
-    /// schedule has no stage-7 member, so it parks nothing.
     fn park_carry<RA: 'static>(self, session: &mut ProofSession) {
         if !self.has_address_phase() {
             return;
@@ -451,9 +409,6 @@ impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReducti
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        // The chunked counterpart of `scalar_claim`: an address phase stages
-        // the intermediate handoff claim (chunks come later, at stage 7); a
-        // cycle-only schedule ends here with the per-chunk openings.
         Ok(if self.has_address_phase() {
             BytecodeReductionCyclePhaseOutputClaims {
                 intermediate: Some(self.tables.intermediate_claim()),
@@ -547,9 +502,6 @@ impl<F: JoltField> SumcheckKernel<F>
     }
 }
 
-/// The LSB-index relabeling implied by the big-endian opening-round
-/// permutation: variables sorted by their global opening round become the new
-/// LSB order. Returns `None` when the relabeling is the identity.
 pub(crate) fn lsb_permutation(poly_opening_round_permutation_be: &[usize]) -> Option<Vec<usize>> {
     let num_vars = poly_opening_round_permutation_be.len();
     let mut be_var_by_round: Vec<usize> = (0..num_vars).collect();
@@ -566,10 +518,6 @@ pub(crate) fn lsb_permutation(poly_opening_round_permutation_be: &[usize]) -> Op
         .then_some(old_lsb_to_new_lsb)
 }
 
-/// Out-of-place coefficient permute: `out[new_index] = table[old_index]` where
-/// each of `new_index`'s bits moves to its pre-image LSB position. A pure
-/// gather, so large tables run on rayon (legacy parallelizes the same permute,
-/// `permute_precommitted_polys`).
 pub(crate) fn permute_coefficients<F: Copy + Send + Sync>(
     table: &[F],
     old_lsb_to_new_lsb: &[usize],
@@ -593,9 +541,6 @@ pub(crate) fn permute_coefficients<F: Copy + Send + Sync>(
     (0..table.len()).map(gather).collect()
 }
 
-/// The challenge-vector counterpart of [`permute_coefficients`]: relabel the
-/// big-endian challenge positions so `eq(permuted_challenges)` indexes the
-/// permuted coefficient table.
 pub(crate) fn permute_challenges<F: Copy>(
     challenges_be: &[F],
     old_lsb_to_new_lsb: &[usize],
@@ -609,8 +554,6 @@ pub(crate) fn permute_challenges<F: Copy>(
     permuted
 }
 
-/// Permute a batch of coefficient tables into the reduction's Dory
-/// opening-round order (identity-permutation short-circuit included).
 pub(crate) fn permute_tables<F: Copy + Send + Sync>(
     reduction: &PrecommittedClaimReduction,
     tables: Vec<Vec<F>>,

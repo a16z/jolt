@@ -20,7 +20,6 @@
 
 use jolt_riscv::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 
-/// Constant-1 wire.
 pub const V_CONST: usize = 0;
 
 pub const V_LEFT_INSTRUCTION_INPUT: usize = 1;
@@ -68,7 +67,7 @@ pub const NUM_PRODUCT_FACTORS: usize = 2;
 pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS;
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS;
 
 pub const fn flag_column(flag: CircuitFlags) -> usize {
     V_FLAG_ADD_OPERANDS + flag as usize
@@ -173,7 +172,6 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
     }
 }
 
-/// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
 use crate::constraint::SparseRow;
@@ -181,11 +179,6 @@ use jolt_field::Field;
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
 
-/// Helper: sparse row from `[(variable_index, coefficient)]` pairs.
-///
-/// Panics at compile-time constant initialization if any coefficient does not
-/// fit in `i64`; callers with wider constants (e.g. `2^64`) must use
-/// [`row_wide`].
 #[expect(
     clippy::expect_used,
     reason = "compile-time constant table; silent i128→i64 truncation would be a correctness bug"
@@ -201,8 +194,6 @@ fn row<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
         .collect()
 }
 
-/// Helper: sparse row entry from i128 coefficient, handling large constants
-/// that don't fit in i64 (e.g. 2^64 bias).
 fn row_wide<F: Field>(entries: &[(usize, i128)]) -> SparseRow<F> {
     entries
         .iter()
@@ -218,13 +209,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
 
     let empty = || Vec::new();
 
-    // Eq-conditional constraints (0-18)
-    // Form: guard · (left − right) = 0  →  A=guard, B=left−right, C=0
-
-    // 0: RamAddrEqRs1PlusImmIfLoadStore
-    //    guard = Load + Store
-    //    left  = RamAddress
-    //    right = Rs1Value + Imm
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1), (V_FLAG_STORE, 1)]));
     b_rows.push(row::<F>(&[
         (V_RAM_ADDRESS, 1),
@@ -233,10 +217,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 1: RamAddrEqZeroIfNotLoadStore
-    //    guard = 1 − Load − Store
-    //    left  = RamAddress
-    //    right = 0
     a_rows.push(row::<F>(&[
         (V_CONST, 1),
         (V_FLAG_LOAD, -1),
@@ -245,34 +225,18 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_RAM_ADDRESS, 1)]));
     c_rows.push(empty());
 
-    // 2: RamReadEqRamWriteIfLoad
-    //    guard = Load
-    //    left  = RamReadValue
-    //    right = RamWriteValue
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1)]));
     b_rows.push(row::<F>(&[(V_RAM_READ_VALUE, 1), (V_RAM_WRITE_VALUE, -1)]));
     c_rows.push(empty());
 
-    // 3: RamReadEqRdWriteIfLoad
-    //    guard = Load
-    //    left  = RamReadValue
-    //    right = RdWriteValue
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1)]));
     b_rows.push(row::<F>(&[(V_RAM_READ_VALUE, 1), (V_RD_WRITE_VALUE, -1)]));
     c_rows.push(empty());
 
-    // 4: Rs2EqRamWriteIfStore
-    //    guard = Store
-    //    left  = Rs2Value
-    //    right = RamWriteValue
     a_rows.push(row::<F>(&[(V_FLAG_STORE, 1)]));
     b_rows.push(row::<F>(&[(V_RS2_VALUE, 1), (V_RAM_WRITE_VALUE, -1)]));
     c_rows.push(empty());
 
-    // 5: LeftLookupZeroUnlessAddSubMul
-    //    guard = Add + Sub + Mul
-    //    left  = LeftLookupOperand
-    //    right = 0
     a_rows.push(row::<F>(&[
         (V_FLAG_ADD_OPERANDS, 1),
         (V_FLAG_SUBTRACT_OPERANDS, 1),
@@ -281,10 +245,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_LEFT_LOOKUP_OPERAND, 1)]));
     c_rows.push(empty());
 
-    // 6: LeftLookupEqLeftInputOtherwise
-    //    guard = 1 − Add − Sub − Mul
-    //    left  = LeftLookupOperand
-    //    right = LeftInstructionInput
     a_rows.push(row::<F>(&[
         (V_CONST, 1),
         (V_FLAG_ADD_OPERANDS, -1),
@@ -297,10 +257,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 7: RightLookupAdd
-    //    guard = Add
-    //    left  = RightLookupOperand
-    //    right = LeftInstructionInput + RightInstructionInput
     a_rows.push(row::<F>(&[(V_FLAG_ADD_OPERANDS, 1)]));
     b_rows.push(row::<F>(&[
         (V_RIGHT_LOOKUP_OPERAND, 1),
@@ -309,10 +265,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 8: RightLookupSub
-    //    guard = Sub
-    //    left  = RightLookupOperand
-    //    right = LeftInstructionInput − RightInstructionInput + 2^64
     a_rows.push(row::<F>(&[(V_FLAG_SUBTRACT_OPERANDS, 1)]));
     b_rows.push(row_wide::<F>(&[
         (V_RIGHT_LOOKUP_OPERAND, 1),
@@ -322,18 +274,10 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 9: RightLookupEqProductIfMul
-    //    guard = Mul
-    //    left  = RightLookupOperand
-    //    right = Product
     a_rows.push(row::<F>(&[(V_FLAG_MULTIPLY_OPERANDS, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_LOOKUP_OPERAND, 1), (V_PRODUCT, -1)]));
     c_rows.push(empty());
 
-    // 10: RightLookupEqRightInputOtherwise
-    //     guard = 1 − Add − Sub − Mul − Advice
-    //     left  = RightLookupOperand
-    //     right = RightInstructionInput
     a_rows.push(row::<F>(&[
         (V_CONST, 1),
         (V_FLAG_ADD_OPERANDS, -1),
@@ -347,26 +291,14 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 11: AssertLookupOne
-    //     guard = Assert
-    //     left  = LookupOutput
-    //     right = 1
     a_rows.push(row::<F>(&[(V_FLAG_ASSERT, 1)]));
     b_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
-    // 12: RdWriteEqLookupIfWriteLookupToRd
-    //     guard = WriteLookupOutputToRD
-    //     left  = RdWriteValue
-    //     right = LookupOutput
     a_rows.push(row::<F>(&[(V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, 1)]));
     b_rows.push(row::<F>(&[(V_RD_WRITE_VALUE, 1), (V_LOOKUP_OUTPUT, -1)]));
     c_rows.push(empty());
 
-    // 13: RdWriteEqPCPlusConstIfWritePCtoRD
-    //     guard = Jump
-    //     left  = RdWriteValue
-    //     right = UnexpandedPC + 4 − 2·IsCompressed
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[
         (V_RD_WRITE_VALUE, 1),
@@ -376,10 +308,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 14: NextUnexpPCEqLookupIfShouldJump
-    //     guard = ShouldJump
-    //     left  = NextUnexpandedPC
-    //     right = LookupOutput
     a_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
     b_rows.push(row::<F>(&[
         (V_NEXT_UNEXPANDED_PC, 1),
@@ -387,10 +315,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 15: NextUnexpPCEqPCPlusImmIfShouldBranch
-    //     guard = ShouldBranch
-    //     left  = NextUnexpandedPC
-    //     right = UnexpandedPC + Imm
     a_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
     b_rows.push(row::<F>(&[
         (V_NEXT_UNEXPANDED_PC, 1),
@@ -399,10 +323,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 16: NextUnexpPCUpdateOtherwise
-    //     guard = 1 − ShouldBranch − Jump
-    //     left  = NextUnexpandedPC
-    //     right = UnexpandedPC + 4 − 4·DoNotUpdate − 2·IsCompressed
     a_rows.push(row::<F>(&[
         (V_CONST, 1),
         (V_SHOULD_BRANCH, -1),
@@ -442,10 +362,6 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_NEXT_PC, 1), (V_PC, -1), (V_CONST, -1)]));
     c_rows.push(empty());
 
-    // 18: MustStartSequenceFromBeginning
-    //     guard = NextIsVirtual − NextIsFirstInSequence
-    //     left  = 1
-    //     right = DoNotUpdateUnexpandedPC
     a_rows.push(row::<F>(&[
         (V_NEXT_IS_VIRTUAL, 1),
         (V_NEXT_IS_FIRST_IN_SEQUENCE, -1),
@@ -464,20 +380,14 @@ fn append_product_constraints<F: Field>(
     b_rows: &mut Vec<SparseRow<F>>,
     c_rows: &mut Vec<SparseRow<F>>,
 ) {
-    // Product constraints (19-21)
-    // Form: left · right = output  →  A=left, B=right, C=output
-
-    // 19: Product = LeftInstructionInput × RightInstructionInput
     a_rows.push(row::<F>(&[(V_LEFT_INSTRUCTION_INPUT, 1)]));
     b_rows.push(row::<F>(&[(V_RIGHT_INSTRUCTION_INPUT, 1)]));
     c_rows.push(row::<F>(&[(V_PRODUCT, 1)]));
 
-    // 20: ShouldBranch = LookupOutput × Branch
     a_rows.push(row::<F>(&[(V_LOOKUP_OUTPUT, 1)]));
     b_rows.push(row::<F>(&[(V_BRANCH, 1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_BRANCH, 1)]));
 
-    // 21: ShouldJump = Jump × (1 − NextIsNoop)
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
@@ -535,16 +445,9 @@ mod tests {
     use jolt_riscv::CIRCUIT_FLAGS;
     use num_traits::Zero;
 
-    /// A no-op cycle: const=1, all else zero. All eq-conditional guards
-    /// evaluate to 0 (Load=0, Store=0, etc.) except constraint 16
-    /// (NextUnexpPCUpdateOtherwise) whose guard = 1−0−0 = 1.
-    /// Constraint 16 requires: NextUnexpPC = UnexpPC + 4 − 4·DoNotUpdate − 2·IsCompressed.
-    /// For the no-op (DoNotUpdate=1): NextUnexpPC = UnexpPC + 4 − 4 = UnexpPC.
-    /// With both at 0 this holds.
     fn noop_witness() -> Vec<Fr> {
         let mut w = vec![Fr::zero(); NUM_VARS_PER_CYCLE];
         w[V_CONST] = Fr::from_u64(1);
-        // DoNotUpdateUnexpandedPC = 1 for no-ops
         w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
         w
     }
@@ -646,8 +549,6 @@ mod execution_witness_tests {
     use jolt_field::{Fr, Ring};
     use num_traits::Zero;
 
-    // Constraint row indices, matching the push order in
-    // `rv64_eq_constraint_rows` and `append_product_constraints`.
     const RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE: usize = 0;
     const RAM_READ_EQ_RAM_WRITE_IF_LOAD: usize = 2;
     const RAM_READ_EQ_RD_WRITE_IF_LOAD: usize = 3;
@@ -682,14 +583,8 @@ mod execution_witness_tests {
         w
     }
 
-    /// `ADD x3, x1, x2` with rs1 = 2^64 − 2, rs2 = 5.
-    ///
-    /// Circuit flags [AddOperands, WriteLookupOutputToRD] (i/add.rs). The
-    /// right lookup operand carries the unwrapped 65-bit sum
-    /// (2^64 − 2) + 5 = 2^64 + 3, while rd receives the RV64 wrapped
-    /// result 3.
     fn add_witness() -> Vec<Fr> {
-        const RS1: u64 = u64::MAX - 1; // 2^64 − 2
+        const RS1: u64 = u64::MAX - 1;
         const RS2: u64 = 5;
         const UNWRAPPED_SUM: u128 = (1u128 << 64) + 3;
         const WRAPPED_SUM: u64 = 3;
@@ -698,7 +593,6 @@ mod execution_witness_tests {
         let mut w = cycle_witness();
         w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(RS1);
         w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(RS2);
-        // (2^64 − 2)·5 = 5·2^64 − 10, committed unconditionally (row 19).
         w[V_PRODUCT] = Fr::from_u128(5 * ((1u128 << 64) - 2));
         w[V_PC] = Fr::from_u64(7);
         w[V_NEXT_PC] = Fr::from_u64(8);
@@ -714,11 +608,6 @@ mod execution_witness_tests {
         w
     }
 
-    /// `SLTU x5, x1, x2` with rs1 = 7, rs2 = 9, so rd = 1.
-    ///
-    /// Circuit flags [WriteLookupOutputToRD] (i/sltu.rs). No operand
-    /// combination flag is set, so the lookup operands pass through the
-    /// instruction inputs unchanged (interleaved-operand default).
     fn sltu_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0020;
 
@@ -732,7 +621,7 @@ mod execution_witness_tests {
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC + 4);
         w[V_RS1_VALUE] = Fr::from_u64(7);
         w[V_RS2_VALUE] = Fr::from_u64(9);
-        w[V_RD_WRITE_VALUE] = Fr::from_u64(1); // 7 <u 9
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(1);
         w[V_LEFT_LOOKUP_OPERAND] = Fr::from_u64(7);
         w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(9);
         w[V_LOOKUP_OUTPUT] = Fr::from_u64(1);
@@ -740,11 +629,6 @@ mod execution_witness_tests {
         w
     }
 
-    /// `LD x11, 8(x10)` with base 0x8000_1000 loading 0xDEAD_BEEF_CAFE_F00D.
-    ///
-    /// Circuit flags [Load] (i/ld.rs). Loads route the loaded value into
-    /// RamReadValue, RamWriteValue (read-write identity), and RdWriteValue;
-    /// instruction inputs and the lookup are unused (all zero).
     fn ld_witness() -> Vec<Fr> {
         const BASE: u64 = 0x8000_1000;
         const LOADED: u64 = 0xDEAD_BEEF_CAFE_F00D;
@@ -765,13 +649,6 @@ mod execution_witness_tests {
         w
     }
 
-    /// `SD x12, -8(x10)` with base 0x8000_2000 storing 0x1122_3344_5566_7788
-    /// over old memory value 0x0F0F_0F0F_0F0F_0F0F.
-    ///
-    /// Circuit flags [Store] (i/sd.rs). Stores write rs2 to memory
-    /// (RamWriteValue = Rs2Value) and write no register (RdWriteValue = 0).
-    /// The negative offset exercises signed immediate handling in the
-    /// address constraint.
     fn sd_witness() -> Vec<Fr> {
         const BASE: u64 = 0x8000_2000;
         const STORED: u64 = 0x1122_3344_5566_7788;
@@ -793,19 +670,13 @@ mod execution_witness_tests {
         w
     }
 
-    /// `BEQ x1, x2, -16` at 0x8000_0040 with rs1 = rs2 = 42: branch taken.
-    ///
-    /// BEQ sets no circuit flags (i/beq.rs); Branch is an instruction flag
-    /// surfacing as the committed product factor `V_BRANCH`. The Equal
-    /// lookup returns 1, so ShouldBranch = 1·1 and the next unexpanded PC
-    /// is the backward target 0x8000_0040 − 16.
     fn beq_taken_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0040;
 
         let mut w = cycle_witness();
         w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(42);
         w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(42);
-        w[V_PRODUCT] = Fr::from_u64(1764); // 42·42
+        w[V_PRODUCT] = Fr::from_u64(1764);
         w[V_SHOULD_BRANCH] = Fr::from_u64(1);
         w[V_PC] = Fr::from_u64(15);
         w[V_NEXT_PC] = Fr::from_u64(11);
@@ -821,10 +692,6 @@ mod execution_witness_tests {
         w
     }
 
-    /// `BEQ x1, x2, -16` at 0x8000_0040 with rs1 = 7 ≠ rs2 = 9: not taken.
-    ///
-    /// The Equal lookup returns 0, so ShouldBranch = 0 and execution falls
-    /// through to 0x8000_0040 + 4.
     fn beq_not_taken_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0040;
 
@@ -845,17 +712,11 @@ mod execution_witness_tests {
         w
     }
 
-    /// `JAL x1, +0x100` at 0x8000_0100: jump to 0x8000_0200, link 0x8000_0104.
-    ///
-    /// Circuit flags [AddOperands, Jump] (i/jal.rs); the left instruction
-    /// input is the unexpanded PC and the right is the immediate, so the
-    /// RangeCheck lookup computes the jump target PC + imm. The next row is
-    /// a real instruction, so ShouldJump = Jump·(1 − NextIsNoop) = 1.
     fn jal_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0100;
         const IMM: u64 = 0x100;
         const TARGET: u64 = 0x8000_0200;
-        const LINK: u64 = 0x8000_0104; // PC + 4
+        const LINK: u64 = 0x8000_0104;
 
         let mut w = cycle_witness();
         w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(UNEXPANDED_PC);
@@ -875,17 +736,11 @@ mod execution_witness_tests {
         w
     }
 
-    /// `MUL x5, x1, x2` with rs1 = 2^63 + 1, rs2 = 3.
-    ///
-    /// Circuit flags [MultiplyOperands, WriteLookupOutputToRD] (m/mul.rs).
-    /// The full product (2^63 + 1)·3 = 2^64 + 2^63 + 3 exceeds 64 bits: the
-    /// right lookup operand and the committed Product carry the full value,
-    /// while rd receives the RV64 truncated low 64 bits 2^63 + 3.
     fn mul_witness() -> Vec<Fr> {
-        const RS1: u64 = 0x8000_0000_0000_0001; // 2^63 + 1
+        const RS1: u64 = 0x8000_0000_0000_0001;
         const RS2: u64 = 3;
-        const FULL_PRODUCT: u128 = 0x1_8000_0000_0000_0003; // 2^64 + 2^63 + 3
-        const TRUNCATED: u64 = 0x8000_0000_0000_0003; // 2^63 + 3
+        const FULL_PRODUCT: u128 = 0x1_8000_0000_0000_0003;
+        const TRUNCATED: u64 = 0x8000_0000_0000_0003;
         const UNEXPANDED_PC: u64 = 0x8000_0060;
 
         let mut w = cycle_witness();
@@ -906,17 +761,8 @@ mod execution_witness_tests {
         w
     }
 
-    /// A mid-sequence inline step of a virtual expansion (e.g. Virtual
-    /// MOVSIGN inside a DIV expansion) with rs1 = 2^63 (negative), so the
-    /// sign-mask lookup output is all-ones.
-    ///
-    /// Per the `jolt_instruction!` macro, `virtual_sequence_remaining =
-    /// Some(k > 0)` sets [VirtualInstruction, DoNotUpdateUnexpandedPC] and
-    /// not IsLastInSequence, so the expanded PC advances by 1 while the
-    /// unexpanded PC stays put. The next row is the following (non-first)
-    /// step of the same sequence.
     fn virtual_inline_step_witness() -> Vec<Fr> {
-        const RS1: u64 = 0x8000_0000_0000_0000; // 2^63, sign bit set
+        const RS1: u64 = 0x8000_0000_0000_0000;
         const SIGN_MASK: u64 = u64::MAX;
         const UNEXPANDED_PC: u64 = 0x8000_0050;
 
@@ -944,14 +790,12 @@ mod execution_witness_tests {
 
     #[test]
     fn add_rejects_wrong_rd_write_value() {
-        // rd must receive the wrapped sum 3, not 4.
         let w = with_cell(&add_witness(), V_RD_WRITE_VALUE, Fr::from_u64(4));
         assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
     }
 
     #[test]
     fn add_rejects_wrapped_right_lookup_operand() {
-        // Claiming the wrapped sum 3 instead of 2^64 + 3 drops the carry.
         let w = with_cell(&add_witness(), V_RIGHT_LOOKUP_OPERAND, Fr::from_u64(3));
         assert_eq!(check(&w), Err(RIGHT_LOOKUP_ADD));
     }
@@ -968,7 +812,6 @@ mod execution_witness_tests {
 
     #[test]
     fn compressed_add_execution_witness_satisfies_constraints() {
-        // C.ADD occupies 2 bytes, so the unexpanded PC advances by 2.
         let mut w = add_witness();
         w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0010 + 2);
@@ -979,7 +822,6 @@ mod execution_witness_tests {
     fn compressed_add_rejects_full_width_pc_increment() {
         let mut w = add_witness();
         w[V_FLAG_IS_COMPRESSED] = Fr::from_u64(1);
-        // +4 is only correct for uncompressed instructions.
         assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
     }
 
@@ -990,15 +832,12 @@ mod execution_witness_tests {
 
     #[test]
     fn sltu_rejects_wrong_rd_write_value() {
-        // rd must receive the comparison result 1 (7 <u 9), not 0.
         let w = with_cell(&sltu_witness(), V_RD_WRITE_VALUE, Fr::from_u64(0));
         assert_eq!(check(&w), Err(RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD));
     }
 
     #[test]
     fn sltu_rejects_left_lookup_operand_mismatch() {
-        // Without an operand-combination flag the left lookup operand must
-        // pass through the left instruction input unchanged.
         let w = with_cell(&sltu_witness(), V_LEFT_LOOKUP_OPERAND, Fr::from_u64(8));
         assert_eq!(check(&w), Err(LEFT_LOOKUP_EQ_LEFT_INPUT_OTHERWISE));
     }
@@ -1020,14 +859,12 @@ mod execution_witness_tests {
 
     #[test]
     fn ld_rejects_ram_write_differing_from_read() {
-        // A load must leave memory unchanged (write back the read value).
         let w = with_cell(&ld_witness(), V_RAM_WRITE_VALUE, Fr::from_u64(0));
         assert_eq!(check(&w), Err(RAM_READ_EQ_RAM_WRITE_IF_LOAD));
     }
 
     #[test]
     fn ld_rejects_wrong_ram_address() {
-        // Address must be rs1 + imm = 0x8000_1008, not the bare base.
         let w = with_cell(&ld_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_1000));
         assert_eq!(check(&w), Err(RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE));
     }
@@ -1039,7 +876,6 @@ mod execution_witness_tests {
 
     #[test]
     fn sd_rejects_dropped_store_value() {
-        // Writing back the old memory value instead of rs2 drops the store.
         let w = with_cell(
             &sd_witness(),
             V_RAM_WRITE_VALUE,
@@ -1050,7 +886,6 @@ mod execution_witness_tests {
 
     #[test]
     fn sd_rejects_sign_error_in_address() {
-        // imm = −8 must subtract: base + 8 is the sign-flipped address.
         let w = with_cell(&sd_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_2008));
         assert_eq!(check(&w), Err(RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE));
     }
@@ -1075,15 +910,12 @@ mod execution_witness_tests {
 
     #[test]
     fn beq_taken_rejects_denied_should_branch() {
-        // Zeroing ShouldBranch shifts the PC obligation to the fall-through
-        // constraint, which the branch-target next PC then violates.
         let w = with_cell(&beq_taken_witness(), V_SHOULD_BRANCH, Fr::from_u64(0));
         assert_eq!(check(&w), Err(NEXT_UNEXP_PC_UPDATE_OTHERWISE));
     }
 
     #[test]
     fn beq_taken_rejects_zero_lookup_output() {
-        // ShouldBranch = 1 requires the Equal lookup to have returned 1.
         let w = with_cell(&beq_taken_witness(), V_LOOKUP_OUTPUT, Fr::from_u64(0));
         assert_eq!(check(&w), Err(SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH));
     }
@@ -1105,8 +937,6 @@ mod execution_witness_tests {
 
     #[test]
     fn beq_not_taken_rejects_forced_branch() {
-        // Forcing ShouldBranch = 1 with a consistent branch-target next PC
-        // still fails: the lookup output is 0, so 0·Branch ≠ ShouldBranch.
         let mut w = beq_not_taken_witness();
         w[V_SHOULD_BRANCH] = Fr::from_u64(1);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0030);
@@ -1120,7 +950,6 @@ mod execution_witness_tests {
 
     #[test]
     fn jal_rejects_wrong_link_value() {
-        // The link register must hold PC + 4, not PC.
         let w = with_cell(&jal_witness(), V_RD_WRITE_VALUE, Fr::from_u64(0x8000_0100));
         assert_eq!(check(&w), Err(RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP));
     }
@@ -1137,7 +966,6 @@ mod execution_witness_tests {
 
     #[test]
     fn jal_rejects_denied_should_jump() {
-        // With Jump = 1 and a real (non-noop) successor, ShouldJump must be 1.
         let w = with_cell(&jal_witness(), V_SHOULD_JUMP, Fr::from_u64(0));
         assert_eq!(check(&w), Err(SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP));
     }
@@ -1149,8 +977,6 @@ mod execution_witness_tests {
 
     #[test]
     fn mul_rejects_truncated_right_lookup_operand() {
-        // The lookup operand must carry the full 65-bit product, not the
-        // RV64-truncated low 64 bits.
         let w = with_cell(
             &mul_witness(),
             V_RIGHT_LOOKUP_OPERAND,
@@ -1161,8 +987,6 @@ mod execution_witness_tests {
 
     #[test]
     fn mul_rejects_truncated_product() {
-        // Truncating both Product and the lookup operand keeps them mutually
-        // consistent but breaks Product = Left·Right over the field.
         let mut w = mul_witness();
         w[V_PRODUCT] = Fr::from_u64(0x8000_0000_0000_0003);
         w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(0x8000_0000_0000_0003);
@@ -1171,7 +995,6 @@ mod execution_witness_tests {
 
     #[test]
     fn mul_rejects_wrong_rd_write_value() {
-        // rd must receive the truncated product 2^63 + 3, not 2^63 + 1.
         let w = with_cell(
             &mul_witness(),
             V_RD_WRITE_VALUE,
@@ -1187,17 +1010,12 @@ mod execution_witness_tests {
 
     #[test]
     fn virtual_inline_step_rejects_skipped_expanded_pc() {
-        // A non-terminal virtual step must advance the expanded PC by
-        // exactly 1.
         let w = with_cell(&virtual_inline_step_witness(), V_NEXT_PC, Fr::from_u64(22));
         assert_eq!(check(&w), Err(NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE));
     }
 
     #[test]
     fn virtual_inline_step_rejects_entering_sequence_mid_way() {
-        // Pretending the expansion ended (normal +4 advance) while the next
-        // row is a non-first virtual step means control would enter the
-        // middle of a virtual sequence.
         let mut w = virtual_inline_step_witness();
         w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(0);
         w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(0x8000_0050 + 4);

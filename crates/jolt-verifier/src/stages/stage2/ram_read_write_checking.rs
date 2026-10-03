@@ -1,9 +1,3 @@
-//! The stage 2 `RamReadWriteChecking` sumcheck instance.
-//!
-//! Owns the RAM read-write opening-point derivation and the `EqCycle` public-value
-//! computation, in lockstep with the BlindFold constraint's
-//! `ram::read_write_checking` formula.
-
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamReadWriteChallenges, RamReadWriteInputClaims, RamReadWriteOutputClaims,
@@ -19,8 +13,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed RAM read/write value opening *values* from stage 1's outer
-/// sumcheck. (Verifier-side constructor for the moved [`RamReadWriteInputClaims`].)
 pub fn ram_read_write_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> RamReadWriteInputClaims<F> {
@@ -106,8 +98,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
-            // cycle sub-point is the suffix past the address bits.
             RamReadWritePublic::EqCycle => {
                 let r_cycle = output_points.val().get(self.ram_log_k..).ok_or_else(|| {
                     public_input_failed(format!(
@@ -130,10 +120,6 @@ mod tests {
     use jolt_field::Fr;
     use jolt_transcript::Transcript;
 
-    // Representative of the 14 single-`challenge_scalar` relations that inherit the
-    // default `draw_challenges`: the inline `ram_read_write_gamma = challenge_scalar()`
-    // is one squeeze, and the default's one-`challenge_scalar`-per-field draw stores
-    // exactly that scalar.
     #[test]
     fn default_draw_challenges_matches_inline_ram_read_write_gamma() {
         let relation =

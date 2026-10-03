@@ -46,8 +46,6 @@ use rayon::prelude::*;
 
 use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
-/// Shared dense reference round driver: evaluate each integer sample independently
-/// over the Boolean remainder, enforce the running claim, then interpolate.
 pub(crate) fn sample_dense_round<F: JoltField>(
     half: usize,
     degree: usize,
@@ -92,30 +90,15 @@ where
     DerivedIdOf<F, R>: Ord + Sync,
     ChallengeIdOf<F, R>: Ord + Sync,
 {
-    /// The kernel's own clone of the stage's relation, taken from
-    /// [`ProverInputs`] at prepare time; the degree and output expression
-    /// are read off it directly.
     relation: R,
-    /// The expression's `Challenge` leaves pre-resolved to scalars at
-    /// construction, so the round loop reads plain `Sync` data (the typed
-    /// `Challenges` struct is borrowed with a lifetime and stays with the
-    /// caller that drew it).
     challenge_values: BTreeMap<ChallengeIdOf<F, R>, F>,
     opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
     derived_tables: BTreeMap<DerivedIdOf<F, R>, Polynomial<F>>,
     binding_order: BindingOrder,
-    /// Active variables in the stored tables. An enclosing kernel handles
-    /// any inactive variables in the relation's full round schedule.
     table_rounds: usize,
     rounds_bound: usize,
 }
 
-/// Hand-written because the id-keyed table maps cannot go through the derive:
-/// `ChallengeIdOf<F, R>`/`OpeningIdOf<F, R>`/`DerivedIdOf<F, R>` have no `Allocative`
-/// impl, and giving them one cascades through jolt-claims for types that own
-/// no heap. Sized arithmetically instead — table bytes by `len()`, exact at
-/// the mid-stage snapshot (see
-/// [`visit_heap_free_elements`](crate::backend::visit_heap_free_elements)).
 #[cfg(feature = "allocative")]
 impl<F, R> allocative::Allocative for NaiveSumcheckProver<F, R>
 where
@@ -207,9 +190,6 @@ where
         )
     }
 
-    /// Evaluate the supplied relation's summand over compact tables. The
-    /// caller owns placement and multiplicity of omitted inactive rounds;
-    /// this kernel binds only the `table_rounds` variables stored in each table.
     pub(crate) fn new_with_table_rounds(
         inputs: &ProverInputs<'_, F, R>,
         opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
@@ -263,11 +243,6 @@ where
             }
         }
 
-        // The dual-role premise, enforced up front: extraction resolves an
-        // output id from its table when one exists (summand leaves and bound
-        // passenger openings alike) and echoes the consumed input claim
-        // otherwise, so a table keyed by a *consumed* id would shadow the
-        // echo with an evaluation at the wrong point.
         if let Some(id) = inputs
             .claims
             .canonical_order()
@@ -391,8 +366,6 @@ where
     ) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         let opening_tables = &self.opening_tables;
-        // Ids no table serves are the dual-role openings: read the consumed
-        // input claim back (the same cell, exactly as the verifier wires it).
         SumcheckOutputClaims::<F, R>::from_opening_values(|id| {
             opening_tables
                 .get(id)
@@ -436,11 +409,6 @@ where
     }
 }
 
-/// A hand-built toy relation exercising every leaf kind (scalar, `Vec`
-/// family, absent `Option`, `Challenge`, `Derived`) through the naive prover
-/// against the relation's own algebra — the single-member rehearsal of a
-/// stage recipe: head choreography → engine round loop → typed extraction →
-/// `expected_output` fold → clear-verifier twin.
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -483,8 +451,6 @@ mod tests {
     struct ToyInputs<C> {
         #[opening(UnexpandedPC, from = RegistersValEvaluation)]
         total: C,
-        // The dual-role cell: consumed here and re-staged on
-        // `ToyOutputs::untrusted` via the shared-id inference.
         #[opening(untrusted_advice, from = RegistersValEvaluation)]
         untrusted: Option<C>,
     }
@@ -626,8 +592,6 @@ mod tests {
         )])
     }
 
-    /// Brute-force the output expression's sum over the hypercube — the true
-    /// input claim the toy's `total` input opening carries.
     fn brute_force_sum(
         opening_tables: &BTreeMap<JoltOpeningId, Polynomial<Fr>>,
         derived_tables: &BTreeMap<JoltDerivedId, Polynomial<Fr>>,
@@ -659,9 +623,6 @@ mod tests {
         let derived_tables = derived_tables(&reference_point());
         let claimed_sum = brute_force_sum(&opening_tables, &derived_tables, gamma);
 
-        // The one-member batch head (what the generated begin_batch performs).
-        // `untrusted` is the dual-role cell: consumed here, expected back on
-        // the typed output claims through the shared-id inference.
         let untrusted_value = Fr::from_u64(4242);
         let inputs = ToyInputs {
             total: claimed_sum,
@@ -709,7 +670,6 @@ mod tests {
         )
         .unwrap();
 
-        // Typed extraction; the verifier's own algebra is the correctness check.
         let output_points = relation
             .derive_opening_points(&proved.challenges, &input_points)
             .unwrap();
@@ -718,9 +678,6 @@ mod tests {
             .validate_derived_tables(&relation, &input_points, &output_points, &challenges)
             .unwrap();
 
-        // The assembled claims cover the expression's openings plus the
-        // dual-role cell, whose value rode in from the consumed claims (no
-        // table exists for it).
         assert_eq!(output_claims.untrusted, Some(untrusted_value));
         assert_eq!(
             output_claims.canonical_order(),
@@ -740,7 +697,6 @@ mod tests {
         assert_eq!(coefficient * expected, proved.final_claim);
         assert_eq!(proved.member_claims, vec![expected]);
 
-        // Clear-verifier twin: same transcript schedule accepts the proof.
         let recorded = recorder
             .finish(&output_claims.opening_values(), &mut prover_transcript)
             .unwrap();
@@ -775,10 +731,6 @@ mod tests {
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
 
-    /// A derived table materialized at the wrong point survives the sumcheck
-    /// (the prover's sum is self-consistent) but is caught by the
-    /// `derive_output_term` cross-check — the drift detector that pins
-    /// hand-written table resolvers to the verifier's scalar path.
     #[test]
     fn derived_table_drift_is_detected() {
         let relation = ToyRelation {
@@ -789,7 +741,6 @@ mod tests {
         let challenges = relation.draw_challenges(&mut transcript).unwrap();
         let gamma = challenges.gamma;
 
-        // Tables built against a DIFFERENT reference point than the relation's.
         let drifted_point: Vec<Fr> = (0..ROUNDS).map(|i| Fr::from_u64(77 + i as u64)).collect();
         let opening_tables = opening_tables();
         let derived_tables = derived_tables(&drifted_point);
@@ -863,7 +814,6 @@ mod tests {
         };
         let c_id = virt(JoltVirtualPolynomial::RightLookupOperand);
 
-        // A missing opening table is rejected with its id.
         let mut incomplete = opening_tables();
         let _ = incomplete.remove(&c_id);
         let relation = ToyRelation {
@@ -885,7 +835,6 @@ mod tests {
             Err(KernelError::MissingOpeningTable { id }) if id == c_id.into(),
         ));
 
-        // A mis-sized table is rejected.
         let mut mis_sized = opening_tables();
         let _ = mis_sized.insert(c_id, Polynomial::new(vec![Fr::from_u64(1); SIZE / 2]));
         assert!(matches!(
@@ -950,9 +899,6 @@ mod tests {
             reference_point: reference_point(),
         };
 
-        // A table keyed by the consumed dual-role advice id — the shadowing
-        // case: extraction would report its bound value instead of echoing
-        // the consumed claim.
         let mut shadowing = opening_tables();
         let _ = shadowing.insert(advice_id, dense(66));
         assert!(matches!(
@@ -971,9 +917,6 @@ mod tests {
         ));
     }
 
-    /// The ambiguous-role twin of [`ToyInputs`]: its consumed id is one of
-    /// the toy summand's own leaves, so the leaf's mandatory table collides
-    /// with the consumed claim and construction must reject it.
     #[derive(jolt_claims::InputClaims)]
     struct ToyLeafInputs<C> {
         #[opening(LookupOutput, from = RegistersValEvaluation)]

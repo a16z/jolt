@@ -280,8 +280,6 @@ fn akita_native_batching_rejects_point_commitment_dimension_mismatch() {
     );
 }
 
-/// The exact-dimension and group-width checks run against the verifier's own
-/// setup, so a statement built for one setup must reject against another.
 #[test]
 fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     let (small_setup, _) = setup_for(14, 1, layout(7));
@@ -302,7 +300,6 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     )
     .expect("proof should be produced");
 
-    // A 14-variable commitment against a 15-variable verifier setup.
     let (_, wider_verifier) = setup_for(15, 2, layout(7));
     let mut transcript = Blake2bTranscript::new(b"akita-bb-cross-setup");
     expect_invalid_batch(
@@ -315,7 +312,6 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
         "does not match exact setup dimension",
     );
 
-    // A two-polynomial group against a verifier setup capped at one slot.
     let (two_slot_setup, _) = native_setup();
     let poly_a = polynomial(16, 1);
     let poly_b = polynomial(16, 20);
@@ -353,8 +349,6 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     );
 }
 
-/// A dense-flavor commitment claiming a one-hot chunk size is internally
-/// inconsistent and must be rejected before any backend work.
 #[test]
 fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
     let (prover_setup, verifier_setup) = native_setup();
@@ -395,8 +389,6 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
     );
 }
 
-/// One-hot hints certify that the committed data was one-hot; handing the
-/// prover dense witnesses for such a hint must reject.
 #[test]
 fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
     use jolt_akita::{AkitaScheduleArtifacts, AkitaSetupParams, AKITA_ONE_HOT_K16};

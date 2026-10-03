@@ -1,5 +1,3 @@
-//! Packed stage 0: input validation, commitments, and transcript setup.
-
 use common::jolt_device::JoltDevice;
 use std::sync::Arc;
 
@@ -23,7 +21,6 @@ use super::field_inline::FieldIncObject;
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// Outputs retained for later prover stages.
 pub struct Stage0Output<PCS, T>
 where
     PCS: CommitmentScheme,
@@ -33,12 +30,10 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
-    /// The field increment polynomial, committed on every packed field-inline proof.
     #[cfg(feature = "field-inline")]
     pub field_inc: FieldIncObject<PCS>,
 }
 
-/// Validate inputs, commit the packed objects, and seed the transcript.
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -201,7 +196,6 @@ where
         }
     }
     let required_batch_polys = auxiliary_groups.len() + 1;
-    // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
         || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
         || preprocessing.pcs_setup.max_total_batch_polys() < required_batch_polys

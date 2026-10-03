@@ -81,14 +81,10 @@ fn generated_code_mapping_is_not_writable() {
     );
 }
 
-/// A load whose effective address lies outside the guest memory plane must
-/// produce the defined out-of-bounds exit, not a host segfault.
 #[test]
 fn out_of_bounds_load_reports_a_fault() {
     let program = single_row_program(row(JoltInstructionKind::LD, Some(1), Some(2), 0));
     let mut pre = [0u64; REGS];
-    // Far past the plane, but still in the RAM region so it is not routed to
-    // the device helpers: the bounds check is what must catch it.
     pre[1] = common::constants::RAM_START_ADDRESS + (1u64 << 40);
 
     let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
@@ -103,8 +99,6 @@ fn out_of_bounds_load_reports_a_fault() {
     );
 }
 
-/// A store outside the plane must likewise be caught rather than corrupting
-/// host memory.
 #[test]
 fn out_of_bounds_store_reports_a_fault() {
     let mut store = row(JoltInstructionKind::SD, Some(1), None, 0);
@@ -122,8 +116,6 @@ fn out_of_bounds_store_reports_a_fault() {
     );
 }
 
-/// An aligned address inside the text span but between compiled group starts
-/// must take the jump-table filler path and report the bad target.
 #[test]
 fn in_range_unmapped_jump_reports_bad_target() {
     let program = single_row_program(row(JoltInstructionKind::JALR, Some(1), None, 0));

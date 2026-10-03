@@ -31,10 +31,7 @@ pub enum EmitOutcome {
     Unsupported,
 }
 
-/// A code-generation strategy for expanded-bytecode rows.
 pub trait RowEmitter {
-    /// Emit code for one row, or report that this emitter does not handle
-    /// the row's kind.
     fn emit_row(
         &self,
         cx: &mut Emitter,
@@ -52,7 +49,6 @@ pub struct EmitterSet {
 }
 
 impl EmitterSet {
-    /// The production configuration: dynasm templates for every kind.
     pub fn dynasm() -> Self {
         Self {
             emitters: vec![Box::new(super::emit::DynasmEmitter)],
@@ -86,8 +82,6 @@ impl EmitterSet {
         ))
     }
 
-    /// Advice computation is emitted by the first emitter; it is execution
-    /// -model plumbing (a helper call), identical across strategies.
     pub fn emit_advice_compute(
         &self,
         cx: &mut Emitter,
@@ -108,8 +102,6 @@ mod tests {
     use crate::native::harness::{single_row_program, TEST_ADDR};
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
 
-    /// An emitter that claims nothing — stands in for a partial emitter
-    /// (e.g. stencils covering only some kinds) in the ordering tests.
     struct DeclineAll;
 
     impl RowEmitter for DeclineAll {
@@ -140,7 +132,6 @@ mod tests {
         }
     }
 
-    /// A partial emitter ahead of the templates must fall through, not fail.
     #[test]
     fn declining_emitter_falls_through_to_the_next() {
         let program = single_row_program(add_row());
@@ -151,8 +142,6 @@ mod tests {
         assert!(super::super::CompiledProgram::compile_with(&program, &set).is_ok());
     }
 
-    /// When no emitter claims a kind, compilation fails fast rather than
-    /// emitting nothing for the row (spec invariant 7).
     #[test]
     fn unclaimed_kind_fails_compilation() {
         let program = single_row_program(add_row());
@@ -160,8 +149,6 @@ mod tests {
         assert!(super::super::CompiledProgram::compile_with(&program, &set).is_err());
     }
 
-    /// An emitter that emits bytes and then declines would double-count rows
-    /// once a later emitter claims the kind; the set must reject it.
     struct EmitThenDecline;
 
     impl RowEmitter for EmitThenDecline {
@@ -171,7 +158,7 @@ mod tests {
             _row: &JoltInstructionRow,
         ) -> Result<EmitOutcome, TraceError> {
             use dynasmrt::DynasmApi as _;
-            cx.ops.push(0x90); // stray nop
+            cx.ops.push(0x90);
             Ok(EmitOutcome::Unsupported)
         }
 

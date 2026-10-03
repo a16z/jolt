@@ -1109,11 +1109,6 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-/// The Akita-path claim cells: the read-raf fused-inc opening, lattice
-/// Booleanity, and the fused Stage-7 Hamming reduction. All active: the fixture-driven sweep in
-/// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
-/// offsets every clear-claim scalar of the real packed-prover fixtures and
-/// asserts each offset rejects.
 #[cfg(feature = "akita")]
 pub const AKITA_TARGETS: &[TamperTarget] = &[
     checked_standard(
@@ -1293,8 +1288,6 @@ pub fn assert_zk_target_active(name: &str) {
     );
 }
 
-/// The phase where a target's rejection is documented to fire, derived from
-/// its disposition.
 pub fn expected_rejection_phase(target: TamperTarget) -> VerifierPhase {
     match target.disposition {
         TamperDisposition::CheckedAtStage => target.checked_at,
@@ -1304,8 +1297,6 @@ pub fn expected_rejection_phase(target: TamperTarget) -> VerifierPhase {
     }
 }
 
-/// Which stage's batched sumcheck verifies each relation. Folds 6a/6b into
-/// `Stage6`.
 fn relation_phase(id: JoltRelationId) -> VerifierPhase {
     match id {
         JoltRelationId::SpartanOuter => VerifierPhase::Stage1,
@@ -1339,7 +1330,6 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
     }
 }
 
-/// Relation-level errors use `format!("{:?}", relation_id)`.
 fn relation_phase_from_stage_string(stage: &str) -> Option<VerifierPhase> {
     let phase = [
         JoltRelationId::SpartanOuter,
@@ -1397,10 +1387,6 @@ fn relation_phase_from_stage_string(stage: &str) -> Option<VerifierPhase> {
     phase
 }
 
-/// Maps a rejection to the verifier phase that raised it, where the error
-/// variant carries enough information. `None` means the variant is
-/// phase-agnostic (e.g. a missing claim id observed wherever it is first
-/// consumed) and the caller should skip phase attribution.
 pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> {
     match error {
         VerifierError::ProtocolConfigMismatch { .. }
@@ -1481,7 +1467,6 @@ pub fn assert_verifier_fixture_tamper_rejects(
     mutate: impl FnOnce(&mut crate::support::verifier_fixtures::VerifierFixtureCase),
 ) {
     assert_manifest_target_is_active(target);
-    // A tamper test is vacuous unless the untampered fixture verifies.
     crate::support::assert_accepts(base.verify());
     let mut case = base.clone();
     mutate(&mut case);
@@ -1491,9 +1476,6 @@ pub fn assert_verifier_fixture_tamper_rejects(
         "tampered standard proof was accepted for target {}",
         target.name
     );
-    // The manifest documents the LAST line of defense: rejection may fire
-    // earlier (transcript-bound values diverge challenges at the first
-    // post-absorption check) but never later than the documented phase.
     if let Err(error) = result {
         if let Some(observed) = observed_rejection_phase(&error) {
             let expected = expected_rejection_phase(target);

@@ -1,17 +1,9 @@
-//! Keccak-256 hash function implementation optimized for Jolt zkVM.
-//!
-//! This module provides an API similar to the `sha3` crate.
-//! On the host
-
 use crate::{RATE_IN_BYTES, RATE_IN_U64};
 
 const HASH_LEN: usize = 32;
 
-/// Keccak-256 hasher state.
 pub struct Keccak256 {
-    /// The 25-word (1600-bit) Keccak state.
     state: [u64; 25],
-    /// Buffer for incomplete blocks.
     buffer: [u64; RATE_IN_U64],
     /// Number of bytes in the buffer, always below `RATE_IN_BYTES`: `update`
     /// absorbs the buffer the moment it fills.
@@ -19,7 +11,6 @@ pub struct Keccak256 {
 }
 
 impl Keccak256 {
-    /// Creates a new Keccak-256 hasher.
     #[inline(always)]
     pub fn new() -> Self {
         Self {
@@ -29,7 +20,6 @@ impl Keccak256 {
         }
     }
 
-    /// Writes data to the hasher.
     #[inline(always)]
     pub fn update(&mut self, input: &[u8]) {
         if input.is_empty() {
@@ -51,8 +41,6 @@ impl Keccak256 {
             }
         }
 
-        // Complete blocks are absorbed straight from `input`; only the tail
-        // is staged in the buffer.
         let remaining = absorb_full_blocks(&mut self.state, &input[offset..]);
         if !remaining.is_empty() {
             self.buffer_bytes()[..remaining.len()].copy_from_slice(remaining);
@@ -60,7 +48,6 @@ impl Keccak256 {
         }
     }
 
-    /// Reads hash digest and consumes the hasher.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; HASH_LEN] {
         // Keccak padding is `0x01 .. 0x80`; both markers share a byte when
@@ -75,8 +62,6 @@ impl Keccak256 {
         to_bytes(self.state)
     }
 
-    /// Computes Keccak-256 hash in one call.
-    /// Optimized for virtual cycles by avoiding intermediate buffer for final block.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; HASH_LEN] {
         let mut state = [0u64; 25];
@@ -92,7 +77,6 @@ impl Keccak256 {
         unsafe { &mut *self.buffer.as_mut_ptr().cast() }
     }
 
-    /// Absorbs the full block held in `buffer` into the state.
     #[inline(always)]
     fn absorb_buffer(&mut self) {
         // SAFETY: both arrays are 8-byte aligned fields of `self`, so they
@@ -110,7 +94,6 @@ impl Default for Keccak256 {
     }
 }
 
-/// The first `HASH_LEN` bytes of the state, lanes serialized little-endian.
 #[inline(always)]
 fn to_bytes(state: [u64; 25]) -> [u8; HASH_LEN] {
     let mut hash = [0u8; HASH_LEN];
@@ -153,7 +136,6 @@ fn absorb_full_blocks<'a>(state: &mut [u64; 25], input: &'a [u8]) -> &'a [u8] {
     blocks.remainder()
 }
 
-/// Pads the final partial block (`input.len() < RATE_IN_BYTES`) and absorbs it.
 #[inline(always)]
 fn absorb_final(state: &mut [u64; 25], input: &[u8]) {
     let mut block = [0u64; RATE_IN_U64];
@@ -228,21 +210,17 @@ mod tests {
 
     #[test]
     fn test_keccak256_aligned_vs_unaligned() {
-        // Test various sizes including rate boundary (136 bytes)
         let test_sizes = [
             0, 1, 7, 8, 31, 32, 63, 64, 135, 136, 137, 200, 272, 512, 1024, 2048,
         ];
 
         for &size in &test_sizes {
-            // Create aligned buffer
             let aligned: Vec<u8> = (0..size).map(|i| (i * 37 + 11) as u8).collect();
 
-            // Create unaligned buffer by adding 1-byte offset
             let mut unaligned_buf = vec![0u8; size + 1];
             unaligned_buf[1..].copy_from_slice(&aligned);
             let unaligned = &unaligned_buf[1..];
 
-            // Verify alignment difference
             if size > 0 {
                 assert_ne!(
                     aligned.as_ptr() as usize % 8,
@@ -251,7 +229,6 @@ mod tests {
                 );
             }
 
-            // Both should produce identical results
             let aligned_result = Keccak256::digest(&aligned);
             let unaligned_result = Keccak256::digest(unaligned);
 
@@ -260,7 +237,6 @@ mod tests {
                 "Keccak256: aligned vs unaligned mismatch at size {size}"
             );
 
-            // Also verify against reference implementation
             use sha3::{Digest, Keccak256 as RefKeccak};
             let expected: [u8; 32] = RefKeccak::digest(&aligned).into();
             assert_eq!(

@@ -185,9 +185,6 @@ struct ZkBatchFixture {
     proof: DoryProof,
 }
 
-/// Produces an honest ZK batch proof over two random 2-variable polynomials,
-/// bound to a caller-chosen transcript label so each test can replay the
-/// exact prover transcript.
 fn zk_batch_fixture(seed: u64, label: &'static [u8]) -> ZkBatchFixture {
     let (polynomials, point) = homomorphic_polynomials(2, 2, seed);
     let prover_setup = DoryScheme::setup_prover(point.len());
@@ -245,9 +242,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_commitment() {
     let label = b"dory-batch-zk-commitment-tamper";
     let fixture = zk_batch_fixture(0x71_01_00, label);
 
-    // Swapping the two commitments keeps them individually well-formed but
-    // reassigns each to the wrong polynomial, so the verifier's joint
-    // commitment no longer matches the proven joint polynomial.
     let mut tampered = fixture.commitments.clone();
     assert_ne!(
         tampered[0], tampered[1],
@@ -267,7 +261,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_commitment() {
         "swapped commitments must fail verification: {result:?}"
     );
 
-    // Control: the untampered statement verifies under the same label.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,
@@ -299,7 +292,6 @@ fn dory_homomorphic_zk_batch_rejects_wrong_opening_point() {
         "a shifted opening point must fail verification: {result:?}"
     );
 
-    // Control: the point the proof was produced for verifies.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,
@@ -316,9 +308,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_hiding_commitment() {
     let fixture = zk_batch_fixture(0x71_01_02, label);
     let donor = zk_batch_fixture(0x71_01_03, b"dory-batch-zk-ycom-donor");
 
-    // Graft a well-formed but wrong evaluation commitment (y_com) from an
-    // unrelated proof: the value the proof binds no longer matches the
-    // proven evaluation.
     let mut grafted = fixture.proof.clone();
     assert_ne!(
         grafted.0.y_com, donor.proof.0.y_com,
@@ -338,8 +327,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_hiding_commitment() {
         "a grafted hiding commitment must fail verification: {result:?}"
     );
 
-    // Stripping the hiding commitment entirely must also be rejected rather
-    // than falling back to a non-hiding verification path.
     let mut stripped = fixture.proof.clone();
     stripped.0.y_com = None;
     let result = verify_zk_fixture(
@@ -354,7 +341,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_hiding_commitment() {
         "a missing hiding commitment must fail verification: {result:?}"
     );
 
-    // Control: the intact proof verifies.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,

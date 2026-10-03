@@ -43,9 +43,6 @@ mod tests {
         Cpu::new(Box::new(DefaultTerminal::default()))
     }
 
-    /// c.slli RV64 encoding roundtrip: assembles the compressed halfword, runs it
-    /// through uncompress_instruction, decodes as SLLI, and executes. Mirrors the
-    /// per-shift test cases in ACT4's Zca-c.slli-00.S.
     fn run_c_slli(cpu: &mut Cpu, rd: u8, shamt: u8) {
         assert!(rd != 0, "C.SLLI with rd=0 is reserved");
         assert!(shamt < 64, "shamt must fit in 6 bits");

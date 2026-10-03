@@ -147,8 +147,6 @@ impl AgentHarness for ClaudeCodeAgent {
             tracing::warn!("claude exited with status {}", outcome.status);
         }
 
-        // Prefer the final `result` event's text (canonical), fall back to
-        // accumulated assistant text if missing.
         let text = outcome
             .final_event
             .as_ref()
@@ -226,8 +224,6 @@ impl AgentHarness for ClaudeCodeAgent {
     }
 }
 
-/// Accumulate the text content of assistant messages for the
-/// fallback-when-missing-result-event path in [`ClaudeCodeAgent::invoke`].
 fn accumulate_text(event: &Value, out: &mut String) {
     if event.get("type").and_then(Value::as_str) != Some("assistant") {
         return;
@@ -248,10 +244,6 @@ fn accumulate_text(event: &Value, out: &mut String) {
     }
 }
 
-/// Pretty-print an event to stderr.
-///
-/// Always printed: assistant text, thinking blocks, and a one-line
-/// summary of tool-use calls. Only printed when `verbose`: tool results.
 fn print_event(event: &Value, verbose: bool) {
     let Some(ty) = event.get("type").and_then(Value::as_str) else {
         return;
@@ -330,8 +322,6 @@ fn print_result(event: &Value) {
     }
 }
 
-/// Render tool input as a one-line summary. Prefer a well-known field
-/// over dumping the whole JSON object.
 fn tool_input_summary(input: &Value) -> String {
     for key in [
         "file_path",
@@ -372,7 +362,6 @@ fn tool_result_text(block: &Value) -> String {
 /// Stages intent-to-add for untracked files first so that `git diff HEAD`
 /// includes newly created files (not just edits to tracked ones).
 fn capture_diff(worktree_dir: &Path, scope: &DiffScope) -> Option<String> {
-    // Mark untracked files with intent-to-add so `git diff HEAD` sees them.
     let _ = Command::new("git")
         .current_dir(worktree_dir)
         .args(["add", "--intent-to-add", "."])
@@ -424,7 +413,6 @@ pub fn create_worktree(repo_dir: &Path) -> Result<PathBuf, AgentError> {
         return Err(AgentError::new("git worktree add failed"));
     }
 
-    // Symlink gitignored directories so the agent can read them.
     #[cfg(unix)]
     for subpath in ["jolt-eval/redteam-history", "jolt-eval/optimize-history"] {
         let src = repo_dir.join(subpath);
@@ -436,7 +424,6 @@ pub fn create_worktree(repo_dir: &Path) -> Result<PathBuf, AgentError> {
     Ok(worktree_dir)
 }
 
-/// Remove a git worktree.
 pub fn remove_worktree(repo_dir: &Path, worktree_dir: &Path) {
     let _ = Command::new("git")
         .current_dir(repo_dir)

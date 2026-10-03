@@ -1,12 +1,5 @@
 use super::*;
 
-/// Lowers unsigned 64-bit `DIVU` by witnessing a quotient and proving it is
-/// the unique valid quotient for `(rs1, rs2)`.
-///
-/// The sequence accepts the RISC-V divide-by-zero result through
-/// `VirtualAssertValidDiv0`. Otherwise it proves `q * divisor` does not
-/// overflow, `q * divisor <= dividend`, and the derived remainder is either
-/// below the divisor or the divisor is zero.
 pub(in crate::expand) fn expand_divu(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -14,8 +7,6 @@ pub(in crate::expand) fn expand_divu(
     let v0 = asm.allocate()?;
     let v1 = asm.allocate()?;
 
-    // v0 is the quotient supplied by the tracer. The following assertions bind
-    // it to the architectural unsigned division relation before copying to rd.
     asm.emit_j(
         SourceInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(())),
         v0.operand(),

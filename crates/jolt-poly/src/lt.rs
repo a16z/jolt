@@ -1,29 +1,3 @@
-//! Less-than polynomial for value accumulation sumchecks.
-//!
-//! The MLE `LT(x, y)` evaluates to 1 on Boolean inputs when `x < y` as
-//! integers and 0 otherwise. Its multilinear extension is:
-//!
-//! $$\text{LT}(x, y) = \sum_{i} (1 - x_i) \cdot y_i \cdot \text{eq}(x_{i+1:}, y_{i+1:})$$
-//!
-//! where the sum runs from MSB to LSB (big-endian bit ordering).
-//!
-//! Used in the register/RAM value evaluation sumcheck to accumulate writes
-//! that occurred before a given cycle point.
-//!
-//! # Split optimization
-//!
-//! Rather than materializing the full `2^n` table and binding it each round
-//! (O(n·2^n) total work, O(2^n) memory), `LtPolynomial` splits the point
-//! `r` at the midpoint into `(r_hi, r_lo)` and stores three √N-sized tables:
-//!
-//! ```text
-//! LT(j, r) = LT(j_hi, r_hi) + eq(j_hi, r_hi) · LT(j_lo, r_lo)
-//! ```
-//!
-//! where `j = (j_hi, j_lo)`. Binding proceeds HighToLow: first all hi vars
-//! (shrinking `lt_hi` and `eq_hi`), then all lo vars (shrinking `lt_lo`).
-//! Total memory stays at 3 · √N throughout.
-
 use jolt_field::JoltField;
 
 use crate::EqPolynomial;
@@ -60,13 +34,11 @@ impl<F: JoltField> LtPolynomial<F> {
         }
     }
 
-    /// Total number of remaining variables.
     #[inline]
     pub fn num_vars(&self) -> usize {
         self.n_hi_vars + self.n_lo_vars
     }
 
-    /// Effective table size `2^num_vars`.
     #[inline]
     pub fn len(&self) -> usize {
         self.lt_hi.len() * self.lt_lo.len()
@@ -77,7 +49,6 @@ impl<F: JoltField> LtPolynomial<F> {
         self.lt_hi.is_empty()
     }
 
-    /// Reconstructs `LT[idx]` from the split tables.
     #[inline]
     fn get(&self, idx: usize) -> F {
         let lo_size = self.lt_lo.len();
@@ -134,13 +105,6 @@ impl<F: JoltField> LtPolynomial<F> {
     }
 }
 
-/// Materializes `[LT(0, r), LT(1, r), ..., LT(2^n - 1, r)]` in big-endian order.
-///
-/// Uses an in-place doubling construction. For each bit position `i` (LSB to MSB):
-/// - Left half `x`: `x' = x + r_i - x·r_i` (accumulates `(1-x_i)·r_i·eq_suffix`)
-/// - Right half `y`: `y' = x·r_i` (propagates eq term through x_i=1)
-///
-/// Time: O(n·2^n). Space: O(2^n).
 fn lt_evals<F: JoltField>(r: &[F]) -> Vec<F> {
     let n = r.len();
     jolt_utils::math::assert_shiftable_dim(n);
@@ -155,7 +119,6 @@ fn lt_evals<F: JoltField>(r: &[F]) -> Vec<F> {
     evals
 }
 
-/// In-place HighToLow bind: `v[j] = v[j] + challenge · (v[j+half] - v[j])`.
 #[inline]
 fn bind_in_place<F: JoltField>(v: &mut Vec<F>, challenge: F) {
     let half = v.len() / 2;
@@ -189,7 +152,6 @@ mod tests {
 
     #[test]
     fn boolean_correctness() {
-        // LT(x, r) = 1 iff x < r on Boolean inputs.
         for n in 1..=5 {
             for r_int in 0..(1u64 << n) {
                 let r_bits = index_to_bits(r_int as usize, n);
@@ -259,7 +221,6 @@ mod tests {
 
     #[test]
     fn sequential_bind_converges() {
-        // Bind all variables → single scalar = evaluate(challenges, r).
         let mut rng = ChaCha20Rng::seed_from_u64(200);
         for n in 2..=8 {
             let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -281,7 +242,6 @@ mod tests {
 
     #[test]
     fn bind_matches_full_table_bind() {
-        // Verify that binding the split matches binding the full table.
         let mut rng = ChaCha20Rng::seed_from_u64(300);
         for n in 3..=7 {
             let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -302,7 +262,6 @@ mod tests {
 
     #[test]
     fn multi_round_bind_matches_full_table() {
-        // Bind several rounds and verify each round matches the full table.
         let mut rng = ChaCha20Rng::seed_from_u64(400);
         let n = 6;
         let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -350,10 +309,6 @@ mod tests {
 
     #[test]
     fn sum_over_hypercube() {
-        // Σ_x LT(x, r) = r interpreted as an integer in [0, 2^n).
-        // Actually: Σ_x LT(x, r) for Boolean x gives the number of x < r,
-        // but for random r this is a multilinear extension.
-        // Simple check: for Boolean r, the sum should equal r_int.
         for n in 1..=5 {
             for r_int in 0..(1u64 << n) {
                 let r_bits = index_to_bits(r_int as usize, n);
@@ -377,7 +332,6 @@ mod tests {
 
     #[test]
     fn odd_num_vars() {
-        // Verify split works correctly when n is odd (hi gets extra var).
         let mut rng = ChaCha20Rng::seed_from_u64(600);
         for n in [3, 5, 7] {
             let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();

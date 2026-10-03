@@ -54,8 +54,6 @@ mod tests {
             is_compressed: false,
         };
         let mut ram_access = ();
-        // i64::MAX.wrapping_add(1) == i64::MIN, whose low 2 bits are 0,
-        // so this must execute without panicking.
         instr.execute(&mut cpu, &mut ram_access);
     }
 }

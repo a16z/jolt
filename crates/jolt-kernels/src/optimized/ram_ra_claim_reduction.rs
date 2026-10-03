@@ -45,7 +45,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The three consumed claims (RAF, read-write, val-check), in γ-power order.
 const TERMS: usize = 3;
 
 impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
@@ -118,8 +117,6 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
     }
 }
 
-/// `Q_x[c_lo] = Σ_{c_hi} eq(r_address)[addresses[c_hi‖c_lo]] · eq_hi_x[c_hi]`
-/// for the three cycle points, in one pass over the access columns.
 fn build_q_tables<F: JoltField>(
     addresses: &[u32],
     eq_address: &[F],
@@ -175,9 +172,6 @@ fn build_q_tables<F: JoltField>(
     }
 }
 
-/// `H'[c_hi] = Σ_{c_lo} eq(r_address)[addresses[c_hi‖c_lo]] · eq_prefix[c_lo]`
-/// — the partial evaluation of the address-folded `ra` at the prefix
-/// challenges, regathered from the access columns.
 fn gather_h_prime<F: JoltField>(
     addresses: &[u32],
     eq_address: &[F],
@@ -234,9 +228,6 @@ fn gather_h_prime<F: JoltField>(
 )]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F: JoltField> {
-    /// Rounds over the low (prefix) cycle variables: six `O(√T)` tables. The
-    /// suffix eq tables and the transition inputs (columns, address eq,
-    /// low-half cycle points, collected challenges) ride along.
     Prefix {
         p: [Vec<F>; TERMS],
         q: [Vec<F>; TERMS],
@@ -246,8 +237,6 @@ enum Phase<F: JoltField> {
         r_cycle_lo: [Vec<F>; TERMS],
         challenges: Vec<F>,
     },
-    /// Rounds over the high (suffix) cycle variables after the regather.
-    /// `scales[x] = eq(r_x_lo, r_prefix)` — the bound prefix eq factors.
     Suffix {
         h: Vec<F>,
         eq_hi: [Vec<F>; TERMS],
@@ -260,7 +249,6 @@ enum Phase<F: JoltField> {
 struct RaReductionKernel<F: JoltField> {
     progress: RoundProgress,
     prefix_bits: usize,
-    /// `[1, γ, γ²]` — the consumed-claim batching coefficients.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; TERMS],
     phase: Phase<F>,
@@ -290,9 +278,6 @@ impl<F: JoltField> RaReductionKernel<F> {
         }
     }
 
-    /// Swap the prefix state for the suffix state: regather `H'` from the
-    /// access columns at the collected prefix challenges and collapse the
-    /// bound prefix eq factors into scalars.
     fn transition_to_suffix(&mut self) {
         let placeholder = Phase::Suffix {
             h: Vec::new(),
@@ -311,7 +296,6 @@ impl<F: JoltField> RaReductionKernel<F> {
             debug_assert!(false, "transition called outside the prefix phase");
             return;
         };
-        // Low-to-high challenges reversed give the big-endian prefix point.
         let r_prefix: Vec<F> = challenges.iter().rev().copied().collect();
         let eq_prefix = eq_table(&r_prefix);
         let h = gather_h_prime(
@@ -325,8 +309,6 @@ impl<F: JoltField> RaReductionKernel<F> {
         self.phase = Phase::Suffix { h, eq_hi, scales };
     }
 
-    /// `[s(0), s(2)]` of the current round polynomial; `s(1)` comes from the
-    /// engine hint.
     fn message_evals(&self) -> [F; 2] {
         match &self.phase {
             Phase::Prefix { p, q, .. } => {
@@ -408,9 +390,6 @@ impl<F: JoltField> SumcheckKernel<F> for RaReductionKernel<F> {
         Ok(RamRaClaimReductionOutputClaims { ram_ra: h[0] })
     }
 
-    /// Pin the factored eq tables to the verifier's scalar path: for each
-    /// cycle point, `scale_x · eq_hi_x` fully bound must equal
-    /// `derive_output_term` at the bound point.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -509,8 +488,6 @@ mod tests {
             )
             .unwrap();
 
-            // The independently folded true input claim:
-            // `Σ_j (eq_raf(j) + γ·eq_rw(j) + γ²·eq_val(j)) · ra_folded(j)`.
             let ra_folded =
                 address_fold::<Fr>(witness, ram_ra_claim_reduction(), shape.log_t, &r_address)
                     .unwrap();
@@ -566,8 +543,6 @@ mod tests {
 
     #[test]
     fn matches_reference_on_single_round() {
-        // `log_T = 1` has no prefix rounds: the kernel starts in the suffix
-        // phase off the plain address fold.
         run_parity(
             FixtureShape { log_t: 1, ram_k: 8 },
             vec![RamOp::Write { word: 1, post: 4 }],

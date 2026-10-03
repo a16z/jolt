@@ -1,16 +1,3 @@
-//! Concrete BN254 curve implementation.
-//!
-//! This module wraps the arkworks `ark-bn254` crate behind the generic
-//! `JoltGroup` and `PairingGroup` traits. Arkworks types never appear in
-//! the public API — all conversions happen internally.
-
-/// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
-/// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
-/// size assertions, and a safe `into_inner` accessor.
-///
-/// Paths are fully qualified so the macro does not inject `use` items into the caller's
-/// module scope — callers can expand the macro multiple times in the same module or
-/// alongside unrelated imports without conflicts.
 macro_rules! impl_jolt_group_wrapper {
     ($wrapper:ident, $projective:ty, $affine:ty, $doc:literal) => {
         #[doc = $doc]
@@ -24,13 +11,11 @@ macro_rules! impl_jolt_group_wrapper {
             assert!(::std::mem::size_of::<$wrapper>() == ::std::mem::size_of::<$projective>());
 
         impl $wrapper {
-            /// Unwraps into the inner arkworks projective type.
             #[inline(always)]
             pub fn into_inner(self) -> $projective {
                 self.0
             }
 
-            /// Reinterprets a wrapper slice as a slice of the inner arkworks type.
             #[inline(always)]
             pub(crate) fn as_inner_slice(slice: &[Self]) -> &[$projective] {
                 // SAFETY: $wrapper is #[repr(transparent)] over $projective
@@ -41,7 +26,6 @@ macro_rules! impl_jolt_group_wrapper {
                 }
             }
 
-            /// Reinterprets a mutable wrapper slice as a slice of the inner arkworks type.
             #[inline(always)]
             pub(crate) fn as_inner_slice_mut(slice: &mut [Self]) -> &mut [$projective] {
                 // SAFETY: same repr(transparent) layout guarantee as `as_inner_slice`;
@@ -248,24 +232,20 @@ use jolt_field::JoltField;
 
 use crate::PairingGroup;
 
-/// BN254 pairing-friendly curve.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bn254;
 
 impl Bn254 {
-    /// Standard G1 generator. Useful for tests and PCS setup code.
     pub fn g1_generator() -> Bn254G1 {
         use ark_ec::AffineRepr;
         Bn254G1(ark_bn254::G1Affine::generator().into())
     }
 
-    /// Standard G2 generator. Useful for tests and PCS setup code.
     pub fn g2_generator() -> Bn254G2 {
         use ark_ec::AffineRepr;
         Bn254G2(ark_bn254::G2Affine::generator().into())
     }
 
-    /// Samples a uniformly random G1 element.
     pub fn random_g1<R: rand_core::RngCore>(rng: &mut R) -> Bn254G1 {
         use ark_std::UniformRand;
         Bn254G1(ark_bn254::G1Projective::rand(rng))

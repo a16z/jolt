@@ -28,7 +28,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Remapped RAM address index, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
     addresses: Arc<Vec<u32>>,
@@ -68,7 +67,6 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         }
         let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
 
-        // Reuse stage 2 addresses; collect only the short-lived values.
         let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
         super::ram_trace::validate_addresses(&columns.addresses, 1usize << ram_log_k)?;
         let addresses = Arc::clone(&columns.addresses);
@@ -82,8 +80,6 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
-/// Raw trace values for two rounds; a dense `T/4` table afterward.
-/// Reads have `post == pre`, and no-ops are zero, matching `RamInc`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncColumn<F: JoltField> {
     Raw(RamAccessColumns),
@@ -95,7 +91,6 @@ enum IncColumn<F: JoltField> {
     Bound(Polynomial<F>),
 }
 
-/// `inc(j)` from raw trace values.
 #[inline]
 fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
     F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
@@ -121,12 +116,10 @@ impl<F: JoltField> RamValCheckKernel<F> {
                 post_values: Vec::new(),
             });
             self.inc = match std::mem::replace(&mut self.inc, placeholder) {
-                // Round 1 reads bound pairs from the raw columns.
                 IncColumn::Raw(columns) => IncColumn::RawBound {
                     columns,
                     r1: challenge,
                 },
-                // Materialize the second bind directly at `T/4`.
                 IncColumn::RawBound { columns, r1 } => {
                     freed_columns = true;
                     IncColumn::Bound(bind_raw_twice(
@@ -142,7 +135,6 @@ impl<F: JoltField> RamValCheckKernel<F> {
         self.ra.bind(challenge);
         self.lt.bind(challenge);
         self.progress.advance();
-        // Return freed `T`-sized columns before the stage boundary.
         if freed_columns {
             crate::mem::purge_retained_memory(self.progress.total());
         }
@@ -164,7 +156,6 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
             self.bind(challenge);
         }
 
-        // Each arm keeps representation branches outside the inner loop.
         let ra = |y: usize| self.ra.lo_hi(0, y);
         let lt = |y: usize| self.lt.pair(y);
         let evals = match &self.inc {
@@ -206,23 +197,19 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamValCheckOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        // Advice outputs echo their input claims; they are not bound here.
         Ok(RamValCheckOutputClaims {
             untrusted_advice: inputs.untrusted_advice,
             trusted_advice: inputs.trusted_advice,
             program_image: inputs.program_image,
             ram_ra: self.ra.final_values()[0],
             ram_inc: match &self.inc {
-                // Only when log_t = 0.
                 IncColumn::Raw(columns) => raw_inc(columns, 0),
-                // Only when log_t = 1.
                 IncColumn::RawBound { columns, r1 } => bound_pair(|j| raw_inc(columns, j), *r1, 0),
                 IncColumn::Bound(inc) => inc.evals()[0],
             },
         })
     }
 
-    /// Check the bound split-LT value against the verifier's scalar path.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -316,7 +303,6 @@ mod tests {
             )
             .unwrap();
 
-            // Independent input claim: `Σ inc · ra_folded · (LT + γ)`.
             let ra_folded =
                 address_fold::<Fr>(witness, ram_ra_val_check(), shape.log_t, &r_address).unwrap();
             let inc: Vec<Fr> = witness
@@ -368,8 +354,6 @@ mod tests {
 
     #[test]
     fn matches_reference_on_odd_log_t() {
-        // Five rounds: the lazy `ra` crosses its dense materialization and
-        // the split LT collapses its lo tables mid-protocol.
         let mut ops = mixed_ops();
         ops.extend([
             RamOp::Write { word: 7, post: 2 },

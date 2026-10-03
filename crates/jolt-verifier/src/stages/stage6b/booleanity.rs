@@ -34,9 +34,6 @@ type CyclePhaseSymbolic = relations::booleanity::BooleanityCyclePhase;
 #[cfg(feature = "akita")]
 type CyclePhaseSymbolic = lattice_booleanity::LatticeBooleanityCyclePhase;
 
-/// The cycle phase's shape: the base dimensions, plus (akita) the inc
-/// chunking they imply. The driver constructs it, keeping this member's
-/// constructor infallible.
 #[cfg(not(feature = "akita"))]
 pub type BooleanityCycleDimensions = BooleanityDimensions;
 #[cfg(feature = "akita")]
@@ -46,9 +43,7 @@ pub type BooleanityCycleDimensions = lattice_booleanity::LatticeBooleanityDimens
 pub struct Booleanity<F: JoltField> {
     symbolic: CyclePhaseSymbolic,
     dimensions: BooleanityCycleDimensions,
-    /// The address opening prefix from the stage-6a phase.
     r_address: Vec<F>,
-    /// The reference address/cycle the `EqAddressCycle` public compares against.
     reference_address: Vec<F>,
     reference_cycle: Vec<F>,
 }
@@ -151,10 +146,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
-        // Recover the raw two-phase sumcheck point from a produced opening point
-        // (`r_address ++ r_cycle`): each half is the reverse of its phase's
-        // sumcheck sub-point, and `EqAddressCycle` compares `[6a ++ 6b]` against
-        // `reversed(reference_address) ++ reversed(reference_cycle)`.
         let opening_point = output_points
             .instruction_ra()
             .first()
@@ -189,10 +180,6 @@ mod tests {
     use jolt_field::Fr;
     use jolt_transcript::Transcript;
 
-    // Booleanity inherits the default `draw_challenges` (one `challenge_scalar`): the
-    // inline draw is a single `challenge()`. The historical zero-gamma re-roll was
-    // dropped — a real Fiat-Shamir transcript never yields zero, and nothing else
-    // checks for it.
     #[test]
     fn default_draw_challenges_matches_inline_booleanity_gamma() {
         let layout = JoltRaPolynomialLayout::new(1, 1, 1).unwrap();

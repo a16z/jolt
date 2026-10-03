@@ -1,10 +1,3 @@
-//! Address-first register checking with O(T) storage for the fixed register domain.
-//!
-//! Raw increment checkpoints let each address round scan compact access
-//! chunks independently, weighted by the bound address prefix. The same
-//! checkpoints parallelize the handoff to five cycle tables; the dead address
-//! equality buffer becomes the rs1 table. Gruen factoring handles the tail.
-
 use core::mem::MaybeUninit;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
@@ -210,8 +203,6 @@ impl<F: JoltField> AddressFirstKernel<F> {
                     weights[i] -= high;
                 }
                 if weights.len() == 1usize << REGISTER_ADDRESS_BITS {
-                    // The address equality table is dead; reuse its allocation
-                    // for rs1 so the handoff never holds six dense cycle tables.
                     let mut rs1 = std::mem::take(eq);
                     rs1.clear();
                     let mut rs2 = Vec::with_capacity(rows.len());
@@ -366,8 +357,6 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
     }
 }
 
-/// Each checkpoint is the raw increment prefix at a chunk boundary. Binding
-/// that K-sized state lets chunks scan independently without another trace pass.
 fn checkpoint_values<F: JoltField>(
     checkpoint: &[i128; 1 << REGISTER_ADDRESS_BITS],
     weights: &[F],

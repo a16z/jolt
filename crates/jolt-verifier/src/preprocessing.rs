@@ -1,5 +1,3 @@
-//! Verifier preprocessing inputs.
-
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -169,7 +167,6 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// deployed verifier sees.
 #[cfg(not(feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v2";
-// Field flags use the common circuit columns; preprocessing has no side table.
 #[cfg(feature = "field-inline")]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v5";
 
@@ -248,8 +245,6 @@ where
     }
 }
 
-/// Wire form of [`JoltVerifierPreprocessing`]: everything except the derived
-/// digest.
 #[derive(Serialize, Deserialize)]
 #[serde(bound(
     serialize = "VC::Setup: Serialize",
@@ -344,8 +339,6 @@ mod tests {
         190, 25, 90, 127, 205, 145, 75, 51, 132, 226, 123, 67,
     ];
 
-    /// An empty program over a real (non-zero) memory layout, so every layout
-    /// field participates in the pinned bytes.
     fn program() -> JoltProgramPreprocessing {
         let memory_layout = MemoryLayout::new(&MemoryConfig {
             max_untrusted_advice_size: 4096,

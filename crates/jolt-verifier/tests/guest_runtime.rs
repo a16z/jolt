@@ -2,7 +2,6 @@
 
 use jolt_host::Program;
 
-// Repeated and partial unmaps must not corrupt ZeroOS's kernel heap.
 #[test]
 fn large_alloc_munmap_trace() {
     let mut program = Program::new("large-alloc-guest");

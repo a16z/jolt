@@ -31,12 +31,6 @@ struct MaterializeOptions {
     stamp: StampSequenceFn,
 }
 
-/// Materializes symbolic recipes into concrete final rows.
-///
-/// `ExpansionState` is the only component that binds symbolic temps to physical
-/// virtual registers. It also owns recursive source-only expansion, so nested
-/// helper recipes share allocator state with their parent and cannot collide
-/// with a top-level `rd = x0` rewrite or a registered inline allocation.
 pub(super) struct ExpansionState {
     allocator: ExpansionAllocator,
     profile: JoltInstructionProfile,
@@ -51,11 +45,6 @@ impl ExpansionState {
         self.allocator
     }
 
-    /// Expand a source instruction while preserving allocator recursion state.
-    ///
-    /// Recursive expansion is used when a recipe emits a source-only helper row.
-    /// It rejects unbounded recursion and routes all rows through the same
-    /// `rd = x0`, profile, and materialization rules as top-level expansion.
     pub(super) fn expand_source_recursive(
         &mut self,
         instruction: &SourceInstruction,
@@ -66,11 +55,6 @@ impl ExpansionState {
         result
     }
 
-    /// Route one source instruction to its final-row representation.
-    ///
-    /// The order matters: `rd = x0` is handled before provider dispatch or
-    /// source-only lowering, native target rows pass through unchanged, and
-    /// built-in source-only rows are lowered into a recipe and materialized.
     fn dispatch_source(
         &mut self,
         instruction: &SourceInstruction,
@@ -109,10 +93,6 @@ impl ExpansionState {
         self.allocator.release(register)
     }
 
-    /// Materialize a built-in source-only recipe and stamp it as one sequence.
-    ///
-    /// This path is bounded by `MAX_FINAL_ROWS_PER_SOURCE` because ordinary
-    /// source-only instructions should expand into small fixed recipes.
     pub(super) fn materialize(
         &mut self,
         sequence: ExpandedInstructionSequence,
@@ -127,12 +107,6 @@ impl ExpansionState {
         )
     }
 
-    /// Materialize a registered inline recipe, append reset rows, and stamp it.
-    ///
-    /// Inline recipes can be much larger than built-in instruction recipes, so
-    /// they use the full `u16` virtual-sequence range. Reset rows are appended
-    /// here, after all provider-owned inline registers have been released, so
-    /// virtual-register cleanup is centralized and independent of tracer RAII.
     pub(super) fn materialize_inline(
         &mut self,
         sequence: ExpandedInstructionSequence,
@@ -209,7 +183,6 @@ impl ExpansionState {
     }
 }
 
-/// Bounded output collector — rejects sequences exceeding `MAX_FINAL_ROWS_PER_SOURCE`.
 #[derive(Debug)]
 struct ExpansionBuffer {
     rows: Vec<JoltInstructionRow>,
@@ -273,7 +246,6 @@ impl TempBindingId for InlineTempId {
     }
 }
 
-/// Maps symbolic ids to physical virtual registers for one recipe materialization.
 struct TempBindings<Id, const N: usize> {
     slots: [Option<u8>; N],
     _marker: PhantomData<fn(Id)>,
@@ -322,7 +294,6 @@ impl<Id: TempBindingId, const N: usize> TempBindings<Id, N> {
     }
 }
 
-/// Executes a single recipe: resolves temps, collects output rows, checks capacity.
 struct SequenceMaterializer {
     address: usize,
     rows: ExpansionBuffer,

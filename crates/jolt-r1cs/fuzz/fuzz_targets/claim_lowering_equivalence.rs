@@ -1,12 +1,5 @@
 #![no_main]
 
-//! Differential oracle for symbolic claim expressions and their R1CS lowering.
-//!
-//! The fuzzer controls a bounded sum-of-products expression and whether each
-//! opening, challenge, and derived value is represented as a constant or a
-//! witness variable. The directly evaluated result must satisfy the lowered
-//! constraints, while changing only the claimed result must violate them.
-
 use jolt_claims::{Expr, Source, Term};
 use jolt_field::{Fr, Ring};
 use jolt_r1cs::{assert_claim_expr_eq, ClaimSourceTable, R1csBuilder, SourceValue};

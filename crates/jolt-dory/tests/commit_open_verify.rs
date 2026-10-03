@@ -1,8 +1,3 @@
-//! Integration tests for the Dory commitment scheme.
-//!
-//! Public-API-only tests — no `pub(crate)` imports. Exercises commit, open,
-//! verify, streaming, combine, and negative cases across transcript backends.
-
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 #![expect(
     clippy::unwrap_used,
@@ -31,7 +26,6 @@ fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: 
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-    // With hint
     let mut pt = T::new(label);
     let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt).unwrap();
 
@@ -39,7 +33,6 @@ fn round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: 
     DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt)
         .expect("round-trip verification (with hint) must succeed");
 
-    // Without hint
     let mut pt2 = T::new(label);
     let proof2 = DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut pt2).unwrap();
 
@@ -302,7 +295,6 @@ fn wrong_commitment_rejected() {
     let mut pt = Blake2bTranscript::new(b"wrong-commit");
     let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt).unwrap();
 
-    // Commit to a different polynomial
     let wrong_poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let (wrong_commitment, _) =
         DoryScheme::commit(wrong_poly.evaluations(), &prover_setup).unwrap();
@@ -345,7 +337,7 @@ fn wrong_transcript_domain_rejected() {
 #[test]
 fn property_based_round_trip() {
     for seed in 0..10u64 {
-        let num_vars = 2 + (seed as usize % 4); // 2..5
+        let num_vars = 2 + (seed as usize % 4);
         round_trip::<Blake2bTranscript>(num_vars, 800 + seed, b"prop-rt");
     }
 }
@@ -555,9 +547,6 @@ fn wrong_eval_commitment_rejected_zk() {
     let (mut proof, _eval_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt).unwrap();
 
-    // Replace proof.y_com (the hiding commitment to the evaluation) with a
-    // different valid G1. dory::verify must reject because the Σ₁/Σ₂ sub-proofs
-    // bind y_com cryptographically to the rest of the proof.
     proof.0.y_com = Some(ArkG1::default());
 
     let mut vt = Blake2bTranscript::new(b"zk-tampered-y-com");
@@ -592,11 +581,6 @@ fn zk_wrong_transcript_domain_rejected() {
     );
 }
 
-/// Hints from a shared commitment grid are ragged: a polynomial narrower than
-/// the grid streams fewer rows than a grid-spanning one. `combine_hints` pads
-/// the narrow hint with identity rows (the zero-embedding's missing rows), so
-/// the combined hint must open the RLC of the wide polynomial with the
-/// zero-extended narrow one.
 #[test]
 fn ragged_hint_combination_verifies() {
     let wide_vars = 6;
@@ -610,8 +594,6 @@ fn ragged_hint_combination_verifies() {
 
     let (wide_commit, wide_hint) = DoryScheme::commit(wide.evaluations(), &prover_setup).unwrap();
 
-    // Commit the narrow polynomial at the wide grid's row width, as the
-    // shared-grid witness commitment does — fewer hint rows than the wide.
     let row_width = 1usize << wide_vars.div_ceil(2);
     let mut partial = DoryScheme::begin(&prover_setup);
     for chunk in narrow.evaluations().chunks(row_width) {
@@ -624,7 +606,6 @@ fn ragged_hint_combination_verifies() {
     let combined_commitment = DoryScheme::combine(&[wide_commit, narrow_commit], &[c1, c2]);
     let combined_hint = DoryScheme::combine_hints(vec![wide_hint, narrow_hint], &[c1, c2]);
 
-    // The joint polynomial: wide + zero-embedded (low-index prefix) narrow.
     let mut narrow_embedded = narrow.evaluations().to_vec();
     narrow_embedded.resize(1 << wide_vars, Fr::from_u64(0));
     let joint = Polynomial::new(

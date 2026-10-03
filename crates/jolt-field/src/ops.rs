@@ -1,13 +1,3 @@
-//! Exported stamping macros.
-//!
-//! Concrete types provide raw add/sub/mul/neg bodies and the two identities;
-//! these macros emit the full operator matrix, iterator sums/products, and
-//! canonical-bytes serde. They are exported so third-party field
-//! implementors pay the same near-zero boilerplate as the in-crate backends.
-//!
-//! Generic parameters are passed as a raw token list: `impl[const P: u64]`,
-//! `impl[F: Field, C: Config<F>]`, or `impl[]` for concrete types.
-
 /// Implements the additive operator matrix for a group type: `Add`/`Sub`
 /// (owned and by-ref), `AddAssign`/`SubAssign`, `Neg`, `Zero`, and the
 /// [`AdditiveGroup`](crate::AdditiveGroup) marker.

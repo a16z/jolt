@@ -25,7 +25,6 @@ use crate::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
-/// Upper bound on rows planned by one preprocessing request.
 const MAX_PROVISIONED_ROWS: usize = 128;
 
 /// Physical shape and admitted coefficient range of one dense commitment group.
@@ -60,7 +59,6 @@ fn producer<Cfg: CommitmentConfig>(
     PrecommittedProducer::try_new(*profile, Cfg::committed_source_contract()?)
 }
 
-/// Public inputs needed to construct this setup's grouped schedules.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroupedScheduleParams {
@@ -147,7 +145,6 @@ impl RegisteredRows {
     }
 }
 
-/// Freeze base and setup-specific rows into one validated immutable catalog.
 pub fn extend_catalog<Cfg: CommitmentConfig>(
     base: &ValidatedScheduleCatalog,
     extra: &RegisteredRows,
@@ -265,7 +262,6 @@ fn provision_producers<Cfg: CommitmentConfig>(
     Ok(rows)
 }
 
-/// Resolve the frozen profile of an independently committed dense object.
 pub fn dense_group_profile(
     dense_catalog: &ValidatedScheduleCatalog,
     layout: PolynomialGroupLayout,

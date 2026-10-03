@@ -31,10 +31,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed instruction-lookup opening *values* from stage 1's outer
-/// sumcheck. (Verifier-side constructor for the moved
-/// [`InstructionClaimReductionInputClaims`] — it reads the verifier-only
-/// [`Stage1ClearOutput`], so it cannot live in `jolt-claims`.)
 pub fn instruction_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> InstructionClaimReductionInputClaims<F> {
@@ -115,8 +111,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The reduced openings share one opening point; bind it against the low
-            // product remainder challenges (`tau_low`).
             InstructionClaimReductionPublic::EqSpartan => {
                 derivations::eq_at_point(output_points.left_lookup_operand(), &self.tau_low)
                     .map_err(public_input_failed)

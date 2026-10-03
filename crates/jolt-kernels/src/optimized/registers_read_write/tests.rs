@@ -115,8 +115,6 @@ fn parity_structured_even_log_t() {
 
 #[test]
 fn parity_past_lut_saturation() {
-    // log_t = 6 runs three LUT-mode binds, the deref at the fourth, and
-    // two more cycle binds on direct field coefficients.
     run_parity(structured_fixture(60), 6, 29);
 }
 
@@ -132,8 +130,6 @@ fn parity_address_first_across_chunk_boundaries_and_padding() {
 
 #[test]
 fn parity_minimal_padded_trace() {
-    // Three real cycles padded to four: exercises the padding rows and
-    // registers that are never touched.
     let mut fixture = TraceFixture::new();
     fixture.op(Some(3), Some(1), Some(2));
     fixture.op(Some(3), Some(3), None);

@@ -63,18 +63,14 @@ impl<'a> WitnessEnv<'a> {
     }
 }
 
-/// The field encoding of an atomic witness value.
 pub trait ToField {
     fn to_field<F: JoltField>(self) -> F;
 }
 
-/// The single-sourced derivation of one atomic witness from a trace row.
 pub trait Extract<R = TraceRow>: Sized {
     fn extract(row: &R, next: Option<&R>, env: &WitnessEnv<'_>) -> Result<Self, WitnessError>;
 }
 
-/// [`Extract`] for indexed witness families ([`OpFlag`], [`InstructionFlag`],
-/// [`LookupTableFlag`]): which member is extracted is bound at the use site.
 pub trait ExtractIndexed<I, R = TraceRow>: Sized {
     fn extract_indexed(
         index: I,
@@ -102,7 +98,6 @@ fn instruction_row(row: &TraceRow) -> JoltInstructionRow {
     }
 }
 
-/// Proof-only view of the compact trace row used by lookup queries.
 #[derive(Clone, Copy)]
 pub(crate) struct CompactTraceCycle<'a>(&'a TraceRow);
 

@@ -1,10 +1,3 @@
-//! Regenerates the checked-in `seeds/deser_commitment/` corpus from a genuine
-//! serialized Dory commitment and proof, so mutation explores the
-//! neighborhood of valid encodings instead of pure garbage.
-//!
-//! Run explicitly, then commit the outputs:
-//! `cargo test --manifest-path crates/jolt-dory/fuzz/Cargo.toml -- --ignored`
-
 use std::fs;
 use std::path::Path;
 

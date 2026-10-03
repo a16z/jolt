@@ -1,6 +1,3 @@
-//! Sparse register entries: compact round-specific layouts, in-place binds,
-//! and quadratic round evaluation.
-
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
@@ -8,16 +5,12 @@ use rayon::prelude::*;
 
 use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized};
 
-/// Bound one-hot coefficient values indexed by `u16`. Each bind squares the
-/// table: `(a ≪ bits) | b` maps to `b + r·(a − b)`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CoeffLut<F> {
-    /// Power-of-two table with zero fixed at index 0.
     pub(super) values: Vec<F>,
 }
 
 impl<F: JoltField> CoeffLut<F> {
-    /// One-past the largest table an entry's `u16` index can address.
     const MAX_VALUES: usize = 1 << 16;
 
     pub(super) fn new(values: Vec<F>) -> Self {
@@ -30,12 +23,10 @@ impl<F: JoltField> CoeffLut<F> {
         self.values.len().trailing_zeros()
     }
 
-    /// Whether one more bind would overflow the `u16` index domain.
     pub(super) fn saturated(&self) -> bool {
         self.values.len() * self.values.len() > Self::MAX_VALUES
     }
 
-    /// Apply `even + r·(odd − even)` to every value pair.
     pub(super) fn bind(&mut self, r: F) {
         debug_assert!(!self.saturated());
         let n = self.values.len();
@@ -53,7 +44,6 @@ impl<F: JoltField> CoeffLut<F> {
     }
 }
 
-/// `left * right`, skipping the multiply when either side is zero or one.
 #[inline(always)]
 fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
     if left.is_zero() || right.is_zero() {
@@ -67,16 +57,11 @@ fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
     }
 }
 
-/// One-hot coefficient stored directly or as a [`CoeffLut`] index.
 pub(super) trait OneHotCoeff<F: JoltField>: Copy + Send + Sync + 'static {
-    /// Bind a vertically adjacent pair with `r`; a missing side is an
-    /// implicit zero coefficient.
     fn bind(even: Option<Self>, odd: Option<Self>, r: F, lut: &CoeffLut<F>) -> Self;
 
-    /// The pair's `[value at t = 0, slope]` sumcheck evaluations.
     fn eval_pair(even: Option<Self>, odd: Option<Self>, lut: &CoeffLut<F>) -> [F; 2];
 
-    /// The coefficient's field value.
     fn value(self, lut: &CoeffLut<F>) -> F;
 }
 
@@ -107,7 +92,6 @@ impl<F: JoltField> OneHotCoeff<F> for F {
     }
 }
 
-/// Newtype avoids overlap with the blanket field-value implementation.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct LutIndex(pub(super) u16);
@@ -115,7 +99,6 @@ pub(super) struct LutIndex(pub(super) u16);
 impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, _r: F, lut: &CoeffLut<F>) -> Self {
-        // The table binds separately; index 0 represents an absent side.
         let bits = lut.bits();
         debug_assert!(bits <= 8, "coefficient LUT bound past u16 saturation");
         match (even, odd) {
@@ -159,7 +142,6 @@ use ops::{
     bind_indexed_in_place_soa, bind_indexed_to_direct, bind_seed_entries_fused,
     bind_sparse_entries_in_place, sparse_quadratic, sparse_quadratic_fused, sparse_quadratic_soa,
 };
-/// Sparse-entry layout: compact seed, indexed SoA, then direct field values.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CyclePhase<F: JoltField> {
     Seed {
@@ -168,8 +150,6 @@ enum CyclePhase<F: JoltField> {
         wa_lut: CoeffLut<F>,
         rd_inc: Vec<i128>,
     },
-    /// First challenge retained; round 1 rebuilds intermediates per 4-row
-    /// group instead of storing a `T/2` generation.
     SeedBound {
         entries: Vec<SeedEntry>,
         seed_ra_lut: CoeffLut<F>,
@@ -197,7 +177,6 @@ enum CyclePhase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CycleState<F: JoltField>(CyclePhase<F>);
 
-/// First-bind value at half-domain index `y`.
 #[inline]
 fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
     bound_pair(|j| F::from_i128(raw[j]), r1, y)
@@ -218,12 +197,10 @@ impl<F: JoltField> CycleState<F> {
         })
     }
 
-    /// Empty LUT for direct coefficients.
     pub(super) fn unused_lut() -> CoeffLut<F> {
         CoeffLut { values: Vec::new() }
     }
 
-    /// Cycle-round quadratic for the current physical layout.
     pub(super) fn quadratic(&self, e_in: &[F], e_out: &[F]) -> [F; 2] {
         match &self.0 {
             CyclePhase::Seed {
@@ -235,7 +212,6 @@ impl<F: JoltField> CycleState<F> {
                 let inc_0 = F::from_i128(rd_inc[2 * z]);
                 [inc_0, F::from_i128(rd_inc[2 * z + 1]) - inc_0]
             }),
-            // Round 1 rebuilds both first-bind intermediates per 4-row group.
             CyclePhase::SeedBound {
                 entries,
                 seed_ra_lut,
@@ -349,7 +325,6 @@ impl<F: JoltField> CycleState<F> {
         }
     }
 
-    /// Bind once; return whether a full entry generation was replaced.
     pub(super) fn bind(&mut self, r: F) -> bool {
         match &mut self.0 {
             CyclePhase::Indexed {
@@ -383,7 +358,6 @@ impl<F: JoltField> CycleState<F> {
             },
         );
         let (next, freed_generation) = match state {
-            // First bind retains seeds and prepares both LUT levels.
             CyclePhase::Seed {
                 entries,
                 ra_lut,
@@ -407,7 +381,6 @@ impl<F: JoltField> CycleState<F> {
                     false,
                 )
             }
-            // Second bind materializes quarter-domain indexed columns.
             CyclePhase::SeedBound {
                 entries,
                 seed_ra_lut,
@@ -440,7 +413,6 @@ impl<F: JoltField> CycleState<F> {
                     true,
                 )
             }
-            // Dereference during the bind before the LUT index overflows.
             CyclePhase::Indexed {
                 vals,
                 metas,
@@ -463,7 +435,6 @@ impl<F: JoltField> CycleState<F> {
         freed_generation
     }
 
-    /// Scatter the final cycle row into dense `(ra, wa, val)` arrays.
     pub(super) fn take_dense(&mut self, k: usize) -> (Vec<F>, Vec<F>, Vec<F>, F) {
         let phase = std::mem::replace(
             &mut self.0,
@@ -479,7 +450,6 @@ impl<F: JoltField> CycleState<F> {
             CyclePhase::Seed { .. } => {
                 unreachable!("prepare requires log_t ≥ 1, so a cycle bind precedes the collapse")
             }
-            // At log_t=1, apply the retained challenge during conversion.
             CyclePhase::SeedBound {
                 entries,
                 seed_ra_lut,

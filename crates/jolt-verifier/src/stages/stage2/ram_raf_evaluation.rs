@@ -1,13 +1,3 @@
-//! The stage 2 `RamRafEvaluation` sumcheck instance.
-//!
-//! Owns the RAM RAF address opening-point derivation and the `UnmapAddress`
-//! public-value computation, in lockstep with the BlindFold constraint's
-//! `ram::raf_evaluation` formula. The phase-3 cycle scaling on the input is baked
-//! into that formula's constant coefficient.
-//!
-//! The produced `ram_ra` opening point is `[r_address(log_k) ‖ tau_low(log_t)]`;
-//! `UnmapAddress` reads only the address prefix.
-
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamRafEvaluationInputClaims, RamRafEvaluationOutputClaims,
@@ -24,8 +14,6 @@ use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
 
-/// Wire the consumed RAM address opening *value* from stage 1's outer sumcheck.
-/// (Verifier-side constructor for the moved [`RamRafEvaluationInputClaims`].)
 pub fn ram_raf_evaluation_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> RamRafEvaluationInputClaims<F> {
@@ -93,8 +81,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         &self.symbolic
     }
 
-    /// Delegates to `super::phase1_instance_point_offset` (the phase-1 sub-point
-    /// slicing shared with `RamOutputCheck`).
     fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
         super::phase1_instance_point_offset(self.read_write_dimensions, self.id(), batch_num_vars)
     }
@@ -132,9 +118,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The produced opening point is `[r_address(log_k) ‖ tau_low]`; the
-            // unmap reads only the address prefix and lifts it back to a byte
-            // address (`identity(r_address) * 8 + lowest_address`).
             RamRafEvaluationPublic::UnmapAddress => {
                 let point = output_points.ram_ra();
                 let address = point.get(..self.ram_log_k).ok_or_else(|| {
@@ -159,9 +142,6 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
 
-    /// The `instance_point_offset` override must place the relation's own
-    /// rounds exactly at the batch tail, and reject batch vectors shorter
-    /// than the active stage-2 window.
     #[test]
     fn instance_point_offset_spans_the_batch_tail() {
         for (log_t, log_k, phase1, phase2) in [(4usize, 3usize, 2usize, 1usize), (6, 5, 3, 2)] {
@@ -169,8 +149,6 @@ mod tests {
             let raf_dimensions = RamRafEvaluationDimensions::try_from(dimensions).unwrap();
             let relation =
                 RamRafEvaluation::<Fr>::new(dimensions, raf_dimensions, log_k, 0, Vec::new());
-            // The real batch has `log_t + log_k` variables (the RAM read-write
-            // leader); also probe a padded vector.
             for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {
                 let offset = relation.instance_point_offset(batch_num_vars).unwrap();
                 assert_eq!(offset + relation.rounds(), batch_num_vars);

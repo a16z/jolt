@@ -1,8 +1,3 @@
-//! Targeted coverage tests for jolt-crypto.
-//!
-//! Covers gaps in G2, GT, GLV (2D/4D), Dory vector ops, fixed-base MSM,
-//! HomomorphicCommitment, and Debug/From conversions.
-
 use jolt_crypto::ec::bn254::glv;
 use jolt_crypto::{
     Bn254, Bn254G1, Bn254G2, Bn254GT, HomomorphicCommitment, JoltGroup, PairingGroup,
@@ -135,7 +130,6 @@ fn gt_mul_assign() {
     let e = gt_element();
     let mut acc = e;
     acc *= e;
-    // Mul is a convenience alias for Add (both map to Fq12 multiplication)
     assert_eq!(acc, e + e);
 }
 
@@ -508,7 +502,6 @@ fn g2_scalar_mul_large_random() {
     let a = Fr::random(&mut rng);
     let b = Fr::random(&mut rng);
 
-    // (a * b) * G == a * (b * G)
     let ab = a * b;
     let lhs = g.scalar_mul(&ab);
     let rhs = g.scalar_mul(&b).scalar_mul(&a);

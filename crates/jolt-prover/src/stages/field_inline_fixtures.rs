@@ -1,16 +1,3 @@
-//! Shared field-inline trace fixtures for the stage-recipe round-trip tests.
-//!
-//! Hand-crafted rows that are semantically consistent instruction executions
-//! (the same discipline as `jolt_witness::testing::with_sample_backend`), so
-//! the composed R1CS eq rows are satisfied and the stage sumchecks' hard
-//! self-checks hold — including the stage-4 register-file and RAM value
-//! checks (consistent register reads, and the termination store the witness
-//! plane's device-derived final RAM state demands). Two profiles: an
-//! ADDI-only trace (a field-inline guest executing zero field-inline instructions —
-//! every field-inline column is zero), and a field arithmetic trace (two field loads and
-//! a multiply, the stage-0 fixture's rows) whose decoded field-inline instruction
-//! words populate the field-inline columns.
-
 #![expect(
     clippy::unwrap_used,
     reason = "hand-crafted fixture rows fail loudly when malformed"
@@ -43,9 +30,6 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use crate::{JoltProverPreprocessing, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
-// 3, not 2: the last physical cycle must be a noop (constraint 21's
-// ShouldJump convention), so the field-inline fixture's six real rows need padding
-// room behind them.
 pub(crate) const LOG_T: usize = 3;
 // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
 pub(crate) const RAM_LOG_K: usize = 6;
@@ -68,9 +52,6 @@ fn instruction(
     }
 }
 
-/// The fixture programs' preprocessing, shared verbatim between the witness
-/// backend and the prover-preprocessing carrier so both fronts see the same
-/// bytecode facts (PC mapping and canonical instruction operands).
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 fn fixture_program_preprocessing(
     bytecode: Vec<JoltInstructionRow>,
@@ -125,10 +106,6 @@ fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> Tra
     row
 }
 
-/// A terminal JAL row: the only hand-craftable last real instruction — its
-/// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
-/// `ShouldJump` stays 0 because the successor is the noop padding — with the
-/// link write (`rd = address + 4`) row 13 demands.
 fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
     let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
     TraceRow::new(
@@ -146,12 +123,6 @@ fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
     .unwrap()
 }
 
-/// The guest termination convention, hand-crafted: the witness plane's final
-/// RAM state unconditionally carries `termination = 1` (a real guest writes
-/// it before halting), so any trace that must satisfy the stage-4 RAM value
-/// check needs a matching increment. Two rows: `ADDI x6, x0, 1` (a consistent
-/// register write of the stored value), then `SD x6, termination(x0)` (store
-/// flag on, `RamAddress = rs1 + imm = termination`, `RamWriteValue = rs2`).
 fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
     let one = instruction(JoltInstructionKind::ADDI, offset, Some(6), Some(0), None, 1);
     let termination = test_memory_layout().termination;
@@ -204,9 +175,6 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
     ]
 }
 
-/// A field-inline guest executing only ordinary instructions (an ADDI with
-/// consistent register semantics, the termination store, then the terminal
-/// JAL): the rv64 eq rows are satisfied while every field-inline column is zero.
 fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
     let [one, store] = termination_store_rows(1);
@@ -215,8 +183,6 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
         TraceRow::new(
             addi,
             RegisterState {
-                // Register 2 is never written, so the read must see the
-                // initial value — the stage-4 register file check binds it.
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 0,
@@ -251,10 +217,6 @@ pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
     field_inline_backend(bytecode, rows)
 }
 
-/// Two field loads and a multiply: `FieldRdInc = [13, 17, 221, 0]`,
-/// `13 · 17 = 221` — every field-inline eq row and both field-inline product lanes are satisfied
-/// (the product columns are extractor-derived), and the x-register file is
-/// untouched.
 fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
@@ -349,10 +311,6 @@ pub(crate) fn field_arithmetic_backend() -> TraceBackend<OwnedTrace> {
     field_inline_backend(bytecode, rows)
 }
 
-/// The prover-preprocessing carrier the stage-4+ recipes take, over the
-/// fixture program: a full-program verifier preprocessing (the same
-/// `JoltProgramPreprocessing` the witness backend holds) and a minimal Dory
-/// setup — the reference-tier stage recipes never commit through it.
 fn prover_preprocessing(
     bytecode: Vec<JoltInstructionRow>,
 ) -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
@@ -377,9 +335,6 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
     prover_preprocessing(addi_only_program().0)
 }
 
-/// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
-/// mirroring what shape validation derives for a field-inline proof at this scale
-/// (no advice, no precommitted objects, full program).
 pub(crate) fn test_checked_inputs() -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
@@ -401,9 +356,6 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
     }
 }
 
-/// The stage recipes' derived-config shape for the fixture traces: the same
-/// derivation `ProverConfig::derive` performs, at the fixture's scale (no
-/// RAM traffic, so `ram_K` stays at a small power of two).
 pub(crate) fn test_prover_config() -> ProverConfig {
     ProverConfig {
         trace_length: 1 << LOG_T,
@@ -414,9 +366,6 @@ pub(crate) fn test_prover_config() -> ProverConfig {
     }
 }
 
-/// A well-formed memory layout for the fixture traces (the default layout is
-/// degenerate: its lowest mapped address is zero, which `PublicIoMemory`
-/// rejects).
 pub(crate) fn test_memory_layout() -> MemoryLayout {
     MemoryLayout::new(&MemoryConfig {
         program_size: Some(1024),
@@ -429,7 +378,6 @@ pub(crate) fn test_memory_layout() -> MemoryLayout {
     })
 }
 
-/// The fixture traces' program I/O: empty, over [`test_memory_layout`].
 pub(crate) fn test_public_io() -> JoltDevice {
     JoltDevice {
         memory_layout: test_memory_layout(),
@@ -437,13 +385,6 @@ pub(crate) fn test_public_io() -> JoltDevice {
     }
 }
 
-/// Twin-transcript replays of the already-round-tripped upstream stages, for
-/// the downstream stage twins: each helper advances `transcript` exactly as
-/// `stageN::verify`'s clear body does over the prover's outputs (with
-/// `verify_clear` hard-checking the wire rounds on the way). The full
-/// `verify` entrypoints need an assembled `JoltProof`, so the twins drive the
-/// same public constituents instead — the stage-1/2 bodies are the ones
-/// stage 2's own round-trip test pins.
 #[cfg(not(feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test twin helpers")]
 pub(crate) mod twins {
@@ -524,8 +465,6 @@ pub(crate) mod twins {
 
     pub(crate) type FixturePreprocessing = JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
-    /// Stage 1's twin (already round-tripped by stage 1's own tests):
-    /// positions the transcript at the stage-2 boundary.
     pub(crate) fn replay_stage1<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
         stage1: &Stage1ProverOutput<Fr, C>,
@@ -567,8 +506,6 @@ pub(crate) mod twins {
         sumchecks.append_output_claims(transcript, &stage1.claims.outer);
     }
 
-    /// Stage 2's twin (already round-tripped by stage 2's own tests):
-    /// positions the transcript at the stage-3 boundary.
     pub(crate) fn replay_stage2<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
         config: &ProverConfig,
@@ -653,8 +590,6 @@ pub(crate) mod twins {
         sumchecks.append_output_claims(transcript, &stage2.claims.batch_outputs);
     }
 
-    /// Stage 3's twin (`stage3::verify`'s clear body — the stage has no field-inline
-    /// member): positions the transcript at the stage-4 boundary.
     pub(crate) fn replay_stage3<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
         stage1: &Stage1ProverOutput<Fr, C>,
@@ -694,11 +629,6 @@ pub(crate) mod twins {
         sumchecks.append_output_claims(transcript, &stage3.claims);
     }
 
-    /// Stage 4's twin (already round-tripped by stage 4's own test):
-    /// `stage4::verify`'s clear body, positioning the transcript at the
-    /// stage-5 boundary. The fixtures carry no advice and no committed
-    /// program image, so the attached-claims step degenerates to the public
-    /// initial-RAM evaluation alone.
     pub(crate) fn replay_stage4<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
         config: &ProverConfig,
@@ -761,8 +691,6 @@ pub(crate) mod twins {
         stage4.claims.append_to_transcript(transcript);
     }
 
-    /// Stage 5's twin (`stage5::verify`'s clear body): positions the
-    /// transcript at the stage-6a boundary.
     pub(crate) fn replay_stage5<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
         config: &ProverConfig,
@@ -812,8 +740,6 @@ pub(crate) mod twins {
         sumchecks.append_output_claims(transcript, &stage5.claims);
     }
 
-    /// Stage 6a's twin (`stage6a::verify`'s clear body): positions the
-    /// transcript at the stage-6b boundary.
     #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
     pub(crate) fn replay_stage6a<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
@@ -864,8 +790,6 @@ pub(crate) mod twins {
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,
         );
-        // The packed shape folds the four reduced Inc claims into the
-        // fused-inc consumer stage slots (stage6a::verify's own wrapper).
         #[cfg(feature = "akita")]
         let base_input_values = LatticeReadRafAddressPhaseInputClaims {
                 base: base_input_values,
@@ -903,7 +827,6 @@ pub(crate) mod twins {
     }
 }
 
-/// Shared upstream proving for clear and committed stage tests.
 pub(crate) mod proving {
     use super::*;
     use crate::stages::stage1::{prove_stage1, Stage1ProverOutput};

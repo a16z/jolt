@@ -7,23 +7,13 @@
 
 use core::fmt::{self, Write};
 
-// ============================================================================
-// Constants used by tracer to identify print operations
-// ============================================================================
-
 /// Identifier for Jolt print operations (placed in a0)
 /// "PRI" in ASCII
 pub const JOLT_PRINT_CALL_ID: u32 = 0x505249;
 
-/// Print string without newline
 pub const JOLT_PRINT_STRING: u32 = 1;
 
-/// Print string with newline
 pub const JOLT_PRINT_LINE: u32 = 2;
-
-// ============================================================================
-// VirtualHostIO-based printing for riscv targets
-// ============================================================================
 
 /// Write a buffer using Jolt's VirtualHostIO instruction.
 ///
@@ -45,7 +35,6 @@ fn emit_jolt_print(buf: *const u8, len: usize) {
     }
 }
 
-/// Write a single character to stdout (riscv)
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub fn putchar(c: u8) {
     let buf = [c];
@@ -59,17 +48,11 @@ pub fn write_bytes(buf: &[u8]) {
     emit_jolt_print(buf.as_ptr(), buf.len());
 }
 
-/// Write a string to stdout (riscv)
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub fn puts(s: &str) {
     emit_jolt_print(s.as_ptr(), s.len());
 }
 
-// ============================================================================
-// Writers implementing core::fmt::Write
-// ============================================================================
-
-/// Writer for stdout
 pub struct StdoutWriter;
 
 impl Write for StdoutWriter {
@@ -93,12 +76,10 @@ impl Write for StdoutWriter {
         not(feature = "std")
     ))]
     fn write_str(&mut self, _s: &str) -> fmt::Result {
-        // No output mechanism available for non-riscv no_std
         Ok(())
     }
 }
 
-/// Writer for stderr
 pub struct StderrWriter;
 
 impl Write for StderrWriter {
@@ -123,16 +104,10 @@ impl Write for StderrWriter {
         not(feature = "std")
     ))]
     fn write_str(&mut self, _s: &str) -> fmt::Result {
-        // No output mechanism available for non-riscv no_std
         Ok(())
     }
 }
 
-// ============================================================================
-// Print macros
-// ============================================================================
-
-/// Print to stdout
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {{
@@ -141,7 +116,6 @@ macro_rules! print {
     }};
 }
 
-/// Print to stdout with newline
 #[macro_export]
 macro_rules! println {
     () => {{
@@ -153,7 +127,6 @@ macro_rules! println {
     }};
 }
 
-/// Print to stderr
 #[macro_export]
 macro_rules! eprint {
     ($($arg:tt)*) => {{
@@ -162,7 +135,6 @@ macro_rules! eprint {
     }};
 }
 
-/// Print to stderr with newline
 #[macro_export]
 macro_rules! eprintln {
     () => {{

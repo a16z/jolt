@@ -1,5 +1,3 @@
-//! Advice-column materialization: canonical zero-padded little-endian words.
-
 use super::*;
 
 impl<T: TraceSource> TraceBackend<T> {
@@ -22,9 +20,6 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
-/// An advice column's word count: the power-of-two number of little-endian
-/// words covering the configured maximum size. Single-sources the column
-/// length for [`TraceBackend::shape_of`].
 pub(super) fn advice_words(max_bytes: usize) -> usize {
     (max_bytes / 8).next_power_of_two().max(1)
 }

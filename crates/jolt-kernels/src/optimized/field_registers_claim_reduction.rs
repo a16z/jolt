@@ -46,7 +46,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// One active field-inline cycle's combined-column cell.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SparseCell<F> {
@@ -109,10 +108,6 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
             })?;
         let gamma_sq = gamma * gamma;
 
-        // The per-cycle `[rd, rs1, rs2]` value triples of the active field-inline
-        // cycles (the oracle's `FieldRdValue`/`FieldRs1Value`/`FieldRs2Value`
-        // extractions: write post-value, read values, zero when absent), and their
-        // γ-combination as the sparse round column.
         let cells = map_indices(rows.len(), |index| {
             let (row, access) = &rows[index];
             let rd = access.rd.map_or_else(F::zero, |write| write.post_value);
@@ -140,14 +135,12 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
 )]
 struct FieldClaimReductionKernel<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
-    /// Sparse combined-column cells, sorted by `row`; merged on each bind.
     cells: Vec<SparseCell<F>>,
     rows: SharedFieldRegisterRows<F>,
     challenges: RoundChallenges<F>,
 }
 
 impl<F: JoltField> FieldClaimReductionKernel<F> {
-    /// Equality-weighted sparse value at the selected Boolean endpoint.
     fn q_endpoint(&self, at_one: bool) -> F {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
@@ -198,8 +191,6 @@ impl<F: JoltField> FieldClaimReductionKernel<F> {
         self.challenges.push(r);
     }
 
-    /// The three produced opening values at the bound cycle point: one
-    /// split-eq walk over the retained triples.
     fn claimed_values(&self) -> [F; 3] {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let hi_bits = reversed.len() / 2;
@@ -276,9 +267,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
         })
     }
 
-    /// The `EqSpartan` cross-check: the fully bound Gruen scalar must equal
-    /// the verifier's `derive_output_term` at the bound point (the reference
-    /// kernel's tie-down on the table it materializes).
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -298,8 +286,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent field-inline traces,
-/// plus the degenerate case without field-inline activity (an empty sparse column).
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

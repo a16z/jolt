@@ -13,9 +13,6 @@
     clippy::let_underscore_must_use,
     clippy::host_endian_bytes
 )]
-// wildcard_enum_match_arm is omitted: claim resolvers and test evaluation maps
-// are fail-closed by construction (unmatched ids return Err/None/zero, never a
-// wrong success path), so the lint would be annotation churn with no catch.
 
 // The per-relation claim structs in `protocols/jolt/relations/**` carry
 // `#[derive(InputClaims/OutputClaims)]`, whose generated impls reference the

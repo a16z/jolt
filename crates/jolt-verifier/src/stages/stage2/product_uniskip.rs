@@ -1,18 +1,3 @@
-//! The stage 2 `SpartanProductVirtualization` product uni-skip sumcheck instance.
-//!
-//! The companion of the [`ProductRemainder`](super::product_remainder) relation:
-//! the product uni-skip first round, a standalone centered-integer sumcheck whose
-//! reduced opening the remainder consumes. Modelling it as a [`ConcreteSumcheck`]
-//! single-sources its input-claim algebra — the Lagrange-weighted sum of the three
-//! Spartan-outer openings (`product`, `should_branch`, `should_jump`) — so it stays
-//! in lockstep with the BlindFold constraint, which evaluates the same
-//! `spartan::product_uniskip` input formula.
-//!
-//! Unlike the remainder, the uni-skip's first-round binding-point draw (`tau_high`)
-//! is still drawn inline in the stage-2 verifier and its Lagrange weights are an
-//! *input* derived (resolved before binding), so this relation overrides
-//! `derive_input_term` rather than `derive_output_term`.
-
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
 #[cfg(feature = "field-inline")]
@@ -118,10 +103,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The uni-skip first-round Lagrange weights, evaluated at `tau_high`; the
-            // input claim reweights the three Spartan-outer openings by
-            // `UniskipLagrangeWeight(0..2)` exactly as the formula's
-            // `product_uniskip_weight(i)`.
             SpartanProductVirtualizationPublic::UniskipLagrangeWeight(index) => {
                 let weights =
                     centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, self.tau_high)
@@ -132,10 +113,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
                     ))
                 })
             }
-            // `LagrangeWeight`/`TauKernel` belong to the product *remainder* relation,
-            // not the uni-skip: `product_uniskip` reweights via `product_uniskip_weight`
-            // -> `UniskipLagrangeWeight` only. Reject rather than silently aliasing them,
-            // so a misrouted public surfaces.
             SpartanProductVirtualizationPublic::LagrangeWeight(_)
             | SpartanProductVirtualizationPublic::TauKernel => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
@@ -150,10 +127,6 @@ mod tests {
     use super::*;
     use jolt_field::{Fr, Ring};
 
-    /// The composed uni-skip input claim over the feature-aware 5-lane domain equals the
-    /// ordinary symbolic fold (lanes 0..3, weights over the SAME composed domain) plus the
-    /// field-inline lanes at the following indices — pinned against a from-scratch
-    /// Lagrange-weighted sum over all five lane inputs.
     #[test]
     fn composed_input_claim_matches_five_lane_fold() {
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);

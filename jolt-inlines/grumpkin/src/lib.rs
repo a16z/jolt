@@ -1,11 +1,3 @@
-//! grumpkin inline implementation module
-//! Contains inlines accessible via
-//! a wrapper around ark-grumpkin types:
-//! the inlines are for
-//! 0x00: base field division
-//! 0x01: scalar field division
-//! 0x02: scalar field GLV decomposition (advice only; sign words are validated before use)
-
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x0B;

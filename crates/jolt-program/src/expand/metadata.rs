@@ -4,7 +4,6 @@ use crate::expand::{materialize::MAX_FINAL_ROWS_PER_SOURCE, ExpansionError};
 
 const MAX_METADATA_SEQUENCE_ROWS: usize = u16::MAX as usize;
 
-/// Stamps position metadata (`is_first_in_sequence`, `virtual_sequence_remaining`) on recipe output.
 pub(super) fn stamp_instruction_sequence(
     rows: Vec<JoltInstructionRow>,
     is_compressed: bool,
@@ -13,7 +12,6 @@ pub(super) fn stamp_instruction_sequence(
     stamp_sequence_metadata(rows, is_compressed, MAX_FINAL_ROWS_PER_SOURCE, profile)
 }
 
-/// Same as `stamp_instruction_sequence` but for inline provider output (higher capacity limit).
 pub(super) fn stamp_inline_sequence(
     rows: Vec<JoltInstructionRow>,
     is_compressed: bool,

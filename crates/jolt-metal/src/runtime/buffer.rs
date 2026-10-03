@@ -94,7 +94,6 @@ impl<T> DeviceBuffer<T> {
 }
 
 impl<T: NoUninit> DeviceBuffer<T> {
-    /// Copies `data` into a new device buffer.
     pub fn from_slice(device: &Device, data: &[T]) -> Result<Self, MetalError> {
         let byte_len = Self::byte_len(device, data.len())?;
         let sys = device
@@ -103,7 +102,6 @@ impl<T: NoUninit> DeviceBuffer<T> {
         Ok(Self::from_sys(device, sys, data.len(), byte_len))
     }
 
-    /// A new device buffer of `len` all-zero values.
     pub fn zeroed(device: &Device, len: usize) -> Result<Self, MetalError>
     where
         T: Zeroable,

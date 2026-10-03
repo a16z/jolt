@@ -100,15 +100,9 @@ where
     let chunk_bits = config.one_hot_config.committed_chunk_bits();
     let committed_program = precommitted.bytecode.is_some();
 
-    // The bytecode gamma shares stage 6a's squeeze; the post-6a draws and the
-    // challenges aggregate are the verifier's promoted two-front helpers.
     let carried = &stage6a.challenges;
     let draws = Stage6bDraws::draw(transcript, committed_program);
 
-    // The batch, through the verifier's own promoted constructor over the
-    // clear carriers. The full-program rows feed only the full-mode table
-    // fold; they ride the witness plane (witness generation requires the
-    // full program in every mode).
     let bytecode_table_rows = if committed_program {
         None
     } else {
@@ -163,18 +157,11 @@ where
         &stage5.output_points,
     );
 
-    // The committed-program weights: read back off the batch member (the
-    // `build_from_parts` fold), for the clear carrier stage 7 consumes (the
-    // bytecode reduction kernel reads them off its relation).
     let bytecode_weights = sumchecks
         .bytecode_reduction
         .as_ref()
         .map(|member| member.weights().clone());
 
-    // The absorb order is the stage's curation override at its
-    // `impl_stage_prover` invocation site (the promoted verifier helper's
-    // canonical order, including the runtime booleanity-vs-bytecode point
-    // dedup).
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
@@ -205,17 +192,6 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-6b recipe against the verifier's own
-/// public constituents — `stage6b::verify`'s clear body (the post-6a draws,
-/// the batch with the field-inline increment-reduction member built by the promoted
-/// `build_from_parts`, the curated `stage6b_opening_values` absorb with the
-/// spliced reduced `FieldRdInc`) on a twin transcript positioned by the
-/// stage-1..6a replays — on both fixture profiles: the field-inactive ADDI
-/// trace (every field-inline fold zero) and the field-active arithmetic trace (the
-/// composed bytecode read-RAF kernels' field-inline stage-value legs carry real
-/// values). A further test drives the field-inline increment-reduction kernel directly
-/// on the field-inline-arithmetic replay and ties the extracted opening to a direct
-/// MLE evaluation.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -307,10 +283,6 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The verifier twin (stage6b::verify's clear body), positioned by
-        // the upstream replays. The private wire-shape validator is
-        // transcript-free and elided; `verify_clear`'s hard checks and the
-        // final state equality pin the protocol content.
         let mut transcript = Blake2bTranscript::new(label);
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
@@ -425,9 +397,6 @@ mod field_inline_round_trip {
             )
             .unwrap();
         let booleanity_point = cycle_points.booleanity_opening_point().unwrap().to_vec();
-        // The verifier's absorb: the curated order with the runtime
-        // booleanity-vs-bytecode dedup (single-sourced with the prover's
-        // curation through `stage6b_opening_values`).
         for value in jolt_verifier::stages::stage6b::stage6b_opening_values(
             &out.claims,
             &cycle_points.bytecode_read_raf.bytecode_ra,
@@ -443,8 +412,6 @@ mod field_inline_round_trip {
         Fr::from_u64(value)
     }
 
-    /// `Σ_i eq(point, i) · evals[i]` — the big-endian MLE the oracle tables
-    /// and opening points share.
     fn mle(evals: &[Fr], point: &[Fr]) -> Fr {
         EqPolynomial::<Fr>::evals(point, None)
             .into_iter()
@@ -453,11 +420,6 @@ mod field_inline_round_trip {
             .sum()
     }
 
-    /// The field-inline increment-reduction kernel on the honest field-inline replay: every round
-    /// message passes the engine's running-claim check starting from the
-    /// relation's own input claim (the two `FieldRdInc` MLEs folded by
-    /// gamma), and the extracted reduced opening equals the direct MLE of the
-    /// committed increment table at the reversed sumcheck point.
     #[test]
     fn field_register_inc_claim_reduction_kernel_output_matches_direct_mle() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
@@ -529,9 +491,6 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the stage-6b committed shell carries the curated row count — the
-/// alias-deduped cycle-point cell total, whose field-inline share is exactly the one
-/// spliced reduced `FieldRdInc` row.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
@@ -594,10 +553,6 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The committed row total is the verifier's expectation: the derived
-        // output-point cell count minus the runtime booleanity-vs-bytecode
-        // aliases. The field-inline reduction contributes exactly one of those cells —
-        // its single reduced `FieldRdInc` opening.
         let values: Vec<Fr> = out
             .committed_witness
             .output_claim_rows

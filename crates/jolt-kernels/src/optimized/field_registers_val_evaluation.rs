@@ -81,9 +81,6 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
                 }))?;
         let inc_column = FieldIncrementColumn::resolve(session, field_inline, cycles)?;
 
-        // Reclaim the field-register write slots the stage-4 kernel parked; collect
-        // them from the shared rows otherwise (reference-only stage 4, tests). This is
-        // the rows' last consumer, so the session copy is released either way.
         let shared_rows = session.take::<SharedFieldRegisterRows<F>>();
         let writes =
             if let Some(SharedFieldRdWrites(writes)) = session.take::<SharedFieldRdWrites>() {
@@ -194,9 +191,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
         })
     }
 
-    /// Pin the split-LT tables to the verifier's scalar path: the fully bound
-    /// LT value must equal `derive_output_term(LtCycle)` (the reference
-    /// kernel's tie-down on the table it materializes).
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -216,9 +210,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent field-inline traces,
-/// covering both index sources (parked by stage 4 vs collected from the oracle rows)
-/// and the degenerate case without field-inline activity.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

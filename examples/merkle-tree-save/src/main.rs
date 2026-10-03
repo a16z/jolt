@@ -1,9 +1,3 @@
-// This is a variant of examples/merkle-tree that adds:
-// 1. `--save` flag to serialize verifier objects to /tmp/
-// 2. Transcript feature flags (transcript-poseidon, etc.) in Cargo.toml
-//
-// The upstream merkle-tree example is left unmodified. This crate reuses its guest.
-
 use jolt_sdk::{serialize_and_print_size, TrustedAdvice, UntrustedAdvice};
 use std::time::Instant;
 use tracing::info;
@@ -69,7 +63,6 @@ pub fn main() {
         .expect("Could not serialize trusted advice commitment.");
     }
 
-    // Pass only the first input and trusted_advice commitment to the verifier
     let is_valid = verify_merkle_tree(
         leaf1,
         output,

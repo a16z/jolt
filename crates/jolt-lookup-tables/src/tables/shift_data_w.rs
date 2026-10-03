@@ -38,7 +38,6 @@ impl<const XLEN: usize> LookupTable for ShiftDataWTable<XLEN> {
             let x_k: F = r[2 * (XLEN - 1 - k)].into();
             lane += x_k * F::from_u64(1u64 << k);
         }
-        // offset = 4·y_2 (bits 0-1 ignored)
         let y_2: F = r[2 * (XLEN - 1 - 2) + 1].into();
         let scale = F::from_u128((1u128 << (eighth << 2)) - 1);
         lane + lane * (scale * y_2)
@@ -87,9 +86,6 @@ mod tests {
         prefix_suffix_test::<XLEN, Fr, ShiftDataWTable<XLEN>>();
     }
 
-    /// Two-round phases put boundaries inside the low six index bits,
-    /// exercising every placement of the lane and offset bits relative to
-    /// the phase window in the ShiftData/OffsetScale prefix/suffix pairs.
     #[test]
     fn prefix_suffix_small_phases() {
         prefix_suffix_materialization_test::<XLEN, Fr, ShiftDataWTable<XLEN>>(2, 3);

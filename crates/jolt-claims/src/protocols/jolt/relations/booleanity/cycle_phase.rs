@@ -1,5 +1,3 @@
-//! The cycle-phase split of the booleanity symbolic sumcheck relation.
-
 use jolt_field::Ring;
 
 use super::monolith::{BooleanityInputClaims, BooleanityOutputClaims};
@@ -10,9 +8,6 @@ use crate::protocols::jolt::geometry::booleanity::{
 use crate::protocols::jolt::{BooleanityChallenge, JoltExpr, JoltRelationId};
 use crate::{SumcheckChallenges, SymbolicSumcheck};
 
-/// Fiat-Shamir challenge drawn by the cycle-phase split of the booleanity
-/// sumcheck. As in the monolith, the `gamma` is built inside
-/// `booleanity_cycle_output`, so this set is derived from `required_challenges()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BooleanityCyclePhaseChallenges<F> {

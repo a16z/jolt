@@ -271,8 +271,6 @@ mod tests {
         assert_eq!(LatticeBooleanity::id(), JoltRelationId::Booleanity);
         assert_eq!(relation.rounds(), 5 + 32);
         assert_eq!(relation.degree(), 3);
-        // The output expression covers exactly the pub opening-order helper's ids
-        // (the helper is the wiring-side order; the set comparison guards drift).
         assert_eq!(
             relation.expected_output_openings::<Fr>(),
             lattice_booleanity_output_openings(dimensions())
@@ -293,9 +291,6 @@ mod tests {
         );
     }
 
-    /// The cycle phase consumes the address-phase intermediate and produces
-    /// the same extended opening set as the monolith (whose fold formula the
-    /// evaluate test above pins — both variants share `booleanity_output`).
     #[test]
     fn lattice_cycle_phase_matches_monolith_dependencies() {
         let relation = LatticeBooleanityCyclePhase::new(dimensions());

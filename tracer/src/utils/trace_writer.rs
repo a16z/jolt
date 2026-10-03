@@ -8,26 +8,18 @@ use std::{
     time::Instant,
 };
 
-// batches of size 5M (~400MB) Cycles (80 bytes each)
 const BATCH_SIZE: usize = 5_000_000;
-// total memory usage of the channel is BATCH * CHANNEL_DEPTH = ~2 GB
 const CHANNEL_DEPTH: usize = 64;
 
-/// Configuration for the trace writer
 #[derive(Debug, Clone)]
 pub struct TraceWriterConfig {
-    /// Size of each batch in number of items
     pub batch_size: usize,
-    /// Depth of the channel (number of batches that can be queued)
     pub channel_depth: usize,
-    /// Buffer size for the file writer (in bytes)
     pub write_buffer_size: usize,
-    /// Threshold in milliseconds for logging slow batch sends
     pub slow_batch_threshold_ms: u128,
 }
 
 impl Default for TraceWriterConfig {
-    /// Defaults were chosen to prefer performance on a M4 Max for traces containing Cycle
     fn default() -> Self {
         Self {
             batch_size: BATCH_SIZE,
@@ -38,7 +30,6 @@ impl Default for TraceWriterConfig {
     }
 }
 
-/// A generic trace writer that handles batched writing to files
 pub struct TraceWriter<T> {
     sender: Option<SyncSender<Vec<T>>>,
     writer_handle: Option<JoinHandle<std::io::Result<()>>>,
@@ -50,7 +41,6 @@ impl<T> TraceWriter<T>
 where
     T: serde::Serialize + Send + 'static,
 {
-    /// Create a new TraceWriter with the given configuration
     pub fn new(output_path: impl AsRef<Path>, config: TraceWriterConfig) -> std::io::Result<Self> {
         let (sender, receiver) = sync_channel::<Vec<T>>(config.channel_depth);
 
@@ -68,12 +58,10 @@ where
         })
     }
 
-    /// Create a new TraceWriter with default configuration
     pub fn with_defaults(output_path: impl AsRef<Path>) -> std::io::Result<Self> {
         Self::new(output_path, TraceWriterConfig::default())
     }
 
-    /// Spawn the background writer thread
     fn spawn_writer_thread(
         path: std::path::PathBuf,
         receiver: Receiver<Vec<T>>,
@@ -92,8 +80,6 @@ where
         })
     }
 
-    /// Send a batch to be written
-    /// Returns true if the batch was sent successfully
     pub fn send_batch(&self, batch: Vec<T>) -> bool {
         if let Some(sender) = &self.sender {
             let start = Instant::now();
@@ -112,9 +98,7 @@ where
         false
     }
 
-    /// Finalize the writer and wait for all pending writes to complete
     pub fn finalize(mut self) -> std::io::Result<()> {
-        // Drop the sender to signal the writer thread to finish
         self.sender.take();
 
         let start = Instant::now();
@@ -177,7 +161,6 @@ where
         }
     }
 
-    /// Finalize the collector, flushing any remaining items
     pub fn finalize(mut self) -> std::io::Result<usize> {
         self.flush_batch();
         self.writer.finalize()?;

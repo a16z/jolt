@@ -377,8 +377,6 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
 
-    // Fail-closed default: a field-inline backend without the attached view serves no
-    // field-inline oracle.
     let detached = witness(&program, &preprocessing, rows.clone(), 2);
     assert!(JoltWitnessOracle::<Fr>::field_inline(&detached).is_none());
 
@@ -391,7 +389,6 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
         provider.committed_order(),
         vec![FieldInlineCommittedPolynomial::FieldRdInc]
     );
-    // The dyn seam serves the same column as the inherent view.
     assert_eq!(
         provider
             .oracle_table(FieldInlinePolynomialId::Committed(
@@ -430,8 +427,6 @@ fn plane_accessor_stays_absent_for_profile_without_field_inline() {
     );
 
     assert!(JoltWitnessOracle::<Fr>::field_inline(&backend).is_none());
-    // The view cannot be attached for a guest without field-inline, so the accessor can
-    // never become Some.
     assert!(matches!(
         backend.with_field_inline(),
         Err(WitnessError::UnavailableView {

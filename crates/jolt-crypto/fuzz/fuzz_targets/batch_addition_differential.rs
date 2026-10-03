@@ -1,13 +1,5 @@
 #![no_main]
 
-//! Differential check of the shared-inversion batch G1 addition against a
-//! naive fold-add over the same index sets.
-//!
-//! Index sets are non-empty and duplicate-free by construction: the batch
-//! inversion's documented precondition excludes equal or inverse points
-//! within one pair, and duplicate indices over a common base set violate it
-//! (the result is documented as silently garbage, not an error).
-
 use std::sync::OnceLock;
 
 use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi;
@@ -33,8 +25,6 @@ fuzz_target!(|data: &[u8]| {
     }
     let bases = bases();
 
-    // Each set is a fuzzer-chosen subset of the bases, decoded from a
-    // 16-bit membership mask so indices are unique by construction.
     let set_count = (data[0] as usize % MAX_SETS) + 1;
     if data.len() < 1 + set_count * 2 {
         return;

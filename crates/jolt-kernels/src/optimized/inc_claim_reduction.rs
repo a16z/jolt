@@ -35,10 +35,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Stage-6b increment claim reduction.
 pub struct OptimizedIncClaimReduction;
 
-/// The two committed increment columns of one cycle.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct IncRow {
     #[opening(committed = RamInc)]
@@ -77,7 +75,6 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
 
         let gamma = inputs.challenges.gamma;
         let gamma_squared = gamma * gamma;
-        // A = eq(ram rw) + γ·eq(ram val); B = γ²·eq(reg rw) + γ³·eq(reg val).
         let ram_weights = PairedEq::new(cycle_points[0], F::one(), cycle_points[1], gamma);
         let rd_weights = PairedEq::new(
             cycle_points[2],
@@ -87,7 +84,6 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
         );
 
         let incs = if relation.rounds() == 0 {
-            // No bind occurs on a single-cycle domain.
             let dense = |id: JoltOpeningId| witness.oracle_table(id.polynomial_id());
             IncState::Dense {
                 ram: Polynomial::new(dense(ram_inc_reduced())?),
@@ -106,8 +102,6 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
     }
 }
 
-/// `s₁·eq(p₁, ·) + s₂·eq(p₂, ·)` in four ~√T split tables.
-/// Binding folds the exhausted low scalars into one dense high table.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) enum PairedEq<F> {
     Split {
@@ -124,7 +118,6 @@ impl<F: JoltField> PairedEq<F> {
         debug_assert_eq!(p1.len(), p2.len());
         let mid = p1.len() / 2;
         if mid == 0 {
-            // At most two entries for zero or one variable.
             let mut table = scaled_eq_table(p1, s1);
             for (acc, term) in table.iter_mut().zip(scaled_eq_table(p2, s2)) {
                 *acc += term;
@@ -141,8 +134,6 @@ impl<F: JoltField> PairedEq<F> {
         }
     }
 
-    /// The combined table's `(lo, hi)` sumcheck pair at group `y` under
-    /// low-to-high pairing.
     #[inline]
     pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {
@@ -173,7 +164,6 @@ impl<F: JoltField> PairedEq<F> {
                     lo.truncate(half);
                 }
                 if half == 1 {
-                    // Fold exhausted low scalars into the high tables.
                     let (s1, s2) = (lo1[0], lo2[0]);
                     let dense: Vec<F> = hi1
                         .iter()
@@ -202,7 +192,6 @@ impl<F: JoltField> PairedEq<F> {
     }
 }
 
-/// Trace rows before the first bind; dense bound tables afterward.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncState<F: JoltField> {
     Rows(BundleStore<IncRow>),
@@ -240,7 +229,6 @@ impl<F: JoltField> IncKernel<F> {
         Ok(())
     }
 
-    /// Binds trace-row pairs directly into half-length field tables.
     fn materialize_bound(
         &self,
         challenge: F,
@@ -280,7 +268,6 @@ impl<F: JoltField> IncKernel<F> {
         Ok((Polynomial::new(ram), Polynomial::new(rd)))
     }
 
-    /// Summand evaluations at `t ∈ {0, 2}` for group `y`.
     #[inline]
     fn group_evals(&self, y: usize, ram: (F, F), rd: (F, F)) -> [F; 2] {
         let (a_lo, a_hi) = self.ram_weights.pair(y);
@@ -384,7 +371,6 @@ impl<F: JoltField> SumcheckKernel<F> for IncKernel<F> {
     }
 }
 
-/// Byte parity with the reference kernel on the sample backend.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

@@ -1,24 +1,3 @@
-//! The stage 1 `SpartanOuter` remainder sumcheck instance.
-//!
-//! A self-contained relation object driven by the verifier after checking the
-//! Spartan outer remainder sumcheck. It owns the remainder opening-point derivation
-//! and resolves the expanded quadratic R1CS form's `SpartanOuterPublic` coefficients
-//! from [`JoltSpartanOuterRemainder::public_coefficients`] — the same source the
-//! BlindFold constraint uses — so the output-claim algebra lives here once and stays
-//! in lockstep with that constraint, which evaluates the same expanded
-//! `spartan::outer_remainder` formula.
-//!
-//! The expanded `output_expression` (`Σ q[l,r]·o[l]·o[r] + Σ ℓ[i]·o[i] + c`) is the
-//! distributed form of the factored quadratic
-//! `tau_kernel · (Σ az[i]·o[i] + az_c) · (Σ bz[i]·o[i] + bz_c)` that
-//! [`JoltSpartanOuterRemainder::expected_output_claim`] computes; the two are
-//! value-equivalent (see `output_matches_factored_form`).
-//!
-//! The companion Spartan outer *uni-skip* first round is a univariate skip rather
-//! than a batched-Boolean [`ConcreteSumcheck`] verification, so it stays hand-coded
-//! in the stage-1 verifier; this relation consumes that uni-skip's reduced opening
-//! as its input claim.
-
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
 #[cfg(feature = "field-inline")]
@@ -69,10 +48,6 @@ pub fn outer_remainder_input_values_from_uniskip_output<F: JoltField>(
     .into()
 }
 
-/// The factored-form constituents, indexed for O(1) resolution. Built once
-/// from [`JoltSpartanOuterRemainder::public_coefficients`] in the constructor
-/// so `derive_output_term` (called ~`2n + 3` times per proof) never rebuilds
-/// the `JoltSpartanOuterRemainder` matrix work.
 #[derive(Clone)]
 struct OuterRemainderCoefficients<F> {
     tau_kernel: F,
@@ -139,18 +114,9 @@ impl<F: JoltField> OuterRemainderCoefficients<F> {
 pub struct OuterRemainder<F: JoltField> {
     symbolic: SelectedSymbolic,
     variable_count: usize,
-    /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
-    /// three inputs to the `SpartanOuterPublic` coefficient table. Both exist
-    /// before this relation is constructed (the uni-skip step completes first).
     tau: Vec<F>,
     uniskip_challenge: F,
-    /// The relation's own bound point (the remainder challenges), captured by
-    /// [`derive_opening_points`](ConcreteSumcheck::derive_opening_points) — the
-    /// third coefficient-table input, which exists only after the batch reduces.
     bound_point: OnceLock<Vec<F>>,
-    /// The expanded coefficient table, built lazily on the first
-    /// `derive_output_term` call so the ZK path (which never evaluates the output
-    /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
     coefficients: OnceLock<OuterRemainderCoefficients<F>>,
 }
 
@@ -176,11 +142,6 @@ impl<F: JoltField> OuterRemainder<F> {
         self.uniskip_challenge
     }
 
-    /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
-    /// `tau`, the uni-skip reduction challenge, and the captured bound point.
-    /// Sourced from [`JoltSpartanOuterRemainder::public_coefficients`] — the same
-    /// source the BlindFold constraint uses — so the output-claim algebra cannot
-    /// drift from that constraint.
     fn coefficients(&self) -> Result<&OuterRemainderCoefficients<F>, VerifierError> {
         if self.coefficients.get().is_none() {
             let bound_point = self.bound_point.get().ok_or_else(|| {
@@ -199,8 +160,6 @@ impl<F: JoltField> OuterRemainder<F> {
                 self.variable_count,
                 formula.public_coefficients(),
             )?;
-            // An already-set cell means another call initialized it from the
-            // same deterministic inputs; discarding the Err keeps first-write-wins.
             drop(self.coefficients.set(coefficients));
         }
         self.coefficients
@@ -228,8 +187,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
         sumcheck_point: &[F],
         _input_points: &SelectedInputs<Vec<F>>,
     ) -> Result<SelectedOutputs<Vec<F>>, VerifierError> {
-        // Capture the bound point for the lazy coefficient-table build; reject a
-        // rebind at a different point (one bind per verification).
         let bound_point = self
             .bound_point
             .get_or_init(|| sumcheck_point.to_vec())
@@ -344,11 +301,6 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltOpeningId;
     use jolt_field::{Fr, Ring};
 
-    /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
-    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated absorb
-    /// (`append_output_claims`) reproduces the input order,
-    /// byte-identically. `canonical_order()` surfaces that field order as opening ids,
-    /// which must line up one-for-one with the R1CS inputs.
     #[test]
     fn append_order_matches_r1cs_input_order() {
         let expected = SPARTAN_OUTER_R1CS_INPUTS
@@ -413,8 +365,6 @@ mod tests {
         }
     }
 
-    /// The composed symbolic output matches the factored R1CS form over the common
-    /// value/flag openings followed by the five field value/product openings.
     #[cfg(feature = "field-inline")]
     #[test]
     fn composed_expected_output_matches_factored_form() {
@@ -478,11 +428,6 @@ mod tests {
         assert_eq!(composed_output, factored_output);
     }
 
-    /// The relation's expanded `expected_output` evaluates bit-identically to the
-    /// factored `JoltSpartanOuterRemainder::expected_output_claim` on the production
-    /// 35-variable rv64 shape. This is the equivalence the clear stage-1 path now
-    /// relies on (it switched from the factored matrix form to the expanded relation
-    /// form); muldiv non-ZK is the end-to-end gate, this pins it at unit level.
     #[cfg(not(feature = "field-inline"))]
     #[test]
     fn expected_output_matches_factored_form_on_rv64_shape() {
@@ -491,8 +436,6 @@ mod tests {
         let variable_count = dimensions.variables().len();
         assert_eq!(variable_count, 35);
 
-        // `tau` has `log_t + 2` entries; the remainder challenge vector has
-        // `1 + log_t` entries (so `tau.len() == remainder.len() + 1`).
         let tau_len = log_t + 2;
         let remainder_len = 1 + log_t;
         let tau = (0..tau_len)
@@ -516,8 +459,6 @@ mod tests {
 
         let relation = OuterRemainder::new(dimensions, tau, uniskip_challenge);
         let input_points = SelectedInputs::<Vec<Fr>>::default();
-        // Capture the bound point (the third coefficient-table input); the table
-        // itself is built lazily by the first `derive_output_term` call.
         let _ = relation
             .derive_opening_points(&remainder_challenges, &input_points)
             .unwrap();

@@ -1,5 +1,3 @@
-/// std backtrace demo: intentionally panic after a few stack frames.
-/// Note: std mode requires a large trace length due to std library initialization.
 #[jolt::provable(
     heap_size = 32768,
     stack_size = 1048576,

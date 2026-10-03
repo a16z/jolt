@@ -126,7 +126,7 @@ fn muldiv(a: u32, b: u32, c: u32) -> u32 {
     black_box(signed_remw(-37, 0));
     black_box(signed_divw(i32::MIN as i64, -1));
     black_box(signed_remw(i32::MIN as i64, -1));
-    let result = black_box(a * b / c); // use black_box to keep code in place
+    let result = black_box(a * b / c);
     end_cycle_tracking("muldiv");
     result
 }

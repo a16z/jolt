@@ -29,9 +29,6 @@ fn main() {
     let only = args.next();
     std::fs::create_dir_all(&output_dir).expect("create artifact output directory");
 
-    // Family names are `jolt-fp128-onehot-k16`, `jolt-fp128-onehot-k256`, and
-    // `jolt-fp128-dense-{bounded,full}`, so the documented selectors are infixes,
-    // not suffixes.
     let specs = family_specs(output_dir)
         .expect("every family must declare a valid contract")
         .into_iter()

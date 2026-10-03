@@ -142,9 +142,6 @@ mod stage6a;
 mod stage6b;
 mod stage7;
 
-/// The lowering's opening-id type: the composite [`ComposedOpeningId`], so hidden witness rows
-/// from either protocol family (jolt, field-inline) live in one claim-source namespace. Builds
-/// without field-inline construct only `Jolt`-wrapped ids, so the layout is unchanged.
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
 type Builder<F, C> = BlindFoldProtocolBuilder<F, ComposedOpeningId, C, VerifierPublicId>;
@@ -154,13 +151,9 @@ type VerifierExpr<F> = Expr<F, ComposedOpeningId, VerifierPublicId>;
 enum VerifierPublicId {
     Jolt(JoltDerivedId),
     SpartanOuter(JoltSpartanOuterPublic),
-    /// Gamma values that remain as `JoltChallengeId` variants (not moved to Public) but are
-    /// treated as public inputs in the BlindFold R1CS wiring.
     Challenge(JoltChallengeId),
     #[cfg(feature = "field-inline")]
     FieldInline(FieldInlineDerivedId),
-    /// Field-inline challenges, treated as public inputs exactly like the
-    /// jolt `Challenge` arm.
     #[cfg(feature = "field-inline")]
     FieldInlineChallenge(FieldInlineChallengeId),
 }
@@ -233,11 +226,6 @@ where
         builder = builder.public(id, value);
     }
 
-    // The stage-8 plan carries composite ids and the lowering is
-    // composite-typed, so the plan passes through unchanged: each id (jolt or
-    // field-inline) resolves to the committed output-claim row the stages
-    // above registered, and the final-opening equation binds them all in one
-    // RLC — the composed final opening order the clear path verified.
     let protocol = builder
         .final_opening(
             input.stage8.opening_ids.clone(),
@@ -373,11 +361,6 @@ where
         .map_err(blindfold_error)
 }
 
-/// Lower one symbolic relation into its `(rounds, input, output)` batch tuple.
-/// Generic over the relation's id family: jolt and field-inline relations both
-/// lower through [`map_expr`] into the composite-id [`VerifierExpr`], so the
-/// hidden claim algebra is single-sourced from each family's symbolic
-/// expressions.
 fn relation_claim<F, S>(relation: &S) -> (usize, VerifierExpr<F>, VerifierExpr<F>)
 where
     F: JoltField,
@@ -403,9 +386,6 @@ fn scale_expr<F: JoltField>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr
     expr
 }
 
-/// Map a protocol-family expression into the composite-id [`VerifierExpr`]:
-/// openings become hidden witness rows named by the composite id; derived
-/// values and challenges both become baked publics.
 fn map_expr<F, O, P, C>(expr: Expr<F, O, P, C>) -> VerifierExpr<F>
 where
     F: JoltField,
@@ -433,12 +413,10 @@ where
     }
 }
 
-/// Lift a jolt-typed opening-id list into the composite id space.
 fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<ComposedOpeningId> {
     ids.into_iter().map(Into::into).collect()
 }
 
-/// Lift jolt-typed `(aliased, source)` pairs into composite [`OpeningAlias`] rows.
 fn composite_aliases<O: Into<ComposedOpeningId>>(
     pairs: impl IntoIterator<Item = (O, O)>,
 ) -> Vec<OpeningAlias<ComposedOpeningId>> {
@@ -816,10 +794,6 @@ where
         })?;
     let (spartan_outer_raf, spartan_shift_raf, entry) =
         if input.checked.precommitted.bytecode.is_some() {
-            // The field-inline extension anchors the field access selectors through the public
-            // public bytecode, which committed-program mode cannot supply; the stage-6b batch build
-            // already rejected this combination, so this arm is reachable only when
-            // field-inline is disabled.
             #[cfg(feature = "field-inline")]
             return Err(crate::stages::stage6b::field_inline::committed_program_rejection());
             #[cfg(not(feature = "field-inline"))]
@@ -886,10 +860,6 @@ where
                     stage5_gammas: &stage_gamma_powers[4],
                 })
                 .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
-            // The composed publics: the field-register access contributions (already
-            // cycle-weighted per stage) add onto the ordinary staged publics BEFORE they bake,
-            // so the same `StageValue(i)` publics the symbolic output expression references
-            // carry both families — exactly the clear composed relation's public composition.
             #[cfg(feature = "field-inline")]
             field_inline::extend_bytecode_stage_values(
                 &mut v.stage_values,
@@ -934,8 +904,6 @@ where
         .batch_consistency
         .try_instance_point(booleanity_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
-    // The (little-endian) reference cycle is the reversed stage-5 instruction
-    // cycle, so its big-endian form here is the stage-5 point itself.
     let reference_eq_point = input
         .stage6a
         .challenges
@@ -1268,9 +1236,6 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    // The cycle-phase relation references `FinalScale` only when the reduction
-    // finalizes at the cycle-phase handoff; otherwise the stage 7 address
-    // phase supplies it.
     if layout.dimensions().has_address_phase() {
         return Ok(());
     }
@@ -1390,7 +1355,6 @@ fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
     }
 }
 
-/// The first `prefix_len` variables of an `address ++ cycle` opening point.
 fn point_prefix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -1407,8 +1371,6 @@ fn point_prefix<F: JoltField>(
     })
 }
 
-/// The variables past the first `prefix_len` of an `address ++ cycle` opening
-/// point (the cycle sub-point).
 fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -1431,12 +1393,6 @@ fn blindfold_error(error: impl ToString) -> VerifierError {
     }
 }
 
-/// Value-parity locks for every FieldInline-family batch member lowered
-/// through the generic [`relation_claim`] / [`map_expr`]: the lowered
-/// input/output expressions, evaluated against the composite claim sources
-/// (hidden rows by composite id, challenges and deriveds as
-/// [`VerifierPublicId`] publics), reproduce the clear path's
-/// `ConcreteSumcheck::input_claim` / `expected_output` on synthetic values.
 #[cfg(all(test, feature = "field-inline"))]
 #[expect(clippy::unwrap_used)]
 #[expect(
@@ -1470,8 +1426,6 @@ mod field_inline_relation_parity {
         (0..len as u64).map(|i| fr(start + i)).collect()
     }
 
-    /// Assert the lowered `(input, output)` expressions of `relation` evaluate
-    /// to the clear claims using the production ZK public-value assembly.
     fn assert_relation_parity<S>(
         relation: &S,
         inputs: &SumcheckInputClaims<Fr, S>,

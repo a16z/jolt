@@ -87,11 +87,6 @@ where
         JoltRelationId::BytecodeReadRaf,
     )?;
 
-    // The batch, through the verifier's own promoted constructor: the relation
-    // carries the upstream cycle/register points and the entry index (full
-    // geometry at construction) — the kernel's read path. Committed-program
-    // mode stages the five raw bound `Val_s` values as extra wire claims; the
-    // sumcheck itself is unchanged.
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
     let entry_bytecode_index = preprocessing
         .verifier
@@ -108,18 +103,12 @@ where
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
     })?;
-    // The field-register access terms use their own upstream opening points.
     #[cfg(feature = "field-inline")]
     let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_geometry(
         sumchecks,
         &stage4.output_points,
         &stage5.output_points,
     );
-    // The generated per-member draw, mirroring the verifier: the bytecode
-    // member's six squeezes (the fold gamma plus the five per-stage gammas),
-    // then the booleanity member's override (the reference-address pad draw
-    // and the gamma). The 6a verifier only carries the booleanity values; this
-    // prover's booleanity kernel consumes them off the challenge aggregate.
     let address_challenges = sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -131,9 +120,6 @@ where
         &stage4.output_values,
         &stage5.output_values,
     );
-    // The packed build folds the four reduced `Inc` claims into the bytecode
-    // address-phase input at the fused-inc consumer stage slots — the same
-    // wrapper the verifier's `stage6a::verify` applies.
     #[cfg(feature = "akita")]
     let bytecode_input_values =
         jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
@@ -186,15 +172,6 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-6a recipe against the verifier's own
-/// public constituents — `stage6a::verify`'s clear body (the batch built by
-/// the promoted `build_from_parts` with the field-register access geometry on the bytecode
-/// member, the field-inline appendage composition, the composed input claim with its
-/// gamma-power extension) on a twin transcript positioned by the stage-1..5
-/// replays, on the field-active arithmetic trace: the appendage openings are
-/// nonzero, so the address kernel's field-inline stage-value legs are exercised for
-/// real (round 0's engine check pins the composed input claim to the
-/// summand).
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -252,10 +229,6 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The field-active premise: the appendage the composed input claim folds
-        // carries nonzero openings (the trace executes field-inline instructions), so
-        // the round trip exercises the extension for real rather than the
-        // zero-fold degenerate case.
         let appendage = field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,
@@ -263,8 +236,6 @@ mod field_inline_round_trip {
         let zero = Fr::from_u64(0);
         assert!(appendage.rd_wa_read_write != zero);
 
-        // The verifier twin (stage6a::verify's clear body), positioned by the
-        // upstream replays.
         let mut transcript = Blake2bTranscript::new(b"stage6a-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);

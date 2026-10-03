@@ -47,8 +47,6 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for ReferenceBackend
                 });
             }
         }
-        // The shared address prefix (the relation's `derive_opening_points`
-        // hard-checks that all three inputs agree on it).
         let r_address = &input_points.read_write()[..ram_log_k];
 
         let ra_folded = address_fold(

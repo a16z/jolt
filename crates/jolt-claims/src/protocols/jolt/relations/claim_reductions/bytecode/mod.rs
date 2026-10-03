@@ -1,5 +1,3 @@
-//! Two-phase committed-bytecode claim-reduction symbolic relations.
-
 use crate::protocols::jolt::PrecommittedReductionDimensions;
 
 /// `(two-phase dimensions, chunk count)` shape shared by the committed-bytecode

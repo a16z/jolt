@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 3 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
@@ -12,22 +10,6 @@ pub use super::registers_claim_reduction::{
 };
 pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 
-/// Source-of-truth for stage 3's sumcheck batch: the three instances in
-/// Fiat-Shamir batch order (Spartan shift, instruction-input virtualization,
-/// register claim-reduction). `#[derive(SumcheckBatch)]` generates the
-/// `Stage3InputClaims<F>`, `Stage3InputPoints<F>`, `Stage3OutputClaims<F>`,
-/// `Stage3OutputPoints<F>`, and `Stage3Challenges<F>` aggregates — one field per
-/// instance, in this declaration order — plus the batched-verify drivers and the
-/// absorb plumbing.
-///
-/// The instruction-input virtualization declares one cross-relation opening alias
-/// (`unexpanded_pc` = the shift's) and the register claim-reduction declares two
-/// (`rs1_value`/`rs2_value` = the instruction-input ones), so the generated
-/// `append_output_claims` absorbs 13 of the members' 16 expression-referenced
-/// openings (each alias once, via its canonical source), the generated
-/// `output_shape` count/validator use the same wire sets, and the generated
-/// `validate_aliases` (run by `expected_final_claim`) enforces the aliased wire
-/// copies equal their sources.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage3Sumchecks<F: JoltField> {
@@ -46,11 +28,7 @@ impl<F: JoltField> Stage3OutputPoints<F> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct Stage3ClearOutput<F: JoltField> {
-    /// The produced stage-3 opening *values* (wire form); read by later stages and
-    /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage3OutputClaims<F>,
-    /// The produced stage-3 opening *points*, paired field-for-field with
-    /// `output_values`. Later stages read each opening's point off these cells.
     pub output_points: Stage3OutputPoints<F>,
 }
 
@@ -59,8 +37,6 @@ pub struct Stage3ZkOutput<F: JoltField, C> {
     pub challenges: Stage3Challenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
-    /// The produced opening points, the ZK counterpart of the clear path's
-    /// `output_points`. Read through the same `*_point()` accessors.
     pub output_points: Stage3OutputPoints<F>,
 }
 
@@ -71,7 +47,6 @@ pub enum Stage3Output<F: JoltField, C> {
 }
 
 impl<F: JoltField, C> Stage3Output<F, C> {
-    /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage3OutputPoints<F> {
         match self {
             Self::Clear(output) => &output.output_points,
@@ -119,11 +94,6 @@ mod tests {
         }
     }
 
-    /// A stage-3 output with the three cross-relation aliases satisfied: shift and
-    /// instruction-input `unexpanded_pc` equal, and register-reduction `rs1`/`rs2`
-    /// equal the instruction-input ones. `validate_aliases` accepts it; the tests
-    /// below perturb one alias each to assert rejection. The absorb test overrides
-    /// the aliased cells with sentinels to prove they are skipped.
     fn consistent() -> Stage3OutputClaims<Fr> {
         Stage3OutputClaims::<Fr> {
             shift: SpartanShiftOutputClaims {
@@ -151,11 +121,6 @@ mod tests {
         }
     }
 
-    /// Locks the stage-3 Fiat-Shamir append order against silent drift: the
-    /// generated absorb follows member declaration order and each member's
-    /// `canonical_order`, skipping the three aliased openings (absorbed once via
-    /// their canonical sources). The aliased cells carry distinct sentinels here
-    /// to prove the skip is id-driven, not value-driven.
     #[test]
     fn opening_values_follow_canonical_order() {
         let mut claims = consistent();
@@ -169,8 +134,6 @@ mod tests {
         );
     }
 
-    /// The generated `output_claim_count` sums the members' wire sets: the 16
-    /// expression-referenced openings minus the 3 aliases.
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
@@ -181,12 +144,6 @@ mod tests {
         );
     }
 
-    /// Pins the stage's alias declarations: each aliased id is distinct and
-    /// referenced by its declaring member's own output `Expr` (so the batch fold
-    /// constrains the wire cell), and each canonical source is absorbed by its
-    /// source member (so the value the copy is checked against is
-    /// Fiat-Shamir-bound). The point-slice identity the value-only check relies
-    /// on is pinned by `aliased_members_derive_identical_opening_points`.
     #[test]
     fn alias_declarations_are_valid() {
         use jolt_claims::SymbolicSumcheck as _;
@@ -265,11 +222,6 @@ mod tests {
         assert!(sumchecks().validate_aliases(&claims).is_err());
     }
 
-    /// Pins the structural invariant the alias declarations rely on:
-    /// `validate_aliases` checks values only, which is sound because all three
-    /// stage-3 members bind the same batch-point slice (equal rounds, default
-    /// offsets) and derive the same opening point — each aliased pair is the same
-    /// polynomial at the same point by construction, never by proof content.
     #[test]
     fn aliased_members_derive_identical_opening_points() {
         let sumchecks = sumchecks();

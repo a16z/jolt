@@ -1,20 +1,3 @@
-//! Adapts Akita's native batched opening protocols to Jolt.
-//!
-//! Two kinds of batching meet at this seam:
-//!
-//! - **Jolt-side batching** happens upstream in the PIOP: the opening
-//!   accumulator reduces the claims produced by the sumcheck stages (via RLC
-//!   combination, claim reductions, or prefix packing) down to evaluation
-//!   claims about committed polynomials at a common point.
-//! - **Akita-native batching** is what this module delegates to: the Akita
-//!   backend proves one group at a common point, or a heterogeneous sequence
-//!   of independently committed groups at their group-local points, in one
-//!   backend proof.
-//!
-//! This adapter performs no claim combination of its own — it validates the
-//! statement shape, bridges Jolt's Fiat-Shamir transcript into Akita's
-//! session, and embeds the backend argument bytes wholesale.
-
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_types::{
@@ -38,8 +21,6 @@ use crate::adapters::{
 };
 use crate::scheme::validate_group_order;
 
-/// Marker adapter selecting Akita's native batched opening as the Jolt batch
-/// opening protocol.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AkitaNativeBatching;
 
@@ -97,8 +78,6 @@ fn validate_trace_batch_statement(
                 entry.role.diagnostic_name()
             )));
         }
-        // Only an object above the final arity needs the catalog-derived
-        // capacity; the common case stays a pure shape check.
         if entry.claim.commitment.num_vars > setup.max_num_vars
             && entry.claim.commitment.num_vars > setup.one_hot_backend_num_vars()?
         {
@@ -150,8 +129,6 @@ fn validate_trace_batch_statement(
     Ok(())
 }
 
-/// Binds the grouped statement into Jolt's transcript and bridges a Jolt
-/// challenge into the Akita session bytes.
 fn bind_grouped_statement_transcripts<T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,
@@ -201,8 +178,6 @@ where
     ))
 }
 
-/// Runs the one-hot backend prover for an opening whose final group was
-/// committed under the setup's K-specific scheme.
 fn prove_one_hot_opening(
     setup: &AkitaProverSetup,
     opening: AkitaOpening<'_>,
@@ -244,8 +219,6 @@ fn prove_one_hot_opening(
     .map_err(prove_failed)
 }
 
-/// Replays the one-hot backend verifier for `statement` under the setup's
-/// K-specific catalog.
 fn verify_one_hot_statement(
     setup: &AkitaVerifierSetup,
     proof: &AkitaBatchProof,
@@ -305,8 +278,6 @@ impl AkitaNativeBatching {
         }
         validate_grouped_hint("main-trace", &main, &main_hint)?;
 
-        // Group order is canonical: every auxiliary group, then the final
-        // trace group. Claims and backend handles stay index-aligned.
         let mut group_claims = Vec::with_capacity(auxiliary_groups.len() + 1);
         let mut handles = Vec::with_capacity(auxiliary_groups.len() + 1);
         for (entry, hint) in auxiliary_groups {
@@ -471,8 +442,6 @@ struct ValidatedStatement<'a> {
     point: &'a [AkitaField],
 }
 
-/// Checks that the statement is a same-point batch over exactly one
-/// commitment group whose shape matches the setup.
 fn validate_statement(
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
     max_num_vars: usize,
@@ -586,9 +555,6 @@ fn validate_witness(
     Ok(())
 }
 
-/// Binds the verifier setup and statement into Jolt's transcript, then bridges
-/// a Jolt challenge into the Akita session bytes so the backend argument is
-/// bound to everything Jolt observed.
 fn bind_statement_transcripts<T>(
     transcript: &mut T,
     verifier_setup: &AkitaVerifierSetup,
@@ -608,9 +574,6 @@ where
     Ok(bridged_akita_session(transcript, b"jolt-akita/batch"))
 }
 
-/// Assembles the single-group opening data handed to Akita's native batched
-/// prover: the shared point, per-polynomial claimed values, the group
-/// commitment, and the commit-time handle retaining the source.
 fn single_group_batch<'a, Cfg>(
     schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],
