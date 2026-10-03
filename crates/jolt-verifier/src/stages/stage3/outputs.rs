@@ -167,6 +167,8 @@ mod tests {
         );
     }
 
+    /// The generated `output_claim_count` sums the members' wire sets: the 16
+    /// expression-referenced openings minus the 3 aliases.
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();

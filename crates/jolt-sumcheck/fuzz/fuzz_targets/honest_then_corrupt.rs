@@ -22,6 +22,8 @@ use num_traits::Zero;
 const SCALAR_BYTES: usize = 32;
 const MAX_NUM_VARS: usize = 5;
 
+/// Evaluates the multilinear extension of `evals` at `point`, with
+/// `point[k]` bound to index bit `k` (LSB-first, matching the prover below).
 fn mle_eval(evals: &[Fr], point: &[Fr]) -> Fr {
     let one = Fr::from_u64(1);
     let mut sum = Fr::zero();

@@ -82,6 +82,7 @@ impl<F: Field, C> SumcheckProof<F, C> {
         }
     }
 
+    /// Verifies a full-round clear sumcheck proof over `domain`.
     pub fn verify<T, D>(
         &self,
         claim: &SumcheckClaim<F>,

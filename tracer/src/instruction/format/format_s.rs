@@ -32,8 +32,10 @@ impl InstructionFormat for FormatS {
         use common::constants::RISCV_REGISTER_COUNT;
         use rand::RngCore;
         Self {
+            // rs1 should never be 0 for memory operations (x0 is hardwired to 0)
             rs1: 1 + (rng.next_u64() as u8 % (RISCV_REGISTER_COUNT - 1)),
             rs2: (rng.next_u64() as u8 % RISCV_REGISTER_COUNT),
+            // Keep imm small to avoid going out of bounds when added to rs1
             imm: (rng.next_u64() as i64 % 256) - 128,
         }
     }

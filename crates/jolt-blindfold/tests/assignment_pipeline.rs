@@ -242,6 +242,8 @@ fn product_auxiliaries_solve_and_prove_through_the_real_prover() {
     let fixture = product_assignment_fixture(&mut rng);
     let stage_refs: Vec<&CommittedSumcheckWitness<F>> = fixture.stage_witnesses.iter().collect();
 
+    // The point of the fixture: the claim lowering allocated at least one
+    // product auxiliary, so `assign_witness` runs the solver.
     assert!(fixture.protocol.dimensions.auxiliary_values > 0);
 
     let assigned = fixture

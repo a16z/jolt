@@ -172,6 +172,7 @@ pub enum JoltAdviceKind {
 }
 
 impl JoltAdviceKind {
+    /// Role descriptor for the final heterogeneous Akita opening.
     pub const fn group_role(self) -> CommitmentGroupRole {
         match self {
             Self::Untrusted => CommitmentGroupRole::new(0, b"untrusted_advice", "untrusted-advice"),

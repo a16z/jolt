@@ -125,6 +125,8 @@ where
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
+        // Advice grids are cycle-major with no one-hot placement, and the
+        // column is small: materialize it and feed dense rows.
         let values = witness.oracle_table(JoltPolynomialId::Committed(id))?;
         let mut partial = PCS::begin(setup);
         for row in values.chunks(grid.num_columns()) {
@@ -267,6 +269,10 @@ where
                     }
                     PCS::feed_zeros(&mut partial, width, zero_rows, setup);
                 }
+                // Address-major: cycle `t` sits at grid index `t · stride`,
+                // everything else is zero. Stream the grid row by row without
+                // materializing the K·T table — the rows holding no cycle
+                // slot go through `feed_zeros`.
                 TracePolynomialOrder::AddressMajor => {
                     let stride = grid.cycle_stride();
                     let rows = (1usize << grid.total_vars) / width;
@@ -307,6 +313,8 @@ struct FusedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStr
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     setup: &'a PCS::ProverSetup,
+    /// Scratch buffers for one row window's column values, reused across
+    /// windows and columns to avoid per-chunk allocation.
     increments: Vec<i128>,
     hot_addresses: Vec<Option<usize>>,
 }

@@ -1,3 +1,8 @@
+//! Differential tests for the two-limb Solinas field (`Fp128`) across every
+//! 128-bit prime offset, with a 4x64-limb schoolbook multiply + binary long
+//! division as the independent oracle (`u128` cannot hold the 256-bit
+//! intermediates).
+
 #![cfg(feature = "solinas")]
 // NB: no `expect(clippy::unwrap_used)` — every unwrap here sits inside a
 // local `macro_rules!` expansion, where the lint does not fire.
@@ -15,6 +20,8 @@ fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)
 }
 
+/// 128x128 -> 256-bit schoolbook multiply over 64-bit halves; independent of
+/// the crate's `mul_wide` (different limb/carry structure, no shared code).
 fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     let (a0, a1) = (a as u64 as u128, a >> 64);
     let (b0, b1) = (b as u64 as u128, b >> 64);
@@ -26,6 +33,8 @@ fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     [p00 as u64, mid as u64, hi as u64, top as u64]
 }
 
+/// Little-endian limbs mod `p` by binary long division (msb first, one
+/// conditional subtract per bit) — no Solinas folding anywhere.
 fn oracle_mod(limbs: &[u64], p: u128) -> u128 {
     let mut r: u128 = 0;
     for &limb in limbs.iter().rev() {
@@ -116,6 +125,8 @@ macro_rules! check_prime128 {
             assert_eq!(ta.half().to_u128_checked(), Some(half));
             assert_eq!((ta.half() + ta.half()).to_u128_checked(), Some(va));
             if $inverses {
+                // Inverse is unique given the oracle-verified multiply, so
+                // `ti * ta == 1` pins the value; None only at zero.
                 match ta.inverse() {
                     Some(ti) => assert_eq!((ti * ta).to_u128_checked(), Some(1)),
                     None => assert_eq!(va, 0, "inverse must exist for nonzero"),

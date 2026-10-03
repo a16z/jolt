@@ -325,6 +325,8 @@ impl Observation {
         })
     }
 
+    /// Which RAM access a row records is a static property of its kind: only
+    /// `Ld` and `Sd` touch RAM in final bytecode.
     fn ram_access(&self, kind: JoltInstructionKind) -> RamAccess {
         match kind {
             JoltInstructionKind::LD => RamAccess::Read(RamRead {
@@ -361,6 +363,7 @@ pub struct X86Checkpoint {
     /// but a requirement: one image per chunk would exhaust memory at small
     /// chunk sizes.
     boundary: Arc<Boundary>,
+    /// Rows to discard after resuming (the boundary may precede the mark).
     skip_rows: usize,
     take_rows: usize,
     /// Longest source-instruction group in the program. Replay can only stop
@@ -458,6 +461,9 @@ const _: () = {
 impl ChunkedExecutionBackend for X86TracerBackend {
     type Checkpoint = X86Checkpoint;
 
+    /// Fast pass with checkpoint capture: run in row-bounded increments,
+    /// pausing at the first group boundary at or past each mark and
+    /// snapshotting the state there.
     fn execute(
         &mut self,
         program: &JoltProgram,

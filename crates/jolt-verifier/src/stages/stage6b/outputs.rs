@@ -420,6 +420,8 @@ pub struct BytecodeReductionWeights<F: JoltField> {
 }
 
 impl<F: JoltField> BytecodeReductionWeights<F> {
+    /// Borrow the weights as the jolt-claims `BytecodeOutputWeightInputs` the
+    /// bytecode reduction's output-weight publics resolve against.
     pub(crate) fn as_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
         BytecodeOutputWeightInputs {
             r_bc: &self.r_bc,

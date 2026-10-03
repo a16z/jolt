@@ -180,6 +180,9 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 }
 
+/// The eq-weighted branch gather at unbound width `width`: one lookup and
+/// one add per hot branch, no multiplications (the weights are pre-scaled
+/// into the branch tables).
 #[inline]
 fn gather<F: JoltField, S: ChunkIndexSource>(
     table: &[F],

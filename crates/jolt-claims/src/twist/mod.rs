@@ -26,6 +26,9 @@ pub mod memory_checking;
 
 #[cfg(test)]
 pub(crate) mod test_ids {
+    //! Toy id families for the structural term-order pins. Framework-only:
+    //! deliberately not any protocol's ids.
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Opening {
         In(usize),

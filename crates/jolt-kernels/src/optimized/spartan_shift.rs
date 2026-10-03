@@ -51,6 +51,9 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// Per-cycle shift columns as native small scalars: the two PCs plus the
+/// three flags the summand references (all at cycle `j`, unshifted — the
+/// shift lives in the `eq+1` factors).
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct SpartanShiftRow {
     #[opening(UnexpandedPC)]
@@ -340,6 +343,7 @@ impl<F: JoltField> ProveRounds<F> for ShiftKernel<F> {
             self.bind(challenge)?;
         }
 
+        // Degree-2 member: evals at t = 0 and t = 2; s(1) from the hint.
         let evals: [F; 2] = match &self.phase {
             Phase::PrefixSuffix { pairs } => {
                 let mut acc = [F::Accumulator::default(); 2];

@@ -410,6 +410,9 @@ mod orientation_probes {
     use jolt_field::{Fr, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
 
+    /// Pin the composite orientation assumption: an `EqPolynomial` table
+    /// (big-endian, `point[0]` at the index MSB) bound LowToHigh over
+    /// challenges `c_0.., c_n` must land on `mle(point, reversed challenges)`.
     #[test]
     fn eq_table_low_to_high_binding_matches_reversed_mle() {
         let tau: Vec<Fr> = (0..3).map(|i| Fr::from_u64(11 + 3 * i)).collect();

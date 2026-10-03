@@ -53,6 +53,7 @@ impl<'a> Binding<'a> {
     }
 }
 
+/// A one-dimensional dispatch shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grid {
     threads: usize,
@@ -78,6 +79,7 @@ impl Grid {
 pub struct Batch<'a> {
     sys: RawCommandBatch,
     device_id: u64,
+    /// Pipeline of every encoded dispatch, for failure attribution.
     dispatched: Vec<Arc<str>>,
     bound_buffers: Vec<&'a BufferAccess>,
     /// A backend encoding error can leave a partial dispatch in the command
@@ -296,6 +298,8 @@ mod tests {
         let access = BufferAccess::default();
         let buffers = [&access];
         {
+            // Simulate successful submission followed by a failure or unwind
+            // before completion can be confirmed.
             let _submission = Submission::begin(&buffers).unwrap();
         }
 

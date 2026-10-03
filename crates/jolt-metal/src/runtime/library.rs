@@ -151,6 +151,7 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// A buffer argument of a kernel, from pipeline reflection.
 #[derive(Clone, Debug)]
 pub(crate) struct ArgumentSlot {
     pub(crate) name: String,

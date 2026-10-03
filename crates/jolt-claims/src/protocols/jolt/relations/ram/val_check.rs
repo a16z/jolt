@@ -169,6 +169,11 @@ mod tests {
         assert_eq!(relation.degree(), 3);
     }
 
+    /// The remodel's soundness anchor: the `Public`-symbol input expression must
+    /// evaluate to the same value the pre-remodel baked-constant decomposition did
+    /// (proven equal to the full-init formula in `geometry::ram`'s tests). With
+    /// `InitEval = public_eval` and `InitSelector = neg_selector`, the
+    /// `public·opening` term equals the old `constant·opening` term.
     #[test]
     fn ram_val_check_symbolic_evaluates_like_decomposed_init() {
         use crate::protocols::jolt::geometry::ram::val_check_advice_opening;

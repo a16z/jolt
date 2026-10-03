@@ -82,6 +82,7 @@ where
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
 
+    // The RAM points, validated exactly as the verifier does.
     let ram_read_write_opening_point = stage2.output_points.ram_read_write_point();
     let ram_output_check_opening_point = stage2.output_points.ram_output_check_point();
     if ram_read_write_opening_point.len() != log_k + log_t {

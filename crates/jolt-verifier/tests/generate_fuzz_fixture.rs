@@ -127,6 +127,7 @@ fn write_bundle(filename: &str, bundle: FuzzBundle, zk: bool) {
     fs::create_dir_all(path.parent().expect("fixture parent")).expect("create fixture directory");
     fs::write(&path, &bytes).expect("write fuzz bundle");
 
+    // Round-trip through the public deserialization the fuzz target uses.
     let (decoded, consumed): (FuzzBundle, usize) =
         bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
             .expect("decode fuzz bundle");

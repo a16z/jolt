@@ -151,6 +151,8 @@ mod tests {
         Fr::from(BigUint::from_bytes_be(&Fq::MODULUS.to_bytes_be()))
     }
 
+    // Ties the scalar-field lambda used by the reconstruction check to the
+    // actual psi powers the table test verifies the table against.
     #[test]
     fn lambda_powers_match_frobenius_powers_on_g2() {
         let lambda = lambda();

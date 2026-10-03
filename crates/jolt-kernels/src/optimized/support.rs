@@ -217,6 +217,7 @@ fn quartic_product_samples<F: JoltField>(values: [F; 4], steps: [F; 4]) -> [F; 5
 
 #[inline]
 fn quartic_next<F: JoltField>(window: [F; 4], six_leading: F) -> F {
+    // The fourth finite difference is 24 times the leading coefficient.
     let mut next = six_leading + window[3] - window[2] + window[1];
     next = next + next - window[2];
     next + next - window[0]

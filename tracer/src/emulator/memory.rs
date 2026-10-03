@@ -92,6 +92,8 @@ impl MemoryData {
         }
     }
 
+    /// Get read-only access to the doubleword stored at `index` *without* recording the access for
+    /// checkpointing.
     #[inline]
     fn get_u64(&self, index: usize) -> u64 {
         match &self.backing {
@@ -472,7 +474,7 @@ mod tests {
         assert!(memory.data.is_saving_checkpoints());
 
         memory.write_doubleword(0, 999);
-        memory.write_doubleword(0, 1000);
+        memory.write_doubleword(0, 1000); // second write must not overwrite the snapshot
         assert_eq!(memory.read_doubleword(8), 222);
 
         let checkpoint = memory.data.save_checkpoint();

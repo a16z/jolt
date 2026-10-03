@@ -420,6 +420,7 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
     let workers = config.workers.max(1);
     let chunk_rows = config.chunk_rows.max(1);
 
+    // Static worker seed, taken before pass-1 starts mutating the emulator.
     let seed_device = emulator.get_cpu().mmu.jolt_device.clone();
     let seed_decode = emulator
         .get_cpu()
@@ -469,6 +470,8 @@ pub fn run_two_pass(emulator: Emulator, config: &TwoPassConfig) -> (Vec<Cycle>, 
                     };
                     let Ok(job) = job else { break };
                     let previous = worker.install_chunk(&job.checkpoint, job.image);
+                    // First install returns the (empty) construction-time
+                    // backing; recycling it is harmless.
                     let _ = buf_tx.send(previous);
                     match job.window {
                         Some(window) => {

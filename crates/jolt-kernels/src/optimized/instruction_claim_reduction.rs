@@ -80,6 +80,8 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
 struct CombineCoefficients<F> {
     gamma_powers: [F; NUM_TABLES],
     right_lookup_hi: F,
+    /// `(lo, hi)` coefficient pairs for the signed lane: `.0` negative, `.1`
+    /// positive.
     right_input_coeffs: ((F, F), (F, F)),
 }
 
@@ -131,6 +133,8 @@ impl<F: JoltField> CombineCoefficients<F> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
+    /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
+    /// table (the summand is linear in the five operands).
     combined: Polynomial<F>,
     rows: BundleStore<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
@@ -268,6 +272,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
+        // Avoid a fresh half-size table each round.
         let _ = self.combined.bind_low_to_high_in_place(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();

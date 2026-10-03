@@ -204,6 +204,9 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
     ]
 }
 
+/// A field-inline guest executing only ordinary instructions (an ADDI with
+/// consistent register semantics, the termination store, then the terminal
+/// JAL): the rv64 eq rows are satisfied while every field-inline column is zero.
 fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
     let [one, store] = termination_store_rows(1);
@@ -248,6 +251,10 @@ pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
     field_inline_backend(bytecode, rows)
 }
 
+/// Two field loads and a multiply: `FieldRdInc = [13, 17, 221, 0]`,
+/// `13 · 17 = 221` — every field-inline eq row and both field-inline product lanes are satisfied
+/// (the product columns are extractor-derived), and the x-register file is
+/// untouched.
 fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
@@ -394,6 +401,9 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
     }
 }
 
+/// The stage recipes' derived-config shape for the fixture traces: the same
+/// derivation `ProverConfig::derive` performs, at the fixture's scale (no
+/// RAM traffic, so `ram_K` stays at a small power of two).
 pub(crate) fn test_prover_config() -> ProverConfig {
     ProverConfig {
         trace_length: 1 << LOG_T,

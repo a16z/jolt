@@ -201,6 +201,10 @@ impl Index<InstructionFlags> for InstructionFlagSet {
     }
 }
 
+/// Static flag configuration for an instruction.
+///
+/// Every instruction struct implements this trait to declare which circuit
+/// and instruction flags are set.
 pub trait Flags {
     fn circuit_flags(&self) -> CircuitFlagSet;
     fn instruction_flags(&self) -> InstructionFlagSet;

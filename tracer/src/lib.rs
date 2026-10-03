@@ -326,6 +326,9 @@ fn parallel_config_from_env() -> Option<parallel::TwoPassConfig> {
 
 fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
     let pc = emulator.get_cpu().read_pc();
+    // This is a trick to see if the program has terminated by throwing itself
+    // into an infinite loop. It seems to be a good heuristic for now but we
+    // should eventually migrate to an explicit shutdown signal.
     if *prev_pc == pc {
         return;
     }
@@ -958,6 +961,7 @@ mod tests {
 
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
 
+    /// addi x1, x0, 1 ; addi x2, x1, 2 ; j .  — terminates via PC stall.
     fn tiny_guest_elf() -> Vec<u8> {
         build_elf64(
             &[0x0010_0093, 0x0020_8113, 0x0000_006f],

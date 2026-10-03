@@ -1,5 +1,12 @@
 #![no_main]
 
+//! Structured coverage for homomorphic Dory batch openings.
+//!
+//! The target builds honest same-point batch openings over byte-controlled
+//! polynomials, then mutates public statements and prover-side source lists.
+//! This reaches the batching adapter plus Dory's transparent and hiding
+//! opening APIs with inputs that stay well-formed up to the mutation boundary.
+
 use std::sync::OnceLock;
 
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme, DoryVerifierSetup};

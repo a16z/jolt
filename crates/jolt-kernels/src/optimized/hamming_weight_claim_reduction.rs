@@ -53,6 +53,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+/// Per-family chunk selectors in canonical layout order.
 struct FamilySelectors {
     instruction: Vec<RaChunkSelector>,
     bytecode: Vec<RaChunkSelector>,
@@ -83,6 +84,8 @@ impl FamilySelectors {
     }
 }
 
+/// All `N` pushforwards from one bundle walk against the shared cycle-eq
+/// table, in canonical (instruction, bytecode, RAM) order.
 fn pushforwards<F: JoltField>(
     rows: &[InstructionCycleRow],
     eq_cycle: &[F],
@@ -154,6 +157,8 @@ fn pushforwards<F: JoltField>(
     }
 }
 
+/// Stage-7 Hamming-weight claim reduction: `PrepareKernel` front of the
+/// optimized kernel.
 pub struct OptimizedHammingWeightClaimReduction;
 
 impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
@@ -360,7 +365,9 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct HammingWeightKernel<F: JoltField> {
     progress: RoundProgress,
+    /// Pushforwards `G_i`, canonical layout order.
     g_tables: Vec<Polynomial<F>>,
+    /// Combined claim weights `W_i`, index-aligned with `g_tables`.
     weight_tables: Vec<Polynomial<F>>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,

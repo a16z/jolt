@@ -32,6 +32,8 @@ pub(super) fn public_error(stage: FieldInlineRelationId, error: impl ToString) -
     }
 }
 
+/// The variables past the first `prefix_len` of a field-inline `address ++ cycle` opening
+/// point (the field-inline cycle sub-point).
 pub(super) fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -48,6 +50,7 @@ pub(super) fn point_suffix<F: JoltField>(
     })
 }
 
+/// The five field value/product openings following the common stage-1 columns.
 pub(super) fn stage1_appended_opening_ids() -> impl Iterator<Item = ComposedOpeningId> {
     field_spartan_geometry::outer_output_openings()
         .into_iter()
@@ -86,6 +89,7 @@ pub(super) fn stage2_claim_reduction<F: JoltField, C>(
     Ok(reduction)
 }
 
+/// The field-inline portion of the product member's canonical output rows.
 pub(super) fn stage2_product_opening_ids() -> impl Iterator<Item = ComposedOpeningId> {
     jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings()
         .into_iter()

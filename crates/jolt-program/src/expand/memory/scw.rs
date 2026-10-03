@@ -78,6 +78,8 @@ pub(in crate::expand) fn expand_scw(
     );
 
     let v_diff = asm.allocate()?;
+    // v_diff = old_mem + success * (rs2 - old_mem), so failure stores the
+    // previous memory value and success stores rs2.
     asm.emit_r(
         SourceInstructionKind::SUB,
         v_diff.operand(),

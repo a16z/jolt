@@ -51,6 +51,8 @@ impl ExceptionalEq {
             len
         ];
         if matches!(self, Self::ZeroPrefix) {
+            // Solve eq(w, first_bind)=0, then subsequent coordinates still
+            // exercise exceptional endpoints under a vanished prefix.
             let w = (first_bind - F::one())
                 * (first_bind + first_bind - F::one())
                     .inverse()

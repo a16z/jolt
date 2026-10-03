@@ -501,6 +501,8 @@ mod field_inline_tests {
             lookup_table_flags: vec![Fr::from_u64(0); LookupTableKind::<RISCV_XLEN>::COUNT],
             ..Default::default()
         };
+        // Distinct sentinels on a spread of ordinary openings so the ordinary
+        // leg of the pin is non-trivial.
         inputs.outer_unexpanded_pc = fr(3);
         inputs.outer_imm = fr(5);
         inputs.outer_jump = fr(7);

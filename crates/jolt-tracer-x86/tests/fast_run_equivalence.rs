@@ -100,6 +100,7 @@ fn fibonacci_record_matches_reference() {
 
 #[test]
 fn muldiv_record_matches_reference() {
+    // DIV/REM advice groups plus RAM traffic.
     assert_record_matches("muldiv-guest", "muldiv", {
         let mut bytes = postcard::to_stdvec(&7u32).unwrap();
         bytes.extend(postcard::to_stdvec(&11u32).unwrap());
@@ -158,6 +159,7 @@ fn sha3_chain_fast_run_matches_reference() {
 
 #[test]
 fn muldiv_fast_run_matches_reference() {
+    // Exercises the DIV/REM advice groups (VirtualAdvice slots).
     assert_fast_run_matches(
         "muldiv-guest",
         "muldiv",

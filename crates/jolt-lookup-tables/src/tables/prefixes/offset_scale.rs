@@ -38,6 +38,7 @@ impl<F: JoltField, const EIGHTHS: usize> SparseDensePrefix<F> for OffsetScalePre
 
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F {
         if suffix_len > 4 {
+            // All offset bits are in the suffix, which supplies the factor.
             return F::one();
         }
         let bits: u128 = b.into();

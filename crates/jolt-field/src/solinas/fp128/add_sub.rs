@@ -39,6 +39,8 @@ impl<const P: u128> Fp128<P> {
         let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
         let overflow = carry1a | carry1b;
 
+        // Since p = 2^128 - C and C < 2^64, reduction adds C to
+        // the low limb and propagates the carry.
         let (r0, carry2) = s0.overflowing_add(Self::C_LO);
         let (r1, carry3) = s1.overflowing_add(carry2 as u64);
 

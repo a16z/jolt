@@ -1185,6 +1185,8 @@ mod tests {
         let poly = Polynomial::<Fr>::random(n, &mut rng);
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
 
+        // HighToLow binds point[0] first (MSB), so binding sequentially
+        // with point[0], point[1], ... should yield evaluate(point).
         let mut hi_to_lo = poly.clone();
         for &r in &point {
             hi_to_lo.bind_with_order(r, BindingOrder::HighToLow);

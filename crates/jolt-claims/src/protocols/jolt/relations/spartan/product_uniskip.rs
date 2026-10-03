@@ -98,6 +98,10 @@ mod tests {
     use crate::protocols::jolt::SpartanProductVirtualizationPublic;
     use jolt_field::{Fr, Ring};
 
+    /// The input claim is the Lagrange-reweighted sum of the three consumed
+    /// Spartan-outer openings: `w0*product + w1*should_branch + w2*should_jump`.
+    /// Distinct primes per source make any dropped, duplicated, or swapped term
+    /// change the total.
     #[test]
     fn input_expression_evaluates_like_lagrange_weighted_sum() {
         let relation = ProductUniskip::new(SpartanProductDimensions::new(7));

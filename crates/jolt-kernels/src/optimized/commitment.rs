@@ -120,6 +120,9 @@ where
     }
 }
 
+/// The streaming commit pass at an explicit superchunk width (tests shrink
+/// it to force multi-delivery sequencing; production uses
+/// [`superchunk_cycles`]).
 fn commit_streaming<F, PCS>(
     source: &dyn RowSource,
     ids: &[JoltCommittedPolynomial],
@@ -133,8 +136,13 @@ where
 {
     let cycles = 1usize << grid.log_t;
     let row_width = grid.num_columns();
+    // Superchunk width: a power-of-two window count (both factors are powers
+    // of two), so every delivery is whole windows.
     let windows = (superchunk_cycles / row_width).clamp(1, cycles / row_width);
     let superchunk = row_width * windows;
+    // Slice-backed sources pipeline the extraction of the next superchunk
+    // against the commit grid of the current one; re-emulating sources
+    // alternate the two phases through the sequential walk.
     #[cfg(feature = "parallel")]
     if let Some(access) = source.random_access() {
         if cycles <= access.cycles() {
@@ -165,6 +173,12 @@ where
     Ok(package::<F, PCS>(consumers.0.finish(setup), ids))
 }
 
+/// The pipelined commit pass over a slice-backed source: while the column
+/// grid advances over superchunk `k`, workers extract superchunk `k + 1`
+/// into the spare buffer (two reused buffers, swapped per delivery). Per
+/// column the fed windows, their order, and the finish calls are exactly
+/// the chunk walk's — the pipeline only overlaps extraction with group
+/// arithmetic, so commitments and hints are byte-identical.
 #[cfg(feature = "parallel")]
 fn collect_range_into(
     access: &RandomAccessRows,
@@ -252,6 +266,8 @@ where
         .collect()
 }
 
+/// One column's in-progress commitment — the reference kernel's states,
+/// advanced a superchunk at a time through the batch entry points.
 enum ColumnCommitState<PCS: ModeStreamingCommitment> {
     Increment {
         kind: ColumnKind,
@@ -264,6 +280,9 @@ enum ColumnCommitState<PCS: ModeStreamingCommitment> {
     },
 }
 
+/// The superchunked commit consumer: every column advances over the same
+/// window sequence as the reference kernel, columns in parallel and windows
+/// in parallel inside each batch call.
 struct BatchedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
 {
     columns: Vec<ColumnCommitState<PCS>>,
@@ -338,6 +357,9 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
         let row_width = self.row_width;
         let one_hot_k = self.one_hot_k;
         let setup = self.setup;
+        // Columns feed by closure straight off the shared bundle chunk —
+        // the commit windows materialize their own values worker-side, so
+        // no per-column batch staging exists at any superchunk size.
         let advance = |column: &mut ColumnCommitState<PCS>| match column {
             ColumnCommitState::Increment { kind, partial } => {
                 PCS::feed_i128_rows_with(
@@ -404,6 +426,10 @@ mod tests {
         }
     }
 
+    /// The optimized streaming pass must reproduce the reference kernel's
+    /// commitments and hints exactly, both when a superchunk covers the whole
+    /// trace (one multi-window delivery) and when it is forced down to one
+    /// window (multi-delivery sequencing).
     #[test]
     fn optimized_commit_matches_reference() {
         let shape = FixtureShape {

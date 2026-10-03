@@ -216,6 +216,9 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
     }
 }
 
+/// Byte parity against the reference kernel on register-consistent field-inline traces,
+/// covering both index sources (parked by stage 4 vs collected from the oracle rows)
+/// and the degenerate case without field-inline activity.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

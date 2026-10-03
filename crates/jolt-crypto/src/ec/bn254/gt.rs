@@ -186,6 +186,7 @@ impl JoltGroup for Bn254GT {
 
     #[inline]
     fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
+        // GT exponentiation: self^scalar (written additively as scalar * self).
         let fr = field_to_fr(scalar);
         Self(self.0.pow(fr.into_bigint()))
     }
@@ -198,6 +199,7 @@ impl JoltGroup for Bn254GT {
             scalars.len(),
             "msm: bases/scalars length mismatch"
         );
+        // GT "MSM" is Π bases[i]^scalars[i] (written additively as Σ scalars[i] * bases[i]).
         let mut acc = Fq12::ONE;
         for (base, scalar) in bases.iter().zip(scalars.iter()) {
             let fr = field_to_fr(scalar);

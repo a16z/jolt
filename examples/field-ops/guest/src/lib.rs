@@ -28,6 +28,9 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
         jolt::field_mul!(1, 1, 4);
     }
 
+    // Horner-recompose the expected value: ((l3·2^64 + l2)·2^64 + l1)·2^64 + l0.
+    // Each limb crosses the bridge as a u64; only the in-field partial sums
+    // exceed 64 bits.
     let [l0, l1, l2, l3] = expected_limbs;
     jolt::field_load_imm!(8, 0);
     for limb in [l3, l2, l1, l0] {

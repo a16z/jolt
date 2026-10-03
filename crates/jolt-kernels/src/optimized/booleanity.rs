@@ -1032,6 +1032,10 @@ pub(crate) mod testing {
         with_trace_backend(log_t, log_k_chunk, rows, f)
     }
 
+    /// Runs `f` against a trace backend over `rows` of the fixture program
+    /// (padded by the backend up to `2^log_t`). Booleanity dimensions are
+    /// probed off the backend's own servable set so test and backend
+    /// geometry cannot drift.
     pub(crate) fn with_trace_backend<R>(
         log_t: usize,
         log_k_chunk: u8,
@@ -1165,6 +1169,9 @@ mod tests {
         Booleanity::new(dimensions, r_address, reference_address, reference_cycle)
     }
 
+    /// Brute-forces the cycle-phase input claim from the dense one-hot
+    /// grids: `Σ_j eq_rr · eq_cycle(j) · Σ_i γ^{2i} (x_i(j)² − x_i(j))` with
+    /// `x_i` the address-folded rows — independent of both kernels.
     fn brute_force_cycle_claim(
         backend: &dyn JoltWitnessOracle<Fr>,
         dimensions: BooleanityDimensions,
@@ -1651,6 +1658,8 @@ mod categorical_tests {
                 for round in 0..if addresses <= 16 { 2 } else { 1 } {
                     let suffix = eq_table(&reference[..4 - round]);
                     let bit = reference[4 - round];
+                    // Direct evaluations of the defining weighted cubic;
+                    // neither Gruen reconstruction nor coefficient caching.
                     let direct: Vec<F> = (0..4)
                         .map(|x| {
                             let x = F::from_u64(x);

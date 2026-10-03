@@ -349,7 +349,7 @@ pub struct Cpu {
     _dump_flag: bool,
     unsigned_data_mask: u64,
     pub trace_len: usize,
-    executed_instrs: u64,
+    executed_instrs: u64, // "real" RV64IMAC cycles
     active_markers: FnvHashMap<u32, ActiveMarker>,
     pub vr_allocator: VirtualRegisterAllocator,
     call_stack: VecDeque<CallFrame>,
@@ -382,7 +382,7 @@ pub enum PrivilegeMode {
 #[derive(Debug)]
 pub struct Trap {
     pub trap_type: TrapType,
-    pub value: u64,
+    pub value: u64, // Trap type specific value
 }
 
 #[derive(Debug)]
@@ -654,7 +654,7 @@ impl Cpu {
         if instr.is_real() {
             self.executed_instrs += 1;
         }
-        self.x[0] = 0;
+        self.x[0] = 0; // hardwired zero
 
         Ok(())
     }
@@ -1146,6 +1146,10 @@ impl Cpu {
     }
 
     pub fn disassemble_next_instruction(&mut self) -> String {
+        // @TODO: Fetching can make a side effect,
+        // for example updating page table entry or update peripheral hardware registers.
+        // But ideally disassembling doesn't want to cause any side effect.
+        // How can we avoid side effect?
         let mut original_word = match self.mmu.fetch_word(self.pc) {
             Ok(data) => data,
             Err(_e) => {
@@ -1651,6 +1655,7 @@ mod test_cpu {
         cpu.get_mut_mmu().init_memory(9);
         cpu.update_pc(DRAM_BASE);
 
+        // Write non-compressed "addi x1, x1, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00108093) {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
@@ -1676,6 +1681,7 @@ mod test_cpu {
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(4);
         cpu.update_pc(DRAM_BASE);
+        // write non-compressed "addi a0, a0, 12" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0xc50513) {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
@@ -1718,6 +1724,7 @@ mod test_cpu {
         let handler_vector = 0x10000000;
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(4);
+        // Write non-compressed "addi x0, x0, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
@@ -1750,6 +1757,7 @@ mod test_cpu {
         let handler_vector = 0x10000000;
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(4);
+        // Write ECALL instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00000073) {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
@@ -1761,6 +1769,7 @@ mod test_cpu {
 
         assert_eq!(handler_vector, cpu.read_pc());
 
+        // mepc/mcause virtual registers hold the faulting pc and cause
         assert_eq!(DRAM_BASE as i64, cpu.x[36]);
         assert_eq!(0xb, cpu.x[37]);
     }
@@ -1771,10 +1780,12 @@ mod test_cpu {
         cpu.get_mut_mmu().init_memory(9);
         cpu.update_pc(DRAM_BASE);
 
+        // Write non-compressed "addi x0, x0, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
         };
+        // Write non-compressed "addi x1, x1, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE + 4, 0x00108093) {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),
@@ -1795,6 +1806,7 @@ mod test_cpu {
         cpu.get_mut_mmu().init_memory(4);
         cpu.update_pc(DRAM_BASE);
 
+        // Write non-compressed "addi x0, x0, 1" instruction
         match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
             Ok(_) => {}
             Err(_e) => panic!("Failed to store"),

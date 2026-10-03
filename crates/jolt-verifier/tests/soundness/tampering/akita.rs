@@ -560,6 +560,8 @@ fn leaf_paths(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
+/// Perturb the leaf at `path` (as produced by [`leaf_paths`], whose first
+/// segment names the root and is skipped).
 fn perturb_leaf(value: &mut serde_json::Value, path: &str) {
     let mut cursor = value;
     for segment in path.split('.').skip(1) {

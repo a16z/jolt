@@ -594,6 +594,7 @@ mod tests {
     #[test]
     #[expect(clippy::expect_used, reason = "test-only assertions")]
     fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
+        // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
         let elf = build_elf64(
             &[0x0010_0093, 0x0020_8113, 0x0000_006f],
             &[],

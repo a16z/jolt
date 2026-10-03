@@ -330,6 +330,8 @@ mod tests {
         assert_eq!(got.chunks, want.chunks);
     }
 
+    /// A transcript double whose every squeeze returns the same nontrivial
+    /// scalar, so `challenge_scalar_powers`' output is a genuine power vector.
     #[derive(Clone, Default)]
     struct ConstantChallengeTranscript;
 

@@ -94,6 +94,10 @@ impl Mmu {
         self.mstatus = mstatus;
     }
 
+    /// Updates PPN used for address translation
+    ///
+    /// # Arguments
+    /// * `ppn`
     pub fn update_ppn(&mut self, ppn: u64) {
         self.ppn = ppn;
     }
@@ -242,6 +246,12 @@ impl Mmu {
         }
     }
 
+    /// Loads multiple bytes. This method takes virtual address and translates
+    /// into physical address inside.
+    ///
+    /// # Arguments
+    /// * `v_address` Virtual address
+    /// * `width` Must be 1, 2, 4, or 8
     fn load_bytes(&mut self, v_address: u64, width: u64) -> Result<u64, Trap> {
         debug_assert!(
             width == 1 || width == 2 || width == 4 || width == 8,
@@ -347,6 +357,13 @@ impl Mmu {
         }
     }
 
+    /// Stores multiple bytes. This method takes virtual address and translates
+    /// into physical address inside.
+    ///
+    /// # Arguments
+    /// * `v_address` Virtual address
+    /// * `value` data written
+    /// * `width` Must be 1, 2, 4, or 8
     fn store_bytes(&mut self, v_address: u64, value: u64, width: u64) -> Result<(), Trap> {
         debug_assert!(
             width == 1 || width == 2 || width == 4 || width == 8,
@@ -475,6 +492,7 @@ impl Mmu {
         }
     }
 
+    /// Read a (4-byte-aligned) doubleword from the memory-mapped device region.
     #[expect(clippy::expect_used)]
     fn device_doubleword(&self, address: u64) -> u64 {
         let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");

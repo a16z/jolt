@@ -748,6 +748,8 @@ mod tests {
                 imm: 0x1234_5000,
             }
         );
+        // sign bit set: the sign-extended u64 pattern appears as a large
+        // positive i128
         assert_eq!(
             format_u_operands(u_word(0xfffff, 3, 0x37)).imm,
             i128::from(0xffff_ffff_ffff_f000u64)
@@ -911,6 +913,7 @@ mod tests {
         let word = (0xc00 << 20) | (0b010 << 12) | (5 << 7) | 0x73; // csrrs t0,cycle,x0
         let instruction = decode_ok(word, 0x8000_0000, false);
         assert_eq!(instruction.kind(), SourceInstructionKind::CSRRS);
+        // I-format sign extension leaves the u64 bit pattern in the i128
         assert_eq!(
             instruction.row().operands.imm,
             i128::from(0xffff_ffff_ffff_fc00u64)

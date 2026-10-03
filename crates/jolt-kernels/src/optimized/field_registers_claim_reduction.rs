@@ -139,6 +139,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
 )]
 struct FieldClaimReductionKernel<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
+    /// Sparse combined-column cells, sorted by `row`; merged on each bind.
     cells: Vec<SparseCell<F>>,
     rows: SharedFieldRegisterRows<F>,
     challenges: RoundChallenges<F>,

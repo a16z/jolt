@@ -4,6 +4,8 @@ use rand::{rngs::StdRng, RngCore, SeedableRng};
 const SEED: u64 = 0x11114A4F4C541111;
 static mut RNG: Option<StdRng> = None;
 
+// Warning: This is a deterministic PRNG implementation. We could allow the prover/verifier to agree on a seed in the future.
+// No atomics support so we're using a static mutable variable
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe fn sys_rand(dest: *mut u8, len: usize) {

@@ -404,6 +404,8 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionRaVirtualizationOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        // Unscale the batch-first tables' γ^v pre-scaling back to the
+        // committed polynomials' claims.
         let mut committed_instruction_ra = self.folded_ra.final_values();
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {

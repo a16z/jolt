@@ -23,6 +23,8 @@ fuzz_target!(|data: [u8; 96]| {
             }};
         }
 
+        // A test-only offset outside the published field aliases ensures the
+        // register-parameterized kernels cannot become unreachable unnoticed.
         exercise!(GenericOffset173);
         exercise!(Prime128Offset275);
         exercise!(Prime128OffsetA7F7);

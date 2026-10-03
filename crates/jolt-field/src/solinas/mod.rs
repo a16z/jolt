@@ -168,6 +168,9 @@ pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {
     })
 }
 
+/// Horner reduction of arbitrary-length little-endian bytes modulo the field
+/// order (the >16-byte path of
+/// [`from_bytes_le_reduced`](crate::CanonicalEncoding::from_bytes_le_reduced)).
 #[inline(always)]
 pub(crate) fn reduce_le_bytes_mod_order<F: Ring>(bytes: &[u8]) -> F {
     let base = F::from_u64(256);

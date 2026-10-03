@@ -233,7 +233,7 @@ pub struct INLINE {
 
 impl RISCVInstruction for INLINE {
     const MASK: u32 = 0x0000707f;
-    const MATCH: u32 = 0x0000002b;
+    const MATCH: u32 = 0x0000002b; // opcode=0x2B (custom-1)
 
     type Format = FormatInline;
     type RegisterState = RegisterStateInline;

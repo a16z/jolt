@@ -285,6 +285,9 @@ fn shift_imm(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     let mut i = base_instance(rng, kind);
     i.row.operands.rs1 = Some(reg(rng));
     i.row.operands.rd = Some(rd(rng));
+    // The immediate is a bitmask; shift = imm.trailing_zeros(). One-hot
+    // values are the real invariant; 0 exercises the trailing_zeros(0)=64
+    // edge on both sides.
     i.row.operands.imm = if rng.gen_ratio(1, 20) {
         0
     } else {

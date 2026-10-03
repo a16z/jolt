@@ -96,6 +96,7 @@ mod clear {
     #[test]
     fn akita_field_inline_field_ops_backends_have_identical_proofs() {
         let mut case = field_ops();
+        // Exercise a joint opening with both bounded advice and full-width increments.
         case.untrusted_advice = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
@@ -181,6 +182,7 @@ mod clear {
         .expect("base proof must verify before tampering");
         let one = AkitaField::from_u64(1);
 
+        // Bind the layout identity independently of the committed values.
         let wrong_digest_commitment = {
             let honest = output
                 .proof
@@ -291,6 +293,8 @@ mod clear {
             &mut transcript,
         )
         .expect_err("a duplicated field-inline-role group must be rejected");
+        // The rejection must come from the canonical role-order check, not
+        // from the fake statement failing later in the batch.
         assert!(
             error.to_string().contains("canonical ascending order"),
             "duplicated field-inline role rejected for the wrong reason: {error}",

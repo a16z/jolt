@@ -130,6 +130,7 @@ fn gt_mul_assign() {
     let e = gt_element();
     let mut acc = e;
     acc *= e;
+    // Mul is a convenience alias for Add (both map to Fq12 multiplication)
     assert_eq!(acc, e + e);
 }
 

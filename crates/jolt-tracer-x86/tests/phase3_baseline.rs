@@ -60,6 +60,7 @@ fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
 
     let x86_fast = x86.then(|| {
         let mut backend = X86TracerBackend::new();
+        // Warm the compile cache so steady-state is measured.
         let _ = backend
             .fast_run(program, inputs.clone())
             .expect("fast_run failed");
@@ -85,6 +86,8 @@ fn report(guest: &str, program: &JoltProgram, inputs: &TraceInputs, x86: bool) {
             None => "n/a".to_string(),
         },
         match (compile_seconds, x86_fast) {
+            // The first run pays compilation; subtracting the steady-state
+            // pass leaves the one-time AOT cost.
             (Some(first), Some(steady)) => format!("{:.3}", (first - steady).max(0.0)),
             _ => "n/a".to_string(),
         }

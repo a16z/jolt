@@ -599,6 +599,9 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         EqPolynomial::<F>::evals(&reversed, None)
     }
 
+    /// The eight produced opening values at the bound cycle point: one
+    /// eq-weighted walk over the typed rows, in the output claims' canonical
+    /// field order.
     fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
         let cycles = weights.len();
         let access = self.rows.access();

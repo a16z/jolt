@@ -536,6 +536,9 @@ mod tests {
 
     #[test]
     fn parallel_evaluations_inner_product_consistency() {
+        // Verifies that the inner product of two eq tables (which computes
+        // eq(r, s) = sum_x eq(x,r)*eq(x,s)) is consistent with evaluate().
+        // This holds regardless of table ordering.
         let mut rng = ChaCha20Rng::seed_from_u64(303);
         let n = 11;
         let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();

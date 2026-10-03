@@ -72,6 +72,7 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
         }
     }
 
+    /// A fresh batch recorder for one stage.
     pub fn recorder(&self) -> Result<ModeRecorder<'a, VC::Field, VC>, ProverError<VC::Field>> {
         #[cfg(feature = "zk")]
         {

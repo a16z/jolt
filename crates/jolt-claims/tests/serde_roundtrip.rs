@@ -117,6 +117,9 @@ fn sumcheck_domain_matches_pinned_golden_bytes() {
     assert_roundtrip(&SumcheckDomain::centered_integer(10));
 }
 
+/// Adversarial wire input: a scalar encoding of the BN254 modulus `r` (the
+/// smallest non-canonical representative) and a truncated scalar must both be
+/// rejected, not silently reduced or zero-padded.
 #[test]
 fn non_canonical_and_truncated_scalars_are_rejected() {
     // r = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001,

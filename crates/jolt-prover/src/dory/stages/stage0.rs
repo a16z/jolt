@@ -317,6 +317,10 @@ where
     })
 }
 
+/// Commit the field-inline columns off the plane's field-inline oracle and
+/// assemble the proof's field-inline commitment payload. Fails closed when the plane
+/// serves no field-inline oracle: a field-inline build proves only field-inline
+/// witnesses (a non-field-inline guest has no honest field-inline columns to commit).
 #[cfg(feature = "field-inline")]
 #[expect(
     clippy::type_complexity,
@@ -513,6 +517,8 @@ mod field_inline_tests {
             vec![FieldInlineCommittedPolynomial::FieldRdInc]
         );
 
+        // The field-inline commitment is the dense trace-domain column committed with
+        // the same placement as the jolt increment columns.
         let column = witness
             .field_inline_witness()
             .unwrap()

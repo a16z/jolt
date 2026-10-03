@@ -125,6 +125,7 @@ macro_rules! define_solinas_prime {
                     let s = a.wrapping_add(b);
                     s.min(s.wrapping_sub(P))
                 } else {
+                    // Full-word: fold the carry with 2^k ≡ C, then subtract.
                     let (s, overflow) = a.overflowing_add(b);
                     let folded = s.wrapping_add((overflow as $word).wrapping_neg() & Self::C);
                     folded.min(folded.wrapping_sub(P))
@@ -134,6 +135,8 @@ macro_rules! define_solinas_prime {
             #[inline(always)]
             fn sub_raw(a: $word, b: $word) -> $word {
                 let (d, underflow) = a.overflowing_sub(b);
+                // If subtraction borrowed, subtracting -P modulo the word
+                // adds P. At full width, -P is the small Solinas offset C.
                 d.wrapping_sub(
                     (underflow as $word).wrapping_neg() & P.wrapping_neg()
                 )

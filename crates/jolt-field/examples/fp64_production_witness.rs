@@ -1,3 +1,5 @@
+//! Stable symbols for inspecting production scalar `2^64 - 59` arithmetic.
+
 use jolt_field::Prime64Offset59;
 
 #[inline(always)]

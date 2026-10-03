@@ -514,6 +514,7 @@ macro_rules! define_rv64imac_enums {
                 $(#[$meta])*
                 $instr($instr),
             )*
+            /// Inline instruction from external crates
             INLINE(INLINE),
         }
 
@@ -1077,7 +1078,7 @@ impl CanonicalSerialize for Instruction {
 
     fn serialized_size(&self, _compress: Compress) -> usize {
         let bytes = serde_json::to_vec(self).expect("serialization failed");
-        bytes.len() + 8
+        bytes.len() + 8 // 8 bytes for length
     }
 }
 
@@ -2499,6 +2500,7 @@ mod tests {
             (0x0000_0073, "ECALL"),
             (0x0010_0073, "EBREAK"),
             (0x3020_0073, "MRET"),
+            // CSRRW/CSRRS on a supported CSR (mtvec = 0x305)
             (i_type(0x305, 1, 0b001, 2, 0x73), "CSRRW"),
             (i_type(0x305, 1, 0b010, 2, 0x73), "CSRRS"),
             // Reserved inline opcodes decode as INLINE without validation
@@ -2779,14 +2781,14 @@ mod tests {
     #[test]
     fn branch_targets_are_relative_to_the_branch_address() {
         let cases: &[(u32, i64, i64, bool)] = &[
-            (b_type(16, 2, 1, 0b000), 5, 5, true),
+            (b_type(16, 2, 1, 0b000), 5, 5, true), // BEQ
             (b_type(16, 2, 1, 0b000), 5, 6, false),
-            (b_type(16, 2, 1, 0b001), 5, 6, true),
+            (b_type(16, 2, 1, 0b001), 5, 6, true), // BNE
             (b_type(16, 2, 1, 0b001), 5, 5, false),
-            (b_type(16, 2, 1, 0b100), -1, 1, true),
-            (b_type(16, 2, 1, 0b110), -1, 1, false),
-            (b_type(16, 2, 1, 0b101), 1, -1, true),
-            (b_type(16, 2, 1, 0b111), 1, -1, false),
+            (b_type(16, 2, 1, 0b100), -1, 1, true), // BLT is signed
+            (b_type(16, 2, 1, 0b110), -1, 1, false), // BLTU is unsigned
+            (b_type(16, 2, 1, 0b101), 1, -1, true), // BGE
+            (b_type(16, 2, 1, 0b111), 1, -1, false), // BGEU: 1 < (u64)-1
             (b_type(-16, 2, 1, 0b000), 7, 7, true),
         ];
         for (word, rs1, rs2, taken) in cases {
@@ -2814,11 +2816,13 @@ mod tests {
 
     #[test]
     fn jumps_link_past_the_jump_and_mask_jalr_bit_zero() {
+        // JAL x5, +2048
         let mut cpu = exec_cpu();
         exec(&mut cpu, j_type(2048, 5));
         assert_eq!(cpu.read_pc(), ADDR + 2048);
         assert_eq!(cpu.x[5], (ADDR + 4) as i64);
 
+        // JAL x5, -2048
         let mut cpu = exec_cpu();
         exec(&mut cpu, j_type(-2048, 5));
         assert_eq!(cpu.read_pc(), ADDR - 2048);
@@ -2846,20 +2850,22 @@ mod tests {
         cpu.write_register(1, base as i64);
         cpu.write_register(2, 0xffee_ddcc_bbaa_9988_u64 as i64);
 
+        // SD x2, 0(x1)
         exec(&mut cpu, s_type(0, 2, 1, 0b011, 0x23));
 
         let load = |cpu: &mut Cpu, funct3: u32, offset: i32| -> i64 {
             exec(cpu, i_type(offset, 1, funct3, 3, 0x03));
             cpu.x[3]
         };
-        assert_eq!(load(&mut cpu, 0b000, 0), 0xffff_ffff_ffff_ff88_u64 as i64);
-        assert_eq!(load(&mut cpu, 0b100, 0), 0x88);
-        assert_eq!(load(&mut cpu, 0b001, 0), 0xffff_ffff_ffff_9988_u64 as i64);
-        assert_eq!(load(&mut cpu, 0b101, 0), 0x9988);
-        assert_eq!(load(&mut cpu, 0b010, 0), 0xffff_ffff_bbaa_9988_u64 as i64);
-        assert_eq!(load(&mut cpu, 0b110, 0), 0xbbaa_9988);
-        assert_eq!(load(&mut cpu, 0b011, 0), 0xffee_ddcc_bbaa_9988_u64 as i64);
+        assert_eq!(load(&mut cpu, 0b000, 0), 0xffff_ffff_ffff_ff88_u64 as i64); // LB
+        assert_eq!(load(&mut cpu, 0b100, 0), 0x88); // LBU
+        assert_eq!(load(&mut cpu, 0b001, 0), 0xffff_ffff_ffff_9988_u64 as i64); // LH
+        assert_eq!(load(&mut cpu, 0b101, 0), 0x9988); // LHU
+        assert_eq!(load(&mut cpu, 0b010, 0), 0xffff_ffff_bbaa_9988_u64 as i64); // LW
+        assert_eq!(load(&mut cpu, 0b110, 0), 0xbbaa_9988); // LWU
+        assert_eq!(load(&mut cpu, 0b011, 0), 0xffee_ddcc_bbaa_9988_u64 as i64); // LD
 
+        // SB merges a single byte; SH a halfword; SW the low word
         cpu.write_register(2, 0x11);
         exec(&mut cpu, s_type(1, 2, 1, 0b000, 0x23));
         assert_eq!(load(&mut cpu, 0b011, 0), 0xffee_ddcc_bbaa_1188_u64 as i64);
@@ -2898,9 +2904,9 @@ mod tests {
         assert_eq!(cpu.mmu.load_word(addr).unwrap().0, 0x8000_0001);
 
         let (old, mem) = run_amo(amo(0b00000, 0b011, 0, 1, 3), 77);
-        assert_eq!((old, mem), (77, 77));
+        assert_eq!((old, mem), (77, 77)); // AMOADD.D + x0
         let (old, mem) = run_amo(amo(0b00001, 0b011, 0, 1, 3), 77);
-        assert_eq!((old, mem), (77, 0));
+        assert_eq!((old, mem), (77, 0)); // AMOSWAP.D with x0
 
         let neg1 = u64::MAX;
         let run_amo_with = |word: u32, initial: u64, rs2: i64| -> (i64, u64) {
@@ -2912,19 +2918,19 @@ mod tests {
             (cpu.x[3], cpu.mmu.load_doubleword(addr).unwrap().0)
         };
         let (old, mem) = run_amo_with(amo(0b10100, 0b011, 2, 1, 3), neg1, 1);
-        assert_eq!((old, mem), (-1, 1));
+        assert_eq!((old, mem), (-1, 1)); // AMOMAX.D: max(-1, 1) = 1
         let (old, mem) = run_amo_with(amo(0b11100, 0b011, 2, 1, 3), neg1, 1);
-        assert_eq!((old, mem), (-1, neg1));
+        assert_eq!((old, mem), (-1, neg1)); // AMOMAXU.D: max(2^64-1, 1)
         let (old, mem) = run_amo_with(amo(0b10000, 0b011, 2, 1, 3), neg1, 1);
-        assert_eq!((old, mem), (-1, neg1));
+        assert_eq!((old, mem), (-1, neg1)); // AMOMIN.D: min(-1, 1) = -1
         let (old, mem) = run_amo_with(amo(0b11000, 0b011, 2, 1, 3), neg1, 1);
-        assert_eq!((old, mem), (-1, 1));
+        assert_eq!((old, mem), (-1, 1)); // AMOMINU.D
         let (old, mem) = run_amo_with(amo(0b01100, 0b011, 2, 1, 3), 0b1100, 0b1010);
-        assert_eq!((old, mem), (0b1100, 0b1000));
+        assert_eq!((old, mem), (0b1100, 0b1000)); // AMOAND.D
         let (old, mem) = run_amo_with(amo(0b01000, 0b011, 2, 1, 3), 0b1100, 0b1010);
-        assert_eq!((old, mem), (0b1100, 0b1110));
+        assert_eq!((old, mem), (0b1100, 0b1110)); // AMOOR.D
         let (old, mem) = run_amo_with(amo(0b00100, 0b011, 2, 1, 3), 0b1100, 0b1010);
-        assert_eq!((old, mem), (0b1100, 0b0110));
+        assert_eq!((old, mem), (0b1100, 0b0110)); // AMOXOR.D
     }
 
     #[test]

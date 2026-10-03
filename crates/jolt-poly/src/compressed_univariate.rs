@@ -49,6 +49,9 @@ impl<F: Field> CompressedPoly<F> {
         self.coeffs_except_linear_term.is_empty()
     }
 
+    /// Recovers the omitted linear term from the hint `h = f(0) + f(1)`.
+    ///
+    /// `c1 = h - 2*c0 - c2 - c3 - ...`
     #[inline]
     fn recover_linear_term(&self, hint: F) -> F {
         // Deserialized proofs can carry an empty coefficient vector; fail with

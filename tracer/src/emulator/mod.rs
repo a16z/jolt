@@ -379,6 +379,9 @@ mod tests {
         ]
     }
 
+    /// A guest that writes `value` to `tohost` and then spins:
+    ///     addi x5, x0, <value> ; lui/slli/srli builds x6 = 0x80003000 ;
+    ///     sd x5, 0(x6) ; j .
     fn tohost_program(value: u32) -> Vec<u32> {
         assert!(value < 2048);
         vec![

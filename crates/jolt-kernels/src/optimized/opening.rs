@@ -192,11 +192,17 @@ impl OpeningColumns {
         Ok(columns)
     }
 
+    /// Index-parallel column collection over a slice-backed source: workers
+    /// extract straight into the five pre-zeroed columns (values identical
+    /// to the streaming pass — extraction is pure per cycle window, and
+    /// every slot is written).
     #[cfg(feature = "parallel")]
     fn collect_par<F: JoltField>(
         access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
+        /// The scatter grain: big enough to amortize rayon dispatch, small
+        /// enough to load-balance skewed extraction.
         const CHUNK: usize = 1 << 12;
         let mut rd_inc: Vec<i128> = unsafe_allocate_zero_vec(cycles);
         let mut ram_inc: Vec<i128> = unsafe_allocate_zero_vec(cycles);
@@ -332,6 +338,9 @@ impl TracePlacement {
     }
 }
 
+/// Fold `total` source slots into a `num_cols`-sized accumulator through
+/// `fill`, splitting into per-thread partial accumulators when parallel.
+/// Field addition is exact, so the merge order cannot change the values.
 fn scatter_fold<F: JoltField>(
     total: usize,
     num_cols: usize,
@@ -592,6 +601,8 @@ impl<F: JoltField> MultilinearPoly<F> for BlockOpeningPoly<F> {
     }
 
     fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        // Table order is grid-index order (row-aligned block), so the
+        // entries arrive pre-sorted.
         let entries = (0..self.table.len())
             .map(|i| (self.index(i), self.table[i]))
             .collect();

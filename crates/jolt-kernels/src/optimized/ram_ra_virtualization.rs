@@ -132,6 +132,10 @@ impl ChunkIndexSource for RamAddressChunks {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
+    /// Address-folded committed RA selectors, one per committed chunk:
+    /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
+    /// cycles, served lazily off the shared columns for the first four
+    /// binds instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, RamAddressChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
@@ -200,6 +204,7 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        // The relation degree: one eq factor plus the committed-RA product.
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
 

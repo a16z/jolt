@@ -705,6 +705,7 @@ impl AkitaVerifierSetup {
         Ok(self.backend_cache.dense.get_or_init(|| verifier))
     }
 
+    /// K=16 one-hot backend verifier; see [`Self::dense_verifier`] for caching.
     pub(crate) fn one_hot_k16_verifier(
         &self,
     ) -> Result<&AkitaVerifier<AkitaOneHotK16Config>, OpeningsError> {
@@ -720,6 +721,7 @@ impl AkitaVerifierSetup {
         Ok(self.backend_cache.one_hot_k16.get_or_init(|| verifier))
     }
 
+    /// K=256 one-hot backend verifier; see [`Self::dense_verifier`] for caching.
     pub(crate) fn one_hot_k256_verifier(
         &self,
     ) -> Result<&AkitaVerifier<AkitaOneHotK256Config>, OpeningsError> {
@@ -805,6 +807,8 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     Ok(())
 }
 
+/// Binds the batch statement (commitment group, point, per-claim data) into
+/// the transcript.
 pub(crate) fn append_batch_statement<T: Transcript>(
     transcript: &mut T,
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
@@ -1062,6 +1066,7 @@ impl AkitaHintSource {
     }
 }
 
+/// `2^num_vars`, or `None` when it does not fit in `usize`.
 pub(crate) fn domain_size(num_vars: usize) -> Option<usize> {
     u32::try_from(num_vars)
         .ok()
@@ -1119,6 +1124,8 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
     }
 }
 
+/// The one-hot backend prover setup `setup` describes, sized by
+/// [`AkitaVerifierSetup::one_hot_backend_num_vars`].
 pub(crate) fn one_hot_setup_prover(
     setup: &AkitaVerifierSetup,
 ) -> Result<AkitaBackendProverSetup, OpeningsError> {

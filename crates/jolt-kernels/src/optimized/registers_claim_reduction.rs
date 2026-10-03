@@ -265,6 +265,7 @@ impl<F: JoltField> ProveRounds<F> for ClaimReductionKernel<F> {
             self.bind(challenge)?;
         }
 
+        // Degree-2 member: evals at t = 0 and t = 2; s(1) from the hint.
         let evals: [F; 2] = match &self.phase {
             Phase::PrefixSuffix { p, q } => {
                 let mut acc = [F::Accumulator::default(); 2];

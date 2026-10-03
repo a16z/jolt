@@ -236,6 +236,8 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
             self.bind(challenge)?;
         }
 
+        // Evaluate at 0, 2, 3; the engine supplies s(1).
+        // Round 0 reads rows fallibly; later rounds read the dense table.
         let evals = match &self.inc {
             IncState::Rows(store) => {
                 debug_assert_eq!(self.progress.bound(), 0);
@@ -319,6 +321,8 @@ impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
         })
     }
 
+    /// Pin the split-LT tables to the verifier's scalar path: the fully bound
+    /// LT value must equal `derive_output_term(LtCycle)`.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -364,7 +368,10 @@ mod tests {
 
     enum IndexSource {
         Collect,
+        /// Reclaimed from a session carry parked by stage 4.
         Parked,
+        /// A stale (wrong-length) carry is parked; `prepare` must fall back
+        /// to collecting.
         StaleParked,
     }
 

@@ -46,6 +46,8 @@ use rayon::prelude::*;
 
 use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
+/// Shared dense reference round driver: evaluate each integer sample independently
+/// over the Boolean remainder, enforce the running claim, then interpolate.
 pub(crate) fn sample_dense_round<F: JoltField>(
     half: usize,
     degree: usize,
@@ -99,6 +101,8 @@ where
     opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
     derived_tables: BTreeMap<DerivedIdOf<F, R>, Polynomial<F>>,
     binding_order: BindingOrder,
+    /// Active variables in the stored tables. An enclosing kernel handles
+    /// any inactive variables in the relation's full round schedule.
     table_rounds: usize,
     rounds_bound: usize,
 }
@@ -940,6 +944,9 @@ mod tests {
         ));
     }
 
+    /// The ambiguous-role twin of [`ToyInputs`]: its consumed id is one of
+    /// the toy summand's own leaves, so the leaf's mandatory table collides
+    /// with the consumed claim and construction must reject it.
     #[derive(jolt_claims::InputClaims)]
     struct ToyLeafInputs<C> {
         #[opening(LookupOutput, from = RegistersValEvaluation)]

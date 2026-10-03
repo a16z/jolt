@@ -133,6 +133,13 @@ impl<F: JoltField> LtPolynomial<F> {
     }
 }
 
+/// Materializes `[LT(0, r), LT(1, r), ..., LT(2^n - 1, r)]` in big-endian order.
+///
+/// Uses an in-place doubling construction. For each bit position `i` (LSB to MSB):
+/// - Left half `x`: `x' = x + r_i - x·r_i` (accumulates `(1-x_i)·r_i·eq_suffix`)
+/// - Right half `y`: `y' = x·r_i` (propagates eq term through x_i=1)
+///
+/// Time: O(n·2^n). Space: O(2^n).
 fn lt_evals<F: JoltField>(r: &[F]) -> Vec<F> {
     let n = r.len();
     jolt_utils::math::assert_shiftable_dim(n);

@@ -69,6 +69,10 @@ pub fn outer_remainder_input_values_from_uniskip_output<F: JoltField>(
     .into()
 }
 
+/// The factored-form constituents, indexed for O(1) resolution. Built once
+/// from [`JoltSpartanOuterRemainder::public_coefficients`] in the constructor
+/// so `derive_output_term` (called ~`2n + 3` times per proof) never rebuilds
+/// the `JoltSpartanOuterRemainder` matrix work.
 #[derive(Clone)]
 struct OuterRemainderCoefficients<F> {
     tau_kernel: F,

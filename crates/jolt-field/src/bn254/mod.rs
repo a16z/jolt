@@ -1,3 +1,11 @@
+//! BN254 backend: `#[repr(transparent)]` newtypes over arkworks decoupling
+//! the public API from the arkworks types.
+//!
+//! Byte formats are frozen: serde and transcript encodings are the 32-byte
+//! little-endian canonical form (identical to jolt-field), and challenge
+//! derivation reproduces the legacy 125-bit shifted / big-endian-scalar
+//! conventions exactly.
+
 mod mont;
 
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
@@ -235,6 +243,7 @@ macro_rules! wrap_bn254 {
 }
 
 wrap_bn254!(
+    /// BN254 scalar field element (`#[repr(transparent)]` over `ark_bn254::Fr`).
     Fr,
     ark_bn254::Fr,
     accumulators(WideAccumulator, FrSmallScalarAccumulator, FrSignedProductAccumulator),
@@ -242,6 +251,7 @@ wrap_bn254!(
 );
 
 wrap_bn254!(
+    /// BN254 base field element (`#[repr(transparent)]` over `ark_bn254::Fq`).
     Fq,
     ark_bn254::Fq,
     accumulators(NaiveAccumulator<Fq>, NaiveAccumulator<Fq>, NaiveAccumulator<Fq>),

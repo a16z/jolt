@@ -48,6 +48,7 @@ fn multi_pairing_matches_sum_of_individual() {
     let g1b = g1.scalar_mul(&b);
 
     let multi = Bn254::multi_pairing(&[g1a, g1b], &[g2, g2]);
+    // In additive notation, "sum" is GT addition (which is Fq12 multiplication).
     let sum = Bn254::pairing(&g1a, &g2) + Bn254::pairing(&g1b, &g2);
 
     assert_eq!(
@@ -142,6 +143,7 @@ fn gt_mul_convenience_matches_add() {
     let g2 = Bn254::g2_generator();
     let e = Bn254::pairing(&g1, &g2);
 
+    // Mul and Add should behave identically (both map to Fq12 multiplication).
     assert_eq!(e * e, e + e);
 }
 

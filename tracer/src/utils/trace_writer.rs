@@ -24,6 +24,7 @@ pub struct TraceWriterConfig {
 }
 
 impl Default for TraceWriterConfig {
+    /// Defaults were chosen to prefer performance on a M4 Max for traces containing Cycle
     fn default() -> Self {
         Self {
             batch_size: BATCH_SIZE,

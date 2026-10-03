@@ -1,5 +1,8 @@
 #![no_main]
 
+//! Differential check of `Polynomial` evaluation paths against a naive
+//! per-index multilinear-extension reference.
+
 use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::Polynomial;
 use libfuzzer_sys::fuzz_target;

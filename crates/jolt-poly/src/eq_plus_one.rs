@@ -75,6 +75,12 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
         eq_evals[0] = scaling_factor.unwrap_or(F::one());
         let mut eq_plus_one_evals: Vec<F> = unsafe_allocate_zero_vec(size);
 
+        // Build tables incrementally. After processing bit i, the eq table
+        // encodes a prefix of length i+1, stored at strided positions.
+        //
+        // At each step:
+        // 1. Derive eq+1 contributions from the current eq prefix.
+        // 2. Extend the eq table by one more variable r[i].
         for i in 0..ell {
             let step = 1usize << (ell - i);
             let half_step = step / 2;
@@ -91,6 +97,11 @@ impl<F: JoltField> EqPlusOnePolynomial<F> {
                 idx += step;
             }
 
+            // Extend eq table by variable r[i].
+            // The eq table after i steps has 2^i nonzero entries at stride 2^(ell-i).
+            // After extension, it has 2^(i+1) entries at stride 2^(ell-i-1).
+            // Selected indices: 0, eq_step, 2·eq_step, ... where eq_step = 2^(ell-i-1).
+            // Pairs: (k, k+eq_step) → eq[k+eq_step] = eq[k]·r[i]; eq[k] -= eq[k+eq_step].
             let eq_step = 1usize << (ell - i - 1);
             let mut k = 0;
             while k < size {

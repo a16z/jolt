@@ -105,6 +105,7 @@ fn compare_4(a: [u64; N], b: [u64; N]) -> core::cmp::Ordering {
     core::cmp::Ordering::Equal
 }
 
+/// a - b for 4-limb numbers. Caller guarantees a >= b.
 #[inline(always)]
 fn sub_4(a: [u64; N], b: [u64; N]) -> [u64; N] {
     let mut result = a;
@@ -163,6 +164,8 @@ fn barrett_reduce_5_to_4(c: BigInt<5>) -> BigInt<N> {
     barrett_cond_subtract(BigInt(r_tmp))
 }
 
+/// N Montgomery reduction steps on a buffer of L >= 2N limbs; returns the
+/// final carry.
 #[inline(always)]
 fn montgomery_reduce_in_place<const L: usize>(limbs: &mut [u64; L]) -> u64 {
     let mut carry2 = 0u64;

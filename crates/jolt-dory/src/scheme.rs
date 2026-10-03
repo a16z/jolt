@@ -95,6 +95,9 @@ pub(crate) fn ark_to_jolt_g1(ark: ArkG1) -> Bn254G1 {
     unsafe { std::mem::transmute(ark) }
 }
 
+/// First `n` bases of an SRS table. Callers size `n` from the polynomial
+/// being committed; the assert keeps a descriptive panic if it outgrows the
+/// setup instead of a bare slice-bounds failure.
 #[inline]
 pub(crate) fn srs_prefix<T>(bases: &[T], n: usize) -> &[T] {
     assert!(
@@ -553,6 +556,8 @@ impl DoryHint {
     }
 }
 
+/// Bridges [`MultilinearPoly<Fr>`] to dory-pcs's polynomial traits
+/// without materializing the full evaluation table.
 struct DorySourceAdapter<'a, S: MultilinearPoly<Fr> + ?Sized> {
     source: &'a S,
 }

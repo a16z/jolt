@@ -125,6 +125,7 @@ fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     [p00 as u64, mid as u64, hi as u64, top as u64]
 }
 
+/// Little-endian limbs mod `p` by binary long division — no Solinas folding.
 fn oracle_mod(limbs: &[u64], p: u128) -> u128 {
     let mut r: u128 = 0;
     for &limb in limbs.iter().rev() {

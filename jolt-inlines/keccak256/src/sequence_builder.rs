@@ -39,6 +39,8 @@ pub(crate) const ROTATION_OFFSETS: [[u32; 5]; 5] = [
     [27, 20, 39,  8, 14],
 ];
 
+/// Register plan (37 virtual registers): A[25], C[5], D[3], one ρ/π
+/// temporary, two χ temporaries, and one scratch register.
 struct Keccak256SequenceBuilder {
     asm: InlineExpansionBuilder,
     round: u32,

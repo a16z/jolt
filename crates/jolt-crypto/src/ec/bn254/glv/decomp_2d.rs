@@ -93,6 +93,8 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
+    /// Signed lattice basis entries in Fr, matching `decompose_scalar_2d`'s
+    /// sign convention (`true` = positive).
     fn basis_fr() -> [Fr; 4] {
         SCALAR_DECOMP_COEFFS.map(|(positive, magnitude)| {
             let value = Fr::from_bigint(magnitude).unwrap();

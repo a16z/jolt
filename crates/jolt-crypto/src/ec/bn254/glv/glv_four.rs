@@ -1,3 +1,8 @@
+//! 4D GLV scalar multiplication for BN254 G2.
+//!
+//! Uses Strauss-Shamir interleaving with four ~64-bit scalars from the 4D decomposition.
+//! The four bases are `P, psi(P), psi^2(P), psi^3(P)` where `psi` is the Frobenius endomorphism.
+
 use ark_bn254::{Fr, G2Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};
@@ -8,6 +13,9 @@ use rayon::prelude::*;
 use super::decomp_4d::decompose_scalar_4d;
 use super::frobenius::frobenius_psi_power_projective;
 
+/// Online 4D GLV scalar multiplication for BN254 G2.
+/// Decomposes scalar into 4 ~66-bit components using Frobenius endomorphism,
+/// then uses Strauss-Shamir interleaving.
 pub fn glv_four_scalar_mul_online(scalar: Fr, points: &[G2Projective]) -> Vec<G2Projective> {
     let (coeffs, signs) = decompose_scalar_4d(scalar);
 

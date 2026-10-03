@@ -170,6 +170,8 @@ mod tests {
         ));
     }
 
+    /// A proof declaring a different field-register file size rejects even when the enabled
+    /// bit matches: the whole config participates in the equality gate.
     #[test]
     fn mismatched_field_register_log_k_is_rejected() {
         let mut protocol = JOLT_VERIFIER_CONFIG;

@@ -21,6 +21,8 @@ use crate::summary::{ProfileSummary, SummaryError, TraceAggregate};
 /// The page template; `__DATA_JSON__` is replaced by the run's payload.
 const TEMPLATE: &str = include_str!("memory_viz.html");
 
+/// Cap on inlined RSS samples — beyond this the series is stride-decimated
+/// (the envelope's shape survives; per-sample detail stays in the trace).
 const MAX_RSS_POINTS: usize = 1500;
 
 /// Derives `memory.html` next to the trace, mirroring

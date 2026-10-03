@@ -13,6 +13,7 @@ use super::group::JoltGroup;
 /// additive notation for uniformity, even though the underlying operation
 /// is Fq12 multiplication. See `Bn254GT` for the mapping.
 pub trait PairingGroup: Clone + Debug + Eq + Sync + Send + 'static {
+    /// Scalar field for G1 and G2 (e.g., BN254 Fr).
     type ScalarField: JoltField;
     type G1: JoltGroup;
     type G2: JoltGroup;

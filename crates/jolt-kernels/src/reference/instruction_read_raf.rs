@@ -305,6 +305,9 @@ impl<F: JoltField> InstructionReadRafKernel<F> {
             (1u128 << suffix_len) - 1
         };
 
+        // RAF suffix accumulators: one fused scan. The shift suffixes are
+        // constant per phase (`2^{suffix_len/2}`, `2^{suffix_len}`), so raw
+        // eq mass is accumulated and scaled afterwards.
         let mut q_shift_half_raw = [F::zero(); CHUNK_SIZE];
         let mut q_left = [F::zero(); CHUNK_SIZE];
         let mut q_right = [F::zero(); CHUNK_SIZE];

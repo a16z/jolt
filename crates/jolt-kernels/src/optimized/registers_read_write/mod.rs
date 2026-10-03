@@ -160,6 +160,8 @@ impl<F: JoltField> ReadWriteKernel<F> {
         self.challenges.push(r);
 
         if self.challenges.bound() == self.dimensions.log_t() {
+            // Replacing the state frees the entry allocation here rather
+            // than at kernel drop.
             (
                 self.address.ra,
                 self.address.wa,
@@ -274,6 +276,8 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
         })
     }
 
+    /// Pin the internally tracked eq factor to the verifier's scalar path:
+    /// the fully bound Gruen scalar must equal `derive_output_term(EqCycle)`.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,

@@ -1,3 +1,9 @@
+//! Spine conformance: a third-party Mersenne-61 field implemented with no
+//! arkworks dependency, driven through the exported stamping macros.
+//!
+//! This is the implementability proof for the trait spine: everything a
+//! non-BN254, non-Solinas field must provide, and nothing more.
+
 #![expect(clippy::unwrap_used, reason = "test code")]
 
 use jolt_field::{
@@ -302,6 +308,8 @@ fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
 
 #[test]
 fn jolt_field_blanket() {
+    // M61 satisfies the JoltField bundle from the component traits alone —
+    // the derive above is the `allocative` feature's supertrait, not a JoltField impl.
     let xs = [M61(2), M61(3)];
     let ys = [M61(5), M61(7)];
     assert_eq!(inner_product(&xs, &ys), M61(31));

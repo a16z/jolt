@@ -88,6 +88,10 @@ fuzz_target!(|data: &[u8]| {
             running_sum = poly.evaluate(r);
             round_proofs.push(poly);
         } else {
+            // Tail rounds: variable-length raw polynomial from fuzzer bytes.
+            // Most of these will fail the verifier's sum check; the contract
+            // is that `verify` returns an `Err` (or `Ok` if the random bytes
+            // happen to land on a valid value) without panicking.
             if cursor >= data.len() {
                 return;
             }
@@ -123,6 +127,8 @@ fuzz_target!(|data: &[u8]| {
         );
         assert_eq!(eval_claim.point.len(), num_vars);
     }
+    // Otherwise (`valid_rounds < num_vars`) `verify` may return Ok or Err
+    // depending on the random tail; the contract is just no panic.
 });
 
 #[inline]

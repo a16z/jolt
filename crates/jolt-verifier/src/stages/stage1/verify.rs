@@ -64,6 +64,8 @@ where
 
         sumchecks.validate_output_claims(&claims.outer)?;
 
+        // The remainder consumes the uni-skip's reduced opening as its input claim
+        // (the relation's `input_claim` is the bare consumed opening).
         let input_values = Stage1BatchInputClaims {
             outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip_output_claim),
         };

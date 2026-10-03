@@ -80,6 +80,8 @@ fn intern(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
+/// Const constructor for curated fibonacci-workload keys (the cheapest
+/// workload — the sensible default for optimizer loops).
 const fn fibonacci(key: &'static str, metric: TelemetryMetric) -> OptimizationObjective {
     OptimizationObjective::Telemetry(TelemetryObjective {
         key,

@@ -167,6 +167,8 @@ fn degree3_final_eval_correct() {
 
 #[test]
 fn eq_weighted_sumcheck() {
+    // eq(r, x) * f(x), common pattern in Jolt (Spartan outer sumcheck).
+    // eq(r, x) = prod_i (r_i * x_i + (1 - r_i)(1 - x_i))
     let num_vars = 4;
     let n = 1 << num_vars;
 

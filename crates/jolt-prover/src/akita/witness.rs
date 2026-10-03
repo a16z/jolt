@@ -39,6 +39,8 @@ struct OneHotTraceSourceRow {
     fused_inc: FusedInc,
 }
 
+/// The RAM access of [`OneHotTraceSourceRow`] alone: whether the RAM columns
+/// commit row zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamAccessRow {
     ram_address: RemappedRamAddress,
@@ -385,6 +387,7 @@ fn commit_failed<F: JoltField>(error: impl ToString) -> ProverError<F> {
     )
 }
 
+/// One direct bounded-dense committed-program object.
 #[derive(Clone)]
 pub struct DirectProgramObject<PCS: CommitmentScheme> {
     pub plan: PrefixPackedObjectPlan,

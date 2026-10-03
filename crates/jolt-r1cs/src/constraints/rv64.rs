@@ -592,6 +592,12 @@ mod execution_witness_tests {
         w
     }
 
+    /// `ADD x3, x1, x2` with rs1 = 2^64 − 2, rs2 = 5.
+    ///
+    /// Circuit flags [AddOperands, WriteLookupOutputToRD] (i/add.rs). The
+    /// right lookup operand carries the unwrapped 65-bit sum
+    /// (2^64 − 2) + 5 = 2^64 + 3, while rd receives the RV64 wrapped
+    /// result 3.
     fn add_witness() -> Vec<Fr> {
         const RS1: u64 = u64::MAX - 1;
         const RS2: u64 = 5;
@@ -618,6 +624,11 @@ mod execution_witness_tests {
         w
     }
 
+    /// `SLTU x5, x1, x2` with rs1 = 7, rs2 = 9, so rd = 1.
+    ///
+    /// Circuit flags [WriteLookupOutputToRD] (i/sltu.rs). No operand
+    /// combination flag is set, so the lookup operands pass through the
+    /// instruction inputs unchanged (interleaved-operand default).
     fn sltu_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0020;
 
@@ -639,6 +650,11 @@ mod execution_witness_tests {
         w
     }
 
+    /// `LD x11, 8(x10)` with base 0x8000_1000 loading 0xDEAD_BEEF_CAFE_F00D.
+    ///
+    /// Circuit flags [Load] (i/ld.rs). Loads route the loaded value into
+    /// RamReadValue, RamWriteValue (read-write identity), and RdWriteValue;
+    /// instruction inputs and the lookup are unused (all zero).
     fn ld_witness() -> Vec<Fr> {
         const BASE: u64 = 0x8000_1000;
         const LOADED: u64 = 0xDEAD_BEEF_CAFE_F00D;
@@ -659,6 +675,13 @@ mod execution_witness_tests {
         w
     }
 
+    /// `SD x12, -8(x10)` with base 0x8000_2000 storing 0x1122_3344_5566_7788
+    /// over old memory value 0x0F0F_0F0F_0F0F_0F0F.
+    ///
+    /// Circuit flags [Store] (i/sd.rs). Stores write rs2 to memory
+    /// (RamWriteValue = Rs2Value) and write no register (RdWriteValue = 0).
+    /// The negative offset exercises signed immediate handling in the
+    /// address constraint.
     fn sd_witness() -> Vec<Fr> {
         const BASE: u64 = 0x8000_2000;
         const STORED: u64 = 0x1122_3344_5566_7788;
@@ -680,6 +703,12 @@ mod execution_witness_tests {
         w
     }
 
+    /// `BEQ x1, x2, -16` at 0x8000_0040 with rs1 = rs2 = 42: branch taken.
+    ///
+    /// BEQ sets no circuit flags (i/beq.rs); Branch is an instruction flag
+    /// surfacing as the committed product factor `V_BRANCH`. The Equal
+    /// lookup returns 1, so ShouldBranch = 1·1 and the next unexpanded PC
+    /// is the backward target 0x8000_0040 − 16.
     fn beq_taken_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0040;
 
@@ -722,6 +751,12 @@ mod execution_witness_tests {
         w
     }
 
+    /// `JAL x1, +0x100` at 0x8000_0100: jump to 0x8000_0200, link 0x8000_0104.
+    ///
+    /// Circuit flags [AddOperands, Jump] (i/jal.rs); the left instruction
+    /// input is the unexpanded PC and the right is the immediate, so the
+    /// RangeCheck lookup computes the jump target PC + imm. The next row is
+    /// a real instruction, so ShouldJump = Jump·(1 − NextIsNoop) = 1.
     fn jal_witness() -> Vec<Fr> {
         const UNEXPANDED_PC: u64 = 0x8000_0100;
         const IMM: u64 = 0x100;
@@ -746,6 +781,12 @@ mod execution_witness_tests {
         w
     }
 
+    /// `MUL x5, x1, x2` with rs1 = 2^63 + 1, rs2 = 3.
+    ///
+    /// Circuit flags [MultiplyOperands, WriteLookupOutputToRD] (m/mul.rs).
+    /// The full product (2^63 + 1)·3 = 2^64 + 2^63 + 3 exceeds 64 bits: the
+    /// right lookup operand and the committed Product carry the full value,
+    /// while rd receives the RV64 truncated low 64 bits 2^63 + 3.
     fn mul_witness() -> Vec<Fr> {
         const RS1: u64 = 0x8000_0000_0000_0001;
         const RS2: u64 = 3;
@@ -771,6 +812,15 @@ mod execution_witness_tests {
         w
     }
 
+    /// A mid-sequence inline step of a virtual expansion (e.g. Virtual
+    /// MOVSIGN inside a DIV expansion) with rs1 = 2^63 (negative), so the
+    /// sign-mask lookup output is all-ones.
+    ///
+    /// Per the `jolt_instruction!` macro, `virtual_sequence_remaining =
+    /// Some(k > 0)` sets [VirtualInstruction, DoNotUpdateUnexpandedPC] and
+    /// not IsLastInSequence, so the expanded PC advances by 1 while the
+    /// unexpanded PC stays put. The next row is the following (non-first)
+    /// step of the same sequence.
     fn virtual_inline_step_witness() -> Vec<Fr> {
         const RS1: u64 = 0x8000_0000_0000_0000;
         const SIGN_MASK: u64 = u64::MAX;

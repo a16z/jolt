@@ -211,6 +211,10 @@ mod tests {
         );
     }
 
+    /// The value carriers' per-lane mapping is the id-level lane table read
+    /// back as values: `factor_values(lane)` resolves exactly
+    /// `lane.factor_openings()`, and `input_value(lane)` resolves
+    /// `lane.input_opening()`'s polynomial.
     #[test]
     fn lane_value_mapping_matches_lane_opening_table() {
         let inputs = inputs();

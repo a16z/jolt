@@ -230,6 +230,8 @@ impl JoltState {
 
     fn assert_output_differs(&self, solver: &mut Solver, other: &Self) {
         let mut or_terms = vec![
+            // we are currently missing constraints on next_pc
+            //(&self.next_pc).ne(&other.next_pc),
             self.next_is_noop.eq(Int::from(0))
                 & self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
             self.left_lookup.ne(&other.left_lookup),

@@ -56,6 +56,7 @@ use crate::{
 const STARTUP_ROUNDS: usize = 4;
 const _: () = assert!(STARTUP_ROUNDS <= 4);
 
+/// Slot front for the stage-6b RAM Hamming-weight booleanity member.
 pub struct OptimizedRamHammingBooleanity;
 
 impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHammingBooleanity {
@@ -502,6 +503,7 @@ mod tests {
             .prepare(&mut ProofSession::default(), backend, inputs())
             .unwrap();
 
+        // The Hamming indicator is boolean, so the input claim is zero.
         let mut claim = Fr::from_u64(0);
         let mut bind = None;
         let mut drawn = Vec::new();
@@ -636,6 +638,10 @@ mod tests {
         with_booleanity_backend(3, 4, |backend, _| parity(backend, 3, generic_binding(3)));
     }
 
+    /// Short traces use startup messages through the final bind. Exercise
+    /// every pattern through three rounds and representative 16-bit patterns
+    /// at four; enumerating 65,536 full trace backends would obscure the
+    /// actual kernel regression this test guards.
     #[test]
     fn every_pattern_within_startup_depth() {
         for log_t in 1..=STARTUP_ROUNDS.min(3) {

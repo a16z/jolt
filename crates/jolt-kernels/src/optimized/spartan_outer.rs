@@ -1177,10 +1177,10 @@ const VARIABLE_COUNT: usize = SPARTAN_OUTER_R1CS_INPUTS.len();
 const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     let mut mask = [false; VARIABLE_COUNT];
     mask[3] = true; // ShouldBranch
-    mask[17] = true;
-    mask[18] = true;
-    mask[20] = true;
-    let mut flag = 21;
+    mask[17] = true; // NextIsVirtual
+    mask[18] = true; // NextIsFirstInSequence
+    mask[20] = true; // ShouldJump
+    let mut flag = 21; // the circuit flags
     while flag < VARIABLE_COUNT {
         mask[flag] = true;
         flag += 1;
@@ -1516,6 +1516,10 @@ mod tests {
         }
     }
 
+    /// Structured pseudo-random rows: full-range `u64`s, mixed-sign `i128`s,
+    /// two-limb `u128`/`S128` values (both wide B-row paths), diverse flags.
+    /// No satisfying-witness structure — parity must hold pointwise on any
+    /// witness.
     fn synthetic_rows(log_t: usize, seed: u64) -> Vec<SpartanOuterRow> {
         let mut state = seed | 1;
         let mut next = move || {
@@ -2032,6 +2036,9 @@ mod tests {
             .with_plane(4, |backend| sample_case(backend, 4));
     }
 
+    /// The integer extension coefficients are exactly the field Lagrange
+    /// basis evaluations at the extended nodes — the fact that ties the
+    /// integer pipeline to the reference's field pipeline.
     #[test]
     fn extension_coefficients_match_field_lagrange() {
         for (position, coefficients) in extension_coefficients() {

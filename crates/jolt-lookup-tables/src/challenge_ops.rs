@@ -39,6 +39,10 @@ impl<F: JoltField, C> ChallengeOps<F> for C where
 {
 }
 
+/// A field element that accepts arithmetic with a challenge type `C`.
+///
+/// Enables expressions like `F::from_u64(n) * challenge` where the field element
+/// is on the left-hand side.
 pub trait FieldOps<C>:
     Add<C, Output = Self>
     + for<'a> Add<&'a C, Output = Self>

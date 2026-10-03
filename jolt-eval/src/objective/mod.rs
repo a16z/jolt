@@ -270,6 +270,7 @@ impl OptimizationObjective {
             Self::StaticAnalysis(s) => s.diff_paths(),
             Self::Performance(p) => p.diff_paths(),
             Self::Telemetry(_) => &["crates/"],
+            // The hot paths the callgrind benches exercise.
             Self::Callgrind(_) => &["crates/jolt-poly/", "crates/jolt-kernels/"],
         }
     }

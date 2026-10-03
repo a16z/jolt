@@ -41,6 +41,8 @@ fn encode(value: Fr) -> FieldEncodedValue {
     FieldEncodedValue { bytes_le }
 }
 
+/// A register-consistent field-inline trace builder over the 16-slot field register
+/// file.
 pub(crate) struct FieldRegisterTraceFixture {
     rows: Vec<TraceRow>,
     bytecode: Vec<JoltInstructionRow>,
@@ -112,6 +114,7 @@ impl FieldRegisterTraceFixture {
         }
     }
 
+    /// An ordinary (inactive field-inline) row: an ADDI with no register traffic.
     pub(crate) fn noop(&mut self) {
         let instruction = self.instruction(JoltInstructionKind::ADDI, Some(1), Some(0), None, 0);
         self.rows

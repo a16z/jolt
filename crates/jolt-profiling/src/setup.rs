@@ -113,6 +113,7 @@ pub fn setup_tracing_with_trace_path(
         tracing::info!("Chrome tracing enabled. Output: {}", trace_path.display());
     }
 
+    // Boundary RSS sampling for the prover-stage spans; inert for all others.
     #[cfg(not(target_arch = "wasm32"))]
     layers.push(crate::stage_memory::StageMemoryLayer.boxed());
 

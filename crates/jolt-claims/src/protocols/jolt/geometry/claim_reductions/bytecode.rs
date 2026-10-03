@@ -590,6 +590,8 @@ mod tests {
         powers
     }
 
+    /// Sparse `(lane, value)` encoding of one committed bytecode row, mirroring
+    /// core's `for_each_active_lane_value`.
     fn lane_values(instruction: &JoltInstructionRow) -> Vec<(usize, Fr)> {
         let decoded = JoltInstruction::try_from(*instruction)
             .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));

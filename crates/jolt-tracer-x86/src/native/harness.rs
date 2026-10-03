@@ -32,6 +32,8 @@ pub fn memory_config() -> MemoryConfig {
     }
 }
 
+/// An always-taken self-branch: `Beq x0, x0, 0`. Terminates via PC-stall
+/// with no register or memory effects.
 fn terminal_row(address: u64) -> JoltInstructionRow {
     JoltInstructionRow {
         instruction_kind: JoltInstructionKind::BEQ,

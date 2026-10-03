@@ -293,6 +293,10 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 Polynomial::new(address_fold(witness, opening, dimensions.log_t, r_address)?),
             );
         }
+        // The packed (lattice) shape extends the boolean fold over the
+        // fused-inc one-hot columns: serve them per the relation's own
+        // expression leaves (the base expression references none, so the
+        // loop no-ops there).
         for term in &relation.symbolic().output_expression::<F>().terms {
             for factor in &term.factors {
                 let Source::Opening(id) = factor else {

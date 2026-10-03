@@ -78,6 +78,8 @@ mod tests {
 
     #[test]
     fn tables_follow_the_configured_variable_order() {
+        // Entry k * 4 + t identifies its original address/cycle coordinates.
+        // Expected tables are literal fixtures, independent of the geometry API.
         let joint_values: Vec<F> = (0..16).map(F::from_u64).collect();
         let address_values: Vec<F> = (0..4).map(F::from_u64).collect();
         for (dimensions, expected_joint, expected_address) in [

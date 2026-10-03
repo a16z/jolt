@@ -1,3 +1,5 @@
+//! Proof-local ownership of the field-register increment column.
+
 use crate::optimized::support::map_indices;
 use crate::{KernelError, ProofSession};
 use jolt_claims::protocols::field_inline::{

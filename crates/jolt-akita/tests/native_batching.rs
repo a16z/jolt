@@ -280,6 +280,8 @@ fn akita_native_batching_rejects_point_commitment_dimension_mismatch() {
     );
 }
 
+/// The exact-dimension and group-width checks run against the verifier's own
+/// setup, so a statement built for one setup must reject against another.
 #[test]
 fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     let (small_setup, _) = setup_for(14, 1, layout(7));
@@ -389,6 +391,8 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
     );
 }
 
+/// One-hot hints certify that the committed data was one-hot; handing the
+/// prover dense witnesses for such a hint must reject.
 #[test]
 fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
     use jolt_akita::{AkitaScheduleArtifacts, AkitaSetupParams, AKITA_ONE_HOT_K16};

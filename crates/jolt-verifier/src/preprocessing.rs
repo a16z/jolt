@@ -342,6 +342,8 @@ mod tests {
         190, 25, 90, 127, 205, 145, 75, 51, 132, 226, 123, 67,
     ];
 
+    /// An empty program over a real (non-zero) memory layout, so every layout
+    /// field participates in the pinned bytes.
     fn program() -> JoltProgramPreprocessing {
         let memory_layout = MemoryLayout::new(&MemoryConfig {
             max_untrusted_advice_size: 4096,

@@ -148,6 +148,8 @@ fn verify_valid_degree1_proof() {
     } = result.unwrap();
     assert_eq!(challenges.len(), num_vars);
 
+    // Verify the final evaluation matches direct evaluation at the challenge point.
+    // evaluate_and_consume binds variables in order, matching the sumcheck bind order.
     let poly = jolt_poly::Polynomial::new(evals);
     let expected = poly.evaluate_and_consume(&challenges);
     assert_eq!(final_eval, expected);
@@ -443,6 +445,7 @@ fn clear_round_verifier_compressed_matches_manual_absorption() {
     <CompressedLabeledRoundPoly<'_, F> as RoundMessage>::append_to_transcript(&compressed, &mut t1);
     let ch1: F = t1.challenge();
 
+    // Manual absorb matching the compressed wire format: label_with_count(d), c0, c2..cd.
     let mut t2 = Blake2bTranscript::new(b"sumcheck-test");
     let coeffs = poly.coefficients();
     t2.append(&LabelWithCount(label, (coeffs.len() - 1) as u64));
@@ -783,6 +786,8 @@ fn batched_instance_points_are_challenge_suffixes_for_mixed_arities() {
     let challenges: Vec<F> = (201..=204).map(F::from_u64).collect();
     let batched = batched_consistency_with_challenges(&challenges, 4);
 
+    // Tail-aligned members of a mixed-arity batch (4, 2, and 1 rounds) get
+    // dummy rounds front-loaded, so each point is a challenge suffix.
     assert_eq!(batched.try_round_offset(4).unwrap(), 0);
     assert_eq!(batched.try_round_offset(2).unwrap(), 2);
     assert_eq!(batched.try_round_offset(1).unwrap(), 3);
@@ -1201,6 +1206,9 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
+/// A minimal dense multilinear [`ProveRounds`](crate::prover::ProveRounds)
+/// member (HighToLow binding), constructible with a prescribed total sum —
+/// the engine tests' stand-in for a real kernel-backed batch member.
 pub(crate) struct DenseMember {
     evals: Vec<F>,
     num_rounds: usize,
@@ -1257,6 +1265,10 @@ impl crate::prover::ProveRounds<F> for DenseMember {
     }
 }
 
+/// A dense member exercising the fused contract for real: on each
+/// `prove_round` the pending bind and the round evaluation happen in ONE pass
+/// over the table (each pair is bound and immediately accumulated), never
+/// leaving a fully bound intermediate table behind.
 struct FusedDenseMember {
     evals: Vec<F>,
     num_rounds: usize,
@@ -1368,6 +1380,9 @@ fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
     PedersenSetup::new(generators, generator.scalar_mul(&F::from_u64(99)))
 }
 
+/// A batch that declares `max_degree == 0` while having rounds to prove must
+/// be rejected with `ZeroBatchDegree`, not proved (a degree-0 round polynomial
+/// cannot carry a sumcheck round) and not panic.
 #[test]
 fn prove_batch_rejects_zero_max_degree() {
     use crate::batch::{BatchMember, BatchPrelude};
@@ -1504,6 +1519,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
     let sum_long = F::from_u64(1234);
     let sum_short = F::from_u64(777);
     let mut long = DenseMember::with_sum(3, sum_long, 5);
+    // The head-aligned kernel's table carries the 2^(3 - 1) padding scale.
     let mut short = DenseMember::with_sum(1, sum_short.mul_pow_2(2), 91);
 
     let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-head-twin");
@@ -1547,6 +1563,8 @@ fn prove_batch_clear_twin_head_aligned_member() {
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
 
+    // Verifier twin: the claimed sum is position-independent — identical to
+    // the tail-aligned layout's.
     let mut verifier_transcript = Blake2bTranscript::new(b"prove-batch-head-twin");
     append_sumcheck_claim(&mut verifier_transcript, &sum_long);
     append_sumcheck_claim(&mut verifier_transcript, &sum_short);

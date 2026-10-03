@@ -300,6 +300,10 @@ mod tests {
         );
     }
 
+    /// Every staged gamma the relation draws (`stage_gammas`) must resolve to a
+    /// distinct field of the `Challenges` struct. A missing or mismatched
+    /// `#[challenge(..)]` among the six fields would surface here as a `None` or a
+    /// wrong value.
     #[test]
     fn challenges_resolve_every_stage_gamma() {
         let challenges = BytecodeReadRafChallenges {

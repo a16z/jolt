@@ -101,6 +101,8 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     let hi_bits = log_t - lo_bits;
     let in_len = 1usize << lo_bits;
 
+    // Big-endian points split as eq(r, j) = eq(r[..hi], j_hi) · eq(r[hi..], j_lo)
+    // with j = (j_hi << lo_bits) | j_lo.
     let e_hi = base_cycle_points
         .iter()
         .chain(weighted_cycle_points)
@@ -343,6 +345,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     outputs
 }
 
+/// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
 pub struct OptimizedBytecodeReadRafAddress;
 
 impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
@@ -547,6 +550,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
     }
 }
 
+/// The two field-register access terms at the stage-4/5 cycle points and γ³/γ⁴
+/// weights, sharing the ordinary bytecode address domain.
 #[cfg(feature = "field-inline")]
 #[cfg_attr(
     feature = "allocative",
@@ -611,6 +616,7 @@ struct AddressKernel<F: JoltField> {
     stage_weights: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     entry_weight: F,
+    /// Within-stage RAF `Int` weights, divided by the stage batching weight.
     raf_weights: Vec<F>,
     pushforwards: Vec<Polynomial<F>>,
     /// RAW stage-value tables — the RAF identity binds separately so
@@ -838,6 +844,7 @@ impl<F: JoltField> LazyFusedInc<F> {
     }
 }
 
+/// Stage-6b cycle phase: `PrepareKernel` front of the optimized kernel.
 pub struct OptimizedBytecodeReadRafCycle;
 
 impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedBytecodeReadRafCycle {
@@ -940,6 +947,10 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                 .zip(scaled.iter())
                 .for_each(|(acc, term)| *acc += *term);
         }
+        // The field-inline stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴. A
+        // trace without field-inline activity folds both weights to zero (its
+        // field-register operands are all absent), so the two dense eq tables are skipped
+        // exactly.
         #[cfg(feature = "field-inline")]
         for (point, weight) in [
             (
@@ -1016,6 +1027,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
     }
 }
 
+/// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
+/// cold on unmapped cycles, off the shared stage-5 rows.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
@@ -1064,6 +1077,10 @@ impl<F: JoltField> CycleKernel<F> {
         self.progress.advance();
     }
 
+    /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
+    /// group `y`, written into `acc` (length `degree`); `ra_pairs` is the
+    /// caller's per-group value-and-delta scratch (each RA pair is gathered once
+    /// per group, not once per sample point).
     #[inline]
     fn accumulate_group(&self, y: usize, acc: &mut [F], ra_pairs: &mut [(F, F)]) {
         let (c_lo, c_hi) = pair(&self.combined, y);
@@ -1663,6 +1680,7 @@ mod akita_tests {
             },
             0,
         );
+        // The relation requires field-inline geometry even for inactive fixtures.
         #[cfg(feature = "field-inline")]
         let relation = relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
             read_write_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 61),
@@ -1765,6 +1783,9 @@ mod akita_tests {
                     register_val_evaluation_point: &synthetic_point(REGISTER_ADDRESS_BITS, 29),
                     stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
                 }),
+                // All-inactive and well-formed, mirroring `run_pair`: the composed
+                // reference cycle kernel folds the field-inline rows (all zero) at
+                // these points, so parity with the optimized kernel holds.
                 #[cfg(feature = "field-inline")]
                 field_inline:
                     FieldInlineBytecodeFold {

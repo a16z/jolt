@@ -1,5 +1,12 @@
 #![no_main]
 
+//! Pedersen vector-commitment correctness over a fixed generator setup.
+//!
+//! The setup lives in a `OnceLock`; the fuzzer controls the vector length
+//! (exercising the short-input prefix path), every committed value, and both
+//! blinding factors. Oracles: commit/verify round-trip, additive
+//! homomorphism, and single-position and wrong-blinding must-reject.
+
 use std::sync::OnceLock;
 
 use jolt_crypto::{Bn254, Bn254G1, Pedersen, PedersenSetup, VectorCommitment};
@@ -25,7 +32,7 @@ fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
     }
-    let len = (data[0] as usize % MAX_LEN) + 1;
+    let len = (data[0] as usize % MAX_LEN) + 1; // 1..=8 exercises the prefix path
     if data.len() < 1 + (2 * len + 2) * SCALAR_BYTES + 1 {
         return;
     }

@@ -1,3 +1,6 @@
+//! The fused trace→bundles pass: one row walk drives a statically-known set
+//! of consumers.
+
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -122,6 +125,7 @@ consumer_set_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, G: 5, H: 6, I: 7);
 pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
+/// Sequential row access, with an optional random-access fast path.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
     /// `chunk_size` rows; `[0, T)` today, segments later.
@@ -274,6 +278,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    /// A hand-implemented bundle carrying a lookahead witness, so chunk
+    /// boundaries are observable.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct WindowBundle {
         pc: UnexpandedPc,
@@ -297,6 +303,7 @@ mod tests {
         }
     }
 
+    /// Counts its own extractions, so a skipped consumer is observable.
     #[derive(Clone, Copy, Debug)]
     struct CountingBundle;
 

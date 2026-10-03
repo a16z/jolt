@@ -162,6 +162,8 @@ fn committed_digit_zero_mapping_is_dimension_generic() {
 }
 
 fn digit_window_source<const D: usize>() -> CyclotomicRing<AkitaField, D> {
+    // Mix small, negative, and near-modulus coefficients so both window
+    // halves carry dense 16-bit digits.
     CyclotomicRing::from_coefficients(std::array::from_fn(|index| match index % 3 {
         0 => AkitaField::from_u64((index + 1) as u64),
         1 => -AkitaField::from_u64((index + 1) as u64),

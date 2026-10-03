@@ -787,6 +787,8 @@ fn scalars_to_index(scalars: &[u128; 4], bit_index: usize) -> usize {
     idx
 }
 
+// performs a 4x128-bit scalar multiplication
+// first two points assumed to be generator and 2^128 * generator
 #[inline(always)]
 fn secp256k1_4x128_inner_scalar_mul(
     scalars: [u128; 4],

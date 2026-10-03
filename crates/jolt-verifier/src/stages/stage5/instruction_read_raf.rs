@@ -305,6 +305,8 @@ mod tests {
             - gamma2
                 * OperandPolynomial::new(ADDRESS_BITS, OperandSide::Right).evaluate(&r_address);
 
+        // Computed independently of `upper_half_all_ones`: the product of the
+        // *leading* half of the address point.
         let canonical_term = r_address[..ADDRESS_BITS / 2]
             .iter()
             .fold(Fr::from_u64(1), |acc, coordinate| acc * *coordinate);

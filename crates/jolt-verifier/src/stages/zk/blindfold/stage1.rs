@@ -149,6 +149,9 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use std::collections::BTreeMap;
 
+    /// Resolve one of the coefficient-table publics from its `(id, value)`
+    /// list; ids outside the SpartanOuter family resolve to zero (the stage-1
+    /// output expression never names them).
     fn resolve_public(publics: &[(JoltSpartanOuterPublic, Fr)], id: &VerifierPublicId) -> Fr {
         match id {
             VerifierPublicId::SpartanOuter(public) => publics

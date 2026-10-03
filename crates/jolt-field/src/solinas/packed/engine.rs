@@ -21,6 +21,8 @@ use crate::{Ext2NonResidueKind, Packed};
 
 pub(crate) use super::fp128::PackedFp128;
 
+/// Stamps `Clone`/`Copy` and the operator matrix from `add_raw`/`sub_raw`/
+/// `mul_raw` inherent methods. Shared by all three packed engines.
 macro_rules! impl_packed_arith {
     (impl[$($g:tt)*] $ty:ty) => {
         impl<$($g)*> Clone for $ty {
@@ -73,6 +75,9 @@ macro_rules! impl_packed_arith {
 }
 pub(crate) use impl_packed_arith;
 
+/// `c·v` on 64-bit lanes for a compile-time-constant offset `c < 2^32`:
+/// shift/add when `c = 2^a ± 1`, otherwise the ISA's small multiply.
+/// Callers guarantee the exact product fits 64 bits.
 #[inline(always)]
 fn mul_by_offset<I: SimdWord>(v: I::V64, c: u64) -> I::V64 {
     if c == 1 {
@@ -86,6 +91,7 @@ fn mul_by_offset<I: SimdWord>(v: I::V64, c: u64) -> I::V64 {
     }
 }
 
+/// Packed `Fp32` lanes over ISA `I` (`I::W32` lanes).
 #[repr(transparent)]
 pub struct PackedFp32<const P: u32, I: SimdWord>(I::V32);
 
@@ -134,6 +140,8 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
     #[inline(always)]
     fn mul_raw(a: Self, b: Self) -> Self {
         if Self::BITS == 31 {
+            // ISAs with a 32-bit high-multiply reduce 31-bit primes without
+            // ever widening to 64-bit lanes.
             if let Some(r) = I::mul_pm31(a.0, b.0, P, Self::C) {
                 return Self(r);
             }
@@ -149,6 +157,8 @@ impl<const P: u32, I: SimdWord> PackedFp32<P, I> {
         )
     }
 
+    /// Two/three-fold reduction of widened products (or sums of up to four
+    /// products, pre-folded when `BITS == 32`) to canonical 32-bit lanes.
     #[inline(always)]
     fn reduce(x: [I::V64; 2]) -> I::V32 {
         let f = x.map(|v| Self::fold(Self::fold(v)));
@@ -213,6 +223,8 @@ impl<const P: u32, I: SimdWord> Packed for PackedFp32<P, I> {
         Self(I::splat32(value.0))
     }
 
+    /// Fused kernel: each output coefficient is one deferred-reduction dot
+    /// product instead of six independently reduced multiplies.
     #[inline(always)]
     fn ext4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         let [b0, b1, b2, b3] = b;
@@ -237,6 +249,7 @@ impl<const P: u32, I: SimdWord> Packed for PackedFp32<P, I> {
     }
 }
 
+/// Packed `Fp64` lanes over ISA `I` (`I::W64` lanes).
 #[repr(transparent)]
 pub struct PackedFp64<const P: u64, I: SimdWord>(I::V64);
 

@@ -19,6 +19,8 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(diff + b, a);
     assert!((a * Fr::zero()).is_zero());
 
+    // a·(a+b) == a² + a·b ties the otherwise-unchecked product and square
+    // into a distributivity identity.
     assert_eq!(a * sum, sq + prod, "distributivity violated");
 
     if !a.is_zero() {

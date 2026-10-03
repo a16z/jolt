@@ -118,6 +118,8 @@ where
         stage5.output_points(),
     );
 
+    // No zk protocol exists over the packed axis, so the committed arm (and its
+    // runtime point-alias dedup arithmetic) is base-only.
     #[cfg(not(feature = "akita"))]
     if checked.zk {
         let consistency = sumchecks.verify_zk(&proof.stages.stage6b_sumcheck_proof, transcript)?;
@@ -668,6 +670,8 @@ mod tests {
                 },
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
+                    // The field-inline member appends last in canonical order on both
+                    // commitment axes.
                     rd_inc: fr(last),
                 },
                 #[cfg(not(feature = "akita"))]

@@ -139,6 +139,7 @@ impl OneHotTraceLayout {
 }
 
 impl OneHotTraceLayoutPlan {
+    /// Generic prefix layout with the protocol's ordered column identifiers.
     pub const fn packing(&self) -> &PrefixPackedLayout<JoltCommittedPolynomial> {
         &self.packing
     }

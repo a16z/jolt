@@ -243,6 +243,11 @@ mod tests {
     /// and 5 for the result value, AdviceLimb and AssertZero.
     const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 10 * PAIRS.len() + 5 + 1 + 11 + 4 + 5;
 
+    /// Commit-A scope: the guest builds and traces field-active — the tracer
+    /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or
+    /// FIELD_ASSERT_ZERO traps at trace time), so a completed trace
+    /// already pins the eq-MLE math. The full prove/verify e2e lives in
+    /// jolt-prover's field_inline_e2e suite.
     #[test]
     fn guest_traces_field_inline_active() {
         let traced = compile_and_trace(&guest_inputs(&PAIRS));

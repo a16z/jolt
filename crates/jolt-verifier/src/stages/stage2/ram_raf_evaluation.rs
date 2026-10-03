@@ -166,6 +166,8 @@ mod tests {
             let raf_dimensions = RamRafEvaluationDimensions::try_from(dimensions).unwrap();
             let relation =
                 RamRafEvaluation::<Fr>::new(dimensions, raf_dimensions, log_k, 0, Vec::new());
+            // The real batch has `log_t + log_k` variables (the RAM read-write
+            // leader); also probe a padded vector.
             for batch_num_vars in [log_t + log_k, log_t + log_k + 5] {
                 let offset = relation.instance_point_offset(batch_num_vars).unwrap();
                 assert_eq!(offset + relation.rounds(), batch_num_vars);

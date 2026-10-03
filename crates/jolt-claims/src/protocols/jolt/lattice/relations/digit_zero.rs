@@ -245,6 +245,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
                     power += 3;
                     c
                 }
+                // The committed rows use eq(r_address, k_i) - eq(r_address, 0).
                 JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
                     let eq_virtualization_digit_zero =
                         derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));

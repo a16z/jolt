@@ -87,6 +87,14 @@ pub type DefaultMleAst = MleAst;
 /// checking for equality against the nodes there.
 pub type Bindings = HashMap<u64, Vec<(Node, LetBinderIndex)>>;
 
+// =============================================================================
+// Global arena
+// =============================================================================
+//
+// Note: These functions were private (`fn`) in upstream zklean. We made them
+// `pub fn` so that `AstBundle::snapshot_arena()` can clone the arena for
+// serialization, and so codegen can read nodes during code generation.
+
 static NODE_ARENA: OnceLock<RwLock<Vec<Node>>> = OnceLock::new();
 
 pub fn node_arena() -> &'static RwLock<Vec<Node>> {
@@ -339,6 +347,7 @@ pub enum Node {
     Inv(Edge),
     Add(Edge, Edge),
     Mul(Edge, Edge),
+    /// The difference between the first and second nodes
     Sub(Edge, Edge),
     /// The quotient between the first and second nodes (from zklean base, unused by Jolt transpiler)
     /// NOTE: No div-by-zero checks are performed here
@@ -996,6 +1005,8 @@ impl std::ops::Add<&Self> for MleAst {
     type Output = Self;
 
     fn add(mut self, rhs: &Self) -> Self::Output {
+        // Optimization: x + 0 = x, 0 + x = x
+        // This prevents constant-vs-constant additions in generated code
         if self.is_zero() {
             return *rhs;
         }
@@ -1011,6 +1022,8 @@ impl std::ops::Sub<&Self> for MleAst {
     type Output = Self;
 
     fn sub(mut self, rhs: &Self) -> Self::Output {
+        // Optimization: x - 0 = x
+        // This prevents constant-vs-constant subtractions in generated code
         if rhs.is_zero() {
             return self;
         }

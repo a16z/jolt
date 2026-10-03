@@ -1,5 +1,11 @@
 #![no_main]
 
+//! Structured mutation of accepted transparent proofs.
+//!
+//! Each input selects an accepted fixture and exactly one semantic mutation.
+//! The mutation families cover preamble inputs, commitments, every sumcheck
+//! stage, clear claims, advice, and the final Dory opening.
+
 use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;

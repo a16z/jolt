@@ -28,6 +28,8 @@ fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xE87_D1FF)
 }
 
+/// 128×128 → 256-bit schoolbook multiply over 64-bit halves (independent of
+/// the crate's `mul_wide`).
 fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     let (a0, a1) = (a as u64 as u128, a >> 64);
     let (b0, b1) = (b as u64 as u128, b >> 64);
@@ -39,6 +41,7 @@ fn oracle_mul_256(a: u128, b: u128) -> [u64; 4] {
     [p00 as u64, mid as u64, hi as u64, top as u64]
 }
 
+/// Little-endian limbs mod `p` by binary long division — no Solinas folding.
 fn oracle_mod(limbs: &[u64], p: u128) -> u128 {
     let mut r: u128 = 0;
     for &limb in limbs.iter().rev() {
@@ -151,6 +154,8 @@ fn cheb_mul_oracle(a: &[u128], b: &[u128], p: u128) -> Vec<u128> {
     out
 }
 
+/// `x^e` via square-and-multiply over the crate's extension multiply (which
+/// the same suite verifies against the schoolbook oracle).
 fn ext_pow<E: Field>(mut base: E, mut e: u128) -> E {
     let mut acc = E::one();
     while e > 0 {
@@ -236,6 +241,8 @@ macro_rules! check_ext {
             assert_eq!((xa + ya) * za, xa * za + ya * za, "distributivity");
             assert_eq!((xa * ya) * za, xa * (ya * za), "associativity");
 
+            // Inversion: `x · x⁻¹ = 1` pins the value (multiply is
+            // oracle-verified); in a genuine field nonzero must invert.
             match xa.inverse() {
                 Some(ti) => assert_eq!(ti * xa, <$E2 as One>::one()),
                 None => assert!(!$is_field || xa.is_zero(), "field ext must invert nonzero"),
@@ -289,6 +296,11 @@ macro_rules! check_ext {
             assert_eq!(back, xa);
         }
 
+        // Frobenius powers 0..2·degree against the semantic definition:
+        // one Frobenius application is `x ↦ x^q` (computed with a test-local
+        // square-and-multiply over the oracle-verified extension multiply),
+        // `frobenius_pow(·, k)` applies it `k mod d` times, and
+        // `frobenius_inv_pow` is its inverse power.
         let q = two::pseudo_mersenne_modulus(
             <$F2 as CanonicalEncoding>::MODULUS_BITS,
             <$F2 as PseudoMersenne>::OFFSET,
@@ -596,6 +608,10 @@ ext_suite!(
     P128_A7F7
 );
 
+/// Which towers are fields over each exported prime, as the extension docs
+/// state: over every registered prime `p ≡ 5 (mod 8)`, so `Ext2` (non-residue
+/// 2), `FpExt4` and `FpExt8` are fields and `NegOneNr` is not; over
+/// `Prime128OffsetA7F7`, `p ≡ 1 (mod 8)` and none is.
 #[test]
 fn extension_fields_over_exported_primes() {
     for spec in two::PRIME_OFFSET_SPECS {

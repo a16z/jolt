@@ -105,6 +105,9 @@ pub trait BuildRoundScheduler<F: JoltField> {
 /// field yields no impl). That match is single-bound: a `Box<dyn
 /// PrepareKernel<F, R> + Send>` (any extra bound) is silently skipped and
 /// surfaces the same distant way.
+// No claim-trait where-clauses: `R: ConcreteSumcheck<F>` already implies them
+// (the ConcreteSumcheck where-clauses are elaborated at every use site), and
+// the relation-family-generic spellings would restate them for nothing.
 pub trait PrepareKernel<F, R>
 where
     F: JoltField,
@@ -360,6 +363,10 @@ impl ProofSession {
     }
 }
 
+/// Deep visitation: each entry's monomorphized visitor (captured at
+/// insertion) sees through the `Box<dyn Any>`, so per-stage flamegraphs
+/// attribute the parked kernel tables — the dominant retained memory —
+/// keyed by their type names.
 #[cfg(feature = "allocative")]
 impl Allocative for ProofSession {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {

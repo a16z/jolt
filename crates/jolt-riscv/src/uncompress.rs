@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn c_addi4spn_expands_to_addi_from_sp() {
-        assert_eq!(expand(c_addi4spn(0, 4)), i_type(4, 2, 0b000, 8, 0x13));
+        assert_eq!(expand(c_addi4spn(0, 4)), i_type(4, 2, 0b000, 8, 0x13)); // minimum imm
         assert_eq!(
             expand(c_addi4spn(7, 1020)),
             i_type(1020, 2, 0b000, 15, 0x13)
@@ -665,7 +665,7 @@ mod tests {
     #[test]
     fn c_lw_expands_with_word_scaled_offset() {
         assert_eq!(expand(c_lw(7, 0, 0)), i_type(0, 8, 0b010, 15, 0x03));
-        assert_eq!(expand(c_lw(0, 7, 124)), i_type(124, 15, 0b010, 8, 0x03));
+        assert_eq!(expand(c_lw(0, 7, 124)), i_type(124, 15, 0b010, 8, 0x03)); // max offset
         assert_eq!(expand(c_lw(2, 1, 84)), i_type(84, 9, 0b010, 10, 0x03));
         for b in 2..=6 {
             let imm = 1u32 << b;
@@ -679,7 +679,7 @@ mod tests {
     #[test]
     fn c_ld_expands_with_doubleword_scaled_offset() {
         assert_eq!(expand(c_ld(1, 2, 8)), i_type(8, 10, 0b011, 9, 0x03));
-        assert_eq!(expand(c_ld(6, 5, 248)), i_type(248, 13, 0b011, 14, 0x03));
+        assert_eq!(expand(c_ld(6, 5, 248)), i_type(248, 13, 0b011, 14, 0x03)); // max offset
         assert_eq!(expand(c_ld(4, 3, 168)), i_type(168, 11, 0b011, 12, 0x03));
         for b in 3..=7 {
             let imm = 1u32 << b;
@@ -876,8 +876,8 @@ mod tests {
     fn c_j_expands_signed_scattered_offset() {
         assert_eq!(expand(c_j(2)), j_type(2, 0));
         assert_eq!(expand(c_j(-2)), j_type(-2, 0));
-        assert_eq!(expand(c_j(2046)), j_type(2046, 0));
-        assert_eq!(expand(c_j(-2048)), j_type(-2048, 0));
+        assert_eq!(expand(c_j(2046)), j_type(2046, 0)); // max
+        assert_eq!(expand(c_j(-2048)), j_type(-2048, 0)); // min
         assert_eq!(expand(c_j(1366)), j_type(1366, 0));
         assert_eq!(expand(c_j(-1366)), j_type(-1366, 0));
         for b in 1..=10 {
@@ -890,8 +890,8 @@ mod tests {
     fn c_beqz_c_bnez_expand_branches_against_x0() {
         // The expansion places rs1' in the rs2 slot and x0 in rs1; equality
         // comparison commutes so this is spec-equivalent.
-        assert_eq!(expand(cb_branch(0b110, 1, -256)), b_type(-256, 9, 0, 0b000));
-        assert_eq!(expand(cb_branch(0b110, 0, 254)), b_type(254, 8, 0, 0b000));
+        assert_eq!(expand(cb_branch(0b110, 1, -256)), b_type(-256, 9, 0, 0b000)); // min
+        assert_eq!(expand(cb_branch(0b110, 0, 254)), b_type(254, 8, 0, 0b000)); // max
         assert_eq!(expand(cb_branch(0b110, 7, 170)), b_type(170, 15, 0, 0b000));
         assert_eq!(expand(cb_branch(0b111, 2, -86)), b_type(-86, 10, 0, 0b001));
         assert_eq!(expand(cb_branch(0b111, 5, 6)), b_type(6, 13, 0, 0b001));
@@ -920,12 +920,12 @@ mod tests {
 
     #[test]
     fn c_lwsp_c_ldsp_expand_and_reject_rd_zero() {
-        assert_eq!(expand(c_lwsp(4, 252)), i_type(252, 2, 0b010, 4, 0x03));
+        assert_eq!(expand(c_lwsp(4, 252)), i_type(252, 2, 0b010, 4, 0x03)); // max
         assert_eq!(expand(c_lwsp(31, 4)), i_type(4, 2, 0b010, 31, 0x03));
         assert_eq!(expand(c_lwsp(1, 168)), i_type(168, 2, 0b010, 1, 0x03)); // bits 3,5,7
         assert_eq!(expand(c_lwsp(0, 8)), 0xffff_ffff); // rd=0 reserved
 
-        assert_eq!(expand(c_ldsp(9, 504)), i_type(504, 2, 0b011, 9, 0x03));
+        assert_eq!(expand(c_ldsp(9, 504)), i_type(504, 2, 0b011, 9, 0x03)); // max
         assert_eq!(expand(c_ldsp(1, 8)), i_type(8, 2, 0b011, 1, 0x03));
         assert_eq!(expand(c_ldsp(31, 336)), i_type(336, 2, 0b011, 31, 0x03)); // bits 4,6,8
         assert_eq!(expand(c_ldsp(0, 8)), 0xffff_ffff); // rd=0 reserved
@@ -973,11 +973,11 @@ mod tests {
 
     #[test]
     fn c_swsp_c_sdsp_c_fsdsp_expand_sp_relative_stores() {
-        assert_eq!(expand(c_swsp(31, 252)), s_type(252, 31, 2, 0b010, 0x23));
+        assert_eq!(expand(c_swsp(31, 252)), s_type(252, 31, 2, 0b010, 0x23)); // max
         assert_eq!(expand(c_swsp(1, 4)), s_type(4, 1, 2, 0b010, 0x23));
         assert_eq!(expand(c_swsp(8, 84)), s_type(84, 8, 2, 0b010, 0x23));
 
-        assert_eq!(expand(c_sdsp(8, 504)), s_type(504, 8, 2, 0b011, 0x23));
+        assert_eq!(expand(c_sdsp(8, 504)), s_type(504, 8, 2, 0b011, 0x23)); // max
         assert_eq!(expand(c_sdsp(31, 8)), s_type(8, 31, 2, 0b011, 0x23));
         assert_eq!(expand(c_sdsp(2, 328)), s_type(328, 2, 2, 0b011, 0x23));
 

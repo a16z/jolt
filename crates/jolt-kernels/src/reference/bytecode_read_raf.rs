@@ -100,6 +100,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel, SumcheckKernelError,
 };
 
+/// The base flag stages of the read-raf fold (the lattice shape appends the
+/// four fused-inc consumer stages).
 const BASE_STAGES: usize = 5;
 
 /// The per-cycle witness of the bytecode read+RAF address phase: the PC
@@ -173,6 +175,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     rounds: usize,
+    /// Committed-program mode stages the raw bound `Val_s` wire claims.
     committed_program: bool,
     stage_weights: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -201,6 +204,8 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     allocative(bound = "F: JoltField")
 )]
 struct FieldInlineAddressLegs<F: JoltField> {
+    /// γ³ / γ⁴ — each leg rides the same outer stage weight as its
+    /// ordinary stage claim.
     weights: [F; 2],
     pushforwards: [Polynomial<F>; 2],
     /// The field-register row values under the extended per-stage gamma powers
@@ -607,6 +612,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
                     Polynomial::new(vec![value; cycles]),
                 );
             }
+            // The packed fused stages carry the `FusedInc` opening as their
+            // cycle factor: serve its dense trace column when the relation's
+            // expression references it (the base expression never does).
             for term in &relation.symbolic().output_expression::<F>().terms {
                 for factor in &term.factors {
                     let Source::Opening(id) = factor else {

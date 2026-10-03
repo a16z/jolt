@@ -29,6 +29,9 @@ pub fn scalar_to_decimal_string(limbs: &Scalar) -> String {
     scalar_to_biguint(limbs).to_string()
 }
 
+/// Add two 256-bit numbers with modular reduction.
+///
+/// Computes (a + b) mod p where p is the BN254 scalar field modulus.
 pub fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
     let mut result = [0u64; 4];
     let mut carry = 0u128;
@@ -46,6 +49,9 @@ pub fn scalar_add_mod(a: Scalar, b: Scalar) -> Scalar {
     }
 }
 
+/// Subtract two 256-bit numbers with modular reduction.
+///
+/// Computes (a - b) mod p where p is the BN254 scalar field modulus.
 pub fn scalar_sub_mod(a: Scalar, b: Scalar) -> Scalar {
     let neg_b = scalar_neg_mod(b);
     scalar_add_mod(a, neg_b)

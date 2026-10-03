@@ -309,6 +309,7 @@ mod field_inline_round_trip {
             .validate_derived_tables(&relation, &points, &output_points, &challenges)
             .unwrap();
 
+        // Both openings share the `[upstream address ‖ own cycle]` point.
         let opening_point = output_points.rd_inc();
         let wa_grid = table(FieldInlinePolynomialId::Virtual(
             FieldInlineVirtualPolynomial::FieldRdWa,

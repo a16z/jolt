@@ -4,6 +4,7 @@ use super::super::{CheckError, FailedAttempt, Invariant};
 use crate::agent::{AgentHarness, DiffScope};
 
 pub enum RedTeamResult {
+    /// The agent produced a counterexample that violates the invariant.
     Violation {
         approach: String,
         input_json: String,

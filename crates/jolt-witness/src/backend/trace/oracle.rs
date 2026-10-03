@@ -166,6 +166,8 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
     fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<F>, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;
+        // Validates presence and index ranges (and rejects excluded ids)
+        // before materialization, exactly like the arms below.
         let _ = self.shape_of(id)?;
         match id {
             JoltPolynomialId::Committed(committed) => match committed {

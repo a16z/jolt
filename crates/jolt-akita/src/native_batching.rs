@@ -95,6 +95,8 @@ fn validate_trace_batch_statement(
                 entry.role.diagnostic_name()
             )));
         }
+        // Only an object above the final arity needs the catalog-derived
+        // capacity; the common case stays a pure shape check.
         if entry.claim.commitment.num_vars > setup.max_num_vars
             && entry.claim.commitment.num_vars > setup.one_hot_backend_num_vars()?
         {

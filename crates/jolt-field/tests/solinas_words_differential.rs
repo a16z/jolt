@@ -1,3 +1,7 @@
+//! Differential tests for the Solinas word fields (`Fp32`/`Fp64`) across
+//! every registered ≤64-bit prime offset, with u128 modular arithmetic (and
+//! num-bigint for oversized byte decodes) as the independent oracle.
+
 #![cfg(feature = "solinas")]
 // NB: no `expect(clippy::unwrap_used)` — every unwrap here sits inside a
 // local `macro_rules!` expansion, where the lint does not fire.

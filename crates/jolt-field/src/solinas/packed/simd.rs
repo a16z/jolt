@@ -353,6 +353,7 @@ mod avx2 {
                 let lo_p = _mm256_mul_epu32(v, cv);
                 let hi_p = _mm256_mul_epu32(_mm256_srli_epi64::<32>(v), cv);
                 let lo = _mm256_add_epi64(lo_p, _mm256_slli_epi64::<32>(hi_p));
+                // Subtracting an all-ones carry mask adds one.
                 let carry = Self::lt_u64(lo, lo_p);
                 let hi = _mm256_sub_epi64(_mm256_srli_epi64::<32>(hi_p), carry);
                 [lo, hi]

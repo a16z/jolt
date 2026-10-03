@@ -102,6 +102,12 @@ pub struct PrecommittedSchedulingReference {
     pub joint_col_vars: usize,
 }
 
+/// Per-polynomial two-phase round schedule projected from the shared reference
+/// domain.
+///
+/// Unlike core's stateful counterpart, this layout is pure: the verifier passes
+/// the recorded cycle-phase challenges explicitly when completing the address
+/// phase.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrecommittedClaimReduction {
     scheduling_reference: PrecommittedSchedulingReference,

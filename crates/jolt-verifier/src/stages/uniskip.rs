@@ -43,6 +43,7 @@ pub struct UniskipParams {
 }
 
 impl UniskipParams {
+    /// The stage-1 Spartan outer uni-skip shape.
     pub fn spartan_outer() -> Self {
         Self {
             stage: JoltRelationId::SpartanOuter,
@@ -53,6 +54,7 @@ impl UniskipParams {
         }
     }
 
+    /// The stage-2 Spartan product-virtualization uni-skip shape.
     pub fn spartan_product() -> Self {
         Self {
             stage: JoltRelationId::SpartanProductVirtualization,

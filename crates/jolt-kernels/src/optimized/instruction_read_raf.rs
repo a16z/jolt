@@ -273,11 +273,16 @@ impl InstructionCycleRow {
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Arc<Vec<Self>>, KernelError<F>> {
+        // A parked strong carry is always honored (re-emulating sources, and
+        // tests that inject rows a witness would not produce).
         let carried = match session.take::<SharedInstructionRows>() {
             Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
             _ => None,
         };
         if witness.random_access().is_some() {
+            // Slice-backed: consumers share within a stage through a weak
+            // handle; once the stage's kernels drop, the rows free, and later
+            // stages re-derive them index-parallel.
             let upgraded = || {
                 session
                     .state::<SharedInstructionRowsWeak>()
@@ -1030,6 +1035,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         let factors = 1 + self.dimensions.num_virtual_ra_polys();
 
         struct Scratch<F: JoltField> {
+            /// Cross-row lanes for `q(1), …, q(F−1), q(∞)` — `e_in` rides in
+            /// the `Val` factor, so these stay unreduced across the block.
             lanes: Vec<F::Accumulator>,
             evals: Vec<F>,
             steps: Vec<F>,
@@ -1147,6 +1154,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             raf_identity += gamma_sqr * self.gamma * self.raf_upper_all_ones.checkpoint;
         }
 
+        // Snap the packed output-claim facts first: past this handoff the
+        // final flag walk reads one byte per cycle, not the 40 B row.
         let rows = self.rows.as_slice();
         const {
             assert!(
@@ -1160,6 +1169,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             table | (u8::from(row.raf_flag()) << 7)
         });
 
+        // The tables stay pending: the first cycle message evaluates these
+        // bases per row, and the first cycle bind materializes half-domain
+        // tables directly (rows and the phase eq tables stay alive until
+        // then).
         self.cycle = Some(CycleState {
             gruen: GruenSplitEqPolynomial::new(&self.r_reduction, BindingOrder::LowToHigh),
             tables: CycleTables::Pending(PendingCycleTables {
@@ -1359,6 +1372,10 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
                 reason: "cycle tables absent after full binding",
             })?;
 
+        // Flag claims at the normalized (big-endian) cycle point via the
+        // split-eq factorization `eq(r_cycle, j) = E_hi[j_hi] · E_lo[j_lo]`:
+        // per-table masses accumulate over the low half and scale by `E_hi`
+        // once per block (exact by distributivity).
         let r_cycle: Vec<F> = self.cycle_challenges.iter().rev().copied().collect();
         let eq_cycle = TensorEqTable::<F>::new(&r_cycle);
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;

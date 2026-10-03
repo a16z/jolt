@@ -377,6 +377,8 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
 
+    // Fail-closed default: a field-inline backend without the attached view serves no
+    // field-inline oracle.
     let detached = witness(&program, &preprocessing, rows.clone(), 2);
     assert!(JoltWitnessOracle::<Fr>::field_inline(&detached).is_none());
 

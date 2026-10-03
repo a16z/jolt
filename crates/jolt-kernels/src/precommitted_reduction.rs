@@ -69,11 +69,17 @@ use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
+/// The bound-table state both phase kernels drive: the summand tables, the
+/// aux tables riding alongside, and the running inactive-round scale.
+/// `Polynomial`-backed so binds take the library's threshold-gated parallel
+/// path (byte-identical fold: `lo + r·(hi − lo)` pairwise, exact field ops).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct PrecommittedTables<F> {
     value: Polynomial<F>,
     eq: Polynomial<F>,
     aux: Vec<Polynomial<F>>,
+    /// `(1/2)^k` over the `k` inactive rounds ingested so far — the factor the
+    /// running claim accumulated relative to the true bound product.
     #[cfg_attr(feature = "allocative", allocative(skip))]
     scale: F,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -194,11 +200,17 @@ impl<F: JoltField> PrecommittedTables<F> {
         Ok(())
     }
 
+    /// The fully bound value coefficient — the reduction's final opening
+    /// value (the advice/program-image polynomial's own opening; for the
+    /// bytecode reduction, the chunk-weighted fold the per-chunk claims sum
+    /// to). Errors while any variable remains unbound.
     fn final_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.value.evals()[0])
     }
 
+    /// The fully bound `aux` coefficients — the per-chunk `BytecodeChunk(i)`
+    /// opening values. Errors while any variable remains unbound.
     fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.aux.iter().map(|table| table.evals()[0]).collect())
@@ -299,6 +311,9 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
         }
     }
 
+    /// Park the post-cycle bound state under `RA`'s carry key — the shared
+    /// body of the per-kind `park_residue` overrides. A cycle-completed
+    /// schedule has no stage-7 member, so it parks nothing.
     fn park_carry<RA: 'static>(self, session: &mut ProofSession) {
         if !self.has_address_phase() {
             return;

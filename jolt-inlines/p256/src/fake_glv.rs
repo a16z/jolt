@@ -1,3 +1,7 @@
+/// Half-GCD decomposition for P-256 "Fake GLV" scalar multiplication.
+///
+/// Given scalar s, finds (a, b) with b*s ≡ a (mod n) and |a|, |b| <= √n.
+/// Based on the extended GCD algorithm truncated at √n.
 use num_bigint::{BigInt as NBigInt, BigUint as NBigUint, Sign};
 
 use crate::P256_ORDER;

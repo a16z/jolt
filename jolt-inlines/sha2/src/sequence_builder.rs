@@ -94,6 +94,8 @@ impl Sha256SequenceBuilder {
                 self.vr(*ch2),
             );
         }
+        // Total allocated: 8 (state) + 16 (message) + 8 (initial_state) + 4 (temps per round) = 36
+        // The temps are allocated/deallocated per round, but we need to reserve space for them
         self.asm.release_many(self.state);
         self.asm.release_many(self.message);
         self.asm.release_iter(self.iv);
@@ -166,6 +168,9 @@ impl Sha256SequenceBuilder {
         self.asm.add(t1, old_d, self.vr('E'));
     }
 
+    /// Returns either Register or Immediate input for a working variable (A-H)
+    /// When initial is true, uses BLOCK constants for the first few rounds
+    /// until all values have been computed
     fn vri(&self, shift: char) -> Value {
         if self.initial
             && (self.round == 0
@@ -179,8 +184,18 @@ impl Sha256SequenceBuilder {
         Reg(self.vr(shift))
     }
 
+    /// Maps working variable (A-H) to its current register location
+    /// Variables rotate through state registers as rounds progress
+    /// For custom IV (!initial), values start in iv and gradually move into rotation
     fn vr(&self, shift: char) -> u8 {
         assert!(('A'..='H').contains(&shift));
+        // For custom IV: check if this value hasn't been computed yet
+        // In each round, we compute new A and new E. After rotation:
+        // Round 0: None computed yet, use saved for all
+        // Round 1: A,E computed (now at H,D positions), use saved for B,C,D,F,G,H
+        // Round 2: A,B,E,F computed (now at G,H,C,D positions), use saved for C,D,G,H
+        // Round 3: A,B,C,E,F,G computed (now at F,G,H,B,C,D positions), use saved for D,H
+        // Round 4+: All have been computed, use rotation only
         if !self.initial
             && (self.round == 0
                 || (self.round == 1 && !['A', 'E'].contains(&shift))

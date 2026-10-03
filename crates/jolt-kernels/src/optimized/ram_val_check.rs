@@ -138,6 +138,7 @@ impl<F: JoltField> RamValCheckKernel<F> {
         self.ra.bind(challenge);
         self.lt.bind(challenge);
         self.progress.advance();
+        // Return freed `T`-sized columns before the stage boundary.
         if freed_columns {
             crate::mem::purge_retained_memory(self.progress.total());
         }
@@ -159,6 +160,7 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
             self.bind(challenge);
         }
 
+        // Each arm keeps representation branches outside the inner loop.
         let ra = |y: usize| self.ra.lo_hi(0, y);
         let lt = |y: usize| self.lt.pair(y);
         let evals = match &self.inc {

@@ -110,6 +110,8 @@ fn aggregation_computes_totals_self_and_dark_time() {
     assert_eq!(span("prove_batch").total_ns, 500_000);
     assert_eq!(span("sumcheck_round").count, 2);
     assert_eq!(span("sumcheck_round").total_ns, 300_000);
+    // Self time subtracts same-thread children only: the tid-2
+    // EqPolynomial::evals span never subtracts from the tid-1 stack.
     assert_eq!(span("prove_batch").self_ns, 200_000);
     assert_eq!(span("Stage1Batch::prove").self_ns, 200_000);
     assert_eq!(span("prove_stage1").self_ns, 300_000);

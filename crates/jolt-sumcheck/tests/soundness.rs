@@ -66,6 +66,11 @@ fn compute_sum(evals: &[F]) -> F {
     evals.iter().copied().sum()
 }
 
+/// Full verification pipeline: sumcheck round checks + oracle evaluation check.
+///
+/// Returns the challenge vector on success. Returns
+/// `OracleCheckError::FinalEvalMismatch` if the proof passes all round checks
+/// but the final evaluation doesn't match the intended polynomial.
 fn verify_with_oracle_check(
     claim: &SumcheckClaim<F>,
     proof: &ClearSumcheckProof<F>,
@@ -130,6 +135,7 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
         claimed_sum: sum_g,
     };
 
+    // Round checks pass (proof is internally consistent for g)
     let mut vt = new_transcript();
     let round_result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
@@ -138,6 +144,7 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
         "round checks should pass for honest g proof"
     );
 
+    // But oracle check against f fails — the final eval is g(r), not f(r)
     let result = verify_with_oracle_check(&claim, &proof, &f_evals);
     assert!(
         matches!(result, Err(OracleCheckError::FinalEvalMismatch)),
@@ -469,6 +476,8 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
     let mut pt = new_transcript();
     let proof = honest_prove_product_compressed(&g_evals, &h_evals, num_vars, &mut pt);
 
+    // Harness sanity: the honest compressed proof verifies AND satisfies the
+    // oracle check, so any failure below is attributable to the tamper.
     let mut vt = new_transcript();
     let honest = SumcheckVerifier::verify_compressed(
         &claim,
@@ -483,6 +492,9 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
         product_eval(&g_evals, &h_evals, &honest.point)
     );
 
+    // Tamper every stored coefficient of every round in turn. The compressed
+    // wire form stores exactly the non-linear coefficients [c0, c2], so the
+    // proof's lengths and degrees stay valid.
     for round in 0..num_vars {
         for position in 0..2usize {
             let mut tampered = proof.clone();

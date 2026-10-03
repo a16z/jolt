@@ -82,6 +82,8 @@ fn limbs_u128_oracle() {
     }
 }
 
+/// Sign-magnitude oracle mirroring the mathematical sign-magnitude rules
+/// with magnitudes wrapping at `width_bits` (matching truncated limb ops).
 #[derive(Clone)]
 struct SignedOracle {
     mag: BigUint,
@@ -310,6 +312,8 @@ fn hi32_ops_match_bigint() {
 
 #[test]
 fn hi32_mul_full_range_oracle() {
+    // Full-limb SignedBigInt<3> multiplication (overflow-safe mac chains) as
+    // a second reference for S160 multiply across the ENTIRE input domain.
     let mut rng = rng();
     for _ in 0..1000 {
         let a = two::signed::S160::new(rng.gen(), rng.gen(), rng.gen());

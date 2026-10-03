@@ -80,6 +80,8 @@ where
     check_boundary_patterns::<PF>(p);
 }
 
+/// Packed Fp64 arithmetic checked directly against integer modular
+/// arithmetic, without routing the expectation through the scalar kernel.
 fn check_fp64_integer_oracle<const P: u64, PF>(lhs: &[u64], rhs: &[u64])
 where
     PF: Packed<Scalar = two::Fp64<P>>,

@@ -1,3 +1,11 @@
+//! Polynomial commitment scheme (PCS) trait hierarchy.
+//!
+//! - [`CommitmentScheme`] — commit, open, verify for multilinear polynomials.
+//! - [`AdditivelyHomomorphic`] — linear combination of commitments.
+//! - [`StreamingCommitment`] — chunked commitment without full materialization.
+//! - [`ZkOpeningScheme`] — zero-knowledge commitments and opening proofs.
+//! - [`ZkStreamingCommitment`] — chunked zero-knowledge commitments.
+
 use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
@@ -749,6 +757,7 @@ where
     }
 }
 
+/// One physical commitment group's opening claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupOpeningClaim<F, C> {
     pub commitment: C,

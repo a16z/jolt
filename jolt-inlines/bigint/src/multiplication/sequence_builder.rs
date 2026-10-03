@@ -5,6 +5,12 @@ use jolt_inlines_sdk::host::{
 
 use super::{INPUT_LIMBS, OUTPUT_LIMBS};
 
+/// Number of virtual registers needed for BigInt multiplication
+/// Layout:
+/// - a0..a3: First operand (4 u64 limbs)
+/// - a4..a7: Second operand (4 u64 limbs)
+/// - s0..s1: Result limbs (2 u64 limbs, accumulator and carry)
+/// - t0    : Temporary for handling carry propagation
 pub(crate) const NEEDED_REGISTERS: usize = 11;
 
 /// Builds assembly sequence for 256-bit × 256-bit multiplication
@@ -35,6 +41,7 @@ impl BigIntMulSequenceBuilder {
     fn s(&self, i: usize) -> u8 {
         *self.vr[INPUT_LIMBS + INPUT_LIMBS + (i % 2)]
     }
+    // Temporary for carry propagation
     fn t(&self) -> u8 {
         *self.vr[INPUT_LIMBS + INPUT_LIMBS + 2]
     }

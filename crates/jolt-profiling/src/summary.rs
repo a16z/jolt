@@ -350,6 +350,8 @@ fn us_to_ns(us: f64) -> u64 {
     }
 }
 
+/// Everything [`build_summary`] (and the memory-timeline viz) needs from
+/// one replay of the event stream.
 pub(crate) struct TraceAggregate {
     pub(crate) spans: BTreeMap<String, SpanAggregate>,
     pub(crate) root: Option<(Interval, u64)>,
@@ -712,6 +714,9 @@ pub fn finalize_trace(
     let summary_json = serde_json::to_string_pretty(&summary)?;
     write_atomic(&out_path, &summary_json)?;
 
+    // The memory-timeline companion (`memory.html`): only
+    // meaningful when the allocative lane produced snapshots and the trace
+    // has a root span to anchor time.
     if !summary.heap.is_empty() && summary.root.is_some() {
         let aggregate = aggregate_events(&events, taxonomy::ROOT_SPAN);
         let _ =

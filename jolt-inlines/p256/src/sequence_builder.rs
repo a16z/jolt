@@ -665,6 +665,10 @@ impl FakeGlvAdvBuilder {
         Ok(FakeGlvAdvBuilder { asm, vr, operands })
     }
 
+    /// Advice function: runs on the host at native speed.
+    /// Reads scalar s from rs1 and point P from rs2.
+    /// Computes R = s*P via arkworks, then half-GCD decomposition.
+    /// Computes the 14 advice words emitted by `P256FakeGlvAdvice`.
     fn advice(
         operands: FormatInline,
         ctx: &mut dyn InlineAdviceContext,

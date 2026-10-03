@@ -88,7 +88,10 @@ pub struct RamValCheck<F: JoltField> {
     symbolic: RamValCheckSymbolic,
     trace_dimensions: TraceDimensions,
     ram_log_k: usize,
+    /// `Val_init(r_address)`'s public portion — resolves the `InitEval` input public.
     public_eval: F,
+    /// The negated block selector for each present `Val_init` contribution —
+    /// resolves the `InitSelector`/`InitSelectorProgramImage` input publics.
     init_selectors: Vec<(RamValCheckPublic, F)>,
     /// The present `Val_init` contribution openings (advice / program image):
     /// staged on the stage-4 wire but consumed by this relation's *input* `Expr`
@@ -244,6 +247,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
                     .find_map(|(selector, value)| (selector == public_id).then_some(*value))
                     .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
+            // Output public — resolved in `derive_output_term`, never in the input expr.
             RamValCheckPublic::LtCyclePlusGamma => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
@@ -283,6 +287,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
                         })?;
                 Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + challenges.gamma)
             }
+            // Input publics — resolved in `derive_input_term`, never in the output expr.
             RamValCheckPublic::InitEval
             | RamValCheckPublic::InitSelector(_)
             | RamValCheckPublic::InitSelectorProgramImage => {

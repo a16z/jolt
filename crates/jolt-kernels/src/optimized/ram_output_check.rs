@@ -199,6 +199,9 @@ impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
         })
     }
 
+    /// Pin the three derived leaves to the verifier's scalar path: the bound
+    /// Gruen scalar is the `EqAddress` value, the bound mask/io tables the
+    /// other two.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -240,6 +243,10 @@ mod tests {
     use super::*;
     use crate::ReferenceBackend;
 
+    /// A witness plane whose `RamValFinal` is nontrivial on both sides of the
+    /// IO-mask boundary: real inputs/outputs (the oracle synthesizes the IO
+    /// region from the device, so `val_final = val_io` there by construction)
+    /// plus a final-memory image carrying post-execution DRAM bytes.
     fn with_output_check_plane<R>(
         log_t: usize,
         ram_k: usize,

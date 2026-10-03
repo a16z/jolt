@@ -76,6 +76,9 @@ fn one_hot_only_setup_rejects_dense_commits() {
     );
 }
 
+/// `commit` routes a row-major K=16 one-hot polynomial through the K=16
+/// backend; the proof must verify against a serde-transported verifier setup,
+/// which re-derives its one-hot backend key from shape alone.
 #[test]
 fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
     let (prover_setup, verifier_setup) = k16_setup();

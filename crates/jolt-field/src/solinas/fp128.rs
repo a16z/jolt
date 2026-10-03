@@ -425,6 +425,15 @@ impl<const P: u128> Fp128<P> {
         pack(out_lo, out_hi)
     }
 
+    /// 35-instruction AArch64 inline-asm multiply with Solinas reduction.
+    ///
+    /// Saves 6 instructions vs LLVM's codegen of the portable path by:
+    ///   - Fold-1 carry chain: direct adds/adcs/adc (5 vs 8 instructions),
+    ///     avoiding intermediate cset/cinc shuttling of carries.
+    ///   - Fold-2 + canonicalize: `ccmp` folds the overflow predicate with
+    ///     the ≥p check (8 vs 10 instructions).
+    ///
+    /// Benchmarked at 1.29x throughput improvement on Apple M4.
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn mul_raw_aarch64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
@@ -525,6 +534,10 @@ impl<const P: u128> Fp128<P> {
         [r0, r1, r2, r3]
     }
 
+    /// 31-instruction AArch64 inline-asm squaring with Solinas reduction:
+    /// 3 widening multiplies (vs 4 for general mul), the cross term doubled
+    /// via shifted-register operands, then the same fold-1 + ccmp
+    /// canonicalize as the parameterized multiplication kernel.
     #[cfg(all(feature = "asm", target_arch = "aarch64"))]
     #[inline(always)]
     fn sqr_raw_aarch64(a: [u64; 2]) -> [u64; 2] {
@@ -542,6 +555,8 @@ impl<const P: u128> Fp128<P> {
                 "mul     {p11l}, {a1}, {a1}",
                 "umulh   {p11h}, {a1}, {a1}",
 
+                // Carry accumulation with doubled cross term
+                // row1 = p00h + 2*p01l, row2 = 2*p01h + p11l, r3 = p11h + carries
                 "lsr    {t0}, {p01l}, #63",
                 "lsr    {t1}, {p01h}, #63",
                 "adds   {p01h}, {p11l}, {p01h}, lsl #1",
@@ -549,6 +564,8 @@ impl<const P: u128> Fp128<P> {
                 "adds   {p00h}, {p00h}, {p01l}, lsl #1",
                 "adcs   {p01h}, {p01h}, {t0}",
                 "adc    {p11h}, {p11h}, {t1}",
+
+                // At this point: r0=p00l, r1=p00h, r2=p01h, r3=p11h
 
                 "mul    {t0}, {p01h}, {c}",
                 "umulh  {t1}, {p01h}, {c}",
@@ -1223,7 +1240,7 @@ mod tests {
 
     #[test]
     fn fp128_asm_matches_portable() {
-        check::<{ u128::MAX - 172 }>();
+        check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
         check::<{ u128::MAX - 274 }>();
         check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
     }

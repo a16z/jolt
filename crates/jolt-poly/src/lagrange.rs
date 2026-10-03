@@ -35,6 +35,9 @@ pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> 
     let diffs: Vec<F> = nodes.iter().map(|&x| r - x).collect();
     let full_product: F = diffs.iter().copied().product();
 
+    // Barycentric weights: w_i = 1 / prod_{j != i} (x_i - x_j)
+    // For consecutive integers {s, s+1, ..., s+N-1}, the denominator is
+    // prod_{j != i} (i - j) which equals (-1)^{N-1-i} * i! * (N-1-i)!
     let mut weights = vec![F::one(); domain_size];
     for (i, wi) in weights.iter_mut().enumerate() {
         for j in 0..domain_size {

@@ -64,6 +64,7 @@ pub trait OptimizeEnv {
         objectives: &[OptimizationObjective],
     ) -> HashMap<OptimizationObjective, f64>;
 
+    /// Check all invariants. Returns `true` if they all pass.
     fn check_invariants(&mut self) -> bool;
 
     /// Apply an agent-produced diff to the working tree.

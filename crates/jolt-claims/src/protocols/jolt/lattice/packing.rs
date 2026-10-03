@@ -21,7 +21,9 @@ use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use super::geometry::{BalancedIncChunking, LatticeGeometryError};
 
+/// Fixed selector capacity of the packed trace polynomial at K=16.
 pub const ONE_HOT_TRACE_K16_CAPACITY: usize = 64;
+/// Fixed selector capacity of the packed trace polynomial at K=256.
 pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
 
 pub use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
@@ -42,6 +44,8 @@ pub struct OneHotTraceShape {
     pub log_k_chunk: usize,
 }
 
+/// Shape of the preprocessing-time direct bounded-dense committed-program
+/// objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrecommittedPackingShape {
     pub bytecode_chunks: usize,

@@ -353,6 +353,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 Ok(eq_at_digit_zero(point))
             }
+            // Output publics — resolved in `derive_output_term`, never in the
+            // input expression.
             HammingWeightClaimReductionPublic::EqBooleanity
             | HammingWeightClaimReductionPublic::EqVirtualization(_)
             | HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {

@@ -81,11 +81,16 @@ const PARALLEL_THRESHOLD: usize = 1 << 12;
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct FieldSparseEntry<F> {
+    /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     val: F,
+    /// Register value just before this entry's row slice.
     prev_val: F,
+    /// Register value just after this entry's row slice.
     next_val: F,
+    /// Bound `γ·rs1_ra + γ²·rs2_ra` coefficient.
     ra: F,
     wa: F,
+    /// Cycle-domain row index (before binding: the cycle).
     row: usize,
     col: u8,
 }
@@ -260,6 +265,9 @@ impl<F: JoltField> FieldSparseEntry<F> {
         }
     }
 
+    /// Accumulate this vertical pair's `[t = 0, t = ∞]` contributions to the
+    /// quadratic inner factor `ra_t·val_t + wa_t·(val_t + inc_t)`, weighted
+    /// by the pair's eq factor.
     fn accumulate_pair_evals(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -634,6 +642,8 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
 struct FieldReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
+    /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
+    /// cycle→address transition.
     entries: FieldEntries<F>,
     gruen: GruenSplitEqPolynomial<F>,
     inc: IncrementRounds<F>,
@@ -644,6 +654,9 @@ struct FieldReadWriteKernel<F: JoltField> {
 }
 
 impl<F: JoltField> FieldReadWriteKernel<F> {
+    /// Cycle-round message via Gruen factoring: the quadratic inner factor's
+    /// `[q(0), leading coefficient]` over the remaining sparse rows, wrapped
+    /// into the exact cubic by `gruen_poly_deg_3`.
     fn cycle_round_message(
         &self,
         round: usize,

@@ -345,6 +345,9 @@ macro_rules! __stage_member {
             )
         })?
     };
+    // Rebind the member's kernel inside the instrumentation-only
+    // [`SpannedRounds`](crate::driver::SpannedRounds) shim; later arms reach
+    // the kernel through `.inner`.
     (spanned required $member:ident, $relation:ident) => {
         let mut $member = $crate::driver::SpannedRounds {
             inner: $member,

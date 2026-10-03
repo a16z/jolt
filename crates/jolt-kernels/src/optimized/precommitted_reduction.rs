@@ -779,6 +779,8 @@ mod tests {
                 .unwrap();
             assert_eq!(reference_final, optimized_final, "address outputs diverged");
 
+            // Missing-carry contract: both tiers' address slots refuse a
+            // session stage 6b never parked into, with the same diagnostic.
             let Err(optimized_error) = OptimizedPrecommittedAddress::<RA>::new(self.missing_carry)
                 .prepare(&mut ProofSession::default(), self.backend, address_inputs())
             else {

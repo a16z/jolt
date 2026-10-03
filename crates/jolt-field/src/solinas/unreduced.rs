@@ -427,6 +427,8 @@ pub(super) fn fp_ext4_mul_to_accum_fp32<const P: u32>(
     ])
 }
 
+/// Widening `FpExt4<Fp32>` square into one `u128` slot per coefficient.
+/// This is the ten-product specialization of [`fp_ext4_mul_to_accum_fp32`].
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(super) fn fp_ext4_square_to_accum_fp32<const P: u32>(

@@ -3,6 +3,12 @@ use jolt_eval::guests::Fibonacci;
 use jolt_eval::objective::performance::trace_gen::TraceGenObjective;
 use jolt_eval::Objective as _;
 
+// Guest input pinned to the `e2e_profiling.rs` default (n = 400000).
+//
+// Setup (guest build, ELF decode + expansion, one un-timed trace for the row
+// count) runs once outside the measurement; each iteration re-traces from the
+// shared `JoltProgram`. Backend variants (`x86`, `x86_fast`) join as
+// additional bench ids in this group (present below on x86_64 Linux).
 fn bench(c: &mut Criterion) {
     // The tracer env-dispatches to parallel mode; pin serial so
     // measurements are environment-independent.

@@ -154,6 +154,7 @@ mod tests {
         csrrs.trace(&mut cpu, Some(&mut trace));
 
         assert_eq!(cpu.x[5] as u64, old_csr, "rd should get old CSR value");
+        // vr should have old | rs1 (using preserved rs1, not clobbered value)
         assert_eq!(
             cpu.x[34] as u64,
             old_csr | rs1_val,

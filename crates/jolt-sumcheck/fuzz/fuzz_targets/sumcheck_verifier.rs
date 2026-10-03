@@ -21,6 +21,9 @@ use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
 
+/// Cap on `num_vars` to keep the fuzz iteration cheap. Real sumchecks bind up
+/// to ~30 variables, but fuzzing the verifier panic surface only needs a
+/// handful of rounds.
 const MAX_NUM_VARS: usize = 8;
 
 const MAX_DEGREE: usize = 6;

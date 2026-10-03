@@ -13,6 +13,8 @@
 //!
 //! Run: `cargo bench -p jolt-field --features solinas --bench ext4_kernels`
 
+// The harness needs the solinas backend; under other feature sets this
+// bench compiles to an empty stub so `cargo bench --bench '*'` succeeds.
 #[cfg(feature = "solinas")]
 #[expect(clippy::print_stdout, reason = "bench harness: stdout is the report")]
 mod harness {
