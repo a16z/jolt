@@ -7,28 +7,21 @@ use std::sync::Arc;
 
 use common::jolt_device::MemoryConfig;
 use jolt_host::{JoltProgramSource, Program};
-use jolt_program::execution::OwnedTrace;
-#[cfg(feature = "field-inline")]
-use jolt_program::execution::{ExecutionBackend, TraceRow};
-use jolt_program::execution::{JoltProgram, TraceInputs, TraceOutput};
+use jolt_program::execution::{
+    ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput,
+};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_prover::ProverConfig;
-#[cfg(not(feature = "field-inline"))]
-use jolt_riscv::JoltTraceRow;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-#[cfg(not(feature = "field-inline"))]
-pub type FixtureTrace = Arc<Vec<JoltTraceRow>>;
-#[cfg(feature = "field-inline")]
-pub type FixtureTrace = OwnedTrace;
 use tracer::execution_backend::TracerBackend;
 
 pub struct PreparedGuest {
     pub program: Arc<JoltProgram>,
     pub program_preprocessing: JoltProgramPreprocessing,
-    pub trace: TraceOutput<FixtureTrace>,
+    pub trace: TraceOutput<OwnedTrace>,
 }
 
 pub fn prepare_guest(
@@ -67,14 +60,9 @@ pub fn prepare_guest(
         trusted_advice.to_vec(),
         memory_config,
     );
-    #[cfg(not(feature = "field-inline"))]
-    let trace = TracerBackend::new()
-        .trace_compact(&program, inputs, &program_preprocessing.bytecode)
-        .expect("modular trace");
-    #[cfg(feature = "field-inline")]
     let trace = TracerBackend::new()
         .trace(&program, inputs)
-        .expect("modular field trace");
+        .expect("modular trace");
     PreparedGuest {
         program,
         program_preprocessing,
@@ -85,10 +73,10 @@ pub fn prepare_guest(
 pub fn fixture_witness(
     program: &Arc<JoltProgram>,
     preprocessing: &Arc<JoltProgramPreprocessing>,
-    trace: TraceOutput<FixtureTrace>,
+    trace: TraceOutput<OwnedTrace>,
     config: &ProverConfig,
     trusted_advice: bool,
-) -> TraceBackend<OwnedTrace> {
+) -> TraceBackend {
     let witness_config = JoltVmWitnessConfig::new(
         config.trace_length.ilog2() as usize,
         config.ram_K,
@@ -96,28 +84,12 @@ pub fn fixture_witness(
     )
     .include_untrusted_advice(!trace.device.untrusted_advice.is_empty())
     .include_trusted_advice(trusted_advice);
-    #[cfg(not(feature = "field-inline"))]
-    {
-        TraceBackend::<OwnedTrace>::from_compact(
-            witness_config,
-            JoltVmWitnessInputs::new(program, preprocessing, trace),
-        )
-    }
+    let witness = TraceBackend::try_new(
+        witness_config,
+        JoltVmWitnessInputs::new(program, preprocessing, trace),
+    )
+    .expect("trace witness");
     #[cfg(feature = "field-inline")]
-    {
-        let mut rows = trace.trace.into_rows();
-        rows.resize(config.trace_length, TraceRow::default());
-        let trace = TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace.device,
-            trace.final_memory,
-            trace.advice_tape,
-        );
-        TraceBackend::new(
-            witness_config,
-            JoltVmWitnessInputs::new(program, preprocessing, trace),
-        )
-        .with_field_inline()
-        .expect("field-inline witness")
-    }
+    let witness = witness.with_field_inline().expect("field-inline witness");
+    witness
 }

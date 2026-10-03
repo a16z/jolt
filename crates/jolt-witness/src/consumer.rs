@@ -4,6 +4,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use jolt_program::execution::TraceData;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::JoltTraceRow as TraceRow;
 #[cfg(feature = "parallel")]
@@ -145,7 +146,7 @@ pub trait RowSource {
 /// Shared random access to compact rows and their extraction context.
 #[derive(Clone)]
 pub struct RandomAccessRows {
-    rows: Arc<Vec<TraceRow>>,
+    rows: Arc<TraceData>,
     cycles: usize,
     preprocessing: Arc<JoltProgramPreprocessing>,
     padding: TraceRow,
@@ -153,16 +154,16 @@ pub struct RandomAccessRows {
 
 impl RandomAccessRows {
     pub(crate) fn new(
-        rows: Arc<Vec<TraceRow>>,
+        rows: Arc<TraceData>,
         cycles: usize,
         preprocessing: Arc<JoltProgramPreprocessing>,
     ) -> Result<Self, WitnessError> {
-        if rows.len() > cycles {
+        if rows.proof_len() > cycles {
             return Err(WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: format!(
                     "physical trace has {} rows but the cycle domain has {cycles}",
-                    rows.len()
+                    rows.proof_len()
                 ),
             });
         }
@@ -182,9 +183,10 @@ impl RandomAccessRows {
     /// Extracts one bundle with padding and one-row lookahead semantics.
     #[inline]
     pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {
-        let current = self.rows.get(index).unwrap_or(&self.padding);
+        let physical = self.rows.proof_rows();
+        let current = physical.get(index).unwrap_or(&self.padding);
         let next =
-            (index + 1 < self.cycles).then(|| self.rows.get(index + 1).unwrap_or(&self.padding));
+            (index + 1 < self.cycles).then(|| physical.get(index + 1).unwrap_or(&self.padding));
         B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
     }
 }
@@ -366,7 +368,7 @@ mod tests {
     #[test]
     fn random_access_rejects_rows_beyond_cycle_domain() {
         with_sample_backend(|backend| {
-            let rows = Arc::new(vec![TraceRow::default(); 2]);
+            let rows = Arc::clone(&backend.trace.trace);
             assert!(matches!(
                 RandomAccessRows::new(rows, 1, Arc::clone(&backend.preprocessing)),
                 Err(WitnessError::InvalidWitnessData { .. })

@@ -32,7 +32,7 @@ pub use instruction::inline::{
     TracerInlineExpansionProvider,
 };
 pub use jolt_riscv::InlineExtension;
-pub use trace_row::{build_trace_rows, cycle_to_trace_row, CycleConversionError};
+pub use trace_row::cycle_to_trace_row;
 
 use crate::emulator::{
     memory::{Memory, MemoryData},

@@ -280,7 +280,18 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
         reason: "field-inline trace assembly requires its witness oracle",
     })?;
     #[cfg(feature = "field-inline")]
-    let mut increments = vec![F::zero(); num_rows];
+    let increments = {
+        const CHUNK_SIZE: usize = 1 << 14;
+        let mut increments = vec![F::zero(); num_rows];
+        #[cfg(feature = "parallel")]
+        let chunks = increments.par_chunks_mut(CHUNK_SIZE);
+        #[cfg(not(feature = "parallel"))]
+        let chunks = increments.chunks_mut(CHUNK_SIZE);
+        chunks.enumerate().try_for_each(|(chunk, values)| {
+            field_oracle.fill_rd_increments(chunk * CHUNK_SIZE, values)
+        })?;
+        increments
+    };
 
     let random_access = witness
         .random_access()
@@ -288,17 +299,6 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
     let selected_rows = if let Some(access) = random_access {
         // Increment commitments precede the trace commitment, so retain only
         // their shared column; the one-hot rows stay lazy.
-        #[cfg(feature = "field-inline")]
-        {
-            #[cfg(feature = "parallel")]
-            let values = increments.par_iter_mut();
-            #[cfg(not(feature = "parallel"))]
-            let values = increments.iter_mut();
-            values.enumerate().try_for_each(|(index, value)| {
-                *value = field_oracle.rd_increment_at(index)?;
-                Ok::<_, WitnessError>(())
-            })?;
-        }
         SelectedRows::Extracted(ExtractedRows {
             access,
             extraction_error: OnceLock::new(),
@@ -312,10 +312,6 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
             .zip(selected_rows.chunks_exact_mut(num_columns))
             .enumerate()
         {
-            #[cfg(feature = "field-inline")]
-            {
-                increments[row_index] = field_oracle.rd_increment_at(row_index)?;
-            }
             if fill_trace_row(row, &columns, selected_rows) {
                 ram_active_rows[row_index / u64::BITS as usize] |=
                     1u64 << (row_index % u64::BITS as usize);

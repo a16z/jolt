@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use super::*;
 
-impl<T: TraceSource> TraceBackend<T> {
+impl TraceBackend {
     pub(crate) fn materialize_ram_read_write_virtual<F: JoltField>(
         &self,
         id: JoltVirtualPolynomial,
@@ -31,7 +31,7 @@ impl<T: TraceSource> TraceBackend<T> {
                 values[address * cycles + cycle] = F::from_u64(value);
             }
 
-            let Some(row) = self.trace.trace.get(cycle) else {
+            let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
                 continue;
             };
             if row.is_load() {
@@ -56,7 +56,7 @@ impl<T: TraceSource> TraceBackend<T> {
             jolt_utils::unsafe_allocate_zero_vec(checked_dense_grid_len::<F>(addresses, cycles)?);
 
         for cycle in 0..cycles {
-            let Some(row) = self.trace.trace.get(cycle) else {
+            let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
                 continue;
             };
             if let Some(raw_address) = ram_access_address(row) {

@@ -363,7 +363,8 @@ pub use row::{JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceIns
 pub use row_data::JoltInstructionRowData;
 pub use trace::JoltCycle;
 pub use trace_row::{
-    CapturedState, JoltTraceRow, LoadState, NonMemoryState, StoreState, TraceRowError,
+    CapturedState, JoltTraceRow, LoadState, NonMemoryState, RamAccess, RamRead, RamWrite,
+    RegisterRead, RegisterState, RegisterWrite, StoreState, TraceRowError,
 };
 pub use uncompress::uncompress_rv64_instruction;
 

@@ -1,7 +1,7 @@
 //! Phase-3 baseline: both engines, one platform, one harness.
 //! Measures, per guest (median of 3, in-process):
 //! - reference serial `ExecutionBackend::trace` (modular seam, includes the
-//!   Cycle to TraceRow conversion),
+//!   Cycle to JoltTraceRow conversion),
 //! - reference fast pass `ChunkedExecutionBackend::execute` at 2^18 rows
 //!   (post-#1717 this runs the parallel machinery's PassOne, execute mode),
 //! - the AOT x86 fast pass (`fast_run`), where the guest's kinds are

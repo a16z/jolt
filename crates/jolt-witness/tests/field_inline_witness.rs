@@ -12,10 +12,7 @@ use jolt_claims::protocols::{
 };
 use jolt_field::{Fr, Ring};
 use jolt_program::{
-    execution::{
-        JoltProgram, OwnedTrace, RamAccess, RegisterRead, RegisterState, RegisterWrite,
-        TraceOutput, TraceRow,
-    },
+    execution::{JoltProgram, OwnedTrace, TraceEvent, TraceOutput},
     field_inline::{
         FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
         FieldRegisterWrite,
@@ -24,7 +21,8 @@ use jolt_program::{
 };
 use jolt_riscv::{
     CircuitFlags, FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
-    NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
+    JoltTraceRow, NormalizedOperands, RamAccess, RegisterRead, RegisterState, RegisterWrite,
+    RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_witness::{
     field_inline::{TraceBackedFieldInlineWitness, FIELD_INLINE_LABEL},
@@ -88,15 +86,26 @@ fn program(bytecode: Vec<JoltInstructionRow>, profile: JoltInstructionProfile) -
 fn witness(
     program: &Arc<JoltProgram>,
     preprocessing: &Arc<JoltProgramPreprocessing>,
-    rows: Vec<TraceRow>,
+    rows: Vec<TraceEvent>,
     log_t: usize,
-) -> TraceBackend<OwnedTrace> {
+) -> TraceBackend {
+    let data = rows
+        .into_iter()
+        .map(|mut event| {
+            let row = event.row;
+            let instruction = row.instruction();
+            let pc = u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap();
+            event.row =
+                JoltTraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap();
+            event
+        })
+        .collect();
     TraceBackend::new(
         config(log_t),
         JoltVmWitnessInputs::new(
             program,
             preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+            TraceOutput::new(OwnedTrace::from_data(data), Default::default(), None, None),
         ),
     )
 }
@@ -109,7 +118,7 @@ fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
 }
 
-fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
+fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
     field_row_with_registers(instruction, RegisterState::default(), data)
 }
 
@@ -117,13 +126,14 @@ fn field_row_with_registers(
     instruction: JoltInstructionRow,
     registers: RegisterState,
     data: FieldInlineTraceData,
-) -> TraceRow {
-    let mut row = TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap();
-    row.field_inline = Some(data.into());
-    row
+) -> TraceEvent {
+    TraceEvent {
+        row: JoltTraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap(),
+        field_inline: Some(data.into()),
+    }
 }
 
-fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceEvent>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
         0,
@@ -241,28 +251,22 @@ fn field_inline_public_provider_materializes_views() {
 
 #[test]
 fn field_inline_public_provider_is_absent_for_programs_without_field_inline() {
-    let bytecode = vec![instruction(
-        JoltInstructionKind::ADDI,
-        0,
-        Some(1),
-        Some(2),
-        None,
-        3,
-    )];
+    let instruction = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
+    let bytecode = vec![instruction];
     let program = program(bytecode.clone(), RV64IMAC_JOLT);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
     let witness = witness(
         &program,
         &preprocessing,
-        vec![TraceRow::from_instruction(instruction(
-            JoltInstructionKind::ADDI,
-            0,
-            Some(1),
-            Some(2),
-            None,
-            3,
-        ))
-        .unwrap()],
+        vec![TraceEvent::from(
+            JoltTraceRow::new(
+                instruction,
+                RegisterState::default(),
+                RamAccess::NoOp,
+                u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )],
         2,
     );
 
@@ -404,28 +408,22 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
 
 #[test]
 fn plane_accessor_stays_absent_for_profile_without_field_inline() {
-    let bytecode = vec![instruction(
-        JoltInstructionKind::ADDI,
-        0,
-        Some(1),
-        Some(2),
-        None,
-        3,
-    )];
+    let instruction = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
+    let bytecode = vec![instruction];
     let program = program(bytecode.clone(), RV64IMAC_JOLT);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
     let backend = witness(
         &program,
         &preprocessing,
-        vec![TraceRow::from_instruction(instruction(
-            JoltInstructionKind::ADDI,
-            0,
-            Some(1),
-            Some(2),
-            None,
-            3,
-        ))
-        .unwrap()],
+        vec![TraceEvent::from(
+            JoltTraceRow::new(
+                instruction,
+                RegisterState::default(),
+                RamAccess::NoOp,
+                u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )],
         2,
     );
 

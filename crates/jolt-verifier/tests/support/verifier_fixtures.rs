@@ -13,7 +13,6 @@ use std::{
 #[cfg(unix)]
 use std::{os::fd::AsRawFd, os::raw::c_int};
 
-use super::guest_fixtures::FixtureTrace;
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{Bn254G1, Pedersen};
@@ -21,7 +20,7 @@ use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 use jolt_host::Program;
-use jolt_program::execution::{JoltProgram, TraceOutput};
+use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
 use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
@@ -705,33 +704,19 @@ fn generate_verifier_fixture_with_order(
 }
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
-    #[cfg(not(feature = "field-inline"))]
-    {
-        ProverConfig::derive_compact::<Fr>(
-            run.trace.trace.as_slice(),
-            &run.program_preprocessing.memory_layout,
-            run.program_preprocessing.ram.min_bytecode_address,
-            run.program_preprocessing.ram.bytecode_words.len(),
-            1 << 16,
-        )
-        .expect("derive config")
-    }
-    #[cfg(feature = "field-inline")]
-    {
-        ProverConfig::derive::<Fr>(
-            run.trace.trace.rows(),
-            &run.program_preprocessing.memory_layout,
-            run.program_preprocessing.ram.min_bytecode_address,
-            run.program_preprocessing.ram.bytecode_words.len(),
-            1 << 16,
-        )
-        .expect("derive config")
-    }
+    ProverConfig::derive::<Fr>(
+        run.trace.trace.data().proof_rows(),
+        &run.program_preprocessing.memory_layout,
+        run.program_preprocessing.ram.min_bytecode_address,
+        run.program_preprocessing.ram.bytecode_words.len(),
+        1 << 16,
+    )
+    .expect("derive config")
 }
 
 fn prove_prepared(
     program: Arc<JoltProgram>,
-    trace: TraceOutput<FixtureTrace>,
+    trace: TraceOutput<OwnedTrace>,
     config: ProverConfig,
     preprocessing: DoryProverPreprocessing,
     trusted_advice: &[u8],
@@ -778,7 +763,7 @@ mod field_inline {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput,
     };
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
@@ -831,21 +816,13 @@ mod field_inline {
         let public_io = trace_output.device.clone();
 
         let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.rows(),
+            trace_output.trace.data().proof_rows(),
             &memory_layout,
             program_preprocessing.ram.min_bytecode_address,
             program_preprocessing.ram.bytecode_words.len(),
             MAX_PADDED_TRACE_LENGTH,
         )
         .expect("derive config");
-        let mut rows = trace_output.trace.rows().to_vec();
-        rows.resize(config.trace_length, TraceRow::default());
-        let padded_output = TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-            trace_output.advice_tape,
-        );
         let prover_preprocessing = jolt_prover::dory::from_shared(
             JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
         )
@@ -853,14 +830,15 @@ mod field_inline {
         let program_preprocessing = prover_preprocessing
             .program_arc()
             .expect("full preprocessing");
-        let witness = TraceBackend::new(
+        let witness = TraceBackend::try_new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
                 config.one_hot_config,
             ),
-            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         )
+        .expect("trace witness")
         .with_field_inline()
         .expect("field-inline witness view");
         let witness = Arc::new(witness);

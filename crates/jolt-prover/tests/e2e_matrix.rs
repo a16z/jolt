@@ -227,7 +227,6 @@ mod matrix {
         use jolt_crypto::{Bn254G1, Pedersen};
         use jolt_dory::DoryScheme;
         use jolt_field::Fr;
-        use jolt_program::execution::OwnedTrace;
         use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
         use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -246,8 +245,8 @@ mod matrix {
 
         fn prove_case(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let mut config = ProverConfig::derive_compact::<Fr>(
-                prepared.trace.trace.as_slice(),
+            let mut config = ProverConfig::derive::<Fr>(
+                prepared.trace.trace.data().proof_rows(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
                 prepared.preprocessing.ram.bytecode_words.len(),
@@ -268,7 +267,7 @@ mod matrix {
                     .expect("trusted advice commitment")
             });
             let public_io = prepared.trace.device.clone();
-            let witness = TraceBackend::<OwnedTrace>::from_compact(
+            let witness = TraceBackend::new(
                 JoltVmWitnessConfig::new(
                     config.trace_length.ilog2() as usize,
                     config.ram_K,
@@ -300,7 +299,6 @@ mod matrix {
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     mod mode {
         use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-        use jolt_program::execution::OwnedTrace;
         use jolt_prover::akita::preprocessing::{self, AkitaTranscript, AkitaVc};
         use jolt_prover::akita::{self, JoltAkitaBackend};
         use jolt_prover::ProverConfig;
@@ -310,8 +308,8 @@ mod matrix {
 
         pub fn prove_and_verify(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let mut config = ProverConfig::derive_compact::<AkitaField>(
-                prepared.trace.trace.as_slice(),
+            let mut config = ProverConfig::derive::<AkitaField>(
+                prepared.trace.trace.data().proof_rows(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
                 prepared.preprocessing.ram.bytecode_words.len(),
@@ -338,7 +336,7 @@ mod matrix {
                 .program_arc()
                 .expect("full program preprocessing");
             let public_io = prepared.trace.device.clone();
-            let witness = TraceBackend::<OwnedTrace>::from_compact(
+            let witness = TraceBackend::new(
                 JoltVmWitnessConfig::new(
                     config.trace_length.ilog2() as usize,
                     config.ram_K,

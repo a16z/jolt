@@ -1,7 +1,9 @@
 use common::jolt_device::JoltDevice;
 use std::sync::Arc;
 
-use super::{MemoryImage, TraceError, TraceInputs, TraceOutput, TraceRow};
+use jolt_riscv::JoltTraceRow;
+
+use super::{MemoryImage, TraceData, TraceError, TraceEvent, TraceInputs, TraceOutput};
 
 pub trait ExecutionBackend {
     type Trace: TraceSource;
@@ -14,21 +16,20 @@ pub trait ExecutionBackend {
 }
 
 pub trait TraceSource {
-    fn next_row(&mut self) -> Option<TraceRow>;
+    fn next_row(&mut self) -> Option<TraceEvent>;
 
     /// The full row sequence as one slice, if this source can serve it.
     ///
-    /// Contract: the slice must equal exactly what the remaining `next_row`
-    /// calls would yield — a partially consumed source must return `None`
+    /// Contract: the slice must equal the core rows the remaining `next_row`
+    /// events would yield — a partially consumed source must return `None`
     /// rather than a slice that includes already-consumed rows.
-    fn rows(&self) -> Option<&[TraceRow]> {
+    fn rows(&self) -> Option<&[JoltTraceRow]> {
         None
     }
 
-    /// The full row sequence as a shared allocation, under the same contract
-    /// as [`Self::rows`]. Consumers that must retain the raw rows (the
-    /// field-inline witness view) hold this instead of copying the trace.
-    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
+    /// The full rows and associated payloads as a shared allocation, under the same contract
+    /// as [`Self::rows`]. Retained consumers hold this instead of copying the trace.
+    fn shared_data(&self) -> Option<Arc<TraceData>> {
         None
     }
 }
@@ -37,7 +38,7 @@ pub trait TraceSource {
 /// program, then parallel per-chunk replay.
 ///
 /// This is the producer-side contract for streaming consumers. Proof adapters
-/// that require retained random access must emit their compact row format at
+/// that require retained random access must retain their unified rows at
 /// this boundary instead of draining a replaying source into another full
 /// trace allocation.
 pub trait ChunkedExecutionBackend: ExecutionBackend {

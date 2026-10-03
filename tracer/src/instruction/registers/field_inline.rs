@@ -1,11 +1,8 @@
-use jolt_program::{
-    execution::{RegisterRead, RegisterWrite},
-    field_inline::{
-        FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
-        FieldRegisterWrite,
-    },
+use jolt_program::field_inline::{
+    FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
+    FieldRegisterWrite,
 };
-use jolt_riscv::{FieldInlineOp, NormalizedOperands};
+use jolt_riscv::{FieldInlineOp, NormalizedOperands, RegisterRead, RegisterWrite};
 #[cfg(any(feature = "test-utils", test))]
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};

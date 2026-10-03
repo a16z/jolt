@@ -23,17 +23,15 @@ use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-    TraceOutput, TraceRow,
-};
+use jolt_program::execution::{JoltProgram, OwnedTrace, TraceEvent, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{
-    FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
-    NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
+    FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
+    NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
+    TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::PrecommittedSchedule;
@@ -86,8 +84,8 @@ fn fixture_program_preprocessing(
 
 pub(crate) fn field_inline_backend(
     bytecode: Vec<JoltInstructionRow>,
-    rows: Vec<TraceRow>,
-) -> TraceBackend<OwnedTrace> {
+    rows: Vec<TraceEvent>,
+) -> TraceBackend {
     let profile: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
     let program = Arc::new(JoltProgram::from_parts_with_profile(
         Vec::new(),
@@ -98,6 +96,17 @@ pub(crate) fn field_inline_backend(
         profile,
     ));
     let preprocessing = fixture_program_preprocessing(bytecode);
+    let data = rows
+        .into_iter()
+        .map(|mut event| {
+            let row = event.row;
+            let instruction = row.instruction();
+            let pc = u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap();
+            event.row =
+                JoltTraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap();
+            event
+        })
+        .collect();
     TraceBackend::new(
         JoltVmWitnessConfig::new(
             LOG_T,
@@ -110,7 +119,7 @@ pub(crate) fn field_inline_backend(
         JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), test_public_io(), None, None),
+            TraceOutput::new(OwnedTrace::from_data(data), test_public_io(), None, None),
         ),
     )
 }
@@ -119,19 +128,30 @@ fn enc(value: u64) -> FieldEncodedValue {
     FieldEncodedValue::from_u64(value)
 }
 
-fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-    let mut row = TraceRow::from_instruction(instruction).unwrap();
-    row.field_inline = Some(data.into());
-    row
+fn trace_event(
+    instruction: JoltInstructionRow,
+    registers: RegisterState,
+    ram_access: RamAccess,
+) -> Result<TraceEvent, TraceRowError> {
+    Ok(TraceEvent {
+        row: JoltTraceRow::new(instruction, registers, ram_access, 1)?,
+        field_inline: None,
+    })
+}
+
+fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
+    let mut event = trace_event(instruction, RegisterState::default(), RamAccess::NoOp).unwrap();
+    event.field_inline = Some(data.into());
+    event
 }
 
 /// A terminal JAL row: the only hand-craftable last real instruction — its
 /// `Jump` flag turns off the otherwise-unconditional PC-update row 16, and
 /// `ShouldJump` stays 0 because the successor is the noop padding — with the
 /// link write (`rd = address + 4`) row 13 demands.
-fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
+fn halt_jal_row(offset: usize, rd: u8) -> TraceEvent {
     let jal = instruction(JoltInstructionKind::JAL, offset, Some(rd), None, None, 0);
-    TraceRow::new(
+    trace_event(
         jal,
         RegisterState {
             rd: Some(RegisterWrite {
@@ -152,7 +172,7 @@ fn halt_jal_row(offset: usize, rd: u8) -> TraceRow {
 /// check needs a matching increment. Two rows: `ADDI x6, x0, 1` (a consistent
 /// register write of the stored value), then `SD x6, termination(x0)` (store
 /// flag on, `RamAddress = rs1 + imm = termination`, `RamWriteValue = rs2`).
-fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
+fn termination_store_rows(offset: usize) -> [TraceEvent; 2] {
     let one = instruction(JoltInstructionKind::ADDI, offset, Some(6), Some(0), None, 1);
     let termination = test_memory_layout().termination;
     let store = instruction(
@@ -164,7 +184,7 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
         termination as i128,
     );
     [
-        TraceRow::new(
+        trace_event(
             one,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -181,7 +201,7 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
             RamAccess::NoOp,
         )
         .unwrap(),
-        TraceRow::new(
+        trace_event(
             store,
             RegisterState {
                 rs1: Some(RegisterRead {
@@ -207,12 +227,12 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
 /// A field-inline guest executing only ordinary instructions (an ADDI with
 /// consistent register semantics, the termination store, then the terminal
 /// JAL): the rv64 eq rows are satisfied while every field-inline column is zero.
-fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceEvent>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
     let [one, store] = termination_store_rows(1);
     let jal = halt_jal_row(3, 5);
     let rows = vec![
-        TraceRow::new(
+        trace_event(
             addi,
             RegisterState {
                 // Register 2 is never written, so the read must see the
@@ -238,15 +258,15 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     (
         vec![
             addi,
-            one.instruction(),
-            store.instruction(),
-            jal.instruction(),
+            one.row.instruction(),
+            store.row.instruction(),
+            jal.row.instruction(),
         ],
         rows,
     )
 }
 
-pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
+pub(crate) fn addi_only_backend() -> TraceBackend {
     let (bytecode, rows) = addi_only_program();
     field_inline_backend(bytecode, rows)
 }
@@ -255,7 +275,7 @@ pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
 /// `13 · 17 = 221` — every field-inline eq row and both field-inline product lanes are satisfied
 /// (the product columns are extractor-derived), and the x-register file is
 /// untouched.
-fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceEvent>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
         0,
@@ -336,15 +356,15 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
             load_a,
             load_b,
             mul,
-            one.instruction(),
-            store.instruction(),
-            jal.instruction(),
+            one.row.instruction(),
+            store.row.instruction(),
+            jal.row.instruction(),
         ],
         rows,
     )
 }
 
-pub(crate) fn field_arithmetic_backend() -> TraceBackend<OwnedTrace> {
+pub(crate) fn field_arithmetic_backend() -> TraceBackend {
     let (bytecode, rows) = field_arithmetic_program();
     field_inline_backend(bytecode, rows)
 }

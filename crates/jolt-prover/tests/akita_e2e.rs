@@ -25,7 +25,6 @@ mod akita_tests {
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
-    use jolt_program::execution::OwnedTrace;
     use jolt_prover::akita::preprocessing::{
         self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
     };
@@ -61,8 +60,8 @@ mod akita_tests {
     }
 
     fn derive_config(run: &PreparedGuest) -> ProverConfig {
-        ProverConfig::derive_compact::<AkitaField>(
-            run.trace.trace.as_slice(),
+        ProverConfig::derive::<AkitaField>(
+            run.trace.trace.data().proof_rows(),
             &run.preprocessing.memory_layout,
             run.preprocessing.ram.min_bytecode_address,
             run.preprocessing.ram.bytecode_words.len(),
@@ -109,7 +108,7 @@ mod akita_tests {
             .program_arc()
             .expect("full program preprocessing");
         let public_io = run.trace.device.clone();
-        let witness = TraceBackend::<OwnedTrace>::from_compact(
+        let witness = TraceBackend::new(
             witness_config(&config, untrusted_advice, has_trusted_advice),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
@@ -236,7 +235,7 @@ mod akita_tests {
         config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
         let program_preprocessing = preprocessing.program_arc().expect("full program");
         let public_io = run.trace.device.clone();
-        let witness = TraceBackend::<OwnedTrace>::from_compact(
+        let witness = TraceBackend::new(
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
@@ -299,7 +298,7 @@ mod akita_tests {
         .expect("committed Akita preprocessing");
         let program_preprocessing = preprocessing.program_arc().expect("retained full program");
         let public_io = run.trace.device.clone();
-        let witness = TraceBackend::<OwnedTrace>::from_compact(
+        let witness = TraceBackend::new(
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
@@ -362,7 +361,7 @@ mod akita_tests {
             .expect("trusted advice commitment");
         let program_preprocessing = preprocessing.program_arc().expect("retained full program");
         let public_io = run.trace.device.clone();
-        let witness = TraceBackend::<OwnedTrace>::from_compact(
+        let witness = TraceBackend::new(
             witness_config(&config, true, true),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );

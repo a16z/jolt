@@ -18,9 +18,12 @@ pub use crate::field_inline::{
 };
 pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, TraceSource};
 pub use error::TraceError;
+#[cfg(feature = "field-inline")]
+pub use trace::FieldEvent;
+#[cfg(feature = "serialization")]
+pub use trace::TraceDataSeed;
 pub use trace::{
-    JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
-    RegisterState, RegisterWrite, TraceInputs, TraceOutput, TraceRow, TraceRowError,
+    JoltProgram, MemoryImage, OwnedTrace, TraceData, TraceEvent, TraceInputs, TraceOutput,
 };
 
 #[cfg(feature = "image")]

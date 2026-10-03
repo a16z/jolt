@@ -495,7 +495,7 @@ mod tests {
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPlusOnePolynomial;
-    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
+    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
@@ -503,6 +503,7 @@ mod tests {
         CircuitFlags, InstructionFlags, JoltInstructionKind, JoltInstructionRow,
         NormalizedOperands, RV64IMAC_JOLT,
     };
+    use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterState};
     use jolt_verifier::stages::stage3::spartan_shift::{
         SpartanShift, SpartanShiftChallenges, SpartanShiftInputClaims,
     };
@@ -539,7 +540,7 @@ mod tests {
     /// sequence (exercising the `is_virtual` / `is_first_in_sequence`
     /// columns), an explicit mid-trace no-op, and no-op padding to `2^log_t`
     /// (exercising `is_noop`).
-    fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
+    fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend) -> R) -> R {
         let plain_a = instruction(0x8000_0000, None, false);
         let virtual_first = instruction(0x8000_0004, Some(1), true);
         let virtual_last = instruction(0x8000_0004, Some(0), false);
@@ -555,11 +556,6 @@ mod tests {
         // weights only cycle 1 (`eq+1` vanishes at 0), and a no-op there
         // zeroes the input claim.
         let real_rows = if log_t == 1 { 2 } else { (1 << log_t) - 1 };
-        let rows: Vec<TraceRow> = script
-            .iter()
-            .take(real_rows)
-            .map(|&instruction| TraceRow::from_instruction(instruction).unwrap())
-            .collect();
 
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
@@ -573,6 +569,24 @@ mod tests {
             memory_layout: Default::default(),
             max_padded_trace_length: 1 << log_t,
         });
+        let rows: Vec<TraceRow> = script
+            .iter()
+            .take(real_rows)
+            .map(|&instruction| {
+                TraceRow::new(
+                    instruction,
+                    RegisterState::default(),
+                    RamAccess::NoOp,
+                    preprocessing
+                        .bytecode
+                        .get_pc(&instruction)
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
         let program = Arc::new(JoltProgram::default());
         let config = JoltVmWitnessConfig::new(
             log_t,

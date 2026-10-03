@@ -8,13 +8,10 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::JoltField;
 use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{
-    execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
+    execution::{JoltProgram, OwnedTrace, TraceData, TraceOutput},
     preprocess::JoltProgramPreprocessing,
 };
-use jolt_riscv::{
-    CapturedState, CircuitFlags, Flags, JoltInstruction, JoltTraceRow, LoadState, NonMemoryState,
-    StoreState,
-};
+
 use std::sync::Arc;
 
 use crate::backend::ProgramSource;
@@ -98,137 +95,70 @@ impl<T> JoltVmWitnessInputs<T> {
     }
 }
 
-/// Proof witness backed by shared compact rows. Raw slice-backed traces can
-/// be normalized through [`Self::try_new`]; replaying sources must emit
-/// compact rows at their producer boundary and use [`Self::from_compact`].
-pub struct TraceBackend<T: TraceSource> {
+/// Retains the producer's rows and payloads without converting or copying them.
+pub struct TraceBackend {
     pub config: JoltVmWitnessConfig,
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
-    pub trace: TraceOutput<Arc<Vec<JoltTraceRow>>>,
-    #[cfg(feature = "field-inline")]
-    pub(crate) raw_trace_rows: Arc<Vec<TraceRow>>,
-    source: std::marker::PhantomData<fn() -> T>,
+    pub trace: TraceOutput<Arc<TraceData>>,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness>,
 }
 
-impl<T: TraceSource> ProgramSource for TraceBackend<T> {
+impl ProgramSource for TraceBackend {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
         &self.preprocessing
     }
 }
 
-impl<T: TraceSource> TraceBackend<T> {
-    /// Constructs a backend from proof rows built by the tracer, retaining
-    /// their allocation.
-    #[cfg(not(feature = "field-inline"))]
+impl TraceBackend {
     #[expect(
         clippy::panic,
-        reason = "trusted compact traces must satisfy the producer cycle-domain contract"
+        reason = "infallible convenience constructor for trusted fixtures"
     )]
-    pub fn from_compact(
+    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<OwnedTrace>) -> Self {
+        match Self::try_new(config, inputs) {
+            Ok(backend) => backend,
+            Err(error) => panic!("invalid trace: {error}"),
+        }
+    }
+
+    /// Transfers a complete retained trace. Iterator-only sources must remain
+    /// on the streaming execution interface rather than being silently drained.
+    pub fn try_new(
         config: JoltVmWitnessConfig,
-        inputs: JoltVmWitnessInputs<Arc<Vec<JoltTraceRow>>>,
-    ) -> Self {
+        inputs: JoltVmWitnessInputs<OwnedTrace>,
+    ) -> Result<Self, WitnessError> {
+        let cycles = checked_pow2(config.log_t)?;
         let TraceOutput {
             trace,
             device,
             final_memory,
             advice_tape,
         } = inputs.trace;
-        let cycles = match checked_pow2(config.log_t) {
-            Ok(cycles) => cycles,
-            Err(error) => panic!("invalid compact trace domain: {error}"),
-        };
-        assert!(
-            trace.len() <= cycles,
-            "compact trace has {} rows but the cycle domain has {cycles}",
-            trace.len()
-        );
-        Self {
-            config,
-            program: inputs.program,
-            preprocessing: inputs.preprocessing,
-            trace: TraceOutput::new(trace, device, final_memory, advice_tape),
-            source: std::marker::PhantomData,
-        }
-    }
-
-    /// Normalizes a trusted slice-backed trace produced against
-    /// `inputs.preprocessing` into shared compact proof rows.
-    ///
-    /// Panics when the trace violates that producer contract. Use
-    /// [`Self::try_new`] when the trace is not trusted.
-    #[expect(
-        clippy::panic,
-        reason = "compatibility constructor for trusted prover-generated traces"
-    )]
-    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<T>) -> Self {
-        match Self::try_new(config, inputs) {
-            Ok(backend) => backend,
-            Err(error) => panic!("invalid proof-facing trace: {error}"),
-        }
-    }
-
-    /// Normalizes a slice-backed raw trace into shared compact proof rows.
-    /// Replaying and iterator-only sources are rejected rather than drained
-    /// and retained behind an API that implies streaming behavior.
-    pub fn try_new(
-        config: JoltVmWitnessConfig,
-        inputs: JoltVmWitnessInputs<T>,
-    ) -> Result<Self, WitnessError> {
-        let cycles = checked_pow2(config.log_t)?;
-        let TraceOutput {
-            trace: source,
-            device,
-            final_memory,
-            advice_tape,
-        } = inputs.trace;
-        let physical = source.rows().ok_or(WitnessError::UnavailableView {
-            label: JOLT_VM_LABEL,
-        })?;
-        if physical.len() > cycles {
+        let trace = trace
+            .into_data()
+            .map_err(|error| WitnessError::InvalidWitnessData {
+                label: JOLT_VM_LABEL,
+                reason: error.to_string(),
+            })?;
+        if trace.proof_len() > cycles {
             return Err(WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: format!(
                     "physical trace has {} rows but the cycle domain has {cycles}",
-                    physical.len()
+                    trace.proof_len()
                 ),
             });
         }
-        let mut trace_rows = Vec::new();
-        let mut trailing_padding = 0;
-        for row in physical {
-            let compact = Self::compact_trace_row(row, &inputs.preprocessing)?;
-            if compact == JoltTraceRow::default() {
-                trailing_padding += 1;
-            } else {
-                trace_rows.resize(trace_rows.len() + trailing_padding, JoltTraceRow::default());
-                trailing_padding = 0;
-                trace_rows.push(compact);
-            }
-        }
-        // The field-inline view replays the raw rows (payloads, register file, bridge
-        // facts); share the source's allocation when it offers one, copying only for
-        // sources that cannot.
-        #[cfg(feature = "field-inline")]
-        let raw_rows = source
-            .shared_rows()
-            .unwrap_or_else(|| Arc::new(physical.to_vec()));
-        let trace = TraceOutput::new(Arc::new(trace_rows), device, final_memory, advice_tape);
-        let backend = Self {
+        Ok(Self {
             config,
             program: inputs.program,
             preprocessing: inputs.preprocessing,
-            trace,
-            #[cfg(feature = "field-inline")]
-            raw_trace_rows: raw_rows,
-            source: std::marker::PhantomData,
+            trace: TraceOutput::new(trace, device, final_memory, advice_tape),
             #[cfg(feature = "field-inline")]
             field_inline: None,
-        };
-        Ok(backend)
+        })
     }
 
     pub fn committed_polynomial_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
@@ -334,106 +264,6 @@ impl<T: TraceSource> TraceBackend<T> {
 
     fn advice_log_rows(max_bytes: usize) -> usize {
         advice::advice_words(max_bytes).ilog2() as usize
-    }
-}
-
-impl<T: TraceSource> TraceBackend<T> {
-    fn compact_trace_row(
-        row: &TraceRow,
-        preprocessing: &JoltProgramPreprocessing,
-    ) -> Result<JoltTraceRow, WitnessError> {
-        let register = row.registers();
-        let instruction_row = row.instruction();
-        let instruction = JoltInstruction::try_from(instruction_row).map_err(|kind| {
-            WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: format!("unsupported Jolt instruction kind in trace row: {kind:?}"),
-            }
-        })?;
-        let circuit_flags = instruction.circuit_flags();
-        let rs1_value = register.rs1.map_or(0, |value| value.value);
-        let rs2_value = register.rs2.map_or(0, |value| value.value);
-        let rd_pre_value = register.rd.map_or(0, |value| value.pre_value);
-        let rd_write_value = register.rd.map_or(0, |value| value.post_value);
-        let state = if circuit_flags[CircuitFlags::Load] {
-            let RamAccess::Read(read) = row.ram_access() else {
-                return Err(invalid_compact_row(
-                    row,
-                    "load instruction is missing its RAM read",
-                ));
-            };
-            if rs2_value != 0 || read.value != rd_write_value {
-                return Err(invalid_compact_row(
-                    row,
-                    "load values do not satisfy RamReadValue = RamWriteValue = RdWriteValue",
-                ));
-            }
-            CapturedState::Load(LoadState {
-                rs1_value,
-                ram_address: read.address,
-                rd_pre_value,
-                rd_write_value,
-            })
-        } else if circuit_flags[CircuitFlags::Store] {
-            let RamAccess::Write(write) = row.ram_access() else {
-                return Err(invalid_compact_row(
-                    row,
-                    "store instruction is missing its RAM write",
-                ));
-            };
-            if rd_pre_value != 0 || rd_write_value != 0 || write.post_value != rs2_value {
-                return Err(invalid_compact_row(
-                    row,
-                    "store values do not satisfy RamWriteValue = Rs2Value and no rd write",
-                ));
-            }
-            CapturedState::Store(StoreState {
-                rs1_value,
-                rs2_value,
-                ram_read_value: write.pre_value,
-                ram_address: write.address,
-            })
-        } else {
-            if row.ram_access() != RamAccess::NoOp {
-                return Err(invalid_compact_row(
-                    row,
-                    "non-memory instruction carries RAM access data",
-                ));
-            }
-            CapturedState::NonMemory(NonMemoryState {
-                rs1_value,
-                rs2_value,
-                rd_pre_value,
-                rd_write_value,
-            })
-        };
-        let pc = preprocessing
-        .bytecode
-        .get_pc(&instruction_row)
-        .ok_or_else(|| WitnessError::InvalidWitnessData {
-            label: JOLT_VM_LABEL,
-            reason: format!(
-                "bytecode preprocessing is missing PC mapping for address {:#x} with virtual_sequence_remaining {:?}",
-                instruction_row.address, instruction_row.virtual_sequence_remaining
-            ),
-        })?;
-        let pc = u32::try_from(pc).map_err(|_| WitnessError::InvalidWitnessData {
-            label: JOLT_VM_LABEL,
-            reason: format!("bytecode PC {pc} does not fit the compact trace row"),
-        })?;
-        JoltTraceRow::from_components(state, &instruction_row, pc).map_err(|error| {
-            WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: error.to_string(),
-            }
-        })
-    }
-}
-
-fn invalid_compact_row(row: &TraceRow, reason: &'static str) -> WitnessError {
-    WitnessError::InvalidWitnessData {
-        label: JOLT_VM_LABEL,
-        reason: format!("{reason} for {:?}", row.instruction_kind()),
     }
 }
 
