@@ -142,15 +142,96 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
     steps: &[F],
     lanes: &mut [F::Accumulator],
 ) {
-    let n = lanes.len();
-    accumulate_product(evals, &mut lanes[0]);
-    for lane in &mut lanes[1..n - 1] {
-        for (eval, step) in evals.iter_mut().zip(steps) {
-            *eval += *step;
+    match (evals, steps, lanes) {
+        ([a, b, c, d], [da, db, dc, dd], lanes @ [_, _, _, _]) => {
+            let left = quadratic_product_samples([*a, *b], [*da, *db]);
+            let right = quadratic_product_samples([*c, *d], [*dc, *dd]);
+            lanes[0].fmadd(left[0], right[0]);
+            lanes[1].fmadd(left[1], right[1]);
+            lanes[2].fmadd(quadratic_next(left), quadratic_next(right));
+            lanes[3].fmadd(left[2], right[2]);
         }
-        accumulate_product(evals, lane);
+        (
+            [a, b, c, d, e, f, g, h],
+            [da, db, dc, dd, de, df, dg, dh],
+            lanes @ [_, _, _, _, _, _, _, _],
+        ) => {
+            let left = quartic_product_samples([*a, *b, *c, *d], [*da, *db, *dc, *dd]);
+            let right = quartic_product_samples([*e, *f, *g, *h], [*de, *df, *dg, *dh]);
+            let mut left_window = [left[0], left[1], left[2], left[3]];
+            let mut right_window = [right[0], right[1], right[2], right[3]];
+            for ((lane, left), right) in lanes.iter_mut().zip(left_window).zip(right_window) {
+                lane.fmadd(left, right);
+            }
+            let left_six = left[4].mul_u64(6);
+            let right_six = right[4].mul_u64(6);
+            for lane in &mut lanes[4..7] {
+                let left_next = quartic_next(left_window, left_six);
+                let right_next = quartic_next(right_window, right_six);
+                lane.fmadd(left_next, right_next);
+                left_window = [left_window[1], left_window[2], left_window[3], left_next];
+                right_window = [
+                    right_window[1],
+                    right_window[2],
+                    right_window[3],
+                    right_next,
+                ];
+            }
+            lanes[7].fmadd(left[4], right[4]);
+        }
+        (evals, steps, lanes) => {
+            let n = lanes.len();
+            accumulate_product(evals, &mut lanes[0]);
+            for lane in &mut lanes[1..n - 1] {
+                for (eval, step) in evals.iter_mut().zip(steps) {
+                    *eval += *step;
+                }
+                accumulate_product(evals, lane);
+            }
+            accumulate_product(steps, &mut lanes[n - 1]);
+        }
     }
-    accumulate_product(steps, &mut lanes[n - 1]);
+}
+
+// Product samples at 1, 2, and infinity; finite differences supply later points.
+#[inline]
+fn quadratic_product_samples<F: JoltField>(values: [F; 2], steps: [F; 2]) -> [F; 3] {
+    [
+        values[0] * values[1],
+        (values[0] + steps[0]) * (values[1] + steps[1]),
+        steps[0] * steps[1],
+    ]
+}
+
+#[inline]
+fn quadratic_next<F: JoltField>(samples: [F; 3]) -> F {
+    let next = samples[1] + samples[2];
+    next + next - samples[0]
+}
+
+#[inline]
+fn quartic_product_samples<F: JoltField>(values: [F; 4], steps: [F; 4]) -> [F; 5] {
+    let left = quadratic_product_samples([values[0], values[1]], [steps[0], steps[1]]);
+    let right = quadratic_product_samples([values[2], values[3]], [steps[2], steps[3]]);
+    let left_third = quadratic_next(left);
+    let right_third = quadratic_next(right);
+    let left_next = left_third + left[2];
+    let right_next = right_third + right[2];
+    [
+        left[0] * right[0],
+        left[1] * right[1],
+        left_third * right_third,
+        (left_next + left_next - left[1]) * (right_next + right_next - right[1]),
+        left[2] * right[2],
+    ]
+}
+
+#[inline]
+fn quartic_next<F: JoltField>(window: [F; 4], six_leading: F) -> F {
+    // The fourth finite difference is 24 times the leading coefficient.
+    let mut next = six_leading + window[3] - window[2] + window[1];
+    next = next + next - window[2];
+    next + next - window[0]
 }
 
 /// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
@@ -912,4 +993,54 @@ pub(crate) fn bind_raw_twice<F: JoltField>(
     #[cfg(not(feature = "parallel"))]
     let bound: Vec<F> = (0..len / 4).map(pair).collect();
     Polynomial::new(bound)
+}
+
+#[cfg(test)]
+mod product_grid_tests {
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Accumulator, Fr, JoltField};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::accumulate_product_grid;
+
+    fn assert_product_grid<F: JoltField>(factors: usize) {
+        let mut rng = ChaCha20Rng::seed_from_u64(431);
+        let mut lanes = vec![F::Accumulator::default(); factors];
+        let mut expected = vec![F::zero(); factors];
+        for _ in 0..32 {
+            let values: Vec<F> = (0..factors).map(|_| F::random(&mut rng)).collect();
+            let steps: Vec<F> = (0..factors).map(|_| F::random(&mut rng)).collect();
+            accumulate_product_grid(&mut values.clone(), &steps, &mut lanes);
+            for (index, expected) in expected.iter_mut().enumerate() {
+                *expected += if index == factors - 1 {
+                    steps.iter().copied().product::<F>()
+                } else {
+                    let point = F::from_u64(index as u64);
+                    values
+                        .iter()
+                        .zip(&steps)
+                        .map(|(value, step)| *value + point * *step)
+                        .product::<F>()
+                };
+            }
+        }
+        for (lane, expected) in lanes.iter().zip(expected) {
+            assert_eq!(lane.reduce(), expected);
+        }
+    }
+
+    #[test]
+    fn specialized_products_match_direct_evaluations() {
+        assert_product_grid::<Fr>(4);
+        assert_product_grid::<Fr>(8);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn specialized_products_match_direct_evaluations_fp128() {
+        assert_product_grid::<Prime128OffsetA7F7>(4);
+        assert_product_grid::<Prime128OffsetA7F7>(8);
+    }
 }

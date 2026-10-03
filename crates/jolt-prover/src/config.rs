@@ -218,10 +218,9 @@ pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWrite
     }
 }
 
-/// Below the trace-length threshold (`log_T < 25`), use
-/// 4-bit committed chunks and `LOG_K/8 = 16`-bit virtual-RA chunks; at or
-/// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks
-/// (a branch that requires a 2^25-cycle trace).
+/// Akita uses 4-bit committed chunks at every trace length. Other PCS modes
+/// use 4-bit chunks below `log_T = 25` and 8-bit chunks above it. Virtual-RA
+/// chunks remain 16 bits below that threshold and 32 bits at or above it.
 #[expect(non_snake_case)]
 pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
@@ -231,7 +230,7 @@ pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
         }
     } else {
         JoltOneHotConfig {
-            log_k_chunk: 8,
+            log_k_chunk: if cfg!(feature = "akita") { 4 } else { 8 },
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
         }
     }
@@ -273,4 +272,21 @@ impl CommittedProgramCandidates {
 pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
     let words = (max_advice_size_bytes / 8) as usize;
     words.next_power_of_two().max(1).ilog2() as usize
+}
+
+#[cfg(all(test, feature = "akita"))]
+mod tests {
+    use super::one_hot_config;
+
+    #[test]
+    fn akita_small_committed_chunks_keep_large_virtual_lookup_chunks() {
+        let below_threshold = one_hot_config(24);
+        assert_eq!(below_threshold.log_k_chunk, 4);
+        assert_eq!(below_threshold.lookups_ra_virtual_log_k_chunk, 16);
+        for log_trace in 25..=30 {
+            let config = one_hot_config(log_trace);
+            assert_eq!(config.log_k_chunk, 4);
+            assert_eq!(config.lookups_ra_virtual_log_k_chunk, 32);
+        }
+    }
 }

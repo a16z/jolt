@@ -33,8 +33,9 @@ pub mod emit {
     /// Prefix packing produces one physical polynomial; two-polynomial rows
     /// cover adapter and tamper-test shapes.
     pub const ONE_HOT_TRACE_NUM_POLYS: &[usize] = &[1, 2];
-    /// K=16 adds six selector variables to column arity `4 + log_T`.
-    pub const K16_NUM_VARS: (usize, usize) = (12, 34);
+    /// K=16 adds six selector variables to column arity `4 + log_T`;
+    /// the catalog covers logical traces through `2^30`.
+    pub const K16_NUM_VARS: (usize, usize) = (12, 40);
     /// K=256 adds five selector variables to column arity `8 + log_T`.
     pub const K256_NUM_VARS: (usize, usize) = (12, 43);
     /// Multi-chunk profiles require enough witness geometry for two chunked fold levels.
