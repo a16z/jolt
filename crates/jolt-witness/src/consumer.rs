@@ -183,13 +183,10 @@ impl RandomAccessRows {
     /// Extracts one bundle with padding and one-row lookahead semantics.
     #[inline]
     pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {
-        let current = self.rows.proof_rows().get(index).unwrap_or(&self.padding);
-        let next = (index + 1 < self.cycles).then(|| {
-            self.rows
-                .proof_rows()
-                .get(index + 1)
-                .unwrap_or(&self.padding)
-        });
+        let physical = self.rows.proof_rows();
+        let current = physical.get(index).unwrap_or(&self.padding);
+        let next =
+            (index + 1 < self.cycles).then(|| physical.get(index + 1).unwrap_or(&self.padding));
         B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
     }
 }

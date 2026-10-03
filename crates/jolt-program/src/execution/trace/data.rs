@@ -130,6 +130,7 @@ impl TraceData {
         clippy::indexing_slicing,
         reason = "private proof_len is bounded by rows at construction and append"
     )]
+    #[inline]
     pub fn proof_rows(&self) -> &[JoltTraceRow] {
         &self.rows[..self.proof_len]
     }
