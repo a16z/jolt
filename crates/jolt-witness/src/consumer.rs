@@ -141,6 +141,7 @@ pub trait RowSource {
     }
 }
 
+/// Shared random access to compact rows and their extraction context.
 #[derive(Clone)]
 pub struct RandomAccessRows {
     rows: Arc<Vec<TraceRow>>,
@@ -241,6 +242,9 @@ pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
     Ok(consumers.0.into_rows())
 }
 
+/// The collecting consumer: accumulates one bundle type across the pass.
+/// Backends materialize bundle vectors through this, so the pass driver is
+/// the live path, not speculative API.
 #[derive(Clone, Debug)]
 pub struct CollectBundles<W> {
     rows: Vec<W>,

@@ -117,6 +117,7 @@ impl SnapshotPool {
         buf
     }
 
+    /// Return a buffer for reuse.
     pub fn put(&mut self, buf: Vec<u64>) {
         self.free.push(buf);
     }

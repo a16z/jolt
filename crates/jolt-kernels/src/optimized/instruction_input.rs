@@ -39,6 +39,7 @@ const LATE_PURGE_ROUNDS: usize = 8;
 #[cfg(feature = "parallel")]
 const MATERIALIZE_CHUNK: usize = 1 << 12;
 
+/// One cycle's eight operand/flag values as native scalars.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 pub struct InstructionInputRow {
     #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value))]

@@ -29,6 +29,8 @@ pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
     pub chunks: Vec<C>,
 }
 
+/// The consumed staged `BytecodeValClaim` openings from the bytecode read-RAF
+/// address phase.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct BytecodeReductionCyclePhaseInputClaims<C> {
     #[opening(BytecodeValClaim, from = BytecodeReadRaf)]

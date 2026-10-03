@@ -26,6 +26,7 @@ use crate::protocols::jolt::{JoltChallengeId, JoltOpeningId};
 /// draw-nothing default feeds it an empty stream) is the typical cause.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
 pub enum ChallengeDrawError {
+    /// The stream ran dry before every required (scalar) field was populated.
     #[error("challenge value stream exhausted: only {populated} of {required} required challenge field(s) populated")]
     StreamExhausted { required: usize, populated: usize },
 

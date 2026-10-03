@@ -54,6 +54,8 @@ pub struct Stage7Sumchecks<F: JoltField> {
     pub program_image_address_phase: Option<ProgramImageReductionAddressPhase<F>>,
 }
 
+/// The shared opening-point accessors over the point-only stage-7 aggregate.
+/// Stages 7/8 read each produced opening's point off these cells.
 impl<F: JoltField> Stage7OutputPoints<F> {
     /// The hamming-weight reduction's shared opening point (the own point of the
     /// one-hot `Ra` polynomials): the first non-empty per-family RA cell. `None`

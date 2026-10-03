@@ -194,6 +194,9 @@ impl P256Mulq {
             self.asm.emit_u(Kind::LUI, *self.p2, P256_NEG_N[1]);
             self.asm.emit_u(Kind::LUI, *self.p3, P256_NEG_N[3]);
         } else {
+            // Base field: p = [1, 0xFFFFFFFF00000000, 0xFFFFFFFFFFFFFFFF, 0x00000000FFFFFFFE]
+            // p[0] = 1 is implicit (handled as ADD)
+            // p1 = p[1], p2 = p[2], p3 = p[3]
             self.asm.emit_u(Kind::LUI, *self.p1, P256_PQ[1]);
             self.asm.emit_u(Kind::LUI, *self.p2, P256_PQ[2]);
             self.asm.emit_u(Kind::LUI, *self.p3, P256_PQ[3]);
@@ -218,6 +221,7 @@ impl P256Mulq {
             self.asm
                 .mac_low(*self.r[1], *self.r[0], *self.w[0], *self.p1, *self.aux);
         } else {
+            // base field: p[0] = 1, so w[0]*p[0] = w[0], use ADD
             self.asm.adc(*self.r[1], *self.r[0], *self.w[0]);
         }
 
@@ -238,6 +242,9 @@ impl P256Mulq {
             let rk_next = *self.r[(k + 1) % 2];
 
             if self.is_scalar_field {
+                // Scalar field: p = [p1, p2, 0, p3]
+                // p[0] in p1, p[1] in p2, p[2] = 0 (skip), p[3] in p3
+
                 if k < 4 {
                     self.asm
                         .mac_low_conditional(!first, rk_next, rk, *self.w[k], *self.p1, *self.aux);
@@ -308,6 +315,9 @@ impl P256Mulq {
                     first = false;
                 }
             } else {
+                // Base field: p = [1, p1, p2, p3]
+                // p[0] = 1 (implicit ADD, high = 0), p[1] in p1, p[2] in p2, p[3] in p3
+
                 if k < 4 {
                     self.asm
                         .add_conditional(!first, rk_next, rk, *self.w[k], *self.aux);

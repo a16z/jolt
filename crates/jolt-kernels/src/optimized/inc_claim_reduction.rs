@@ -84,6 +84,7 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
         );
 
         let incs = if relation.rounds() == 0 {
+            // No bind occurs on a single-cycle domain.
             let dense = |id: JoltOpeningId| witness.oracle_table(id.polynomial_id());
             IncState::Dense {
                 ram: Polynomial::new(dense(ram_inc_reduced())?),

@@ -105,6 +105,7 @@ mod tests {
 
     #[test]
     fn test_csrrs_trace_full() {
+        // csrrs a0, mtvec, t0 (rd=a0(10), rs1=t0(5), csr=mtvec)
         let instr: u32 = 0x3052a573;
         let address: u64 = 0x1000;
 
@@ -118,7 +119,7 @@ mod tests {
         let old_csr: u64 = 0x00FF;
         let rs1_val: u64 = 0xFF00;
 
-        cpu.x[34] = old_csr as i64;
+        cpu.x[34] = old_csr as i64; // vr34 = mtvec
         cpu.x[5] = rs1_val as i64;
 
         let mut trace: Vec<Cycle> = Vec::new();
@@ -134,6 +135,7 @@ mod tests {
 
     #[test]
     fn test_csrrs_trace_rd_eq_rs1() {
+        // csrrs t0, mtvec, t0 (rd == rs1 == x5)
         let instr: u32 = (0x305 << 20) | (5 << 15) | (2 << 12) | (5 << 7) | 0x73;
         let address: u64 = 0x1000;
 
@@ -147,7 +149,7 @@ mod tests {
         let old_csr: u64 = 0x00FF;
         let rs1_val: u64 = 0xFF00;
 
-        cpu.x[34] = old_csr as i64;
+        cpu.x[34] = old_csr as i64; // vr34 = mtvec
         cpu.x[5] = rs1_val as i64;
 
         let mut trace: Vec<Cycle> = Vec::new();

@@ -65,6 +65,8 @@ impl TraceOneHotRows for TestRows {
 
 type TestBackend = CpuBackend<AkitaField, AkitaField>;
 
+/// The kernels under test never read the owned setup; the smallest valid
+/// setup only gives them a backend to hang off.
 fn test_backend() -> TestBackend {
     let setup = AkitaProverSetup::<AkitaField>::generate_with_capacity(
         1,

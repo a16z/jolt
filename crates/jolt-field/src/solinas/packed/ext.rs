@@ -159,6 +159,7 @@ where
         Self::new(value.coeffs.map(PF::broadcast))
     }
 
+    /// Squaring via the dedicated kernel hook (fewer base multiplies).
     #[inline(always)]
     fn square(self) -> Self {
         Self::new(PF::ext4_square(self.coeffs))

@@ -33,6 +33,8 @@ fuzz_target!(|data: &[u8]| {
     }
     let bases = bases();
 
+    // Each set is a fuzzer-chosen subset of the bases, decoded from a
+    // 16-bit membership mask so indices are unique by construction.
     let set_count = (data[0] as usize % MAX_SETS) + 1;
     if data.len() < 1 + set_count * 2 {
         return;

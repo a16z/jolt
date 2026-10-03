@@ -107,6 +107,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         sumcheck_point: &[F],
         _input_points: &BooleanityAddressPhaseInputClaims<Vec<F>>,
     ) -> Result<BooleanityAddressPhaseOutputClaims<Vec<F>>, VerifierError> {
+        // The address opening point (`booleanity_r_address`) is the reversed
+        // address sumcheck point; the cycle phase prepends it to its cycle point.
         Ok(BooleanityAddressPhaseOutputClaims {
             intermediate: sumcheck_point.iter().rev().copied().collect(),
         })

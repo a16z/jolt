@@ -19,9 +19,12 @@ pub(in crate::expand) fn expand_csrrs(
         asm.emit_i(Kind::ADDI, reg(0), reg(0), 0);
         return asm.finalize();
     } else if rs1(instruction)? == 0 {
+        // Read-only `csrr rd, csr`: copy the CSR virtual register to rd.
         asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
         return asm.finalize();
     } else if rd(instruction)? == 0 {
+        // Set-only `csrs csr, rs1`: update the CSR virtual register and
+        // deliberately discard the old value.
         asm.emit_r(
             Kind::OR,
             reg(virtual_reg),

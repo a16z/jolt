@@ -176,6 +176,7 @@ impl PeakMemory {
     }
 }
 
+/// Logs the current physical memory usage at the point of call.
 pub fn print_current_memory_usage(label: &str) {
     if tracing::enabled!(tracing::Level::DEBUG) {
         if let Some(usage) = memory_stats() {

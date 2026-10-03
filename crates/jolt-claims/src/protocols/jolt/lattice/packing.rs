@@ -49,6 +49,7 @@ pub struct OneHotTraceShape {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrecommittedPackingShape {
     pub bytecode_chunks: usize,
+    /// Log of the row count of one bytecode chunk.
     pub log_bytecode_rows: usize,
     pub trace_order: TracePolynomialOrder,
     pub program_image_log_words: Option<usize>,

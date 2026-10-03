@@ -240,6 +240,7 @@ pub(crate) fn fmadd_u64_split<F: JoltField>(
     accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
 }
 
+/// `[1, γ, γ², …, γ^{N−1}]`.
 pub(crate) fn gamma_powers_array<F: JoltField, const N: usize>(gamma: F) -> [F; N] {
     let mut powers = [F::one(); N];
     for i in 1..N {
@@ -248,6 +249,7 @@ pub(crate) fn gamma_powers_array<F: JoltField, const N: usize>(gamma: F) -> [F; 
     powers
 }
 
+/// `[1, γ, γ², …]` of length `count`.
 pub(crate) fn gamma_powers<F: JoltField>(gamma: F, count: usize) -> Vec<F> {
     let mut powers = Vec::with_capacity(count);
     let mut power = F::one();
@@ -654,6 +656,9 @@ pub(crate) fn triple_product_round_evals<F: JoltField>(
     }
 }
 
+/// Sum per-pair-group evaluation contributions over `y = 0..groups` into a
+/// `slots`-sized vector — the dense-table round walk of the pair-group
+/// kernels ([`pair`] serves the `(lo, hi)` values inside `accumulate`).
 pub(crate) fn par_sum_pair_groups<F: JoltField>(
     groups: usize,
     slots: usize,
@@ -721,6 +726,7 @@ pub(crate) fn map_reduce_chunks<R: Send>(
     }
 }
 
+/// Collect `f(0), …, f(len − 1)`.
 pub(crate) fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + Sync) -> Vec<T> {
     #[cfg(feature = "parallel")]
     {
@@ -937,6 +943,8 @@ pub(crate) fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
     }
 }
 
+/// First-bind value at half-domain index `y` of a raw column:
+/// `raw(2y) + r1·(raw(2y+1) − raw(2y))`.
 #[inline]
 pub(crate) fn bound_pair<F: JoltField>(raw: impl Fn(usize) -> F, r1: F, y: usize) -> F {
     let lo = raw(2 * y);

@@ -59,6 +59,7 @@ fn producer<Cfg: CommitmentConfig>(
     PrecommittedProducer::try_new(*profile, Cfg::committed_source_contract()?)
 }
 
+/// Public inputs needed to construct this setup's grouped schedules.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroupedScheduleParams {

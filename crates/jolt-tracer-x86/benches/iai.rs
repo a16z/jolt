@@ -41,6 +41,7 @@ fn row(kind: JoltInstructionKind, operands: Operands) -> JoltInstructionRow {
 
 fn bench_regs() -> [u64; REGS] {
     let mut pre = [0u64; REGS];
+    // Distinct operand values; the branch benches rely on x5 != x6.
     pre[5] = 1;
     pre[6] = 2;
     pre[7] = 1 << 20;

@@ -65,6 +65,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftDataBTable<XLEN
         debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [offset_scale, shift_data] = suffixes.try_into().unwrap();
+        // T = (L_b + L_s)·P_b·P_s = [L_b·P_b]·P_s + P_b·[L_s·P_s]
         prefixes[Prefixes::ShiftDataB] * offset_scale
             + prefixes[Prefixes::OffsetScaleB] * shift_data
     }

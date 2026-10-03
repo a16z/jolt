@@ -719,6 +719,7 @@ impl<T: Pod> AdviceTapeIO for Vec<T> {
     fn new_from_advice_tape() -> Self {
         let len = usize::new_from_advice_tape();
         let capacity = usize::new_from_advice_tape();
+        // panic and spoil the proof if capacity < len
         check_advice!(capacity >= len);
         let mut buf = Vec::<T>::with_capacity(capacity);
         let bytes = unsafe {

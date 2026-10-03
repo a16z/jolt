@@ -76,6 +76,7 @@ impl AkitaScheduleArtifacts {
         }
     }
 
+    /// Load Jolt's checked-in artifacts from a normal filesystem directory.
     pub fn from_directory(directory: impl AsRef<Path>) -> Result<Self, OpeningsError> {
         let directory = directory.as_ref();
         let read = |family: &str| {

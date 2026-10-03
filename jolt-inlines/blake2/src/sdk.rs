@@ -1,3 +1,4 @@
+//! High-level Blake2b hashing API for host and guest modes.
 use crate::{
     BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, PERSONA_SIZE_IN_BYTES, SALT_SIZE_IN_BYTES,
     STATE_VECTOR_LEN,

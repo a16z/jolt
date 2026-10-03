@@ -1,3 +1,4 @@
+//! This file provides high-level API to use BLAKE3 compression, both in host and guest mode.
 #[cfg(feature = "host")]
 use crate::FLAG_KEYED_HASH;
 use crate::{

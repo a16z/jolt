@@ -3,6 +3,7 @@ use std::fmt::Debug;
 
 use super::{InstructionFormat, NormalizedOperands};
 
+/// R-format operands for atomic memory operations.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatAMO {
     pub rd: u8,

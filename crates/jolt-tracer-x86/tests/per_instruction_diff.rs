@@ -270,6 +270,7 @@ fn alu_ri(rng: &mut StdRng, kind: JoltInstructionKind, wide_imm: bool) -> Instan
 fn upper_imm(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     let mut i = base_instance(rng, kind);
     i.row.operands.rd = Some(rd(rng));
+    // 20-bit immediate << 12, sign-extended (the U-format decode invariant).
     i.row.operands.imm = ((rng.gen_range(-(1i64 << 19)..(1i64 << 19))) << 12) as i128;
     i
 }
@@ -477,6 +478,7 @@ fn assert_valid_div0(rng: &mut StdRng) -> Instance {
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
     if rng.gen() {
+        // divisor == 0 requires quotient == u64::MAX.
         i.pre_regs[rs1 as usize] = 0;
         i.pre_regs[rs2 as usize] = u64::MAX;
         if rs1 == rs2 {
@@ -495,6 +497,7 @@ fn assert_valid_unsigned_remainder(rng: &mut StdRng) -> Instance {
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
     if rs1 == rs2 {
+        // remainder == divisor is only valid when both are zero.
         i.pre_regs[rs1 as usize] = 0;
     } else if rng.gen_ratio(1, 5) {
         i.pre_regs[rs2 as usize] = 0;
@@ -512,6 +515,7 @@ fn assert_mulu_no_overflow(rng: &mut StdRng) -> Instance {
     let rs2 = rd(rng);
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
+    // Keep both factors below 2^32 so the product cannot overflow.
     i.pre_regs[rs1 as usize] &= 0xFFFF_FFFF;
     i.pre_regs[rs2 as usize] &= 0xFFFF_FFFF;
     i

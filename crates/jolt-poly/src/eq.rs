@@ -523,6 +523,8 @@ mod tests {
 
     #[test]
     fn parallel_evaluations_sum_is_one() {
+        // num_vars=11 -> 2048 entries, above PAR_THRESHOLD=1024
+        // Verifies the parallel path produces a valid eq table whose entries sum to 1.
         let mut rng = ChaCha20Rng::seed_from_u64(300);
         let n = 11;
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -706,7 +708,7 @@ mod tests {
         // Verifies that the parallel path in evaluations() produces the correct
         // entry at every index — catches layout mismatches (blocked vs interleaved).
         let mut rng = ChaCha20Rng::seed_from_u64(500);
-        let n = 12;
+        let n = 12; // 4096 entries, well above PAR_THRESHOLD=1024
         let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let eq = EqPolynomial::new(point);
         let table = eq.evaluations();

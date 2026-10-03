@@ -401,10 +401,12 @@ impl<F: JoltField, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
     }
 }
 
+/// ra seed indices: `[0, γ, γ², γ + γ²]` — rs1 hot, rs2 hot, both.
 const RA_ZERO: u8 = 0;
 const RA_RS1: u8 = 1;
 const RA_RS2: u8 = 2;
 const RA_BOTH: u8 = 3;
+/// wa seed indices: `[0, 1]`.
 const WA_ZERO: u8 = 0;
 const WA_HOT: u8 = 1;
 

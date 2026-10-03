@@ -1,3 +1,5 @@
+//! Batch affine addition for BN254 G1 using Montgomery's inversion trick.
+
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;

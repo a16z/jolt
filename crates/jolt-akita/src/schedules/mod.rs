@@ -81,6 +81,7 @@ pub mod emit {
         )))
     }
 
+    /// Reachable scalar keys for one family grid.
     pub fn keys(
         num_polys: &[usize],
         (min_vars, max_vars): (usize, usize),

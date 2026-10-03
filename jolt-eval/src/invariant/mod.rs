@@ -242,6 +242,7 @@ fn run_checks_impl<I: Invariant>(
     results
 }
 
+/// Record of a red-team attempt that failed to find a violation.
 pub struct FailedAttempt {
     pub description: String,
     pub approach: String,

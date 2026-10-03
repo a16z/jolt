@@ -96,6 +96,7 @@ impl CommandBufferError {
     }
 }
 
+/// The device limit a [`MetalError::CapacityExceeded`] request ran into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapacityLimit {
     /// The request's byte size does not fit in `usize`.

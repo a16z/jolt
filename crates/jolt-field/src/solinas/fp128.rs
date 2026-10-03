@@ -1073,6 +1073,7 @@ impl<const P: u128> Field for Fp128<P> {
         }
     }
 
+    /// Fermat inversion with branchless zero-masking.
     #[inline(always)]
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow_u128(P.wrapping_sub(2));

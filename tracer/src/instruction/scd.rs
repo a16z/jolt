@@ -177,6 +177,7 @@ mod tests {
         cpu.mmu.store_doubleword(addr, 0xDEADBEEF_CAFEBABE).unwrap();
         cpu.x[11] = addr as i64;
 
+        // LR.W sets reservation_w (vr32)
         let decoded = Instruction::decode(encode_lrw(10, 11), 0x1000, false).unwrap();
         let Instruction::LRW(lrw) = decoded else {
             panic!("Expected LRW");

@@ -94,6 +94,7 @@ macro_rules! impl_signed_family {
                 self
             }
 
+            /// Returns the sign (`true` = non-negative).
             #[inline]
             pub const fn sign(&self) -> bool {
                 self.is_positive

@@ -77,6 +77,10 @@ const _: () = assert!(
     "InstructionCycleRow packs lookup table indices as u8"
 );
 
+/// One packed per-cycle row: the stage-5 facts plus the bytecode/RAM and
+/// packed fused-inc sources used by later one-hot kernels. The lookup index
+/// is split into native limbs and the PC/table/flags share one word, keeping
+/// the retained row at 40 bytes in Akita mode.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct InstructionCycleRow {
@@ -333,6 +337,8 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
     }
 }
 
+/// One RAF prefix–suffix decomposition — same shape and binding as the
+/// reference kernel's.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RafDecomposition<F: JoltField> {
     prefix: Polynomial<F>,
@@ -513,6 +519,7 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
+    /// `ALL_PREFIXES` indices referenced by tables with non-empty buckets.
     prefix_indices: Vec<usize>,
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table: enum value + suffix `Q` polynomials in
@@ -1299,6 +1306,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 }
             };
             if let Some(pending) = pending {
+                // First cycle bind: materialize the half-domain tables
+                // straight from the bases under this challenge — the same
+                // values a full-T materialization would bind to, without
+                // the full-T tables ever existing.
                 let half = self.claim_columns.len() / 2;
                 let combined_val: Vec<F> = map_indices(half, |position| {
                     let lo = self.pending_combined_base(&pending, 2 * position);

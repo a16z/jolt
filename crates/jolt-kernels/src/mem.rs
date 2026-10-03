@@ -1,3 +1,5 @@
+//! Return allocator-retained pages to the OS at memory lifetime boundaries.
+
 #[cfg(target_os = "macos")]
 extern "C" {
     /// NULL zone targets all zones; zero goal releases as much as possible.

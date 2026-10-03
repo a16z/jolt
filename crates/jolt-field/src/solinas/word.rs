@@ -267,6 +267,7 @@ macro_rules! define_solinas_prime {
                 }
             }
 
+            /// Fermat inversion with branchless zero-masking.
             #[inline(always)]
             fn inv_or_zero(self) -> Self {
                 let candidate = self.pow((P as u64).wrapping_sub(2));

@@ -25,6 +25,7 @@ use crate::{PolynomialEncoding, Shape, WitnessError};
 
 pub mod witnesses;
 
+/// Error label for the field-inline witness backend.
 pub const FIELD_INLINE_LABEL: &str = "jolt_vm.field_inline";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

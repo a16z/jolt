@@ -190,6 +190,7 @@ pub mod registers;
 
 pub use crate::utils::instruction_macros;
 
+/// Trace a multi-row instruction through its per-PC cached inline sequence.
 pub(crate) fn trace_inline_sequence(
     source: &Instruction,
     cpu: &mut Cpu,

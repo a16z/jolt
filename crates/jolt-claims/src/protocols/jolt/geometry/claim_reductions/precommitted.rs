@@ -12,6 +12,7 @@ use jolt_field::JoltField;
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::super::error::PointGeometryError;
 
+/// Degree bound shared by all two-phase precommitted reduction sumchecks.
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
 
 /// Round counts of a two-phase precommitted claim reduction, shared by the
@@ -543,7 +544,10 @@ mod tests {
         let two_inv = Fr::from_u64(2).inv_or_zero();
         assert_eq!(precommitted.cycle_phase_rounds(), &[0]);
         assert_eq!(precommitted.num_address_phase_rounds(), 0);
+        // The cycle-phase handoff scale excludes the address rounds this
+        // polynomial never participates in...
         assert_eq!(precommitted.cycle_phase_skip_scale::<Fr>(), two_inv);
+        // ...while the full final scale counts both phase gaps.
         assert_eq!(
             precommitted_skip_round_scale::<Fr>(&precommitted),
             two_inv * two_inv * two_inv

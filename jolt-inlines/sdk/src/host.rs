@@ -605,6 +605,7 @@ macro_rules! register_inlines {
     };
 }
 
+/// Helper macro to submit a single `InlineOp` to inventory.
 #[macro_export]
 macro_rules! __submit_inline_op {
     ($op:ty, $extension:expr) => {

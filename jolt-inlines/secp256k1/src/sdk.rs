@@ -95,6 +95,7 @@ impl Secp256k1Fq {
     pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fq { e: *arr }
     }
+    /// get limbs
     #[inline(always)]
     pub fn e(&self) -> [u64; 4] {
         self.e
@@ -397,6 +398,7 @@ impl Secp256k1Fr {
     pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Secp256k1Fr { e: *arr }
     }
+    /// get limbs
     #[inline(always)]
     pub fn e(&self) -> [u64; 4] {
         self.e

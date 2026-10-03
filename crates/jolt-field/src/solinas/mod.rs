@@ -132,6 +132,7 @@ pub const fn registered_prime_offset_spec(bits: u32, offset: u128) -> Option<Pri
     None
 }
 
+/// Check whether `(k, offset)` is an explicitly registered `2^k − offset` prime.
 pub const fn is_registered_prime_offset(bits: u32, offset: u128) -> bool {
     offset <= PRIME_OFFSET_MAX
         && bits <= PRIME_OFFSET_IMPLEMENTED_MAX_BITS

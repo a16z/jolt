@@ -14,6 +14,7 @@ use crate::AkitaField;
 /// Keep four on other targets to avoid spilling on baseline SSE2.
 const TILE: usize = if cfg!(target_arch = "aarch64") { 8 } else { 4 };
 
+/// One destination ring element as unreduced [`Fp128x8i32`] lanes.
 pub(super) type DigitAccumulator<const D: usize> = [Fp128x8i32; D];
 
 /// Every negacyclic shift of one `A` entry as canonical 16-bit digits.

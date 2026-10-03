@@ -107,6 +107,12 @@ where
     rounds_bound: usize,
 }
 
+/// Hand-written because the id-keyed table maps cannot go through the derive:
+/// `ChallengeIdOf<F, R>`/`OpeningIdOf<F, R>`/`DerivedIdOf<F, R>` have no `Allocative`
+/// impl, and giving them one cascades through jolt-claims for types that own
+/// no heap. Sized arithmetically instead — table bytes by `len()`, exact at
+/// the mid-stage snapshot (see
+/// [`visit_heap_free_elements`](crate::backend::visit_heap_free_elements)).
 #[cfg(feature = "allocative")]
 impl<F, R> allocative::Allocative for NaiveSumcheckProver<F, R>
 where

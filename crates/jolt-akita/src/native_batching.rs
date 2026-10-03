@@ -38,6 +38,8 @@ use crate::adapters::{
 };
 use crate::scheme::validate_group_order;
 
+/// Marker adapter selecting Akita's native batched opening as the Jolt batch
+/// opening protocol.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AkitaNativeBatching;
 

@@ -5,8 +5,11 @@ use rayon::prelude::*;
 
 use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized};
 
+/// Bound one-hot coefficient values indexed by `u16`. Each bind squares the
+/// table: `(a ≪ bits) | b` maps to `b + r·(a − b)`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CoeffLut<F> {
+    /// Power-of-two table with zero fixed at index 0.
     pub(super) values: Vec<F>,
 }
 
@@ -441,6 +444,7 @@ impl<F: JoltField> CycleState<F> {
         freed_generation
     }
 
+    /// Scatter the final cycle row into dense `(ra, wa, val)` arrays.
     pub(super) fn take_dense(&mut self, k: usize) -> (Vec<F>, Vec<F>, Vec<F>, F) {
         let phase = std::mem::replace(
             &mut self.0,
