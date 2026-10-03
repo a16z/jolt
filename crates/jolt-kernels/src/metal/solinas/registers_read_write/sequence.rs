@@ -1034,9 +1034,14 @@ impl SolinasMetal {
                 "registers read-write Metal state has more than 64 active registers",
             ));
         }
+        let private_buffer_pool_cap_bytes = if log_t == 29 {
+            0
+        } else {
+            PRIVATE_PAYLOAD_POOL_CAP_BYTES
+        };
         let private_buffer_pool_epoch = self.begin_private_buffer_pool_epoch(
             (physical_rows, log_t),
-            PRIVATE_PAYLOAD_POOL_CAP_BYTES,
+            private_buffer_pool_cap_bytes,
         )?;
 
         let (direct, direct_cooperative) = if uses_operand_carry(log_t, stage1_source) {
@@ -4449,6 +4454,17 @@ mod tests {
             let weights = vec![AkitaField::one(); 1 << 14];
             let message = sequence.message(&weights, &weights, gamma).unwrap();
             assert_eq!(message.quadratic, [AkitaField::zero(); 2]);
+            let payload = || {
+                new_private_payload_buffer::<u64>(
+                    &context,
+                    1024,
+                    MTLResourceOptions::StorageModePrivate,
+                    sequence.private_buffer_pool_epoch,
+                )
+                .unwrap()
+            };
+            drop(payload());
+            assert!(!payload().was_reused());
             assert!(context
                 .prepare_registers_read_write_cycle_sequence(source, 30, gamma)
                 .is_err());
