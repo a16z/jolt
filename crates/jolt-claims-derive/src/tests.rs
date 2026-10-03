@@ -76,6 +76,22 @@ fn expect_output_error(input: DeriveInput, expected: &str) {
 }
 
 #[test]
+fn output_claims_rejects_non_structs() {
+    expect_output_error(
+        parse_quote! { enum Demo<C> { A(C) } },
+        "OutputClaims/InputClaims can only be derived for structs",
+    );
+}
+
+#[test]
+fn output_claims_rejects_tuple_structs() {
+    expect_output_error(
+        parse_quote! { #[relation(SpartanOuter)] struct Demo<C>(C); },
+        "OutputClaims/InputClaims require a struct with named fields",
+    );
+}
+
+#[test]
 fn output_claims_rejects_extra_generics() {
     expect_output_error(
         parse_quote! {

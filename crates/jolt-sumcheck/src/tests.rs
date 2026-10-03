@@ -509,6 +509,59 @@ fn owned_compressed_verify_matches_borrowed_compressed_rounds() {
 }
 
 #[test]
+fn owned_compressed_verify_rejects_wrong_round_count() {
+    let proof = CompressedSumcheckProof {
+        round_polynomials: Vec::new(),
+    };
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_u64(0),
+    };
+
+    let mut transcript = Blake2bTranscript::<F>::new(b"sumcheck-test");
+    let result = proof.verify(
+        &claim,
+        BooleanHypercube,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+        &mut transcript,
+    );
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::WrongNumberOfRounds {
+            expected: 1,
+            got: 0,
+        })
+    ));
+}
+
+#[test]
+fn owned_compressed_verify_rejects_degree_bound_exceeded() {
+    let proof = CompressedSumcheckProof {
+        round_polynomials: vec![CompressedPoly::new(vec![F::from_u64(1), F::from_u64(2)])],
+    };
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_u64(3),
+    };
+
+    let mut transcript = Blake2bTranscript::<F>::new(b"sumcheck-test");
+    let result = proof.verify(
+        &claim,
+        BooleanHypercube,
+        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+        &mut transcript,
+    );
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::DegreeBoundExceeded { got: 2, max: 1 })
+    ));
+}
+
+#[test]
 fn owned_compressed_verify_rejects_empty_round_polynomial() {
     let proof = CompressedSumcheckProof {
         round_polynomials: vec![CompressedPoly::new(Vec::new())],

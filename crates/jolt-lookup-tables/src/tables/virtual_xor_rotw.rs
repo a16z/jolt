@@ -158,6 +158,11 @@ mod tests {
     }
 
     #[test]
+    fn mle_full_hypercube_rotw22() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 22>>();
+    }
+
+    #[test]
     fn mle_random_rotw19() {
         mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 19>>();
     }

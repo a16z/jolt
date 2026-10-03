@@ -673,6 +673,17 @@ mod tests {
     }
 
     #[test]
+    fn serde_round_trip_empty() {
+        let poly = Polynomial::<Fr>::new(vec![]);
+        let bytes = bincode::serde::encode_to_vec(&poly, bincode::config::standard()).unwrap();
+        let recovered: Polynomial<Fr> =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+                .unwrap()
+                .0;
+        assert_eq!(poly, recovered);
+    }
+
+    #[test]
     fn parallel_bind_matches_bind_to_field() {
         // n=11 -> 2048 evaluations, above PAR_THRESHOLD=1024
         let mut rng = ChaCha20Rng::seed_from_u64(201);

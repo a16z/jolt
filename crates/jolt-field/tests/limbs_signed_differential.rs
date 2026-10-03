@@ -310,6 +310,26 @@ fn hi32_ops_match_bigint() {
 }
 
 #[test]
+fn hi32_mul_full_range_oracle() {
+    // Full-limb SignedBigInt<3> multiplication (overflow-safe mac chains) as
+    // a second reference for S160 multiply across the ENTIRE input domain.
+    let mut rng = rng();
+    for _ in 0..1000 {
+        let a = two::signed::S160::new(rng.gen(), rng.gen(), rng.gen());
+        let b = two::signed::S160::new(rng.gen(), rng.gen(), rng.gen());
+        let product = a * b;
+        let wide = a
+            .to_signed_bigint_nplus1::<3>()
+            .mul_trunc::<3, 3>(&b.to_signed_bigint_nplus1::<3>());
+        assert_eq!(&product.magnitude_lo()[..], &wide.magnitude.0[..2]);
+        assert_eq!(
+            product.magnitude_hi() as u64,
+            wide.magnitude.0[2] & 0xFFFF_FFFF
+        );
+    }
+}
+
+#[test]
 fn hi32_conversions_match_bigint() {
     let mut rng = rng();
     for _ in 0..300 {

@@ -383,4 +383,10 @@ mod tests {
         let err = parse_instruction_count(&v7).unwrap_err();
         assert!(err.to_string().contains("unsupported"), "{err}");
     }
+
+    #[test]
+    fn malformed_output_is_an_error() {
+        assert!(parse_instruction_count(r#"{"kind":"benchmark"}"#).is_err());
+        assert!(parse_instruction_count("not json").is_err());
+    }
 }

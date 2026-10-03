@@ -250,6 +250,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn interleaved_default() {
+        let flags = CircuitFlagSet::default();
+        assert!(flags.is_interleaved_operands());
+    }
+
+    #[test]
     fn add_operands_not_interleaved() {
         let flags = CircuitFlagSet::default().set(CircuitFlags::AddOperands);
         assert!(!flags.is_interleaved_operands());

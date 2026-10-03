@@ -1662,6 +1662,46 @@ mod test_cpu {
     }
 
     #[test]
+    fn read_register() {
+        let mut cpu = create_cpu();
+        // Initial register values are 0 other than 0xb th register.
+        // Initial value of 0xb th register is temporal for Linux boot and
+        // I'm not sure if the value is correct. Then skipping so far.
+        for i in 0..31 {
+            if i != 0xb {
+                assert_eq!(0, cpu.read_register(i));
+            }
+        }
+
+        for i in 0..31 {
+            cpu.x[i] = i as i64 + 1;
+        }
+
+        for i in 0..31 {
+            match i {
+                // 0th register is hardwired zero
+                0 => assert_eq!(0, cpu.read_register(i)),
+                _ => assert_eq!(i as i64 + 1, cpu.read_register(i)),
+            }
+        }
+
+        for i in 0..31 {
+            cpu.x[i] = (0xffffffffffffffff - i) as i64;
+        }
+
+        for i in 0..31 {
+            match i {
+                // 0th register is hardwired zero
+                0 => assert_eq!(0, cpu.read_register(i)),
+                _ => assert_eq!(-(i as i64 + 1), cpu.read_register(i)),
+            }
+        }
+
+        // @TODO: Should I test the case where the argument equals to or is
+        // greater than 32?
+    }
+
+    #[test]
     fn tick() {
         let mut cpu = create_cpu();
         cpu.get_mut_mmu().init_memory(9);

@@ -328,6 +328,28 @@ mod tests {
         access.require_available("GPU dispatch").unwrap();
     }
 
+    #[cfg(target_os = "macos")]
+    mod gpu {
+        use super::*;
+
+        #[test]
+        fn uncertain_submission_rejects_device_buffer_read() {
+            let device = Device::system_default().unwrap();
+            let mut buffer = DeviceBuffer::<u32>::zeroed(&device, 1).unwrap();
+            {
+                let buffers = [&buffer.access];
+                let _submission = Submission::begin(&buffers).unwrap();
+            }
+
+            assert!(matches!(
+                buffer.read(),
+                Err(MetalError::BufferUnavailable {
+                    operation: "host read"
+                })
+            ));
+        }
+    }
+
     #[test]
     fn rejected_submission_does_not_clear_an_existing_poison() {
         let ready = BufferAccess::default();

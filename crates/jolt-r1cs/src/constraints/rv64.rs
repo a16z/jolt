@@ -990,6 +990,13 @@ mod execution_witness_tests {
     }
 
     #[test]
+    fn ld_rejects_wrong_ram_address() {
+        // Address must be rs1 + imm = 0x8000_1008, not the bare base.
+        let w = with_cell(&ld_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_1000));
+        assert_eq!(check(&w), Err(RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE));
+    }
+
+    #[test]
     fn sd_negative_offset_execution_witness_satisfies_constraints() {
         assert_eq!(check(&sd_witness()), Ok(()));
     }

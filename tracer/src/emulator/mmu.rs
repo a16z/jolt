@@ -1233,6 +1233,23 @@ mod test_mmu {
     }
 
     #[test]
+    fn test_mprv_uses_mpp_machine_fast_path() {
+        let mut mmu = setup_mmu();
+
+        mmu.update_addressing_mode(AddressingMode::SV39);
+        mmu.update_privilege_mode(PrivilegeMode::Machine);
+
+        let mprv_bit: u64 = 1 << 17;
+        let mpp_machine: u64 = (get_privilege_mode(3) as u64) << 11;
+        mmu.update_mstatus(mprv_bit | mpp_machine);
+
+        let v_address = DRAM_BASE;
+        let result = mmu.translate_address(v_address, &MemoryAccessType::Read);
+
+        assert_eq!(result, Ok(v_address));
+    }
+
+    #[test]
     fn loads_and_stores_round_trip_through_ram_and_report_word_state() {
         let mut mmu = setup_mmu();
         let addr = DRAM_BASE + 0x100;

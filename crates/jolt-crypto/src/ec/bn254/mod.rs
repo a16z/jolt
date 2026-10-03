@@ -334,7 +334,7 @@ pub(crate) fn field_to_fr<F: JoltField>(f: &F) -> ark_bn254::Fr {
 mod tests {
     use ark_serialize::CanonicalSerialize;
 
-    use super::{Bn254, Bn254G1};
+    use super::{Bn254, Bn254G1, Bn254G2};
 
     fn encode_with_trailing_byte<P: CanonicalSerialize>(point: &P) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -350,6 +350,14 @@ mod tests {
         let bytes = encode_with_trailing_byte(&Bn254::g1_generator().0);
         let json = serde_json::to_string(&bytes).expect("encode bytes");
         let err = serde_json::from_str::<Bn254G1>(&json).expect_err("trailing byte");
+        assert!(err.to_string().contains("exactly"), "{err}");
+    }
+
+    #[test]
+    fn g2_deserialize_rejects_wrong_length_encoding() {
+        let bytes = encode_with_trailing_byte(&Bn254::g2_generator().0);
+        let json = serde_json::to_string(&bytes).expect("encode bytes");
+        let err = serde_json::from_str::<Bn254G2>(&json).expect_err("trailing byte");
         assert!(err.to_string().contains("exactly"), "{err}");
     }
 }

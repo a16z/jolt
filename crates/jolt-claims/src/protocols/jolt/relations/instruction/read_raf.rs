@@ -114,3 +114,96 @@ impl SymbolicSumcheck for ReadRaf {
         output
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::protocols::jolt::geometry::instruction::instruction_ra;
+    use crate::protocols::jolt::{
+        JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltVirtualPolynomial,
+    };
+    use jolt_field::{Fr, Ring};
+
+    fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
+        InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))
+            .unwrap_or_else(|err| panic!("test read-RAF dimensions should be nonzero: {err}"))
+    }
+
+    #[test]
+    fn read_raf_evaluates_like_core_formula() {
+        let dimensions = read_raf_dimensions(2);
+        let relation = ReadRaf::new(dimensions);
+
+        let lookup_output = Fr::from_u64(3);
+        let left_lookup_operand = Fr::from_u64(5);
+        let right_lookup_operand = Fr::from_u64(7);
+        let gamma = Fr::from_u64(11);
+        let ra_0 = Fr::from_u64(2);
+        let ra_1 = Fr::from_u64(3);
+        let table_flags: Vec<_> = (0..LookupTableKind::<XLEN>::COUNT)
+            .map(|i| Fr::from_u64(i as u64 + 5))
+            .collect();
+        let table_values: Vec<_> = (0..LookupTableKind::<XLEN>::COUNT)
+            .map(|i| Fr::from_u64(2 * i as u64 + 13))
+            .collect();
+        let raf_constant = Fr::from_u64(23);
+        let raf_flag_coeff = Fr::from_u64(29);
+        let raf_flag = Fr::from_u64(31);
+        let zero = Fr::from_u64(0);
+
+        let input = relation.input_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == lookup_output_reduced() => lookup_output,
+                id if id == left_lookup_operand_reduced() => left_lookup_operand,
+                id if id == right_lookup_operand_reduced() => right_lookup_operand,
+                _ => zero,
+            },
+            |id| match *id {
+                JoltChallengeId::InstructionReadRaf(InstructionReadRafChallenge::Gamma) => gamma,
+                _ => zero,
+            },
+            |_| zero,
+        );
+
+        let output = relation.output_expression::<Fr>().evaluate(
+            |id| match *id {
+                id if id == instruction_ra(0) => ra_0,
+                id if id == instruction_ra(1) => ra_1,
+                JoltOpeningId::Polynomial {
+                    polynomial:
+                        JoltPolynomialId::Virtual(JoltVirtualPolynomial::LookupTableFlag(index)),
+                    relation: JoltRelationId::InstructionReadRaf,
+                } => table_flags[index],
+                id if id == instruction_raf_flag() => raf_flag,
+                _ => zero,
+            },
+            |_| zero,
+            |id| match *id {
+                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqTableValue(
+                    index,
+                )) => table_values[index],
+                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqRafConstant) => {
+                    raf_constant
+                }
+                JoltDerivedId::InstructionReadRaf(InstructionReadRafPublic::EqRafFlag) => {
+                    raf_flag_coeff
+                }
+                _ => zero,
+            },
+        );
+
+        assert_eq!(
+            input,
+            lookup_output + gamma * left_lookup_operand + gamma * gamma * right_lookup_operand
+        );
+        let table_sum = table_values
+            .iter()
+            .zip(table_flags.iter())
+            .fold(zero, |sum, (value, flag)| sum + *value * *flag);
+        assert_eq!(
+            output,
+            ra_0 * ra_1 * (table_sum + raf_constant + raf_flag_coeff * raf_flag)
+        );
+    }
+}

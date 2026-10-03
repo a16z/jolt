@@ -215,6 +215,27 @@ fn redteam_fallback_extracts_json_from_freeform_text() {
     }
 }
 
+#[test]
+fn redteam_zero_iterations_returns_immediately() {
+    let invariant = AlwaysPassInvariant;
+    let agent = MockAgent::always_ok("should not be called");
+    let config = RedTeamConfig {
+        num_iterations: 0,
+        ..Default::default()
+    };
+
+    let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
+
+    match result {
+        RedTeamResult::NoViolation { attempts } => {
+            assert!(attempts.is_empty());
+        }
+        _ => panic!("Expected NoViolation with empty attempts"),
+    }
+
+    assert!(agent.recorded_prompts().is_empty());
+}
+
 // Mock OptimizeEnv
 
 fn lloc() -> OptimizationObjective {
@@ -406,6 +427,21 @@ fn optimize_stops_when_agent_errors() {
     let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
 
     assert_eq!(result.attempts.len(), 1);
+}
+
+#[test]
+fn optimize_zero_iterations() {
+    let agent = MockAgent::always_ok("should not be called");
+    let mut env = MockOptimizeEnv::new().with_measurements(vec![m(&[(lloc(), 10.0)])]);
+
+    let config = opt_config(0);
+    let obj = lloc_obj();
+    let result = auto_optimize(&agent, &mut env, &obj, &config, Path::new("/tmp"));
+
+    assert!(result.attempts.is_empty());
+    assert_eq!(result.baseline_score, 10.0);
+    assert_eq!(result.best_score, 10.0);
+    assert!(agent.recorded_prompts().is_empty());
 }
 
 #[test]

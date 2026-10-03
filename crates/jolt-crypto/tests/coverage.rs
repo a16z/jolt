@@ -11,8 +11,31 @@ use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
+#[test]
+#[expect(clippy::op_ref)]
+fn g2_sub_ref() {
+    let g = Bn254::g2_generator();
+    let a = g.scalar_mul(&Fr::from_u64(7));
+    let b = g.scalar_mul(&Fr::from_u64(3));
+    let expected = a - b;
+    assert_eq!(a - &b, expected);
+}
+
+#[test]
+fn g2_msm_empty() {
+    let result = Bn254G2::msm(&[], &([] as [Fr; 0]));
+    assert!(result.is_identity());
+}
+
 fn gt_element() -> Bn254GT {
     Bn254::pairing(&Bn254::g1_generator(), &Bn254::g2_generator())
+}
+
+#[test]
+fn gt_identity_is_identity() {
+    let id = <Bn254GT as JoltGroup>::identity();
+    assert!(id.is_identity());
+    assert!(!gt_element().is_identity());
 }
 
 #[test]
@@ -31,6 +54,30 @@ fn gt_sub_assign() {
     let mut x = double;
     x -= e;
     assert_eq!(x, e);
+}
+
+#[test]
+#[expect(clippy::op_ref)]
+fn gt_add_ref() {
+    let e = gt_element();
+    let e2 = e.scalar_mul(&Fr::from_u64(2));
+    let expected = e + e2;
+    assert_eq!(e + &e2, expected);
+}
+
+#[test]
+#[expect(clippy::op_ref)]
+fn gt_sub_ref() {
+    let e = gt_element();
+    let e2 = e.scalar_mul(&Fr::from_u64(2));
+    let expected = e2 - e;
+    assert_eq!(e2 - &e, expected);
+}
+
+#[test]
+fn gt_msm_empty() {
+    let result = Bn254GT::msm(&[], &([] as [Fr; 0]));
+    assert!(result.is_identity());
 }
 
 #[test]
@@ -77,6 +124,19 @@ fn glv_four_scalar_mul_zero_scalar() {
     for result in &results {
         assert!(result.is_identity());
     }
+}
+
+#[test]
+fn glv_four_scalar_mul_empty() {
+    let results = glv::glv_four_scalar_mul(Fr::from_u64(42), &[]);
+    assert!(results.is_empty());
+}
+
+#[test]
+fn glv_fixed_base_vector_msm_g1_empty() {
+    let base = Bn254::g1_generator();
+    let results = glv::fixed_base_vector_msm_g1(&base, &[]);
+    assert!(results.is_empty());
 }
 
 #[test]

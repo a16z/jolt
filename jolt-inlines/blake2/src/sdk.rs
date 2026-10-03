@@ -623,6 +623,12 @@ mod params_tests {
     fn test_blake2b_oversized_salt_panics() {
         let _ = Blake2b::new_with_params(b"01234567890123456", b"");
     }
+
+    #[test]
+    #[should_panic(expected = "persona must be at most 16 bytes")]
+    fn test_blake2b_oversized_persona_panics() {
+        let _ = Blake2b::digest_with_params(b"", b"01234567890123456", b"");
+    }
 }
 
 #[cfg(all(test, feature = "host"))]

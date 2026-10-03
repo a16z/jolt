@@ -1383,6 +1383,15 @@ mod tests {
     }
 
     #[test]
+    fn jolt_to_akita_evals_passes_zero_var_polynomials_through() {
+        let jolt = [af(99)];
+        assert_eq!(
+            jolt_to_akita_evals(0, &jolt).expect("constant polynomial converts"),
+            vec![af(99)],
+        );
+    }
+
+    #[test]
     fn jolt_to_akita_evals_rejects_length_domain_mismatch() {
         let error = jolt_to_akita_evals(2, &[af(1), af(2), af(3)]).unwrap_err();
         assert!(matches!(error, OpeningsError::InvalidBatch(_)));

@@ -410,6 +410,33 @@ diff --git a/Cargo.toml b/Cargo.toml
     }
 
     #[test]
+    fn validate_rejects_oversized_input() {
+        let c = GuestMemoryConfig {
+            max_input_size: u64::MAX,
+            ..Default::default()
+        };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn validate_rejects_oversized_output() {
+        let c = GuestMemoryConfig {
+            max_output_size: u64::MAX,
+            ..Default::default()
+        };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn validate_rejects_oversized_stack() {
+        let c = GuestMemoryConfig {
+            stack_size: u64::MAX,
+            ..Default::default()
+        };
+        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
+    }
+
+    #[test]
     fn check_rejects_oversized_memory_before_compilation() {
         let inv = SoundnessInvariant;
         let setup = inv.setup();

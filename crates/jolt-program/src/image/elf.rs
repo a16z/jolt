@@ -311,6 +311,14 @@ mod tests {
     }
 
     #[test]
+    fn merge_ranges_sorts_and_keeps_disjoint_ranges_separate() {
+        assert_eq!(
+            merge_ranges(vec![(30, 40), (0, 5), (10, 20)]),
+            vec![(0, 5), (10, 20), (30, 40)]
+        );
+    }
+
+    #[test]
     fn merge_ranges_coalesces_overlapping_adjacent_and_nested_ranges() {
         // adjacent ranges must merge or text decoding would split an
         // instruction stream at the seam

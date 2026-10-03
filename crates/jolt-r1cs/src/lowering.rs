@@ -401,6 +401,18 @@ mod tests {
     }
 
     #[test]
+    fn missing_challenge_is_typed_error() {
+        let mut builder = R1csBuilder::<Fr>::new();
+        let mut sources = ClaimSourceTable::<Fr, Opening>::new();
+        let expression: Expr<Fr, Opening> = challenge(2usize);
+
+        let error = lower_claim_expr(&mut builder, &expression, &mut sources)
+            .expect_err("challenge is missing");
+
+        assert_eq!(error, ClaimLoweringError::MissingChallenge);
+    }
+
+    #[test]
     fn missing_opening_is_typed_error() {
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening>::new();
@@ -410,6 +422,18 @@ mod tests {
             .expect_err("opening is missing");
 
         assert_eq!(error, ClaimLoweringError::MissingOpening);
+    }
+
+    #[test]
+    fn missing_public_is_typed_error() {
+        let mut builder = R1csBuilder::<Fr>::new();
+        let mut sources = ClaimSourceTable::<Fr, Opening, Public>::new();
+        let expression: Expr<Fr, Opening, Public> = derived(Public::Offset);
+
+        let error = lower_claim_expr(&mut builder, &expression, &mut sources)
+            .expect_err("public is missing");
+
+        assert_eq!(error, ClaimLoweringError::MissingPublic);
     }
 
     #[test]

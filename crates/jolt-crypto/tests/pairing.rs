@@ -1,6 +1,6 @@
 //! Pairing bilinearity and consistency tests for BN254.
 
-use jolt_crypto::{Bn254, Bn254GT, JoltGroup, PairingGroup};
+use jolt_crypto::{Bn254, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
 use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -26,6 +26,19 @@ fn pairing_bilinearity() {
 }
 
 #[test]
+fn pairing_with_identity_gives_gt_identity() {
+    let g1 = Bn254::g1_generator();
+    let g2_id = Bn254G2::identity();
+
+    let result = Bn254::pairing(&g1, &g2_id);
+    assert_eq!(
+        result,
+        Bn254GT::identity(),
+        "e(G, O) should be identity in GT"
+    );
+}
+
+#[test]
 fn multi_pairing_matches_sum_of_individual() {
     // multi_pairing([(a,b), (c,d)]) == e(a,b) + e(c,d)  (additive notation)
     let mut rng = ChaCha20Rng::seed_from_u64(99);
@@ -46,6 +59,14 @@ fn multi_pairing_matches_sum_of_individual() {
         multi, sum,
         "multi_pairing should equal sum of individual pairings"
     );
+}
+
+#[test]
+fn generators_are_not_identity() {
+    let g1 = Bn254::g1_generator();
+    let g2 = Bn254::g2_generator();
+    assert!(!g1.is_identity());
+    assert!(!g2.is_identity());
 }
 
 #[test]
@@ -108,6 +129,26 @@ fn gt_mul_convenience_matches_add() {
 
     // Mul and Add should behave identically (both map to Fq12 multiplication).
     assert_eq!(e * e, e + e);
+}
+
+#[test]
+fn gt_scalar_mul_zero_is_identity() {
+    let g1 = Bn254::g1_generator();
+    let g2 = Bn254::g2_generator();
+    let e = Bn254::pairing(&g1, &g2);
+    let zero = Fr::from_u64(0);
+
+    assert!(e.scalar_mul(&zero).is_identity());
+}
+
+#[test]
+fn gt_scalar_mul_one_is_noop() {
+    let g1 = Bn254::g1_generator();
+    let g2 = Bn254::g2_generator();
+    let e = Bn254::pairing(&g1, &g2);
+    let one = Fr::from_u64(1);
+
+    assert_eq!(e.scalar_mul(&one), e);
 }
 
 #[test]

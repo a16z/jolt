@@ -680,4 +680,17 @@ mod encoding_tests {
             );
         }
     }
+
+    #[test]
+    fn load_imm_is_reserved_i_type_family() {
+        assert_eq!(
+            FieldInlineOp::from_i_type_funct3(7),
+            Some(FieldInlineOp::LoadImm)
+        );
+        assert_eq!(
+            FieldInlineOp::from_word(i_type_word(7, 0x7ff)),
+            Some(FieldInlineOp::LoadImm)
+        );
+        assert_eq!(FieldInlineOp::from_r_type_key(0, 7), None);
+    }
 }

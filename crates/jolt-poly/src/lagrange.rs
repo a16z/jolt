@@ -662,6 +662,15 @@ mod tests {
     }
 
     #[test]
+    fn symmetric_power_sums_width_2() {
+        // Domain {-2, -1, 0, 1, 2}: S_0 = 5, S_1 = 0, S_2 = 10
+        let sums = symmetric_power_sums(2, 3);
+        assert_eq!(sums[0], 5);
+        assert_eq!(sums[1], 0);
+        assert_eq!(sums[2], 10); // 4 + 1 + 0 + 1 + 4
+    }
+
+    #[test]
     fn centered_domain_start_matches_core_uniskip_convention() {
         assert_eq!(centered_domain_start(1), Ok(0));
         assert_eq!(centered_domain_start(3), Ok(-1));

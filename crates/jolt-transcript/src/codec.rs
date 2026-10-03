@@ -84,6 +84,17 @@ mod tests {
     }
 
     #[test]
+    fn bytes_msg_narg_rejects_oversized_length() {
+        let mut narg = Vec::new();
+        narg.extend_from_slice(&u64::MAX.to_le_bytes());
+        let mut cursor: &[u8] = &narg;
+        let before = cursor.len();
+        let result = BytesMsg::deserialize_from_narg(&mut cursor);
+        assert!(result.is_err());
+        assert_eq!(cursor.len(), before, "cursor must not advance on error");
+    }
+
+    #[test]
     // A representable length that survives `checked_add` but exceeds the
     // remaining buffer must be rejected by the bounds check BEFORE the payload
     // copy — the allocation is bounded by the caller-supplied NARG size. If the
