@@ -517,10 +517,11 @@ mod tests {
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::{Fr, Ring};
-    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
+    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
+    use jolt_riscv::JoltTraceRow as TraceRow;
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     use jolt_verifier::stages::relations::SumcheckInputPoints;
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhaseChallenges;
@@ -565,7 +566,7 @@ mod tests {
 
     fn with_fixture<R>(
         trace_order: TracePolynomialOrder,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>, &PrecommittedSchedule) -> R,
+        f: impl FnOnce(&TraceBackend, &PrecommittedSchedule) -> R,
     ) -> R {
         let instructions: Vec<JoltInstructionRow> = (0..3u64)
             .map(|index| JoltInstructionRow {
@@ -664,7 +665,7 @@ mod tests {
         SumcheckOutputClaims<Fr, RA>: OutputClaims<Fr>,
         ConcreteSumcheckChallenges<Fr, RA>: SumcheckChallenges<Fr, JoltChallengeId>,
     {
-        backend: &'a TraceBackend<OwnedTrace>,
+        backend: &'a TraceBackend,
         cycle_relation: &'a RC,
         cycle_claims: &'a SumcheckInputClaims<Fr, RC>,
         cycle_points: &'a SumcheckInputPoints<Fr, RC>,

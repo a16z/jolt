@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
 
-impl<T: TraceSource> TraceBackend<T> {
+impl TraceBackend {
     /// Materializes one cycle-domain witness column by walking the trace
     /// once; all per-witness logic lives on `W`.
     pub(crate) fn materialize_cycle<F: JoltField, W: Extract + ToField>(
@@ -112,7 +112,7 @@ impl<T: TraceSource> TraceBackend<T> {
     ) -> Result<Vec<V>, WitnessError> {
         let rows = checked_pow2(self.config.log_t)?;
         let env = WitnessEnv::new(&self.preprocessing);
-        let physical = self.trace.trace.as_slice();
+        let physical = self.trace.trace.proof_rows();
         let padding = TraceRow::default();
         let window = |index: usize| {
             let current = physical.get(index).unwrap_or(&padding);
@@ -126,7 +126,7 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
-impl<T: TraceSource> RowSource for TraceBackend<T> {
+impl RowSource for TraceBackend {
     fn random_access(&self) -> Option<crate::RandomAccessRows> {
         let cycles = checked_pow2(self.config.log_t).ok()?;
         crate::RandomAccessRows::new(
@@ -154,7 +154,7 @@ impl<T: TraceSource> RowSource for TraceBackend<T> {
             });
         }
         let env = WitnessEnv::new(&self.preprocessing);
-        let physical = self.trace.trace.as_slice();
+        let physical = self.trace.trace.proof_rows();
         let padding = TraceRow::default();
         let mut position = range.start;
         while position < range.end {
@@ -175,7 +175,7 @@ impl<T: TraceSource> RowSource for TraceBackend<T> {
     }
 }
 
-impl<T: TraceSource> BundleSource for TraceBackend<T> {
+impl BundleSource for TraceBackend {
     fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
         crate::collect_bundles(self, checked_pow2(self.config.log_t)?)
     }

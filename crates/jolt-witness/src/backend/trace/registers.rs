@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<T: TraceSource> TraceBackend<T> {
+impl TraceBackend {
     pub(crate) fn materialize_register_read_write_virtual<F: JoltField>(
         &self,
         id: JoltVirtualPolynomial,
@@ -33,7 +33,7 @@ impl<T: TraceSource> TraceBackend<T> {
                     values[register * cycles + cycle] = F::from_u64(value);
                 }
 
-                let Some(row) = self.trace.trace.get(cycle) else {
+                let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
                     continue;
                 };
                 if let Some(register) = row.rd_index() {
@@ -48,7 +48,7 @@ impl<T: TraceSource> TraceBackend<T> {
         }
 
         for cycle in 0..cycles {
-            let Some(row) = self.trace.trace.get(cycle) else {
+            let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
                 break;
             };
             let register = match id {

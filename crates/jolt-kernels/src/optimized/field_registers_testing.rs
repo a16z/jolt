@@ -22,7 +22,7 @@ use std::sync::Arc;
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_field::{CanonicalBytes, Fr, Ring};
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
+use jolt_program::execution::{JoltProgram, OwnedTrace, TraceEvent, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
@@ -31,6 +31,7 @@ use jolt_riscv::{
     FieldInlineOp, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
     RV64IMAC_JOLT_FIELD_INLINE,
 };
+use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 const ENTRY: u64 = RAM_START_ADDRESS;
@@ -44,17 +45,18 @@ fn encode(value: Fr) -> FieldEncodedValue {
 /// A register-consistent field-inline trace builder over the 16-slot field register
 /// file.
 pub(crate) struct FieldRegisterTraceFixture {
-    rows: Vec<TraceRow>,
+    rows: Vec<TraceEvent>,
     bytecode: Vec<JoltInstructionRow>,
     state: [Fr; 16],
     counter: u64,
 }
 
 /// One active field-inline cycle: the instruction row with its field-inline trace data.
-fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-    let mut row = TraceRow::from_instruction(instruction).unwrap();
-    row.field_inline = Some(Arc::new(data));
-    row
+fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
+    TraceEvent {
+        row: TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),
+        field_inline: Some(Arc::new(data)),
+    }
 }
 
 impl FieldRegisterTraceFixture {
@@ -118,8 +120,11 @@ impl FieldRegisterTraceFixture {
     /// An ordinary (inactive field-inline) row: an ADDI with no register traffic.
     pub(crate) fn noop(&mut self) {
         let instruction = self.instruction(JoltInstructionKind::ADDI, Some(1), Some(0), None, 0);
-        self.rows
-            .push(TraceRow::from_instruction(instruction).unwrap());
+        self.rows.push(
+            TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1)
+                .unwrap()
+                .into(),
+        );
     }
 
     pub(crate) fn load_imm(&mut self, rd: u8, imm: u64) {
@@ -204,11 +209,7 @@ impl FieldRegisterTraceFixture {
 
     /// Run `f` against a field-inline trace backend padded to `2^log_t` cycles, with
     /// the field-inline witness view attached.
-    pub(crate) fn with_plane<R>(
-        self,
-        log_t: usize,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
-    ) -> R {
+    pub(crate) fn with_plane<R>(self, log_t: usize, f: impl FnOnce(&TraceBackend) -> R) -> R {
         assert!(self.rows.len() <= 1 << log_t, "fixture overflows 2^log_t");
         let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
@@ -237,10 +238,27 @@ impl FieldRegisterTraceFixture {
                 lookups_ra_virtual_log_k_chunk: 16,
             },
         );
+        let data = self
+            .rows
+            .into_iter()
+            .map(|mut event| {
+                let row = event.row;
+                let instruction = row.instruction();
+                let pc = preprocessing
+                    .bytecode
+                    .get_pc(&instruction)
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+                event.row =
+                    TraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap();
+                event
+            })
+            .collect();
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(self.rows), Default::default(), None, None),
+            TraceOutput::new(OwnedTrace::from_data(data), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs)
             .with_field_inline()

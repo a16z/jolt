@@ -266,8 +266,8 @@ mod tests {
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
     use jolt_riscv::{
-        CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NonMemoryState,
-        NormalizedOperands,
+        JoltInstructionKind, JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess,
+        RegisterState, RV64IMAC_JOLT,
     };
 
     use super::*;
@@ -276,20 +276,24 @@ mod tests {
     fn rejects_register_outside_protocol_domain() {
         let instruction = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
+            address: 0x8000_0000,
             operands: NormalizedOperands {
                 rs1: Some(200),
                 ..Default::default()
             },
             ..Default::default()
         };
-        let row = JoltTraceRow::from_components(
-            CapturedState::NonMemory(NonMemoryState::default()),
-            &instruction,
-            0,
+        let bytecode = BytecodePreprocessing::preprocess(
+            vec![instruction],
+            instruction.address as u64,
+            RV64IMAC_JOLT,
         )
         .unwrap();
+        let pc = u32::try_from(bytecode.get_pc(&instruction).unwrap()).unwrap();
+        let row =
+            JoltTraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, pc).unwrap();
         let preprocessing = JoltProgramPreprocessing {
-            bytecode: BytecodePreprocessing::default(),
+            bytecode,
             ram: RAMPreprocessing::default(),
             memory_layout: MemoryLayout::default(),
             max_padded_trace_length: 1,

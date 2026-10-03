@@ -25,7 +25,7 @@ pub fn prove(
         trace,
     } = support::prepare(case);
     let config = ProverConfig::derive::<Fr>(
-        trace.trace.rows(),
+        trace.trace.data().proof_rows(),
         &preprocessing.memory_layout,
         preprocessing.ram.min_bytecode_address,
         preprocessing.ram.bytecode_words.len(),

@@ -152,7 +152,6 @@ mod field_inline_round_trip {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
-    use jolt_program::execution::OwnedTrace;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::stages::stage2::product_tau_low;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
@@ -162,7 +161,7 @@ mod field_inline_round_trip {
         addi_only_backend, field_arithmetic_backend, LOG_T,
     };
 
-    fn round_trip(trace_backend: TraceBackend<OwnedTrace>) {
+    fn round_trip(trace_backend: TraceBackend) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
