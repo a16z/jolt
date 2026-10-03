@@ -4,8 +4,8 @@ Status: implemented on `refactor/unify-trace-rows`, based on upstream
 [`47130f3dc`](https://github.com/a16z/jolt/commit/47130f3dc9a51a7ac2754a98ff0aa31981a6b810)
 (2026-10-03), after [#1818](https://github.com/a16z/jolt/pull/1818) and
 [#1734](https://github.com/a16z/jolt/pull/1734). This change addresses
-[#1839](https://github.com/a16z/jolt/issues/1839). Validation is in progress;
-the acceptance matrix below specifies checks, not completed results.
+[#1839](https://github.com/a16z/jolt/issues/1839). Implementation and validation
+results, including measurement limits, are recorded below.
 
 ## Implemented design
 
@@ -356,6 +356,13 @@ migration. The deployed proof and preprocessing formats are unchanged.
 `Program::trace_to_file` still writes raw `Cycle` records and is outside this
 wire migration. See [summary implementation](../crates/jolt-host/src/analyze.rs).
 
+The accompanying telemetry change advances the span taxonomy to version 4.
+`ProverConfig::derive_compact` is removed; every feature mode emits
+`ProverConfig::derive`. This configuration span belongs to the SDK/profile
+prelude, outside the root proving span. Telemetry consumers must account for
+the removed label. This schema version is separate from the analysis archive's
+version 1; proof and preprocessing serialization are unaffected.
+
 ## Structural memory effect and scope
 
 The following estimates compare with `47130f3dc`; they are element-storage
@@ -398,8 +405,64 @@ emulator execution have not been redesigned.
 
 ## Validation and acceptance
 
-This is the acceptance plan, not a record of completed commands. Results and
-measurements must identify the tested revision and feature configuration.
+The completed runs below cover the unified-row implementation through
+`4e9f1cdd8`, based on upstream `47130f3dc`. They precede the accompanying
+telemetry taxonomy version 4 change. Counts are per run, not a total of unique
+tests across feature configurations.
+
+| Scope | Configuration | Result |
+| --- | --- | --- |
+| `jolt-riscv` core | Base | 67 passed |
+| `jolt-riscv` core | Field-inline | 79 passed |
+| Affected-crate suites | Base | 654 passed, 8 skipped |
+| Affected-crate suites | Field-inline | 635 passed, 3 skipped |
+| Full `jolt-prover` suite | `prover-fixtures` | 23 passed |
+| Full `jolt-prover` suite | `prover-fixtures,zk` | 29 passed |
+| Full `jolt-prover` suite | `prover-fixtures,akita` | 30 passed |
+| Full `jolt-prover` suite | `prover-fixtures,field-inline` | 33 passed |
+| Full `jolt-prover` suite | `prover-fixtures,field-inline,zk` | 23 passed |
+| Full `jolt-prover` suite | `prover-fixtures,field-inline,akita` | 30 passed |
+| `tracer` | `test-utils,field-inline,fp128-field-inline` | 208 passed |
+
+The skips are feature- or ignore-related, not missing guest-toolchain
+substitutes for execution. Guest end-to-end tests executed in the completed
+acceptance runs. Workspace clippy passed with both `host` and `host,zk`;
+selected field-inline clippy checks also passed. No-default-feature checks
+passed for `jolt-riscv` and `jolt-program` in plain, serialization, and
+field-inline configurations.
+
+Deterministic clear Dory fixtures were regenerated in separate worktrees at
+`47130f3dc` and `4e9f1cdd8`, using the same guest inputs and four Rayon threads.
+The proof, preprocessing, and public-input sections are byte-identical:
+
+| Fixture | Proof bytes | Proof SHA-256 |
+| --- | ---: | --- |
+| `standard-muldiv-small` (optimized) | 64,800 | `c9b841c1dce5cb5562aa91c7e2eb42f784634c75bb4b05e763d5a0bba87262e9` |
+| `standard-field-inline-eqpoly-modular-v4` (reference) | 70,186 | `c07071ec31c31bb05a6ca982c0edc376f04944b22b8833b92e3af97d3a199d12` |
+
+Both fresh proofs verified before their respective tamper-rejection checks.
+At `b233f6f5e`, the telemetry version 4 profiling smoke test passed (one test,
+no skips), and profiling-enabled clippy passed. All five full verifier
+configurations also passed:
+
+| `jolt-verifier` features | Passed | Skipped |
+| --- | ---: | ---: |
+| `prover-fixtures` | 162 | 14 |
+| `prover-fixtures,zk` | 137 | 25 |
+| `prover-fixtures,akita` | 102 | 9 |
+| `prover-fixtures,field-inline` | 156 | 7 |
+| `prover-fixtures,field-inline,akita` | 105 | 6 |
+
+The final implementation at `b7a9d1eb9` adds a targeted hot-path adjustment:
+`proof_rows()` is inlineable across crates, and each random-access window
+reuses one proof slice. Disassembly confirms that the two new out-of-line
+getter calls per window are eliminated in both feature modes. This preserves
+the checked prefix bound and avoids adding call overhead to row extraction.
+After this adjustment, all 38 ordinary and 53 field-inline witness tests passed,
+as did both workspace clippy configurations, formatting, and style checks.
+
+Performance/memory measurements are recorded below. They distinguish retained
+row storage from process peak memory and row production from proving time.
 
 Permanent tests cover independent layout and semantic properties: 64-byte
 `Copy` rows, metadata/control bounds, exact accepted instruction reconstruction,
@@ -424,9 +487,10 @@ allocation when another `Arc` owner exists. Partial consumption, shared proof
 bounds, padding/lookahead, and lengths around powers of two have distinct
 failure signals. Contextual import must reject PC/program mismatches.
 
-Run affected-crate suites (`jolt-riscv`, `jolt-program`, `jolt-host`, `tracer`,
-`jolt-tracer-x86`, `jolt-witness`, and `jolt-kernels`) and the current acceptance
-commands, always using nextest:
+The acceptance matrix covers affected-crate suites (`jolt-riscv`,
+`jolt-program`, `jolt-host`, `tracer`, `jolt-tracer-x86`, `jolt-witness`, and
+`jolt-kernels`) and the following commands. The tables above record the
+completed runs; test runs always use nextest.
 
 ```bash
 cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --cargo-quiet
@@ -438,6 +502,7 @@ cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk --ca
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita --cargo-quiet
 cargo nextest run -p jolt-verifier --features prover-fixtures --test-threads 1 --cargo-quiet
 cargo nextest run -p jolt-verifier --features prover-fixtures,zk --test-threads 1 --cargo-quiet
+cargo nextest run -p jolt-verifier --features prover-fixtures,akita --test-threads 1 --cargo-quiet
 cargo nextest run -p jolt-verifier --features prover-fixtures,field-inline --test-threads 1 --cargo-quiet
 cargo nextest run -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1 --cargo-quiet
 cargo nextest run -p jolt-witness --features test-utils,parallel,field-inline --cargo-quiet
@@ -460,26 +525,80 @@ verification and tamper rejection for randomized ZK proofs. Preserve Akita
 and committed-program/advice fixture coverage without restoring deleted
 legacy-prover machinery.
 
-Measure three paths separately: the previously compact SDK/profile path,
-generic execution-to-witness handoff, and field-inline handoff. Record row
-and sparse-event capacities, subprocess peak RSS and physical footprint
-where available, tracing time, handoff time, and prover time. Use existing
-fibonacci and SHA tracing benchmarks plus optimized fibonacci and a
-memory-heavy prover workload on the same machine and thread count. Repeat
-apparent regressions; target no reproducible end-to-end prover-time regression
-above 2%. Profiling excludes tracing, so its proving timer alone cannot
-establish faster row production or handoff.
+### Measured behavior
 
-The field profiling workload is available through:
+Measurements compare baseline `47130f3dc` with implementation `b7a9d1eb9`
+on the same Linux VM (16 vCPUs, AMD EPYC 9554P, 62 GiB RAM, Rust 1.95.0),
+using four Rayon workers and the optimized `ci` profile (`opt-level=3`, no
+LTO). `TRACER_PARALLEL` was unset. Separate target directories and copied
+binaries prevented Cargo artifacts from crossing revisions.
+
+A temporary diagnostic invoked the production trace/config/witness
+constructors in fresh processes, with identical pinned guest ELFs and inputs.
+Five alternating samples per variant excluded guest compilation and
+preprocessing from their timers. The diagnostic was removed afterward;
+no measurement-only API or benchmark remains in the workspace.
+
+| Handoff path | Actual cycles / field events | Baseline witness construction, median ms | Unified, median ms |
+| --- | ---: | ---: | ---: |
+| Ordinary compact Fibonacci | 197,605 / 0 | 0.0010 | 0.0010 |
+| Ordinary generic Fibonacci | 197,605 / 0 | 24.4148 | 0.0010 |
+| Ordinary generic SHA-256 chain | 136,766 / 0 | 18.4076 | 0.0007 |
+| Fibonacci with field support, no field activity | 197,605 / 0 | 22.4824 | 1.1953 |
+| Active field operations | 1,761 / 68 | 0.1921 | 0.0272 |
+
+The generic conversion cost disappears. The old ordinary compact path already
+had constant-time handoff. Field-enabled handoff still validates field state;
+it shares the row allocation and sparse events.
+
+For inactive-field Fibonacci, retained row-element storage decreases from
+26,874,280 to 12,646,720 bytes, and median RSS after witness construction
+falls from 31.047 to 17.027 MiB. For active field operations, the row-element
+lower bound decreases from 239,496 to 113,792 bytes (`136N` versus
+`64N + 16M`); this tiny workload's process RSS remains about 5.2 MiB.
+These element totals exclude payload bodies, Arc headers, unused capacity,
+and other allocations. The new aggregate keeps capacities private, so they
+were not inferred from lengths. Process peak RSS is essentially unchanged
+in these trace diagnostics: approximately 55 MiB for ordinary Fibonacci,
+88 MiB with field support, and 37 MiB for the small active field workload.
+The emulator still determines that peak.
+
+Cold trace timing varied substantially. The final ordinary compact/unified
+Fibonacci medians were 47.219/54.114 ms, with ranges 45.967–54.282 and
+37.858–59.967 ms; SHA medians were 43.973/51.544 ms, with ranges
+37.864–50.385 and 32.448–52.711 ms. Earlier paired batches were flat for
+Fibonacci and faster for SHA. The initial active-field slowdown reversed in
+a dedicated ten-pair repetition. These samples do not establish a stable
+trace-throughput change. The reported handoff and storage improvements do
+not depend on claiming one.
+
+The existing optimized Dory profiler separately measures proving time,
+excluding tracing and witness construction. Three alternating final pairs
+used Fibonacci and SHA-256 chaining at scale 18, plus the fixed-input field
+workload at scale 16. The field guest has 1,009 actual cycles in this profiler;
+its inputs differ from the larger-limb handoff diagnostic, and `--scale` does
+not sweep its payload density.
+
+| Optimized Dory workload | Baseline median [min–max], seconds | Unified median [min–max], seconds | Median change |
+| --- | ---: | ---: | ---: |
+| Fibonacci, scale 18 | 13.265 [13.104–13.705] | 13.411 [13.017–13.552] | +1.10% |
+| SHA-256 chain, scale 18 | 12.470 [12.367–12.705] | 12.616 [12.575–12.668] | +1.17% |
+| Field operations, scale 16 | 1.003 [0.999–1.061] | 1.010 [0.952–1.027] | +0.78% |
+
+All three final median changes are below 2%; no reproducible regression above
+that target was observed in this measured matrix.
+
+These are bounded `ci`-profile measurements, not a large-scale or fat-LTO
+release performance guarantee. The end-to-end target is no reproducible
+prover-time regression above 2%; the sample ranges and configuration must
+accompany any claim about that target. Reproduce the proving measurements
+in separate worktrees with:
 
 ```bash
-cargo run --release -p jolt-prover --features profiling,field-inline -- profile --name field-ops --backend optimized --format chrome
-cargo run --release -p jolt-prover --features profiling,field-inline,akita -- profile --name field-ops --backend optimized --format chrome
+RAYON_NUM_THREADS=4 cargo run --profile ci -p jolt-prover --features profiling -- profile --name fibonacci --scale 18 --backend optimized --format chrome
+RAYON_NUM_THREADS=4 cargo run --profile ci -p jolt-prover --features profiling -- profile --name sha2-chain --scale 18 --backend optimized --format chrome
+RAYON_NUM_THREADS=4 cargo run --profile ci -p jolt-prover --features profiling,field-inline -- profile --name field-ops --scale 16 --backend optimized --format chrome
 ```
-
-`field-ops` has fixed-size input; `--scale` does not sweep payload densities.
-Report actual row/event counts and include a base workload in a field-enabled
-build to measure sparse-event overhead.
 
 ## Alternatives considered
 
