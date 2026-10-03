@@ -73,6 +73,13 @@ fn captured_state(
     };
     let ram_address = cycle.ram_access().address() as u64;
 
+    if (is_load || is_store) && !ram_address_is_rs1_plus_imm(rs1_value, instruction, ram_address) {
+        return Err(contract(
+            kind,
+            "load/store RamAddress must equal Rs1Value + Imm without wrapping",
+        ));
+    }
+
     if is_load {
         // RamReadValue = RamWriteValue = RdWriteValue; no rs2.
         if rs2_value != 0 {
@@ -115,6 +122,19 @@ fn captured_state(
             rd_write_value,
         }))
     }
+}
+
+/// R1CS row 0 (`RamAddrEqRs1PlusImmIfLoadStore`) holds over the proof field, so
+/// `Rs1Value + Imm` must equal `RamAddress` as integers. The emulator computes
+/// effective addresses modulo 2^64 (`wrapping_add`), so a base/offset pair that
+/// wraps yields an address the constraint cannot accept.
+#[inline]
+fn ram_address_is_rs1_plus_imm(
+    rs1_value: u64,
+    instruction: &JoltInstructionRow,
+    ram_address: u64,
+) -> bool {
+    i128::from(rs1_value).checked_add(instruction.operands.imm) == Some(i128::from(ram_address))
 }
 
 #[inline]
@@ -308,6 +328,43 @@ mod tests {
                 &err,
                 CycleConversionError::MemoryRowContractViolation { detail, .. }
                     if detail.contains("RamWriteValue must equal Rs2Value")
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// R1CS row 0 forces `RamAddress = Rs1Value + Imm` over the proof field, so
+    /// a load/store row whose address is anything else (for example the wrapped
+    /// `(Rs1Value + Imm) mod 2^64`) must be refused at the phase boundary.
+    #[test]
+    fn tampered_ram_addresses_violate_the_memory_row_contract() {
+        let preprocessing = preprocessing();
+        let cycles = traced_cycles();
+
+        let Cycle::LD(mut ld_cycle) = cycles[1] else {
+            panic!("expected an LD cycle");
+        };
+        ld_cycle.ram_access.address += 8;
+        let err = cycle_to_trace_row(&ld_cycle.into(), &preprocessing).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                CycleConversionError::MemoryRowContractViolation { detail, .. }
+                    if detail.contains("RamAddress must equal Rs1Value + Imm")
+            ),
+            "got {err:?}"
+        );
+
+        let Cycle::SD(mut sd_cycle) = cycles[2] else {
+            panic!("expected an SD cycle");
+        };
+        sd_cycle.ram_access.address = 0;
+        let err = cycle_to_trace_row(&sd_cycle.into(), &preprocessing).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                CycleConversionError::MemoryRowContractViolation { detail, .. }
+                    if detail.contains("RamAddress must equal Rs1Value + Imm")
             ),
             "got {err:?}"
         );

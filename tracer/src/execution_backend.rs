@@ -593,6 +593,7 @@ mod chunked_tests {
 mod tests {
     use super::*;
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
+    use crate::trace_row::CycleConversionError;
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
 
@@ -638,6 +639,73 @@ mod tests {
         let image = output.final_memory.expect("memory image present");
         assert!(!image.bytes.is_empty());
         assert!(!output.device.panic);
+    }
+
+    fn compact_trace_of(
+        text: &[u32],
+    ) -> Result<TraceOutput<Arc<Vec<JoltTraceRow>>>, CompactTraceError> {
+        use common::jolt_device::MemoryLayout;
+        use jolt_program::execution::build_jolt_program;
+        use jolt_program::preprocess::JoltProgramPreprocessing;
+        use jolt_riscv::RV64IMAC_JOLT;
+
+        let elf = build_elf64(text, &[], StrtabOrder::GnuLd);
+        let memory_config = MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        };
+        let program = build_jolt_program(&elf).expect("valid ELF");
+        let preprocessing = JoltProgramPreprocessing::new(
+            program.expanded_bytecode.clone(),
+            program.memory_init.clone(),
+            MemoryLayout::new(&memory_config),
+            program.entry_address,
+            256,
+            RV64IMAC_JOLT,
+        )
+        .expect("preprocessing");
+        let inputs = TraceInputs {
+            memory_config,
+            ..Default::default()
+        };
+        TracerBackend::new().trace_compact(&program, inputs, &preprocessing.bytecode)
+    }
+
+    /// `addi x1, x0, -8 ; ld x2, 8(x1)` computes its effective address modulo
+    /// 2^64, so the load reads the zero-padding word at address 0 while R1CS
+    /// row 0 (`RamAddress = Rs1Value + Imm`, over the field) has no solution.
+    /// The proof-facing conversion must refuse the trace rather than emit a row
+    /// whose honest witness violates the constraint.
+    #[test]
+    fn trace_compact_rejects_a_load_whose_effective_address_wraps() {
+        let result = compact_trace_of(&[0xff80_0093, 0x0080_b103, 0x0000_006f]);
+        assert!(
+            matches!(
+                &result,
+                Err(CompactTraceError::Row(
+                    CycleConversionError::MemoryRowContractViolation { detail, .. }
+                )) if detail.contains("RamAddress must equal Rs1Value + Imm")
+            ),
+            "got {:?}",
+            result.map(|output| output.trace.len())
+        );
+    }
+
+    /// A negative offset overflows in `u64` arithmetic but not over the
+    /// integers, so it is a valid address computation: `auipc x1, 0 ;
+    /// addi x1, x1, 16 ; ld x2, -8(x1)` reads the program word at 0x8000_0008.
+    #[test]
+    fn trace_compact_accepts_a_load_with_a_negative_offset() {
+        let output = compact_trace_of(&[0x0000_0097, 0x0100_8093, 0xff80_b103, 0x0000_006f])
+            .expect("in-range negative offset must convert");
+        let load = output
+            .trace
+            .iter()
+            .find(|row| row.is_load())
+            .expect("trace contains the load");
+        assert_eq!(load.ram_address(), 0x8000_0008);
+        assert_eq!(load.rs1_value(), 0x8000_0010);
+        assert_eq!(load.imm(), -8);
     }
 
     #[test]
