@@ -17,7 +17,7 @@
 //!
 //! See `specs/x86-tracer-backend.md` for the design (row templates over the
 //! statically expanded bytecode; fail-fast on unsupported rows; bit-identical
-//! `TraceRow` streams vs. the reference `TracerBackend`).
+//! `JoltTraceRow` streams vs. the reference `TracerBackend`).
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 mod native;

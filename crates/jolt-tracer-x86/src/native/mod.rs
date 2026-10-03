@@ -13,10 +13,13 @@ use std::sync::Arc;
 use common::jolt_device::JoltDevice;
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-    TraceError, TraceInputs, TraceOutput, TraceRow,
+    OwnedTrace, TraceError, TraceInputs, TraceOutput,
 };
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
+use jolt_program::preprocess::BytecodePCMapper;
+use jolt_riscv::{
+    JoltInstructionKind, JoltInstructionRow, JoltTraceRow, RamAccess, RamRead, RamWrite,
+    RegisterRead, RegisterState, RegisterWrite,
+};
 
 use compile::CompiledProgram;
 use memory::MemoryPlane;
@@ -185,6 +188,7 @@ impl X86TracerBackend {
 
         Ok(RecordRunOutput {
             observations,
+            compiled,
             device: host.device,
             final_memory: MemoryImage {
                 bytes: plane.materialized_nonzero_bytes(),
@@ -255,7 +259,7 @@ impl ExecutionBackend for X86TracerBackend {
     type Trace = OwnedTrace;
 
     /// Record mode: a fast pass sizes the observation buffer exactly, then the
-    /// record body fills it and a Rust pass reassembles `TraceRow`s.
+    /// record body fills it and a Rust pass reassembles `JoltTraceRow`s.
     ///
     /// Two passes cost about 12% over recording alone (the fast pass runs at
     /// several hundred MHz) and buy an exactly-sized buffer plus a
@@ -275,7 +279,11 @@ impl ExecutionBackend for X86TracerBackend {
                 "record pass emitted a different row count than the fast pass",
             ));
         }
-        let rows = Observation::reassemble_rows(&program.expanded_bytecode, &record.observations)?;
+        let rows = Observation::reassemble_rows(
+            &program.expanded_bytecode,
+            record.compiled.pc_map(),
+            &record.observations,
+        )?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
             record.device,
@@ -288,6 +296,7 @@ impl ExecutionBackend for X86TracerBackend {
 /// Result of a recording pass.
 struct RecordRunOutput {
     observations: Vec<Observation>,
+    compiled: Arc<CompiledProgram>,
     device: JoltDevice,
     final_memory: MemoryImage,
     advice_tape: Vec<u8>,
@@ -297,19 +306,28 @@ impl Observation {
     /// Combines static bytecode with recorded values into validated rows.
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
+        pc_map: &BytecodePCMapper,
         observations: &[Self],
-    ) -> Result<Vec<TraceRow>, TraceError> {
+    ) -> Result<Vec<JoltTraceRow>, TraceError> {
         let mut rows = Vec::with_capacity(observations.len());
         for observation in observations {
             let row = bytecode
                 .get(observation.row_index as usize)
                 .ok_or(TraceError::Backend("observation row index out of range"))?;
-            rows.push(TraceRow::new(
+            let pc = pc_map
+                .get_instruction_pc(row)
+                .ok_or(TraceError::MissingBytecodePc {
+                    address: row.address as u64,
+                    virtual_sequence_remaining: row.virtual_sequence_remaining,
+                })?;
+            let pc = u32::try_from(pc).map_err(|_| TraceError::BytecodePcTooWide { pc })?;
+            let operands = row.integer_operands();
+            rows.push(JoltTraceRow::new(
                 *row,
                 RegisterState {
-                    rs1: Self::register_read(row.operands.rs1, observation.rs1),
-                    rs2: Self::register_read(row.operands.rs2, observation.rs2),
-                    rd: row.operands.rd.map(|register| RegisterWrite {
+                    rs1: Self::register_read(operands.rs1, observation.rs1),
+                    rs2: Self::register_read(operands.rs2, observation.rs2),
+                    rd: operands.rd.map(|register| RegisterWrite {
                         register,
                         // x0 reads as zero on both sides of a write.
                         pre_value: if register == 0 { 0 } else { observation.rd_pre },
@@ -321,6 +339,7 @@ impl Observation {
                     }),
                 },
                 observation.ram_access(row.instruction_kind),
+                pc,
             )?);
         }
         Ok(rows)
@@ -638,6 +657,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         observations.truncate(needed);
         let rows = Observation::reassemble_rows(
             &checkpoint.bytecode,
+            checkpoint.compiled.pc_map(),
             &observations[checkpoint.skip_rows..],
         )?;
         Ok(OwnedTrace::new(rows))

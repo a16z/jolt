@@ -98,7 +98,7 @@ impl GuestState {
 }
 
 /// One row's dynamic values, written by generated code in record mode.
-/// Rust adds static bytecode fields and validates the final `TraceRow`.
+/// Rust adds static bytecode fields and validates the final `JoltTraceRow`.
 /// The 64-byte size keeps cursor bumps cheap.
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]

@@ -1,29 +1,26 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, OnceLock},
-};
+#[cfg(not(feature = "field-inline"))]
+use std::sync::OnceLock;
+use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    OwnedTrace, RamAccess as ProgramRamAccess, RamRead as ProgramRamRead,
-    RamWrite as ProgramRamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError,
-    TraceInputs, TraceOutput, TraceRow,
+    OwnedTrace, TraceData, TraceError, TraceEvent, TraceInputs, TraceOutput,
 };
+use jolt_program::preprocess::BytecodePCMapper;
 #[cfg(feature = "field-inline")]
-use jolt_program::field_inline::FieldInlineTraceData;
-use jolt_program::preprocess::BytecodePreprocessing;
-use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
+use jolt_program::{execution::FieldEvent, field_inline::FieldInlineTraceData};
+use jolt_riscv::JoltTraceRow;
 use rayon::prelude::*;
 
 use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+use crate::instruction::Cycle;
 #[cfg(feature = "field-inline")]
 use crate::instruction::RISCVCycle;
-use crate::instruction::{Cycle, RAMAccess};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
-use crate::trace_row::{cycle_to_trace_row, CycleConversionError};
+use crate::trace_row::cycle_to_trace_row;
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
@@ -39,29 +36,6 @@ impl TracerBackend {
         Self {
             elf_path: Some(elf_path),
         }
-    }
-
-    /// Executes the program and builds proof rows directly, without first
-    /// allocating the wider execution rows.
-    pub fn trace_compact(
-        &mut self,
-        program: &JoltProgram,
-        inputs: TraceInputs,
-        bytecode: &BytecodePreprocessing,
-    ) -> Result<TraceOutput<Arc<Vec<JoltTraceRow>>>, CompactTraceError> {
-        let execution = self.trace_execution(program, inputs)?;
-        let mut rows = collect_rows(execution.cycles, |cycle| {
-            cycle_to_trace_row(&cycle, bytecode)
-        })?;
-        while rows.last() == Some(&JoltTraceRow::default()) {
-            rows.pop();
-        }
-        Ok(TraceOutput::new(
-            Arc::new(rows),
-            execution.device,
-            Some(execution.final_memory),
-            Some(execution.advice_tape),
-        ))
     }
 
     fn trace_execution(
@@ -93,14 +67,6 @@ impl TracerBackend {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum CompactTraceError {
-    #[error(transparent)]
-    Trace(#[from] TraceError),
-    #[error(transparent)]
-    Row(#[from] CycleConversionError),
-}
-
 struct TraceExecution {
     cycles: Vec<Cycle>,
     final_memory: MemoryImage,
@@ -116,10 +82,11 @@ impl ExecutionBackend for TracerBackend {
         program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
         let execution = self.trace_execution(program, inputs)?;
-        let rows = collect_rows(execution.cycles, trace_row_from_cycle)?;
+        let data = collect_rows(&execution.cycles, &bytecode)?;
         Ok(TraceOutput::new(
-            OwnedTrace::new(rows),
+            OwnedTrace::from_data(data),
             execution.device,
             Some(execution.final_memory),
             Some(execution.advice_tape),
@@ -129,14 +96,7 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-fn collect_rows<R, E>(
-    cycles: Vec<Cycle>,
-    convert: impl Fn(Cycle) -> Result<R, E> + Sync,
-) -> Result<Vec<R>, E>
-where
-    R: Default + Send,
-    E: Send + Sync,
-{
+fn collect_rows(cycles: &[Cycle], bytecode: &BytecodePCMapper) -> Result<TraceData, TraceError> {
     let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
     let _span = tracing::info_span!(
         "trace_rows_from_cycles",
@@ -149,25 +109,60 @@ where
     )
     .entered();
     if !parallel {
-        return cycles.into_iter().map(convert).collect();
+        let mut data = TraceData::with_capacity(cycles.len());
+        for cycle in cycles {
+            data.push(TraceEvent {
+                row: cycle_to_trace_row(cycle, bytecode)?,
+                #[cfg(feature = "field-inline")]
+                field_inline: cycle.field_inline_trace().map(Arc::new),
+            });
+        }
+        return Ok(data);
     }
 
-    // Rayon's fallible collector creates temporary shard vectors. Capturing the
-    // error out of band keeps collection indexed and writes into one allocation.
-    let error = OnceLock::new();
-    let rows = cycles
-        .into_par_iter()
-        .map(|cycle| match convert(cycle) {
-            Ok(row) => row,
-            Err(worker_error) => {
-                let _ = error.set(worker_error);
-                R::default()
-            }
-        })
-        .collect();
-    match error.into_inner() {
-        Some(worker_error) => Err(worker_error),
-        None => Ok(rows),
+    #[cfg(not(feature = "field-inline"))]
+    {
+        // Keep indexed collection in one allocation; the fallible collector
+        // would allocate intermediate row shards.
+        let error = OnceLock::new();
+        let rows = cycles
+            .par_iter()
+            .map(|cycle| match cycle_to_trace_row(cycle, bytecode) {
+                Ok(row) => row,
+                Err(worker_error) => {
+                    let _ = error.set(worker_error);
+                    JoltTraceRow::default()
+                }
+            })
+            .collect();
+        match error.into_inner() {
+            Some(worker_error) => Err(worker_error),
+            None => Ok(TraceData::new(rows)),
+        }
+    }
+    #[cfg(feature = "field-inline")]
+    {
+        let mut rows = vec![JoltTraceRow::default(); cycles.len()];
+        let batches = rows
+            .par_chunks_mut(PARALLEL_ROW_CONVERSION_THRESHOLD)
+            .zip(cycles.par_chunks(PARALLEL_ROW_CONVERSION_THRESHOLD))
+            .enumerate()
+            .map(|(batch, (rows, cycles))| {
+                let mut fields = Vec::new();
+                for (offset, (row, cycle)) in rows.iter_mut().zip(cycles).enumerate() {
+                    *row = cycle_to_trace_row(cycle, bytecode)?;
+                    if let Some(data) = cycle.field_inline_trace() {
+                        fields.push(FieldEvent {
+                            cycle: batch * PARALLEL_ROW_CONVERSION_THRESHOLD + offset,
+                            data: Arc::new(data),
+                        });
+                    }
+                }
+                Ok(fields)
+            })
+            .collect::<Result<Vec<_>, TraceError>>()?;
+        let fields = batches.into_iter().flatten().collect();
+        TraceData::from_parts(rows, fields)
     }
 }
 
@@ -193,6 +188,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
+    bytecode: BytecodePCMapper,
 }
 
 /// Boundary checkpoints are captured at chunk-mark crossings, but at most
@@ -221,6 +217,7 @@ impl TracerBackend {
             return Err(TraceError::Backend("chunk_size must be nonzero"));
         }
 
+        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
         let emulator = crate::create_emulator(
             program.elf_bytes(),
             self.elf_path.as_ref(),
@@ -237,6 +234,7 @@ impl TracerBackend {
                 .mmu
                 .decode_cache
                 .snapshot_with_empty_entries(),
+            bytecode,
         });
 
         // Construction-only bookkeeping: a captured boundary plus the row
@@ -350,27 +348,12 @@ impl ChunkedExecutionBackend for TracerBackend {
             }
         }
 
-        let rows = cycles[checkpoint.skip_rows..needed]
-            .iter()
-            .map(|cycle| trace_row_from_cycle(*cycle))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(OwnedTrace::new(rows))
+        let data = collect_rows(
+            &cycles[checkpoint.skip_rows..needed],
+            &checkpoint.seed.bytecode,
+        )?;
+        Ok(OwnedTrace::from_data(data))
     }
-}
-
-fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
-    let row = TraceRow::new(
-        jolt_instruction_row(&cycle)?,
-        register_state(&cycle),
-        cycle.ram_access().into(),
-    )?;
-    #[cfg(feature = "field-inline")]
-    let row = {
-        let mut row = row;
-        row.field_inline = cycle.field_inline_trace().map(Into::into);
-        row
-    };
-    Ok(row)
 }
 
 #[cfg(feature = "field-inline")]
@@ -392,48 +375,6 @@ impl Cycle {
         let op =
             jolt_riscv::field_inline_source_op(self.instruction().source_instruction().kind())?;
         Some(register_state.to_field_inline_trace(op))
-    }
-}
-
-fn jolt_instruction_row(cycle: &Cycle) -> Result<JoltInstructionRow, TraceError> {
-    let instruction = cycle.instruction();
-    instruction
-        .try_jolt_instruction_row()
-        .map_err(|_| TraceError::Backend("execution trace contained a source-only instruction"))
-}
-
-fn register_state(cycle: &Cycle) -> RegisterState {
-    RegisterState {
-        rs1: cycle
-            .rs1_read()
-            .map(|(register, value)| RegisterRead { register, value }),
-        rs2: cycle
-            .rs2_read()
-            .map(|(register, value)| RegisterRead { register, value }),
-        rd: cycle
-            .rd_write()
-            .map(|(register, pre_value, post_value)| RegisterWrite {
-                register,
-                pre_value,
-                post_value,
-            }),
-    }
-}
-
-impl From<RAMAccess> for ProgramRamAccess {
-    fn from(access: RAMAccess) -> Self {
-        match access {
-            RAMAccess::Read(read) => Self::Read(ProgramRamRead {
-                address: read.address,
-                value: read.value,
-            }),
-            RAMAccess::Write(write) => Self::Write(ProgramRamWrite {
-                address: write.address,
-                pre_value: write.pre_value,
-                post_value: write.post_value,
-            }),
-            RAMAccess::NoOp => Self::NoOp,
-        }
     }
 }
 
@@ -502,7 +443,7 @@ mod chunked_tests {
             );
 
             // Replay in reverse order to exercise order-independence.
-            let mut replayed: Vec<Vec<TraceRow>> = summary
+            let mut replayed: Vec<Vec<JoltTraceRow>> = summary
                 .checkpoints
                 .iter()
                 .rev()
@@ -510,7 +451,8 @@ mod chunked_tests {
                     backend
                         .replay_chunk(checkpoint)
                         .expect("replay failed")
-                        .into_rows()
+                        .rows()
+                        .to_vec()
                 })
                 .collect();
             replayed.reverse();
@@ -521,7 +463,7 @@ mod chunked_tests {
                     assert_eq!(rows.len(), chunk_size, "chunk_size {chunk_size}, chunk {i}");
                 }
             }
-            let concat: Vec<TraceRow> = replayed.into_iter().flatten().collect();
+            let concat: Vec<JoltTraceRow> = replayed.into_iter().flatten().collect();
             assert_eq!(concat.as_slice(), eager_rows, "chunk_size {chunk_size}");
         }
     }
@@ -554,14 +496,16 @@ mod chunked_tests {
         let first = backend
             .replay_chunk(&summary.checkpoints[0])
             .expect("replay failed")
-            .into_rows();
+            .rows()
+            .to_vec();
         assert_eq!(first.as_slice(), &eager_rows[..CHUNK_SIZE]);
 
         let last_mark = (summary.checkpoints.len() - 1) * CHUNK_SIZE;
         let last = backend
             .replay_chunk(summary.checkpoints.last().expect("nonempty trace"))
             .expect("replay failed")
-            .into_rows();
+            .rows()
+            .to_vec();
         assert_eq!(last.as_slice(), &eager_rows[last_mark..]);
     }
 
@@ -611,7 +555,7 @@ mod tests {
             &[],
             StrtabOrder::GnuLd,
         );
-        let program = JoltProgram::from_elf_bytes(elf.clone());
+        let program = jolt_program::build_jolt_program(&elf).expect("prepare program");
         let inputs = TraceInputs {
             memory_config: MemoryConfig {
                 program_size: Some(elf.len() as u64),
@@ -650,6 +594,8 @@ mod tests {
         ));
     }
     #[cfg(feature = "field-inline")]
+    use jolt_program::execution::TraceSource;
+    #[cfg(feature = "field-inline")]
     use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
@@ -670,7 +616,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn trace_row_from_cycle_carries_field_inline_payload() {
+    fn trace_data_from_cycles_carries_field_inline_payload() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
         cpu.write_register(5, 11);
         let instruction = Instruction::decode(
@@ -683,12 +629,16 @@ mod tests {
         instruction.trace(&mut cpu, Some(&mut trace));
         assert_eq!(trace.len(), 1);
 
-        let row = super::trace_row_from_cycle(trace.remove(0)).unwrap();
+        let bytecode =
+            BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
+        let data = super::collect_rows(&trace, &bytecode).unwrap();
+        let event = data.event(0).unwrap();
+        let row = event.row;
         assert_eq!(row.rs1_read().unwrap().register, 5);
         assert_eq!(row.rs1_read().unwrap().value, 11);
         assert!(row.rs2_read().is_none());
         assert!(row.rd_write().is_none());
-        let field_trace = row.field_inline.unwrap();
+        let field_trace = event.field_inline.unwrap();
         assert_eq!(
             field_trace.op,
             Some(FieldInlineOp::LoadAccumulateFromRegister)
@@ -701,5 +651,45 @@ mod tests {
                 field_value: FieldEncodedValue::from_u64(11),
             })
         );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn parallel_collection_preserves_sparse_field_event_positions() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.write_register(5, 11);
+        let instruction = Instruction::decode(
+            field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 2, 5, 0),
+            0x8000_0000,
+            false,
+        )
+        .unwrap();
+        let bytecode =
+            BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
+        let positions = [
+            0,
+            PARALLEL_ROW_CONVERSION_THRESHOLD - 1,
+            PARALLEL_ROW_CONVERSION_THRESHOLD,
+            2 * PARALLEL_ROW_CONVERSION_THRESHOLD,
+        ];
+        let mut trace = vec![Cycle::NoOp; 2 * PARALLEL_ROW_CONVERSION_THRESHOLD + 1];
+        for position in positions {
+            let mut captured = Vec::new();
+            instruction.trace(&mut cpu, Some(&mut captured));
+            trace[position] = captured[0];
+        }
+        let mut retained = OwnedTrace::from_data(collect_rows(&trace, &bytecode).unwrap());
+        for (cycle, captured) in trace.iter().enumerate() {
+            let event = retained.next_row().unwrap();
+            assert_eq!(Some(&event), retained.data().event(cycle).as_ref());
+            assert_eq!(event.field_inline.is_some(), positions.contains(&cycle));
+            if let Some(payload) = event.field_inline {
+                assert_eq!(*payload, captured.field_inline_trace().unwrap());
+                assert_eq!(event.row.pc(), 1);
+            } else {
+                assert_eq!(event.row, JoltTraceRow::default());
+            }
+        }
+        assert!(retained.next_row().is_none());
     }
 }
