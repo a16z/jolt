@@ -1409,6 +1409,8 @@ mod tests {
     use jolt_witness::witnesses::OpFlag;
     use jolt_witness::BundleSource;
 
+    use jolt_riscv::JoltInstructionKind;
+
     use super::test_rows::{expanded_trace, splitmix, stage1_rows, witness, ADVICE_KINDS};
     use super::*;
     use crate::metal::solinas::{
@@ -1817,10 +1819,28 @@ mod tests {
         output
     }
 
-    #[test]
-    fn outer_remainder_sequence_matches_field_oracle() {
-        let packed = stage1_rows(4);
-        let explicit_rows = packed.len() - 1;
+    /// `e_in`, `e_out` weights over `pairs` table pairs, split as the host
+    /// splits its eq tables.
+    fn round_weights(seed: u64, pairs: usize) -> (Vec<AkitaField>, Vec<AkitaField>) {
+        let inner = 1 << (pairs.ilog2() / 2);
+        let weights = |seed: u64, len: usize| {
+            (0..len)
+                .map(|index| {
+                    AkitaField::from_u64(splitmix(seed ^ ((index as u64) << 32)) & ((1 << 48) - 1))
+                })
+                .collect::<Vec<_>>()
+        };
+        (weights(seed, inner), weights(!seed, pairs / inner))
+    }
+
+    /// Drives the Outer remainder over the resident form of `packed` through
+    /// every round and checks its messages, CPU tail, 35 openings and product
+    /// endpoints against the field oracle over the witness-derived rows.
+    fn assert_outer_sequence_matches_field_oracle(
+        packed: &[SpartanOuterUniskipRow],
+        explicit_rows: usize,
+    ) {
+        const CPU_TAIL: usize = 4;
         let mut padding_openings = [AkitaField::zero(); 35];
         padding_openings[30] = AkitaField::one();
         assert_eq!(
@@ -1830,18 +1850,13 @@ mod tests {
         let lagrange = std::array::from_fn(|index| {
             AkitaField::from_u64(splitmix(0x600d_f00d ^ index as u64) & ((1 << 48) - 1))
         });
-        let initial_in = (0..4)
-            .map(|index| AkitaField::from_u64(3 + index))
-            .collect::<Vec<_>>();
-        let initial_out = (0..4)
-            .map(|index| AkitaField::from_u64(11 + index))
-            .collect::<Vec<_>>();
-        let (mut az, mut bz) = outer_tables(&packed, &lagrange);
+        let (initial_in, initial_out) = round_weights(1, packed.len());
+        let (mut az, mut bz) = outer_tables(packed, &lagrange);
         let expected_first = outer_endpoints(&az, &bz, &initial_in, &initial_out);
 
         let context = SolinasMetal::for_akita().unwrap();
         let resident = context
-            .prepare_spartan_outer_uniskip_rows(&packed)
+            .prepare_spartan_outer_uniskip_rows(packed)
             .unwrap()
             .with_explicit_rows(explicit_rows)
             .unwrap();
@@ -1850,7 +1865,7 @@ mod tests {
         let raw_id = resident.allocation_identity();
         let config = OuterRemainderSequenceConfig {
             max_threadgroups: 2,
-            cpu_tail_elements: 4,
+            cpu_tail_elements: CPU_TAIL,
             storage_initialization: OuterRemainderStorageInitialization::Lazy,
             product_uniskip_carrier: true,
             ..OuterRemainderSequenceConfig::default()
@@ -1873,9 +1888,6 @@ mod tests {
             .enumerate()
             .all(|(index, identity)| *identity != 0
                 && !storage_before_export.buffer_identities[..index].contains(identity)));
-        assert!(storage_before_export.buffer_identities[..2]
-            .iter()
-            .all(|identity| *identity != 0));
         assert_eq!(
             sequence
                 .materialize_and_first_message(&lagrange, &initial_in, &initial_out)
@@ -1886,42 +1898,29 @@ mod tests {
         let stream_challenge = AkitaField::from_u64(101);
         az = bind_table(&az, stream_challenge);
         bz = bind_table(&bz, stream_challenge);
-        let stream_in = [AkitaField::from_u64(17), AkitaField::from_u64(19)];
-        let stream_out = [
-            AkitaField::from_u64(23),
-            AkitaField::from_u64(29),
-            AkitaField::from_u64(31),
-            AkitaField::from_u64(37),
-        ];
+        let (stream_in, stream_out) = round_weights(2, az.len() / 2);
         assert_eq!(
             sequence
-                .bind_stream_and_message(stream_challenge, &lagrange, &stream_in, &stream_out,)
+                .bind_stream_and_message(stream_challenge, &lagrange, &stream_in, &stream_out)
                 .unwrap(),
             outer_endpoints(&az, &bz, &stream_in, &stream_out)
         );
-
-        for (challenge, e_in, e_out) in [
-            (
-                AkitaField::from_u64(103),
-                vec![AkitaField::from_u64(41), AkitaField::from_u64(43)],
-                vec![AkitaField::from_u64(47), AkitaField::from_u64(53)],
-            ),
-            (
-                AkitaField::from_u64(107),
-                vec![AkitaField::from_u64(59)],
-                vec![AkitaField::from_u64(61), AkitaField::from_u64(67)],
-            ),
-        ] {
+        for round in 3u64.. {
+            if az.len() == CPU_TAIL {
+                break;
+            }
+            let challenge = AkitaField::from_u64(100 + round);
             az = bind_table(&az, challenge);
             bz = bind_table(&bz, challenge);
+            let (e_in, e_out) = round_weights(round, az.len() / 2);
             assert_eq!(
                 sequence.bind_and_message(challenge, &e_in, &e_out).unwrap(),
                 outer_endpoints(&az, &bz, &e_in, &e_out)
             );
         }
 
-        let mut actual_az = vec![AkitaField::zero(); 4];
-        let mut actual_bz = vec![AkitaField::zero(); 4];
+        let mut actual_az = vec![AkitaField::zero(); CPU_TAIL];
+        let mut actual_bz = vec![AkitaField::zero(); CPU_TAIL];
         sequence
             .export_cpu_tail(&mut actual_az, &mut actual_bz)
             .unwrap();
@@ -1934,23 +1933,16 @@ mod tests {
             (3 * packed.len() * size_of::<Fp128>()) as u64
         );
 
-        let opening_in = (0..4)
-            .map(|index| AkitaField::from_u64(71 + index))
-            .collect::<Vec<_>>();
-        let opening_out = (0..4)
-            .map(|index| AkitaField::from_u64(79 + index))
-            .collect::<Vec<_>>();
-        let expected_product_endpoints =
-            product_uniskip_endpoints(&packed, &opening_in, &opening_out);
+        let (opening_in, opening_out) = round_weights(0x0be5, packed.len());
         assert_eq!(
             sequence
                 .evaluate_openings(&opening_in, &opening_out)
                 .unwrap(),
-            outer_openings(&packed, &opening_in, &opening_out)
+            outer_openings(packed, &opening_in, &opening_out)
         );
         assert_eq!(
             sequence.take_product_uniskip_endpoints(),
-            Some(expected_product_endpoints)
+            Some(product_uniskip_endpoints(packed, &opening_in, &opening_out))
         );
         let stats = sequence.storage_stats().unwrap();
         assert_eq!(stats.compact_row_identity, compact_id);
@@ -1959,9 +1951,15 @@ mod tests {
         assert_eq!(compact.allocation_identity(), compact_id);
     }
 
-    /// The Metal decoder against the witness: the uni-skip over resident rows
-    /// of every expanded instruction kind matches the field oracle over the
-    /// witness rows.
+    #[test]
+    fn outer_remainder_sequence_matches_field_oracle() {
+        let packed = stage1_rows(4);
+        assert_outer_sequence_matches_field_oracle(&packed, packed.len() - 1);
+    }
+
+    /// The Metal decoder against the witness: the uni-skip and the 35 Outer
+    /// openings over resident rows of every expanded instruction kind match
+    /// the field oracle over the witness rows.
     #[test]
     fn stage1_rows_cover_every_expanded_instruction() {
         let trace = expanded_trace();
@@ -1975,7 +1973,7 @@ mod tests {
             .iter()
             .map(|row| row.instruction().instruction_kind)
             .collect::<Vec<_>>();
-        let missing = jolt_riscv::JoltInstructionKind::ALL
+        let missing = JoltInstructionKind::ALL
             .iter()
             .filter(|kind| !kinds.contains(kind))
             .map(|kind| kind.name())
@@ -2002,6 +2000,45 @@ mod tests {
             );
         }
         assert!(witness[0].is_noop.0, "row-0 Noop");
+        let explicit_rows = trace.rows.len();
+        assert!(!witness[explicit_rows - 1].is_noop.0, "last explicit row");
+        assert!(
+            witness[explicit_rows..].iter().all(|row| row.is_noop.0),
+            "padding"
+        );
+        // Upper immediates and expanded alignment offsets are 64-bit two's
+        // complement (positive with bit 63 set); decoded branch offsets are
+        // sign-magnitude.
+        let wrapped_negative = |words: [u64; ROW_WORDS]| {
+            flag(words[19], FLAG_IMM_POSITIVE) != 0 && words[7] >> 63 == 1
+        };
+        for kind in [
+            JoltInstructionKind::AUIPC,
+            JoltInstructionKind::VirtualAssertHalfwordAlignment,
+            JoltInstructionKind::VirtualAssertWordAlignment,
+        ] {
+            assert!(
+                rows.iter()
+                    .zip(&kinds)
+                    .any(|(row, &row_kind)| row_kind == kind && wrapped_negative(row.words())),
+                "{} with a negative 64-bit immediate",
+                kind.name()
+            );
+        }
+        assert!(
+            rows.iter().any(|row| {
+                let words = row.words();
+                flag(words[19], FLAG_IMM_POSITIVE) == 0 && words[7] != 0
+            }),
+            "a sign-magnitude negative immediate"
+        );
+        assert!(
+            rows.iter().any(|row| {
+                let words = row.words();
+                flag(words[19], FLAG_MUL) != 0 && words[4] >= 1 << 62
+            }),
+            "multiply with a near-maximal product"
+        );
 
         let point = (0..=log_t)
             .map(|index| AkitaField::from_u64(splitmix(index as u64) & ((1 << 48) - 1)))
@@ -2025,6 +2062,7 @@ mod tests {
             .unwrap();
         invocation.execute().unwrap();
         assert_eq!(invocation.read_output().unwrap(), expected);
+        assert_outer_sequence_matches_field_oracle(&rows, explicit_rows);
     }
 
     #[test]
