@@ -28,6 +28,8 @@ where
     pub checked: CheckedInputs,
     pub transcript: T,
     pub commitment: PCS::Output,
+    /// Holds no trace rows: they are released after the commit, and stage 8
+    /// regenerates them from the witness for the opening.
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
 }
@@ -247,15 +249,15 @@ where
                 packed_trace_rows,
                 &precommitted_hints,
             );
-            let (commitment, hint) =
+            let (commitment, mut hint) =
                 committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                     reason: error.to_string(),
                 })?;
-            PCS::release_post_commit_residency(&backend.trace_commitment, &preprocessing.pcs_setup).map_err(|error| {
-                VerifierError::FinalOpeningVerificationFailed {
+            PCS::release_post_commit_residency(&backend.trace_commitment, &preprocessing.pcs_setup)
+                .and_then(|()| PCS::release_trace_rows(&mut hint))
+                .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                     reason: error.to_string(),
-                }
-            })?;
+                })?;
             Ok::<_, ProverError<F>>((commitment, hint))
         })?;
 

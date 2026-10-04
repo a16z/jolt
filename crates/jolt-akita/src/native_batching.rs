@@ -328,7 +328,8 @@ impl AkitaNativeBatching {
                 AkitaHintPolynomials::Dense(polys) if polys.len() == 1 => Arc::clone(polys),
                 AkitaHintPolynomials::Dense(_)
                 | AkitaHintPolynomials::OneHot(_)
-                | AkitaHintPolynomials::TraceOneHot(_) => {
+                | AkitaHintPolynomials::TraceOneHot(_)
+                | AkitaHintPolynomials::ReleasedTraceOneHot(_) => {
                     return Err(invalid_batch(format!(
                         "Akita {} hint must retain one dense source",
                         entry.role.diagnostic_name()
@@ -354,6 +355,11 @@ impl AkitaNativeBatching {
             AkitaHintPolynomials::Dense(_) | AkitaHintPolynomials::OneHot(_) => {
                 return Err(invalid_batch(
                     "Akita main-trace hint must retain one one-hot source",
+                ))
+            }
+            AkitaHintPolynomials::ReleasedTraceOneHot(_) => {
+                return Err(invalid_batch(
+                    "Akita main-trace rows were released after the commit and not restored",
                 ))
             }
         };
@@ -634,7 +640,9 @@ fn validate_witness(
     }
     if matches!(
         hint.polynomials,
-        AkitaHintPolynomials::OneHot(_) | AkitaHintPolynomials::TraceOneHot(_)
+        AkitaHintPolynomials::OneHot(_)
+            | AkitaHintPolynomials::TraceOneHot(_)
+            | AkitaHintPolynomials::ReleasedTraceOneHot(_)
     ) && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
     {
         return Err(invalid_batch(format!(
@@ -872,6 +880,11 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                     backend_hint,
                     &mut akita_transcript,
                 )?
+            }
+            AkitaHintPolynomials::ReleasedTraceOneHot(_) => {
+                return Err(invalid_batch(
+                    "Akita trace rows were released after the commit and not restored",
+                ))
             }
         };
 

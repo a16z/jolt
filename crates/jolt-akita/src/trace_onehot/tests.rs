@@ -60,6 +60,61 @@ impl TraceOneHotRows for TestRows {
     }
 }
 
+#[derive(Debug)]
+struct PackedTestRows {
+    rows: usize,
+    columns: usize,
+    row_major: Vec<u8>,
+    active_zero_rows: Vec<u64>,
+    hot_entries: usize,
+}
+
+impl PackedTestRows {
+    fn new(rows: usize, hot_entries: usize) -> Arc<Self> {
+        Arc::new(Self {
+            rows,
+            columns: 3,
+            row_major: vec![1; rows * 3],
+            active_zero_rows: vec![0; rows.div_ceil(64)],
+            hot_entries,
+        })
+    }
+}
+
+impl TraceOneHotRows for PackedTestRows {
+    fn num_rows(&self) -> usize {
+        self.rows
+    }
+
+    fn num_columns(&self) -> usize {
+        self.columns
+    }
+
+    fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
+        selected_rows.copy_from_slice(&self.row_major[row * self.columns..][..self.columns]);
+    }
+
+    fn packed_selectors(&self) -> Option<TracePackedSelectors<'_>> {
+        Some(TracePackedSelectors::new_with_precomputed_metrics(
+            &self.row_major,
+            &self.active_zero_rows,
+            0,
+            self.hot_entries,
+            self.rows,
+        ))
+    }
+}
+
+#[test]
+fn released_rows_restore_only_with_matching_shape_and_metrics() {
+    let source = TracePackedOneHot::new(16, 64, 8, PackedTestRows::new(64, 192)).unwrap();
+    let released = source.release_rows();
+    assert!(released.restore(PackedTestRows::new(64, 191)).is_err());
+    assert!(released.restore(PackedTestRows::new(32, 96)).is_err());
+    let restored = released.restore(PackedTestRows::new(64, 192)).unwrap();
+    assert_eq!(restored.release_rows(), released);
+}
+
 fn packing_point<const D: usize>(
     source_num_vars: usize,
     num_live_positions: usize,

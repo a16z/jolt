@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
 use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
@@ -18,8 +19,9 @@ use jolt_verifier::stages::stage8::packed::{
     leaf_claims, object_leaf_claims, one_hot_trace_packed_claims,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
+use jolt_witness::JoltWitnessPlane;
 
-use super::witness::{AdviceObject, DirectProgramObjects};
+use super::witness::{assemble_one_hot_trace_rows, AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
@@ -50,8 +52,9 @@ pub fn prove_stage8<F, PCS, VC, T>(
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
+    witness: &dyn JoltWitnessPlane<F>,
     one_hot_trace_commitment: &PCS::Output,
-    one_hot_trace_hint: PCS::OpeningHint,
+    mut one_hot_trace_hint: PCS::OpeningHint,
     untrusted_advice: Option<&AdviceObject<PCS>>,
     trusted_advice: Option<&AdviceObject<PCS>>,
     program: Option<&DirectProgramObjects<PCS>>,
@@ -62,7 +65,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
 ) -> Result<PCS::Proof, ProverError<F>>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + TraceOneHotCommitment,
     PCS::Output: Clone + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -82,6 +85,14 @@ where
             log_k_chunk: chunk_width,
         })
         .map_err(batch_failed::<F>)?;
+    let rows = assemble_one_hot_trace_rows(
+        witness,
+        &plan,
+        formula_dimensions.ra_layout,
+        chunk_width,
+        log_t,
+    )?;
+    PCS::restore_trace_rows(&mut one_hot_trace_hint, rows).map_err(batch_failed::<F>)?;
 
     let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
 

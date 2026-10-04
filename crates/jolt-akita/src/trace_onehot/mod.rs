@@ -34,6 +34,7 @@ mod traversal;
 mod tests;
 
 pub(crate) use grouped::GroupedRootSource;
+pub(crate) use source::ReleasedTracePackedOneHot;
 pub use source::{no_selected_row, TraceOneHotRows, TracePackedOneHot, TracePackedSelectors};
 
 #[cfg(test)]

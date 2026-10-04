@@ -235,6 +235,64 @@ impl TracePackedOneHot {
     }
 }
 
+/// The geometry and committed-entry metrics of a [`TracePackedOneHot`] whose
+/// rows were dropped after the commit. [`Self::restore`] accepts only rows
+/// with the same shape and metrics; that the rows are the committed ones
+/// rests on regenerating them deterministically from the same witness (the
+/// verifier rejects an opening of anything else).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReleasedTracePackedOneHot {
+    num_rows: usize,
+    num_columns: usize,
+    one_hot_k: usize,
+    column_capacity: usize,
+    num_vars: usize,
+    packed_metrics: Option<(Option<usize>, Option<usize>)>,
+}
+
+impl TracePackedOneHot {
+    pub(crate) fn release_rows(&self) -> ReleasedTracePackedOneHot {
+        ReleasedTracePackedOneHot {
+            num_rows: self.num_rows,
+            num_columns: self.num_columns,
+            one_hot_k: self.one_hot_k,
+            column_capacity: self.column_capacity,
+            num_vars: self.num_vars,
+            packed_metrics: self
+                .rows
+                .packed_selectors()
+                .map(|selectors| (selectors.hot_entries(), selectors.zero_suffix_start())),
+        }
+    }
+}
+
+impl ReleasedTracePackedOneHot {
+    pub(crate) const fn one_hot_k(&self) -> usize {
+        self.one_hot_k
+    }
+
+    pub(crate) fn restore(
+        &self,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<TracePackedOneHot, AkitaError> {
+        let source = TracePackedOneHot {
+            num_rows: rows.num_rows(),
+            num_columns: rows.num_columns(),
+            one_hot_k: self.one_hot_k,
+            column_capacity: self.column_capacity,
+            num_vars: self.num_vars,
+            rows,
+        };
+        if source.release_rows() != *self {
+            return Err(AkitaError::InvalidInput(
+                "regenerated trace rows disagree with the committed rows' shape or metrics"
+                    .to_string(),
+            ));
+        }
+        Ok(source)
+    }
+}
+
 pub struct TracePackedOneHotView<'a, const D: usize> {
     pub(super) source: &'a TracePackedOneHot,
 }

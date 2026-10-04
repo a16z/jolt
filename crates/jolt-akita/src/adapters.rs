@@ -31,7 +31,7 @@ use tracing::info_span;
 
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
 use crate::schedule_registry::PrecommittedScheduleParams;
-use crate::trace_onehot::TracePackedOneHot;
+use crate::trace_onehot::{ReleasedTracePackedOneHot, TracePackedOneHot};
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = JoltDenseBounded;
@@ -955,6 +955,8 @@ pub(crate) enum AkitaHintPolynomials {
     Dense(Arc<[AkitaBackendDensePoly]>),
     OneHot(Arc<[AkitaBackendOneHotPoly]>),
     TraceOneHot(TracePackedOneHot),
+    /// Trace rows dropped between the commit and the opening.
+    ReleasedTraceOneHot(ReleasedTracePackedOneHot),
 }
 
 impl Default for AkitaHintPolynomials {
@@ -967,7 +969,9 @@ impl AkitaHintPolynomials {
     pub(crate) const fn backend_flavor(&self) -> AkitaBackendFlavor {
         match self {
             Self::Dense(_) => AkitaBackendFlavor::Dense,
-            Self::OneHot(_) | Self::TraceOneHot(_) => AkitaBackendFlavor::OneHot,
+            Self::OneHot(_) | Self::TraceOneHot(_) | Self::ReleasedTraceOneHot(_) => {
+                AkitaBackendFlavor::OneHot
+            }
         }
     }
 
@@ -976,6 +980,7 @@ impl AkitaHintPolynomials {
             Self::Dense(_) => "dense",
             Self::OneHot(_) => "one_hot",
             Self::TraceOneHot(_) => "trace_one_hot",
+            Self::ReleasedTraceOneHot(_) => "released_trace_one_hot",
         }
     }
 
@@ -983,7 +988,7 @@ impl AkitaHintPolynomials {
         match self {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
-            Self::TraceOneHot(_) => 1,
+            Self::TraceOneHot(_) | Self::ReleasedTraceOneHot(_) => 1,
         }
     }
 
@@ -995,6 +1000,7 @@ impl AkitaHintPolynomials {
             Self::TraceOneHot(polynomial) => {
                 akita_prover::RootPolyMeta::onehot_chunk_size(polynomial)
             }
+            Self::ReleasedTraceOneHot(released) => Some(released.one_hot_k()),
             Self::Dense(_) => None,
         }
     }

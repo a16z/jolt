@@ -205,6 +205,7 @@ where
         &checked,
         config,
         preprocessing,
+        witness,
         &stage0.commitment,
         stage0.hint,
         stage0.untrusted_advice.as_ref(),

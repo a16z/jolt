@@ -187,6 +187,16 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         precommitted_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
+    /// Drops the trace rows `hint` retains for the opening.
+    fn release_trace_rows(hint: &mut Self::OpeningHint) -> Result<(), OpeningsError>;
+
+    /// Reinstalls rows regenerated from the committed witness; rejects rows
+    /// whose shape or committed-entry metrics differ from the released ones.
+    fn restore_trace_rows(
+        hint: &mut Self::OpeningHint,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(), OpeningsError>;
+
     /// Releases backend state that can be rebuilt before the opening proof.
     fn release_post_commit_residency(
         backend: &TraceCommitmentBackend,
@@ -756,6 +766,31 @@ impl TraceOneHotCommitment for AkitaScheme {
             rows,
             precommitted_hints,
         )
+    }
+
+    fn release_trace_rows(hint: &mut Self::OpeningHint) -> Result<(), OpeningsError> {
+        let AkitaHintPolynomials::TraceOneHot(source) = &hint.polynomials else {
+            return Err(invalid_batch(
+                "Akita trace hint retains no trace rows to release",
+            ));
+        };
+        hint.polynomials = AkitaHintPolynomials::ReleasedTraceOneHot(source.release_rows());
+        tracing::info!("released trace one-hot rows until the opening");
+        Ok(())
+    }
+
+    fn restore_trace_rows(
+        hint: &mut Self::OpeningHint,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<(), OpeningsError> {
+        let AkitaHintPolynomials::ReleasedTraceOneHot(released) = &hint.polynomials else {
+            return Err(invalid_batch(
+                "Akita trace hint has no released trace rows to restore",
+            ));
+        };
+        hint.polynomials =
+            AkitaHintPolynomials::TraceOneHot(released.restore(rows).map_err(akita_error)?);
+        Ok(())
     }
 
     fn release_post_commit_residency(
