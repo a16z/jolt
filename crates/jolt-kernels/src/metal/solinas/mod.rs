@@ -125,7 +125,7 @@ pub use instruction_read_raf::InstructionReadRafStage1Owner;
 pub(crate) use instruction_read_raf::{
     instruction_read_raf_claim_and_count_rank, instruction_read_raf_stage1_claim_bytes,
     instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
-    instruction_read_raf_stage5_owner_overlap_bytes, InstructionReadRafCompatibilityScatterConfig,
+    instruction_read_raf_stage5_main_plane_bytes, InstructionReadRafCompatibilityScatterConfig,
     InstructionReadRafCountOrder, InstructionReadRafDenseGroupedPlanes,
     InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
     InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Lease,

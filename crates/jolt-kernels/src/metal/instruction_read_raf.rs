@@ -16,13 +16,13 @@ use super::solinas::bytecode_read_raf_address::{
     BytecodeAddressStage1TopologyOwner,
 };
 use super::solinas::{
-    instruction_read_raf_stage5_owner_overlap_bytes, AddressPhaseSequence,
-    AddressPhaseSequenceConfig, AddressPhaseSums, BooleanityRows,
-    InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
-    InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
-    InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt,
-    PendingInstructionReadRafSourcePrimer, Product5Sequence, Product5SequenceConfig,
-    RegistersValInstructionSourceLease, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
+    instruction_read_raf_stage5_main_plane_bytes, AddressPhaseSequence, AddressPhaseSequenceConfig,
+    AddressPhaseSums, BooleanityRows, InstructionReadRafCompatibilityScatterConfig,
+    InstructionReadRafDenseGroupedPlanes, InstructionReadRafDenseGroupedReceipt,
+    InstructionReadRafFusedBytecodeReceipt, InstructionReadRafStage1Owner,
+    InstructionReadRafStage1Receipt, PendingInstructionReadRafSourcePrimer, Product5Sequence,
+    Product5SequenceConfig, RegistersValInstructionSourceLease, ResidentLookupIndexPlane,
+    SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
     prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
@@ -163,8 +163,8 @@ impl MetalBackend {
     }
 
     /// Builds the Stage-1 owner at Stage 5 when Stage 0 could not co-produce
-    /// it: only for a random-access witness, and only when the whole Stage-5
-    /// Metal overlap fits the working set. Otherwise Stage 5 keeps its
+    /// it: only for a random-access witness, and only when the Stage-5 main
+    /// planes fit the device working set. Otherwise Stage 5 keeps its
     /// CPU-built route and RegistersVal its CPU kernel.
     fn prepare_stage5_owner(
         &self,
@@ -179,18 +179,21 @@ impl MetalBackend {
         {
             return Ok(());
         }
-        let overlap_bytes =
-            instruction_read_raf_stage5_owner_overlap_bytes(rows, registers_val_lease)
+        let main_plane_bytes =
+            instruction_read_raf_stage5_main_plane_bytes(rows, registers_val_lease)
                 .map_err(metal_prepare_error)?;
         let span = tracing::info_span!(
             "MetalInstructionReadRaf::stage5_owner_admission",
             rows,
-            overlap_bytes,
+            main_plane_bytes,
             registers_val_lease,
             admitted = Empty,
         );
         let _entered = span.enter();
-        if let Err(error) = self.context.validate_additional_working_set(overlap_bytes) {
+        if let Err(error) = self
+            .context
+            .validate_additional_working_set(main_plane_bytes)
+        {
             if !error.is_capacity_error() {
                 return Err(metal_prepare_error(error));
             }
