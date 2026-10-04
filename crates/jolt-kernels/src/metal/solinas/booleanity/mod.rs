@@ -1119,7 +1119,133 @@ const _: () = assert!(size_of::<BranchParams>() == 16);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal resident-row validation setup")]
 mod tests {
+    use jolt_field::Ring as _;
+
     use super::*;
+
+    fn below_modulus(offset: usize) -> AkitaField {
+        -AkitaField::from_u64(offset as u64 + 1)
+    }
+
+    fn weights(pairs: usize, e_out_capacity: usize) -> (Vec<AkitaField>, Vec<AkitaField>) {
+        let e_out_len = pairs.min(e_out_capacity);
+        (
+            (0..pairs / e_out_len).map(below_modulus).collect(),
+            (0..e_out_len)
+                .map(|index| below_modulus(index + 3))
+                .collect(),
+        )
+    }
+
+    fn expected_message(
+        tables: &[Vec<AkitaField>],
+        rho: &[AkitaField],
+        e_in: &[AkitaField],
+        e_out: &[AkitaField],
+    ) -> [AkitaField; MESSAGE_LANES] {
+        let mut message = [AkitaField::zero(); MESSAGE_LANES];
+        for (pair, (x_out, x_in)) in (0..e_out.len())
+            .flat_map(|x_out| (0..e_in.len()).map(move |x_in| (x_out, x_in)))
+            .enumerate()
+        {
+            let weight = e_out[x_out] * e_in[x_in];
+            for (table, rho) in tables.iter().zip(rho) {
+                let (h_0, h_1) = (table[2 * pair], table[2 * pair + 1]);
+                message[0] += weight * h_0 * (h_0 - *rho);
+                message[1] += weight * (h_1 - h_0) * (h_1 - h_0);
+            }
+        }
+        message
+    }
+
+    #[test]
+    fn lazy_message_matches_field_arithmetic_on_maximal_limbs() {
+        const K: usize = 256;
+        const POLYS: usize = 64;
+        const MATERIALIZE_WIDTH: usize = 32;
+        const E_OUT_CAPACITY: usize = 4;
+        let rows_len = 1 << 10;
+        let lookups = (0..rows_len as u64)
+            .map(|row| {
+                (u128::from(row.wrapping_mul(0x9e37_79b9_7f4a_7c15)) << 64)
+                    | u128::from(row.wrapping_mul(0xc2b2_ae3d_27d4_eb4f))
+            })
+            .collect::<Vec<_>>();
+        let rows = lookups
+            .iter()
+            .map(|&lookup| BooleanityRow::new(lookup, None, None, 0).unwrap())
+            .collect::<Vec<_>>();
+        let shifts = (0..POLYS)
+            .map(|poly| (poly % 16 * 8) as u32)
+            .collect::<Vec<_>>();
+        let selectors = shifts
+            .iter()
+            .map(|&shift| BooleanitySelector::Lookup { shift })
+            .collect::<Vec<_>>();
+        let base_tables = (0..POLYS * K)
+            .map(|index| below_modulus(index % 5))
+            .collect::<Vec<_>>();
+        let rho = (0..POLYS)
+            .map(|poly| AkitaField::from_u64(poly as u64 + 1))
+            .collect::<Vec<_>>();
+        let mut tables = shifts
+            .iter()
+            .enumerate()
+            .map(|(poly, &shift)| {
+                lookups
+                    .iter()
+                    .map(|&lookup| base_tables[poly * K + ((lookup >> shift) as usize & (K - 1))])
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let context = SolinasMetal::for_akita().unwrap();
+        let mut sequence = context
+            .prepare_booleanity_sequence(
+                &rows,
+                &selectors,
+                &base_tables,
+                &rho,
+                K,
+                rows_len / 2 / E_OUT_CAPACITY,
+                E_OUT_CAPACITY,
+                BooleanitySequenceConfig {
+                    threads_per_threadgroup: Some(32),
+                    dense_threads_per_threadgroup: Some(32),
+                    materialize_width: MATERIALIZE_WIDTH,
+                },
+            )
+            .unwrap();
+
+        let (e_in, e_out) = weights(rows_len / 2, E_OUT_CAPACITY);
+        assert_eq!(
+            sequence.message(&e_in, &e_out).unwrap(),
+            expected_message(&tables, &rho, &e_in, &e_out)
+        );
+        let mut round = 0;
+        while tables[0].len() >= 4 {
+            let challenge = below_modulus(round);
+            for table in &mut tables {
+                *table = table
+                    .chunks_exact(2)
+                    .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                    .collect();
+            }
+            let (e_in, e_out) = weights(tables[0].len() / 2, E_OUT_CAPACITY);
+            assert_eq!(
+                sequence.bind_and_message(challenge, &e_in, &e_out).unwrap(),
+                expected_message(&tables, &rho, &e_in, &e_out),
+                "round {}",
+                round + 1
+            );
+            if tables[0].len() == rows_len / MATERIALIZE_WIDTH {
+                let mut dense = vec![AkitaField::zero(); POLYS * tables[0].len()];
+                sequence.read_current_tables(&mut dense).unwrap();
+                assert_eq!(dense, tables.concat());
+            }
+            round += 1;
+        }
+    }
 
     #[test]
     fn resident_rows_reject_a_different_device_registry() {
