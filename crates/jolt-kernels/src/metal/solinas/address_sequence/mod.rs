@@ -238,7 +238,9 @@ struct AddressPhaseBuffers {
     packed_rows: Buffer,
     lookups: Buffer,
     cycle_to_table_major: Buffer,
-    weights: Buffer,
+    /// Address-phase eq weights (16 B/row); retired when the cycle phase
+    /// begins, since no cycle kernel binds them.
+    weights: Option<Buffer>,
     previous_phase_table: Buffer,
     raf_partials: Buffer,
     raf_output: Buffer,
@@ -797,7 +799,7 @@ impl SolinasMetal {
                 packed_rows: packed_rows_buffer,
                 lookups: lookups_buffer,
                 cycle_to_table_major: cycle_to_table_major_buffer,
-                weights: weights_buffer,
+                weights: Some(weights_buffer),
                 previous_phase_table: buffer_from_slice(&self.device, &identity),
                 raf_partials: self.device.new_buffer(
                     byte_length::<Fp128>(raf_partial_elements)?,
@@ -886,6 +888,11 @@ impl AddressPhaseSequence {
                 suffix_len,
             ));
         }
+        let weights = self.buffers.weights.as_ref().ok_or_else(|| {
+            MetalError::InvalidInstructionReadRafGrouped(
+                "address phase requested after the cycle phase retired its weights".to_owned(),
+            )
+        })?;
         if let Some(table) = previous_phase_table {
             self.context
                 .validate_inputs("resident address condensation table", table)?;
@@ -918,7 +925,7 @@ impl AddressPhaseSequence {
             raf_tile.set_compute_pipeline_state(&self.raf_tile_pipeline);
             raf_tile.set_buffer(0, Some(&self.buffers.packed_rows), 0);
             raf_tile.set_buffer(1, Some(&self.buffers.lookups), 0);
-            raf_tile.set_buffer(2, Some(&self.buffers.weights), 0);
+            raf_tile.set_buffer(2, Some(weights), 0);
             raf_tile.set_buffer(3, Some(&self.buffers.previous_phase_table), 0);
             raf_tile.set_buffer(4, Some(&self.buffers.raf_partials), 0);
             raf_tile.set_buffer(5, Some(&self.buffers.raf_params), 0);
@@ -967,7 +974,7 @@ impl AddressPhaseSequence {
             let suffix_tile = command_buffer.new_compute_command_encoder();
             suffix_tile.set_compute_pipeline_state(&self.suffix_tile_pipeline);
             suffix_tile.set_buffer(0, Some(&self.buffers.lookups), 0);
-            suffix_tile.set_buffer(1, Some(&self.buffers.weights), 0);
+            suffix_tile.set_buffer(1, Some(weights), 0);
             suffix_tile.set_buffer(2, Some(&self.buffers.suffix_jobs), 0);
             suffix_tile.set_buffer(3, Some(&self.buffers.suffix_kinds), 0);
             suffix_tile.set_buffer(4, Some(&self.buffers.suffix_counts), 0);
@@ -1046,6 +1053,15 @@ impl AddressPhaseSequence {
         })
     }
 
+    fn retire_address_weights(&mut self) {
+        if let Some(weights) = self.buffers.weights.take() {
+            tracing::info!(
+                weights_bytes = weights.length(),
+                "retired resident address-phase weights"
+            );
+        }
+    }
+
     pub(crate) fn cycle_message(
         &mut self,
         phase_tables: &[Vec<AkitaField>],
@@ -1055,6 +1071,7 @@ impl AddressPhaseSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; PRODUCT5_FACTORS], MetalError> {
+        self.retire_address_weights();
         self.execute_cycle(
             phase_tables,
             table_values,
@@ -1081,6 +1098,7 @@ impl AddressPhaseSequence {
         e_out: &[AkitaField],
         config: Product5SequenceConfig,
     ) -> Result<(Product5Sequence, [AkitaField; PRODUCT5_FACTORS]), MetalError> {
+        self.retire_address_weights();
         let elements = self.rows / 2;
         let mut sequence = self.context.prepare_product5_sequence_storage(
             elements,
@@ -1610,6 +1628,49 @@ mod tests {
     use jolt_lookup_tables::LookupBits;
 
     use super::*;
+
+    #[test]
+    fn cycle_phase_retires_the_address_weights() {
+        let rows = 1 << 8;
+        let sources: Vec<_> = (0..rows)
+            .map(|row| {
+                (
+                    AddressRafScanRow::new_with_table(row as u128, Some(0), false),
+                    Fp128::from_jolt_field(&AkitaField::from_u64((row + 1) as u64)),
+                )
+            })
+            .collect();
+        let mut buckets = vec![Vec::new(); ADDRESS_SUFFIX_TABLES];
+        buckets[0] = (0..rows as u32).collect();
+        let context = SolinasMetal::for_akita().expect("Metal context should compile");
+        let mut sequence = context
+            .prepare_address_phase_sequence_from_buckets(
+                rows,
+                &buckets,
+                AddressPhaseSequenceConfig::default(),
+                |row| sources[row],
+            )
+            .expect("address sequence should prepare");
+        let _ = sequence
+            .phase(0, None)
+            .expect("address phase should execute");
+
+        let one = AkitaField::from_u64(1);
+        let e_out = vec![one; sequence.cycle_e_out_capacity];
+        let e_in = vec![one; rows / 2 / e_out.len()];
+        let _ = sequence
+            .cycle_message(
+                &vec![vec![one; ADDRESS_RAF_BINS]; CYCLE_PHASES],
+                &[one; ADDRESS_SUFFIX_TABLES],
+                one,
+                one,
+                &e_in,
+                &e_out,
+            )
+            .expect("cycle message should execute");
+        assert!(sequence.buffers.weights.is_none());
+        assert!(sequence.phase(0, None).is_err());
+    }
 
     #[test]
     fn latest_suffix_abi_matches_host_at_every_address_phase() {
