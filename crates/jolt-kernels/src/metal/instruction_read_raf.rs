@@ -190,10 +190,7 @@ impl MetalBackend {
             admitted = Empty,
         );
         let _entered = span.enter();
-        if let Err(error) = self
-            .context
-            .validate_additional_working_set(main_plane_bytes)
-        {
+        if let Err(error) = self.validate_additional_working_set(main_plane_bytes) {
             if !error.is_capacity_error() {
                 return Err(metal_prepare_error(error));
             }
@@ -1118,7 +1115,7 @@ mod tests {
     use jolt_field::FromPrimitiveInt as _;
     use jolt_lookup_tables::XLEN as RISCV_XLEN;
     use jolt_poly::Polynomial;
-    use jolt_verifier::stages::relations::ConcreteSumcheck;
+    use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckOutputClaims};
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage5::registers_val_evaluation::{
         RegistersValEvaluation, RegistersValEvaluationInputClaims,
@@ -1222,140 +1219,176 @@ mod tests {
         });
     }
 
+    fn stage5_backend() -> MetalBackend {
+        MetalBackend::new(MetalConfig {
+            instruction_read_raf: InstructionReadRafMetalConfig {
+                address_cutoff_elements: 1 << LOG_T,
+                cutoff_elements: 8,
+                ..Default::default()
+            },
+            registers_val_evaluation: RegistersValEvaluationMetalConfig {
+                source: RegistersValEvaluationSource::Stage1Resident,
+                trace_cutoff_elements: 1 << LOG_T,
+                cutoff_elements: 16,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    type Stage5Outputs = (
+        SumcheckOutputClaims<AkitaField, InstructionReadRaf<AkitaField>>,
+        SumcheckOutputClaims<AkitaField, RegistersValEvaluation<AkitaField>>,
+    );
+
+    /// Prepares InstructionReadRAF then RegistersVal through `backend` in
+    /// Stage-5 declaration order, proves both in lockstep with the optimized
+    /// CPU kernels, and returns whether a RegistersVal lease was published
+    /// together with both output claims.
+    fn stage5_lockstep(
+        backend: &MetalBackend,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+    ) -> (bool, Stage5Outputs) {
+        let instruction_relation = InstructionReadRaf::new(InstructionReadRafDimensions::new(
+            LOG_T,
+            2 * RISCV_XLEN,
+            NonZeroUsize::new(4).unwrap(),
+        ));
+        let reduction_point = point(LOG_T, 151);
+        let opening = |polynomial| {
+            let table = JoltWitnessOracle::<AkitaField>::oracle_table(
+                witness,
+                JoltPolynomialId::Virtual(polynomial),
+            )
+            .unwrap();
+            Polynomial::new(table).evaluate(&reduction_point)
+        };
+        let instruction_claims = InstructionReadRafInputClaims {
+            lookup_output: opening(JoltVirtualPolynomial::LookupOutput),
+            left_lookup_operand: opening(JoltVirtualPolynomial::LeftLookupOperand),
+            right_lookup_operand: opening(JoltVirtualPolynomial::RightLookupOperand),
+        };
+        let instruction_points = InstructionReadRafInputClaims {
+            lookup_output: reduction_point.clone(),
+            left_lookup_operand: reduction_point.clone(),
+            right_lookup_operand: reduction_point.clone(),
+        };
+        let instruction_challenges = InstructionReadRafChallenges {
+            gamma: AkitaField::from_u64(167),
+        };
+        let instruction_inputs = || ProverInputs {
+            relation: &instruction_relation,
+            claims: &instruction_claims,
+            points: &instruction_points,
+            challenges: &instruction_challenges,
+        };
+
+        let registers_relation = RegistersValEvaluation::new(TraceDimensions::new(LOG_T));
+        let registers_point = point(REGISTER_ADDRESS_BITS + LOG_T, 19);
+        let registers_table = JoltWitnessOracle::<AkitaField>::oracle_table(
+            witness,
+            JoltPolynomialId::Virtual(JoltVirtualPolynomial::RegistersVal),
+        )
+        .unwrap();
+        let registers_claims = RegistersValEvaluationInputClaims {
+            registers_val: Polynomial::new(registers_table).evaluate(&registers_point),
+        };
+        let registers_points = RegistersValEvaluationInputClaims {
+            registers_val: registers_point,
+        };
+        let no_challenges = NoChallenges::default();
+        let registers_inputs = || ProverInputs {
+            relation: &registers_relation,
+            claims: &registers_claims,
+            points: &registers_points,
+            challenges: &no_challenges,
+        };
+
+        let mut session = ProofSession::default();
+        let mut instruction_actual = <MetalBackend as PrepareKernel<
+            AkitaField,
+            InstructionReadRaf<AkitaField>,
+        >>::prepare(
+            backend, &mut session, witness, instruction_inputs()
+        )
+        .unwrap();
+        assert!(session.state::<InstructionReadRafStage1Owner>().is_none());
+        let leased = session
+            .state::<RegistersValInstructionSourceLease>()
+            .is_some();
+        let mut registers_actual = <MetalBackend as PrepareKernel<
+            AkitaField,
+            RegistersValEvaluation<AkitaField>,
+        >>::prepare(
+            backend, &mut session, witness, registers_inputs()
+        )
+        .unwrap();
+        assert!(session
+            .state::<RegistersValInstructionSourceLease>()
+            .is_none());
+
+        let mut instruction_expected = OptimizedInstructionReadRaf
+            .prepare(&mut ProofSession::default(), witness, instruction_inputs())
+            .unwrap();
+        let claim = instruction_relation
+            .input_claim(&instruction_claims, &instruction_challenges)
+            .unwrap();
+        let challenges = point(instruction_expected.num_rounds(), 211);
+        run_lockstep(
+            instruction_expected.as_mut(),
+            instruction_actual.as_mut(),
+            claim,
+            &challenges,
+        );
+        let instruction_outputs = instruction_actual
+            .output_claims(&instruction_claims)
+            .unwrap();
+        assert_eq!(
+            instruction_outputs,
+            instruction_expected
+                .output_claims(&instruction_claims)
+                .unwrap()
+        );
+
+        let mut registers_expected = OptimizedRegistersValEvaluation
+            .prepare(&mut ProofSession::default(), witness, registers_inputs())
+            .unwrap();
+        let challenges = point(LOG_T, 223);
+        run_lockstep(
+            registers_expected.as_mut(),
+            registers_actual.as_mut(),
+            registers_claims.registers_val,
+            &challenges,
+        );
+        let registers_outputs = registers_actual.output_claims(&registers_claims).unwrap();
+        assert_eq!(
+            registers_outputs,
+            registers_expected.output_claims(&registers_claims).unwrap()
+        );
+        (leased, (instruction_outputs, registers_outputs))
+    }
+
     #[test]
     fn stage5_owner_is_leased_to_registers_val_before_its_prepare() {
         with_sample_backend_at_log_t(LOG_T, 8, |witness| {
-            let backend = MetalBackend::new(MetalConfig {
-                instruction_read_raf: InstructionReadRafMetalConfig {
-                    address_cutoff_elements: 1 << LOG_T,
-                    cutoff_elements: 8,
-                    ..Default::default()
-                },
-                registers_val_evaluation: RegistersValEvaluationMetalConfig {
-                    source: RegistersValEvaluationSource::Stage1Resident,
-                    trace_cutoff_elements: 1 << LOG_T,
-                    cutoff_elements: 16,
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .unwrap();
-
-            let instruction_relation = InstructionReadRaf::new(InstructionReadRafDimensions::new(
-                LOG_T,
-                2 * RISCV_XLEN,
-                NonZeroUsize::new(4).unwrap(),
-            ));
-            let reduction_point = point(LOG_T, 151);
-            let opening = |polynomial| {
-                let table = JoltWitnessOracle::<AkitaField>::oracle_table(
-                    witness,
-                    JoltPolynomialId::Virtual(polynomial),
-                )
-                .unwrap();
-                Polynomial::new(table).evaluate(&reduction_point)
-            };
-            let instruction_claims = InstructionReadRafInputClaims {
-                lookup_output: opening(JoltVirtualPolynomial::LookupOutput),
-                left_lookup_operand: opening(JoltVirtualPolynomial::LeftLookupOperand),
-                right_lookup_operand: opening(JoltVirtualPolynomial::RightLookupOperand),
-            };
-            let instruction_points = InstructionReadRafInputClaims {
-                lookup_output: reduction_point.clone(),
-                left_lookup_operand: reduction_point.clone(),
-                right_lookup_operand: reduction_point.clone(),
-            };
-            let instruction_challenges = InstructionReadRafChallenges {
-                gamma: AkitaField::from_u64(167),
-            };
-            let instruction_inputs = || ProverInputs {
-                relation: &instruction_relation,
-                claims: &instruction_claims,
-                points: &instruction_points,
-                challenges: &instruction_challenges,
-            };
-
-            let registers_relation = RegistersValEvaluation::new(TraceDimensions::new(LOG_T));
-            let registers_point = point(REGISTER_ADDRESS_BITS + LOG_T, 19);
-            let registers_table = JoltWitnessOracle::<AkitaField>::oracle_table(
-                witness,
-                JoltPolynomialId::Virtual(JoltVirtualPolynomial::RegistersVal),
-            )
-            .unwrap();
-            let registers_claims = RegistersValEvaluationInputClaims {
-                registers_val: Polynomial::new(registers_table).evaluate(&registers_point),
-            };
-            let registers_points = RegistersValEvaluationInputClaims {
-                registers_val: registers_point,
-            };
-            let no_challenges = NoChallenges::default();
-            let registers_inputs = || ProverInputs {
-                relation: &registers_relation,
-                claims: &registers_claims,
-                points: &registers_points,
-                challenges: &no_challenges,
-            };
-
-            let mut session = ProofSession::default();
-            let mut instruction_actual = <MetalBackend as PrepareKernel<
-                AkitaField,
-                InstructionReadRaf<AkitaField>,
-            >>::prepare(
-                &backend, &mut session, witness, instruction_inputs()
-            )
-            .unwrap();
-            assert!(session.state::<InstructionReadRafStage1Owner>().is_none());
-            assert!(session
-                .state::<RegistersValInstructionSourceLease>()
-                .is_some());
-            let mut registers_actual = <MetalBackend as PrepareKernel<
-                AkitaField,
-                RegistersValEvaluation<AkitaField>,
-            >>::prepare(
-                &backend, &mut session, witness, registers_inputs()
-            )
-            .unwrap();
-            assert!(session
-                .state::<RegistersValInstructionSourceLease>()
-                .is_none());
+            let backend = stage5_backend();
+            let (leased, _) = stage5_lockstep(&backend, witness);
+            assert!(leased);
             assert_eq!(backend.registers_val_sequences(), 1);
+        });
+    }
 
-            let mut instruction_expected = OptimizedInstructionReadRaf
-                .prepare(&mut ProofSession::default(), witness, instruction_inputs())
-                .unwrap();
-            let claim = instruction_relation
-                .input_claim(&instruction_claims, &instruction_challenges)
-                .unwrap();
-            let challenges = point(instruction_expected.num_rounds(), 211);
-            run_lockstep(
-                instruction_expected.as_mut(),
-                instruction_actual.as_mut(),
-                claim,
-                &challenges,
-            );
-            assert_eq!(
-                instruction_actual
-                    .output_claims(&instruction_claims)
-                    .unwrap(),
-                instruction_expected
-                    .output_claims(&instruction_claims)
-                    .unwrap()
-            );
-
-            let mut registers_expected = OptimizedRegistersValEvaluation
-                .prepare(&mut ProofSession::default(), witness, registers_inputs())
-                .unwrap();
-            let challenges = point(LOG_T, 223);
-            run_lockstep(
-                registers_expected.as_mut(),
-                registers_actual.as_mut(),
-                registers_claims.registers_val,
-                &challenges,
-            );
-            assert_eq!(
-                registers_actual.output_claims(&registers_claims).unwrap(),
-                registers_expected.output_claims(&registers_claims).unwrap()
-            );
+    #[test]
+    fn declined_stage5_owner_keeps_both_cpu_routes() {
+        with_sample_backend_at_log_t(LOG_T, 8, |witness| {
+            let (_, admitted) = stage5_lockstep(&stage5_backend(), witness);
+            let mut backend = stage5_backend();
+            backend.working_set_limit = Some(0);
+            let (leased, declined) = stage5_lockstep(&backend, witness);
+            assert!(!leased);
+            assert_eq!(backend.registers_val_sequences(), 0);
+            assert_eq!(declined, admitted);
         });
     }
 

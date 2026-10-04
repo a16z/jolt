@@ -756,32 +756,6 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(cpu_only.registers_val_sequences(), 0);
-
-                let declined_owner = MetalBackend::new(super::super::MetalConfig {
-                    instruction_read_raf: super::super::InstructionReadRafMetalConfig {
-                        address_cutoff_elements: 4,
-                        ..Default::default()
-                    },
-                    registers_val_evaluation: RegistersValEvaluationMetalConfig {
-                        source: RegistersValEvaluationSource::Stage1Resident,
-                        trace_cutoff_elements: 4,
-                        cutoff_elements: 2,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-                .unwrap();
-                let _ = <MetalBackend as PrepareKernel<
-                    AkitaField,
-                    RegistersValEvaluation<AkitaField>,
-                >>::prepare(
-                    &declined_owner,
-                    &mut ProofSession::default(),
-                    witness,
-                    inputs(),
-                )
-                .unwrap();
-                assert_eq!(declined_owner.registers_val_sequences(), 0);
             });
         }
     }

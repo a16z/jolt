@@ -29,6 +29,8 @@ use super::registers_read_write::RegistersReadWriteMetalConfig;
 use super::registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };
+#[cfg(test)]
+use super::solinas::{device_allocated_bytes, validate_working_set};
 use super::solinas::{
     InstructionInputStorageInitialization, MetalError, OuterRemainderStorageInitialization,
     SolinasMetal,
@@ -179,6 +181,11 @@ pub struct MetalBackend {
     pub(super) config: MetalConfig,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) test_counters: Arc<MetalTestCounters>,
+    /// Stands in for the device's recommended working set in
+    /// [`Self::validate_additional_working_set`], so a small fixture can be
+    /// declined.
+    #[cfg(test)]
+    pub(super) working_set_limit: Option<u64>,
 }
 
 impl MetalBackend {
@@ -327,7 +334,22 @@ impl MetalBackend {
             config: *config,
             #[cfg(any(test, feature = "test-utils"))]
             test_counters: Arc::default(),
+            #[cfg(test)]
+            working_set_limit: None,
         }
+    }
+
+    /// Admits `additional` Metal bytes against the device's recommended
+    /// working set.
+    pub(super) fn validate_additional_working_set(
+        &self,
+        additional: u64,
+    ) -> Result<(), MetalError> {
+        #[cfg(test)]
+        if let Some(maximum) = self.working_set_limit {
+            return validate_working_set(device_allocated_bytes(), additional, maximum);
+        }
+        self.context.validate_additional_working_set(additional)
     }
 
     test_counter_getters! {
