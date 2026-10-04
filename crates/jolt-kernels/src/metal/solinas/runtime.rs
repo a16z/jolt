@@ -372,16 +372,6 @@ impl SolinasMetal {
         )
     }
 
-    /// [`Self::validate_additional_working_set`] against the process footprint
-    /// (host memory plus every Metal allocation) instead of Metal alone.
-    pub(crate) fn validate_additional_footprint(&self, additional: u64) -> Result<(), MetalError> {
-        super::validate_working_set(
-            process_footprint_bytes(),
-            additional,
-            self.device.recommended_max_working_set_size(),
-        )
-    }
-
     pub(super) fn compile_named_pipeline(
         &self,
         name: &'static str,
@@ -479,9 +469,11 @@ pub fn device_allocated_bytes() -> u64 {
     Device::system_default().map_or(0, |device| device.current_allocated_size())
 }
 
-/// This process's `phys_footprint` (what `footprint(1)` and `time -l` report);
+/// This process's `phys_footprint` (what `footprint(1)` and `time -l` report):
+/// its dirty resident and compressed pages, host and Metal alike. A Metal
+/// buffer counts only the pages touched so far, not its allocated length.
 /// `u64::MAX`, which declines every footprint admission, if the call fails.
-fn process_footprint_bytes() -> u64 {
+pub(crate) fn process_footprint_bytes() -> u64 {
     let mut info = MaybeUninit::<rusage_info_v4>::zeroed();
     // SAFETY: flavor RUSAGE_INFO_V4 writes at most one rusage_info_v4 into
     // `info`, a valid zeroed value either way.

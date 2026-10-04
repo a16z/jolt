@@ -30,10 +30,10 @@ use super::registers_val_evaluation::{
     RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
 };
 #[cfg(test)]
-use super::solinas::{device_allocated_bytes, validate_working_set};
+use super::solinas::device_allocated_bytes;
 use super::solinas::{
-    InstructionInputStorageInitialization, MetalError, OuterRemainderStorageInitialization,
-    SolinasMetal,
+    process_footprint_bytes, validate_working_set, InstructionInputStorageInitialization,
+    MetalError, OuterRemainderStorageInitialization, SolinasMetal,
 };
 use super::spartan_outer::{SpartanOuterRemainderMetalConfig, SpartanOuterUniskipMetalConfig};
 use super::spartan_product::SpartanProductRemainderMetalConfig;
@@ -184,6 +184,9 @@ pub struct MetalBackend {
     /// declined.
     #[cfg(test)]
     pub(super) working_set_limit: Option<u64>,
+    /// [`Self::working_set_limit`] for [`Self::validate_additional_footprint`].
+    #[cfg(test)]
+    pub(super) footprint_limit: Option<u64>,
 }
 
 impl MetalBackend {
@@ -325,6 +328,8 @@ impl MetalBackend {
             test_counters: Arc::default(),
             #[cfg(test)]
             working_set_limit: None,
+            #[cfg(test)]
+            footprint_limit: None,
         }
     }
 
@@ -339,6 +344,18 @@ impl MetalBackend {
             return validate_working_set(device_allocated_bytes(), additional, maximum);
         }
         self.context.validate_additional_working_set(additional)
+    }
+
+    /// Admits `additional` bytes against the device's recommended working set
+    /// counted from the process footprint, which covers host memory and the
+    /// touched pages of Metal buffers; returns the footprint it measured.
+    pub(super) fn validate_additional_footprint(&self, additional: u64) -> Result<u64, MetalError> {
+        let maximum = self.context.device_info().recommended_max_working_set_size;
+        #[cfg(test)]
+        let maximum = self.footprint_limit.unwrap_or(maximum);
+        let footprint = process_footprint_bytes();
+        validate_working_set(footprint, additional, maximum)?;
+        Ok(footprint)
     }
 
     test_counter_getters! {

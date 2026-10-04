@@ -81,7 +81,7 @@ use runtime::{
     validate_completed_command, ReductionBuffer,
 };
 pub use runtime::{device_allocated_bytes, DeviceInfo, PipelineLimits, SolinasMetal};
-pub(crate) use runtime::{set_inline_bytes, validate_working_set};
+pub(crate) use runtime::{process_footprint_bytes, set_inline_bytes, validate_working_set};
 
 pub use address_raf::{AddressRafScanRow, AddressRafSums, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES};
 pub(crate) use address_sequence::ResidentLookupIndexPlane;

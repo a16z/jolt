@@ -308,11 +308,7 @@ impl SolinasMetal {
         completion_serial: u64,
     ) -> Result<RegistersClaimResidentRdPlane, RegistersClaimError> {
         let row_count = rows.geometry.rows();
-        let bytes = to_u64(
-            row_count
-                .checked_mul(size_of::<u64>())
-                .ok_or(MetalError::InputTooLong(row_count))?,
-        )?;
+        let bytes = registers_claim_rd_post_bytes(row_count)?;
         self.validate_buffer_length(bytes)?;
         self.validate_additional_working_set(bytes)?;
         let buffer = self
@@ -578,6 +574,14 @@ fn encode_fields(values: &[AkitaField]) -> Vec<Fp128> {
 
 fn to_u64(value: usize) -> Result<u64, MetalError> {
     u64::try_from(value).map_err(|_| MetalError::InputTooLong(value))
+}
+
+/// Bytes of the RdWriteValue plane over `rows` cycles.
+pub(crate) fn registers_claim_rd_post_bytes(rows: usize) -> Result<u64, MetalError> {
+    to_u64(
+        rows.checked_mul(size_of::<u64>())
+            .ok_or(MetalError::InputTooLong(rows))?,
+    )
 }
 
 #[cfg(test)]

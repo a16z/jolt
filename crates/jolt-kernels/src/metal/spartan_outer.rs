@@ -25,6 +25,7 @@ use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
 use super::instruction_input::PreparedInstructionInput;
+use super::ram_read_write::RamReadWriteStage1Source;
 use super::registers_claim_reduction::{
     MetalRegistersClaimAsyncStage1Carry, MetalRegistersClaimOuterSource,
     MetalRegistersClaimPendingStage1Carry, MetalRegistersClaimStage1Carry,
@@ -33,6 +34,8 @@ use super::registers_val_evaluation::RegistersValEvaluationSource;
 use super::solinas::bytecode_read_raf_address::{
     bytecode_address_stage1_topology_max_bytes, bytecode_address_stage1_topology_max_plane_bytes,
 };
+use super::solinas::registers_claim_reduction::registers_claim_rd_post_bytes;
+use super::solinas::spartan_shift::SpartanShiftResidentRows;
 use super::solinas::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_read_raf_stage1_claim_bytes, instruction_read_raf_stage1_device_bytes,
@@ -41,10 +44,12 @@ use super::solinas::{
     spartan_outer_uniskip_row_bytes, InstructionInputRows, MetalError, OuterRemainderPhase,
     OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
     PendingRegistersReadWriteStage1Pipelines, PendingSpartanStage1SourcePrimer,
-    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source, SolinasMetal,
-    SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
+    ProductRemainderSequence, RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source,
+    SolinasMetal, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
-use super::spartan_product::MetalProductUniskipEndpointCarrier;
+use super::spartan_product::{
+    MetalInstructionClaimResidentRows, MetalProductUniskipEndpointCarrier,
+};
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
 use crate::optimized::registers_read_write::RegisterCapacityExceeded;
 use crate::optimized::spartan_outer::{
@@ -108,6 +113,18 @@ fn resident_row_consumers(cycles: usize, config: &MetalConfig) -> (bool, bool) {
     (stage1, instruction_input)
 }
 
+/// The rows the Stage-0 pass writes for `plan`; the rest of its working set
+/// is lazily backed storage that Stages 1–3 first touch.
+fn resident_row_bytes(cycles: usize, plan: ResidentRowPlan) -> Result<u64, MetalError> {
+    if plan.stage1 {
+        spartan_outer_uniskip_row_bytes(cycles)
+    } else if plan.instruction_input {
+        instruction_input_row_bytes(cycles)
+    } else {
+        Ok(0)
+    }
+}
+
 fn resident_row_working_set(
     cycles: usize,
     plan: ResidentRowPlan,
@@ -115,13 +132,7 @@ fn resident_row_working_set(
 ) -> Result<u64, MetalError> {
     let metal_remainder =
         plan.stage1 && cycles >= config.spartan_outer_remainder.trace_cutoff_elements;
-    let row_bytes = if plan.stage1 {
-        spartan_outer_uniskip_row_bytes(cycles)?
-    } else if plan.instruction_input {
-        instruction_input_row_bytes(cycles)?
-    } else {
-        0
-    };
+    let row_bytes = resident_row_bytes(cycles, plan)?;
     let instruction_input_bytes = if plan.instruction_input {
         // The dense tables borrow Outer's state A and Product's state B, which
         // the Outer storage below counts.
@@ -222,6 +233,72 @@ impl Default for SpartanOuterUniskipMetalConfig {
 }
 
 impl MetalBackend {
+    /// Checks the lazily backed storage of the admitted Stage-0 plan, which
+    /// Stages 1–3 touch first, against the process footprint once Stage 0 has
+    /// returned its transients. A decline releases the resident rows with
+    /// every lease on them and on that storage, so each consumer takes the
+    /// route it takes when Stage 0 admits no rows; a Stage-0 InstructionReadRAF
+    /// owner stays for Stage 5.
+    fn admit_stage1_resident_storage(
+        &self,
+        session: &mut ProofSession,
+        cycles: usize,
+    ) -> Result<(), KernelError<AkitaField>> {
+        let plan = ResidentRowPlan {
+            stage1: session.state::<SpartanOuterUniskipRows>().is_some(),
+            instruction_input: session.state::<PreparedInstructionInput>().is_some(),
+            owner: false,
+        };
+        if !plan.stage1 && !plan.instruction_input {
+            return Ok(());
+        }
+        let rd_post_bytes = if session.state::<RegistersReadWriteStage1Source>().is_some() {
+            registers_claim_rd_post_bytes(cycles).map_err(metal_prepare_error)?
+        } else {
+            0
+        };
+        let bytes = resident_row_working_set(cycles, plan, &self.config)
+            .and_then(|total| {
+                let rows = resident_row_bytes(cycles, plan)?;
+                total
+                    .checked_sub(rows)
+                    .and_then(|lazy| lazy.checked_add(rd_post_bytes))
+                    .ok_or(MetalError::InputTooLong(cycles))
+            })
+            .map_err(metal_prepare_error)?;
+        let error = match self.validate_additional_footprint(bytes) {
+            Ok(footprint) => {
+                tracing::info!(
+                    target: "jolt::metal",
+                    cycles,
+                    footprint,
+                    bytes,
+                    "admitted the Stage-1 resident storage against the process footprint"
+                );
+                return Ok(());
+            }
+            Err(error) if error.is_capacity_error() => error,
+            Err(error) => return Err(metal_prepare_error(error)),
+        };
+        tracing::warn!(
+            target: "jolt::metal",
+            error = %error,
+            "Stage-1 resident storage was not admitted against the process footprint; releasing the resident rows and using optimized CPU"
+        );
+        drop(session.take::<PendingSpartanStage1SourcePrimer>());
+        drop(session.take::<PreparedInstructionInput>());
+        drop(session.take::<MetalInstructionClaimResidentRows>());
+        drop(session.take::<ProductRemainderSequence>());
+        drop(session.take::<OuterRemainderSequenceStorage>());
+        drop(session.take::<RamReadWriteStage1Source>());
+        drop(session.take::<PendingRegistersReadWriteStage1Pipelines>());
+        drop(session.take::<RegistersReadWriteStage1Source>());
+        drop(session.take::<SpartanShiftResidentRows>());
+        drop(session.take::<InstructionInputRows>());
+        drop(session.take::<SpartanOuterUniskipRows>());
+        Ok(())
+    }
+
     fn prepare_outer_remainder_storage(
         &self,
         session: &mut ProofSession,
@@ -505,12 +582,13 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         })
                         .and_then(|additional| {
                             self.context.validate_additional_working_set(additional)?;
-                            // Only owner plans also face the process footprint:
-                            // it still holds Stage-0 commit transients, which
-                            // would decline the rows alone at 2^29, while the
-                            // owner can be built at Stage 5 instead.
+                            // Owner plans face the process footprint here with
+                            // the whole plan, Stage-0 commit transients included:
+                            // a declined owner is built at Stage 5 instead.
+                            // Ownerless plans check their rows right before
+                            // writing them, and Stage 1 checks the lazy storage.
                             if candidate.owner {
-                                self.context.validate_additional_footprint(additional)?;
+                                let _footprint = self.validate_additional_footprint(additional)?;
                             }
                             Ok(())
                         });
@@ -546,6 +624,27 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         // not stack on them. The owner pass publishes the columns itself.
         if !owner_admitted {
             self.prepare_ram_raf_witness(session, log_t, witness)?;
+        }
+        if let Some(plan) = admitted_plan.filter(|plan| !plan.owner) {
+            let rows = resident_row_bytes(cycles, plan).map_err(metal_prepare_error)?;
+            match self.validate_additional_footprint(rows) {
+                Ok(footprint) => tracing::info!(
+                    target: "jolt::metal",
+                    cycles,
+                    footprint,
+                    rows,
+                    "admitted the Stage-0 resident rows against the process footprint"
+                ),
+                Err(error) if error.is_capacity_error() => {
+                    tracing::warn!(
+                        target: "jolt::metal",
+                        error = %error,
+                        "Stage-0 resident rows were not admitted against the process footprint; using optimized CPU"
+                    );
+                    admitted_plan = None;
+                }
+                Err(error) => return Err(metal_prepare_error(error)),
+            }
         }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
@@ -638,6 +737,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         witness: &dyn JoltWitnessPlane<AkitaField>,
     ) -> Result<(), KernelError<AkitaField>> {
         let cycles = 1usize << log_t;
+        self.admit_stage1_resident_storage(session, cycles)?;
         let resident_rows = session.state::<SpartanOuterUniskipRows>().is_some();
         if !use_metal_stage1(cycles, &self.config, resident_rows) {
             drop(session.take::<PendingSpartanStage1SourcePrimer>());
@@ -1576,10 +1676,13 @@ mod tests {
 
     use super::{
         outer_remainder_storage_fallback_reason, prepare_cpu_instruction_input_now,
-        resident_row_admission_candidates, resident_row_consumers, resident_row_working_set,
-        use_metal_remainder, use_metal_stage1, validate_resident_row_buffer,
-        MetalOuterRemainderHost, OuterRemainder, ResidentRowPlan, SpartanOuterDimensions,
-        OUTER_DOMAIN, OUTER_VARIABLES,
+        resident_row_admission_candidates, resident_row_bytes, resident_row_consumers,
+        resident_row_working_set, use_metal_remainder, use_metal_stage1,
+        validate_resident_row_buffer, InstructionInputRows, JoltWitnessPlane,
+        MetalInstructionClaimResidentRows, MetalOuterRemainderHost, OuterRemainder,
+        OuterRemainderSequenceStorage, PreparedInstructionInput, ProductRemainderSequence,
+        ResidentRowPlan, SpartanOuterDimensions, SpartanOuterUniskipRows, SpartanShiftResidentRows,
+        SumcheckOutputClaims, UnivariatePoly, OUTER_DOMAIN, OUTER_VARIABLES,
     };
     use crate::metal::solinas::{
         validate_working_set, MetalError, OuterRemainderPhase, OuterRemainderSequence,
@@ -1694,12 +1797,16 @@ mod tests {
     #[test]
     fn stage0_owner_is_deferred_at_log_29_and_co_produced_at_log_28() {
         // recommendedMaxWorkingSetSize of the 128 GB benchmark host and the
-        // W2 Stage-0 measurements when the plan is admitted: 2^29 commit
-        // plateau and W1's A-prefix (the only Metal allocation then); 2^28
-        // Stage-0 peak less the rows and owner it held.
+        // W2 measurements when the plan is admitted: 2^29 commit plateau and
+        // W1's A-prefix (the only Metal allocation then), the largest 2^29
+        // footprint sample between the commit prewarm and the rows, the 2^29
+        // footprint at Stage 1; 2^28 Stage-0 peak less the rows and owner it
+        // held.
         const MAXIMUM: u64 = 115_448_725_504;
         const FOOTPRINT_29: u64 = 63_400_000_000;
         const METAL_29: u64 = 6_440_000_000;
+        const ROWS_FOOTPRINT_29: u64 = 70_500_000_000;
+        const STAGE1_FOOTPRINT_29: u64 = 80_000_000_000;
         const FOOTPRINT_28: u64 = 45_800_000_000;
         let config = MetalConfig::production();
         let plan_bytes = |log_t: usize, stage1, owner| {
@@ -1733,6 +1840,23 @@ mod tests {
         assert!(validate_working_set(FOOTPRINT_28, plan_bytes(28, true, true), MAXIMUM).is_ok());
         assert!(validate_working_set(FOOTPRINT_29, plan_bytes(29, true, true), MAXIMUM).is_err());
         assert!(validate_working_set(METAL_29, plan_bytes(29, true, false), MAXIMUM).is_ok());
+        let rows_29 = resident_row_bytes(
+            1 << 29,
+            ResidentRowPlan {
+                stage1: true,
+                instruction_input: true,
+                owner: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(rows_29, 42_949_672_960);
+        assert!(validate_working_set(ROWS_FOOTPRINT_29, rows_29, MAXIMUM).is_ok());
+        assert!(validate_working_set(
+            STAGE1_FOOTPRINT_29,
+            plan_bytes(29, true, false) - rows_29,
+            MAXIMUM
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1995,6 +2119,156 @@ mod tests {
     #[test]
     fn outer_remainder_handoff_waits_for_the_stream_bind() {
         adapter_parity_case(3, 16);
+    }
+
+    const STAGE1_LOG_T: usize = 10;
+
+    fn stage1_backend() -> MetalBackend {
+        let mut config = MetalConfig::production();
+        config.spartan_outer_uniskip.trace_cutoff_elements = 2;
+        config.spartan_outer_remainder.trace_cutoff_elements = 4;
+        config.spartan_outer_remainder.dispatch.cpu_tail_elements = 2;
+        config.spartan_product_remainder.trace_cutoff_elements = 2;
+        config.spartan_shift.trace_cutoff_elements = 2;
+        config.instruction_input.trace_cutoff_elements = 4;
+        config.instruction_input.cutoff_elements = 2 << (STAGE1_LOG_T / 2);
+        MetalBackend::new(config).unwrap()
+    }
+
+    fn stage1_leases(session: &ProofSession) -> [bool; 7] {
+        [
+            session.state::<SpartanOuterUniskipRows>().is_some(),
+            session.state::<SpartanShiftResidentRows>().is_some(),
+            session.state::<InstructionInputRows>().is_some(),
+            session.state::<OuterRemainderSequenceStorage>().is_some(),
+            session.state::<ProductRemainderSequence>().is_some(),
+            session
+                .state::<MetalInstructionClaimResidentRows>()
+                .is_some(),
+            session.state::<PreparedInstructionInput>().is_some(),
+        ]
+    }
+
+    type Stage1Outputs = (
+        UnivariatePoly<AkitaField>,
+        SumcheckOutputClaims<AkitaField, OuterRemainder<AkitaField>>,
+    );
+
+    /// Runs Stage 1 through `backend` on a session its witness preparation
+    /// filled, Outer in lockstep with the optimized CPU kernels, and returns
+    /// the resident leases left after the uni-skip prepare with the outputs.
+    fn stage1_outputs(
+        backend: &MetalBackend,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        rows: &[SpartanOuterRow],
+    ) -> ([bool; 7], Stage1Outputs) {
+        let log_t = STAGE1_LOG_T;
+        let tau = (0..log_t + 2)
+            .map(|index| AkitaField::from_u64(71 + 19 * index as u64))
+            .collect::<Vec<_>>();
+        let r0 = AkitaField::from_u64(12_289);
+        let relation = OuterRemainder::new(SpartanOuterDimensions::rv64(log_t), tau.clone(), r0);
+        let input_claim = true_input_claim(rows, &tau, r0, log_t);
+        let claims = outer_remainder_input_values_from_uniskip_output(input_claim);
+        let points = OuterRemainderInputClaims::<Vec<AkitaField>>::default();
+        let no_challenges = NoChallenges::<AkitaField>::default();
+        let inputs = || ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        };
+
+        <MetalBackend as UniskipKernel<AkitaField, OuterRemainder<AkitaField>>>::prepare(
+            backend, session, log_t, &tau, witness,
+        )
+        .unwrap();
+        let leases = stage1_leases(session);
+        let poly =
+            <MetalBackend as UniskipKernel<AkitaField, OuterRemainder<AkitaField>>>::first_round_poly(
+                backend,
+                session,
+                &[],
+                &[],
+            )
+            .unwrap();
+        let mut device =
+            <MetalBackend as PrepareKernel<AkitaField, OuterRemainder<AkitaField>>>::prepare(
+                backend,
+                session,
+                witness,
+                inputs(),
+            )
+            .unwrap();
+
+        let mut cpu_session = ProofSession::default();
+        <OptimizedOuterUniskip as UniskipKernel<AkitaField, OuterRemainder<AkitaField>>>::prepare(
+            &OptimizedOuterUniskip,
+            &mut cpu_session,
+            log_t,
+            &tau,
+            witness,
+        )
+        .unwrap();
+        let mut cpu = OptimizedOuterRemainder
+            .prepare(&mut cpu_session, witness, inputs())
+            .unwrap();
+        let round_challenges = (0..=log_t)
+            .map(|index| AkitaField::from_u64(65_537 + 31 * index as u64))
+            .collect::<Vec<_>>();
+        run_lockstep(
+            cpu.as_mut(),
+            device.as_mut(),
+            input_claim,
+            &round_challenges,
+        );
+        let outputs = device.output_claims(&claims).unwrap();
+        assert_eq!(outputs, cpu.output_claims(&claims).unwrap());
+        (leases, (poly, outputs))
+    }
+
+    #[test]
+    fn footprint_declines_release_every_resident_stage1_lease() {
+        with_sample_backend_at_log_t(STAGE1_LOG_T, 4, |witness| {
+            let rows = witness.bundles().unwrap();
+            let prepare_witness = |backend: &MetalBackend| {
+                let mut session = ProofSession::default();
+                <MetalBackend as UniskipKernel<AkitaField, OuterRemainder<AkitaField>>>::prepare_witness(
+                    backend,
+                    &mut session,
+                    STAGE1_LOG_T,
+                    witness,
+                )
+                .unwrap();
+                session
+            };
+
+            let admitted = stage1_backend();
+            let mut session = prepare_witness(&admitted);
+            assert_eq!(stage1_leases(&session), [true; 7]);
+            let (leases, expected) = stage1_outputs(&admitted, &mut session, witness, &rows);
+            assert_eq!(leases, [true; 7]);
+            assert_eq!(admitted.outer_remainder_sequences(), 1);
+
+            let mut stage1_declined = stage1_backend();
+            let mut session = prepare_witness(&stage1_declined);
+            assert_eq!(stage1_leases(&session), [true; 7]);
+            stage1_declined.footprint_limit = Some(0);
+            let (leases, outputs) = stage1_outputs(&stage1_declined, &mut session, witness, &rows);
+            assert_eq!(leases, [false; 7]);
+            assert_eq!(stage1_declined.outer_remainder_sequences(), 0);
+            assert_eq!(outputs, expected);
+
+            let mut stage0_declined = stage1_backend();
+            stage0_declined.footprint_limit = Some(0);
+            let mut session = prepare_witness(&stage0_declined);
+            assert_eq!(stage1_leases(&session), [false; 7]);
+            let (leases, outputs) = stage1_outputs(&stage0_declined, &mut session, witness, &rows);
+            assert_eq!(leases, [false; 7]);
+            assert_eq!(stage0_declined.outer_remainder_sequences(), 0);
+            assert_eq!(outputs, expected);
+        });
     }
 
     #[test]
