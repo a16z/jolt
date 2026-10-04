@@ -1119,7 +1119,7 @@ pub(crate) mod testing {
                    ram_access: RamAccess| {
             TraceRow::new(instruction.unwrap_or_default(), registers, ram_access).unwrap()
         };
-        let mut rows = vec![
+        let rows = [
             // Hot bytecode, hot RAM, register activity.
             row(
                 Some(instruction_a),
@@ -1180,7 +1180,9 @@ pub(crate) mod testing {
                 RamAccess::NoOp,
             ),
         ];
-        rows.truncate(1 << log_t);
+        let rows = (0usize..1 << log_t)
+            .map(|cycle| rows[(cycle.wrapping_mul(0x9e37_79b9) >> 11) % rows.len()])
+            .collect::<Vec<_>>();
 
         let config = JoltVmWitnessConfig::new(
             log_t,

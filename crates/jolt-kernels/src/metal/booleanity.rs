@@ -586,7 +586,22 @@ mod tests {
 
     #[test]
     fn prepare_kernel_matches_optimized_cpu_with_resident_rows() {
-        let log_t = 10;
+        let narrow = BooleanitySequenceConfig {
+            threads_per_threadgroup: Some(256),
+            dense_threads_per_threadgroup: Some(128),
+            materialize_width: 2,
+        };
+        let wide = BooleanitySequenceConfig {
+            threads_per_threadgroup: Some(32),
+            dense_threads_per_threadgroup: Some(32),
+            materialize_width: 32,
+        };
+        for (log_t, dispatch) in [(10, narrow), (13, wide)] {
+            assert_cycle_matches_optimized_cpu(log_t, dispatch);
+        }
+    }
+
+    fn assert_cycle_matches_optimized_cpu(log_t: usize, dispatch: BooleanitySequenceConfig) {
         with_booleanity_backend(log_t, 8, |witness, dimensions| {
             let r_address = point(110, dimensions.log_k_chunk);
             let reference_address = point(700, dimensions.log_k_chunk);
@@ -620,11 +635,7 @@ mod tests {
                 booleanity_cycle: BooleanityMetalConfig {
                     trace_cutoff_elements: 2,
                     cutoff_elements: 4,
-                    dispatch: BooleanitySequenceConfig {
-                        threads_per_threadgroup: Some(256),
-                        dense_threads_per_threadgroup: Some(128),
-                        materialize_width: 2,
-                    },
+                    dispatch,
                 },
                 ..Default::default()
             })

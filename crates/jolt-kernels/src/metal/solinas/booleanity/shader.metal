@@ -27,36 +27,99 @@ struct BooleanityReductionParams {
     uint2 reserved;
 };
 
-inline ulong booleanity_broadcast_ulong(ulong value, ushort source_lane)
+struct BooleanityLazySum {
+    SolinasFp128 low;
+    uint overflow;
+};
+
+struct BooleanityLazyWideSum {
+    SolinasWide256 low;
+    uint overflow;
+};
+
+inline BooleanityLazySum booleanity_lazy_zero()
 {
-    uint lo = simd_broadcast((uint)value, source_lane);
-    uint hi = simd_broadcast((uint)(value >> 32), source_lane);
-    return ((ulong)hi << 32) | (ulong)lo;
+    BooleanityLazySum sum = {};
+    return sum;
 }
 
-inline BooleanityRow booleanity_load_row_simd(
+inline BooleanityLazyWideSum booleanity_lazy_wide_zero()
+{
+    BooleanityLazyWideSum sum = {};
+    return sum;
+}
+
+inline void booleanity_lazy_add(thread BooleanityLazySum& sum, SolinasFp128 value)
+{
+    ulong carry = 0ul;
+    for (uint i = 0; i < 4; i++) {
+        ulong word = (ulong)sum.low.limb[i] + (ulong)value.limb[i] + carry;
+        sum.low.limb[i] = (uint)word;
+        carry = word >> 32;
+    }
+    sum.overflow += (uint)carry;
+}
+
+inline void booleanity_lazy_wide_add(thread BooleanityLazyWideSum& sum, SolinasWide256 value)
+{
+    ulong carry = 0ul;
+    for (uint i = 0; i < 8; i++) {
+        ulong word = (ulong)sum.low.limb[i] + (ulong)value.limb[i] + carry;
+        sum.low.limb[i] = (uint)word;
+        carry = word >> 32;
+    }
+    sum.overflow += (uint)carry;
+}
+
+// A lazy sum is exactly low + overflow * 2^bits; each add carries at most one,
+// so overflow counts adds and fits a uint. With SOLINAS_OFFSET < 2^32 the
+// correction overflow * SOLINAS_OFFSET^(bits / 128) is below 2^96, which
+// solinas_add folds canonically next to any 128-bit left operand.
+inline SolinasFp128 booleanity_lazy_reduce(BooleanityLazySum sum)
+{
+    ulong residue = (ulong)sum.overflow * (ulong)SOLINAS_OFFSET;
+    SolinasFp128 correction = solinas_zero();
+    correction.limb[0] = (uint)residue;
+    correction.limb[1] = (uint)(residue >> 32);
+    return solinas_add(sum.low, correction);
+}
+
+inline SolinasFp128 booleanity_lazy_wide_reduce(BooleanityLazyWideSum sum)
+{
+    ulong residue = (ulong)sum.overflow * (ulong)SOLINAS_OFFSET;
+    ulong low = (residue & 0xfffffffful) * (ulong)SOLINAS_OFFSET;
+    ulong high = (residue >> 32) * (ulong)SOLINAS_OFFSET + (low >> 32);
+    SolinasFp128 correction = solinas_zero();
+    correction.limb[0] = (uint)low;
+    correction.limb[1] = (uint)high;
+    correction.limb[2] = (uint)(high >> 32);
+    return solinas_add(solinas_reduce(sum.low), correction);
+}
+
+inline bool booleanity_row_hot_index(
     device const ulong* rows,
     uint row_count,
     uint row,
-    uint lane)
+    BooleanitySelector selector,
+    uint chunk_bits,
+    ulong inc_bias,
+    thread uint& hot)
 {
-    BooleanityRow value;
-    value.lookup_lo = booleanity_broadcast_ulong(
-        lane == 0 ? booleanity_row_word(rows, row_count, 0u, row) : 0ul,
-        0);
-    value.lookup_hi = booleanity_broadcast_ulong(
-        lane == 1 ? booleanity_row_word(rows, row_count, 1u, row) : 0ul,
-        1);
-    value.ram_address_plus_one = booleanity_broadcast_ulong(
-        lane == 2 ? booleanity_row_word(rows, row_count, 2u, row) : 0ul,
-        2);
-    value.fused_inc_magnitude = booleanity_broadcast_ulong(
-        lane == 3 ? booleanity_row_word(rows, row_count, 3u, row) : 0ul,
-        3);
-    value.packed_pc_and_flags = booleanity_broadcast_ulong(
-        lane == 4 ? booleanity_row_word(rows, row_count, 4u, row) : 0ul,
-        4);
-    return value;
+    BooleanityRow value = {};
+    if (selector.kind == 0u) {
+        ulong word = booleanity_row_word(
+            rows, row_count, selector.shift < 64u ? 0u : 1u, row);
+        value.lookup_lo = word;
+        value.lookup_hi = word;
+    } else if (selector.kind == 1u) {
+        value.packed_pc_and_flags = booleanity_row_word(rows, row_count, 4u, row);
+    } else if (selector.kind == 2u) {
+        value.ram_address_plus_one = booleanity_row_word(rows, row_count, 2u, row);
+    } else {
+        value.fused_inc_magnitude = booleanity_row_word(rows, row_count, 3u, row);
+        value.packed_pc_and_flags = booleanity_row_word(rows, row_count, 4u, row);
+    }
+    return booleanity_hot_index(value, selector, chunk_bits, inc_bias, hot);
 }
 
 inline void booleanity_lazy_pair(
@@ -67,28 +130,26 @@ inline void booleanity_lazy_pair(
     device const SolinasFp128* initial_constant,
     constant BooleanityParams& params,
     uint pair,
-    uint lane,
     device SolinasFp128* dense,
-    thread SolinasFp128& constant_lane,
-    thread SolinasFp128& leading_lane)
+    thread SolinasFp128& constant_pair,
+    thread SolinasFp128& leading_pair)
 {
-    for (uint poly = lane; poly < params.polys; poly += 32u) {
-        if (params.branch_width == 1u && params.materialize == 0u) {
+    BooleanityLazyWideSum leading = booleanity_lazy_wide_zero();
+    if (params.branch_width == 1u && params.materialize == 0u) {
+        BooleanityLazySum constant_sum = booleanity_lazy_zero();
+        for (uint poly = 0; poly < params.polys; poly++) {
             BooleanitySelector selector = selectors[poly];
-            BooleanityRow row_0 = booleanity_load_row_simd(
-                rows, params.rows, 2u * pair, lane);
-            BooleanityRow row_1 = booleanity_load_row_simd(
-                rows, params.rows, 2u * pair + 1u, lane);
             uint first = params.k;
             uint second = params.k;
-            booleanity_hot_index(
-                row_0, selector, params.chunk_bits, params.inc_bias, first);
-            booleanity_hot_index(
-                row_1, selector, params.chunk_bits, params.inc_bias, second);
-            uint stride = params.k + 1u;
-            constant_lane = solinas_add(
-                constant_lane,
-                initial_constant[poly * stride + first]);
+            booleanity_row_hot_index(
+                rows, params.rows, 2u * pair, selector,
+                params.chunk_bits, params.inc_bias, first);
+            booleanity_row_hot_index(
+                rows, params.rows, 2u * pair + 1u, selector,
+                params.chunk_bits, params.inc_bias, second);
+            booleanity_lazy_add(
+                constant_sum,
+                initial_constant[poly * (params.k + 1u) + first]);
             // Round 0 branches are the base tables, so derive the leading
             // coefficient here instead of gathering from a k^2 table.
             SolinasFp128 base_0 = first < params.k
@@ -98,44 +159,47 @@ inline void booleanity_lazy_pair(
                 ? branches[poly * params.k + second]
                 : solinas_zero();
             SolinasFp128 pair_delta = solinas_sub(base_1, base_0);
-            leading_lane = solinas_add(
-                leading_lane, solinas_mul_wide(pair_delta, pair_delta));
-            continue;
+            booleanity_lazy_wide_add(leading, solinas_product_wide(pair_delta, pair_delta));
         }
-        SolinasFp128 h_0 = solinas_zero();
-        SolinasFp128 h_1 = solinas_zero();
+        constant_pair = booleanity_lazy_reduce(constant_sum);
+        leading_pair = booleanity_lazy_wide_reduce(leading);
+        return;
+    }
+    BooleanityLazyWideSum constant_sum = booleanity_lazy_wide_zero();
+    for (uint poly = 0; poly < params.polys; poly++) {
         BooleanitySelector selector = selectors[poly];
+        BooleanityLazySum lazy_0 = booleanity_lazy_zero();
+        BooleanityLazySum lazy_1 = booleanity_lazy_zero();
         uint original = 2u * pair * params.branch_width;
         for (uint offset = 0; offset < params.branch_width; offset++) {
-            BooleanityRow row_0 = booleanity_load_row_simd(
-                rows, params.rows, original + offset, lane);
-            BooleanityRow row_1 = booleanity_load_row_simd(
-                rows,
-                params.rows,
-                original + params.branch_width + offset,
-                lane);
             uint hot;
             uint table = (poly * params.branch_width + offset) * params.k;
-            if (booleanity_hot_index(
-                    row_0, selector, params.chunk_bits, params.inc_bias, hot)) {
-                h_0 = solinas_add(h_0, branches[table + hot]);
+            if (booleanity_row_hot_index(
+                    rows, params.rows, original + offset, selector,
+                    params.chunk_bits, params.inc_bias, hot)) {
+                booleanity_lazy_add(lazy_0, branches[table + hot]);
             }
-            if (booleanity_hot_index(
-                    row_1, selector, params.chunk_bits, params.inc_bias, hot)) {
-                h_1 = solinas_add(h_1, branches[table + hot]);
+            if (booleanity_row_hot_index(
+                    rows, params.rows, original + params.branch_width + offset, selector,
+                    params.chunk_bits, params.inc_bias, hot)) {
+                booleanity_lazy_add(lazy_1, branches[table + hot]);
             }
         }
+        SolinasFp128 h_0 = booleanity_lazy_reduce(lazy_0);
+        SolinasFp128 h_1 = booleanity_lazy_reduce(lazy_1);
         if (params.materialize != 0u) {
             uint destination = poly * params.source_elements + 2u * pair;
             dense[destination] = h_0;
             dense[destination + 1u] = h_1;
         }
         SolinasFp128 delta = solinas_sub(h_1, h_0);
-        constant_lane = solinas_add(
-            constant_lane,
-            solinas_mul_wide(h_0, solinas_sub(h_0, rho[poly])));
-        leading_lane = solinas_add(leading_lane, solinas_mul_wide(delta, delta));
+        booleanity_lazy_wide_add(
+            constant_sum,
+            solinas_product_wide(h_0, solinas_sub(h_0, rho[poly])));
+        booleanity_lazy_wide_add(leading, solinas_product_wide(delta, delta));
     }
+    constant_pair = booleanity_lazy_wide_reduce(constant_sum);
+    leading_pair = booleanity_lazy_wide_reduce(leading);
 }
 
 inline void booleanity_finish_block(
@@ -185,17 +249,17 @@ kernel void solinas_booleanity_lazy_message(
     constant BooleanityParams& params [[buffer(9)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_out [[threadgroup_position_in_grid]],
+    uint thread_index [[thread_index_in_threadgroup]],
     uint lane [[thread_index_in_simdgroup]],
     uint simdgroup [[simdgroup_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
 {
-    uint simdgroups = threads / 32u;
     SolinasFp128 constant_sum = solinas_zero();
     SolinasFp128 leading_sum = solinas_zero();
-    for (uint x_in = simdgroup; x_in < params.e_in_length; x_in += simdgroups) {
+    for (uint x_in = thread_index; x_in < params.e_in_length; x_in += threads) {
         uint pair = x_out * params.e_in_length + x_in;
-        SolinasFp128 constant_lane = solinas_zero();
-        SolinasFp128 leading_lane = solinas_zero();
+        SolinasFp128 constant_pair = solinas_zero();
+        SolinasFp128 leading_pair = solinas_zero();
         booleanity_lazy_pair(
             rows,
             selectors,
@@ -204,24 +268,16 @@ kernel void solinas_booleanity_lazy_message(
             initial_constant,
             params,
             pair,
-            lane,
             dense,
-            constant_lane,
-            leading_lane);
-        constant_lane = solinas_simd_sum_32(constant_lane);
-        leading_lane = solinas_simd_sum_32(leading_lane);
-        if (lane == 0u) {
-            constant_sum = solinas_add(
-                constant_sum,
-                solinas_mul_wide(e_in[x_in], constant_lane));
-            leading_sum = solinas_add(
-                leading_sum,
-                solinas_mul_wide(e_in[x_in], leading_lane));
-        }
+            constant_pair,
+            leading_pair);
+        SolinasFp128 weight = e_in[x_in];
+        constant_sum = solinas_add(constant_sum, solinas_mul_wide(weight, constant_pair));
+        leading_sum = solinas_add(leading_sum, solinas_mul_wide(weight, leading_pair));
     }
     booleanity_finish_block(
-        constant_sum,
-        leading_sum,
+        solinas_simd_sum_32(constant_sum),
+        solinas_simd_sum_32(leading_sum),
         e_out[x_out],
         partials,
         shared,
@@ -229,7 +285,7 @@ kernel void solinas_booleanity_lazy_message(
         params.e_out_length,
         lane,
         simdgroup,
-        simdgroups);
+        threads / 32u);
 }
 
 kernel void solinas_booleanity_double_branches(
