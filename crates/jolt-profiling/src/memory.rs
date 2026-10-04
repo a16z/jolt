@@ -112,6 +112,63 @@ pub fn peak_rss_bytes() -> Option<u64> {
     None
 }
 
+/// Kernel physical-footprint counters (`phys_footprint`, what `footprint(1)`
+/// and `time -l` report): dirty host memory plus Metal allocations,
+/// including Private buffers that never enter RSS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FootprintSample {
+    pub current_bytes: u64,
+    /// High-water mark since the last [`reset_footprint_interval`].
+    pub interval_peak_bytes: u64,
+    pub lifetime_peak_bytes: u64,
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    /// Exported by libsystem_kernel (private libproc header): restarts the
+    /// interval high-water mark reported as `ri_interval_max_phys_footprint`.
+    fn proc_reset_footprint_interval(pid: libc::c_int) -> libc::c_int;
+}
+
+/// This process's footprint counters; `None` off macOS or if the call fails.
+#[cfg(target_os = "macos")]
+pub fn phys_footprint() -> Option<FootprintSample> {
+    use libc::{rusage_info_t, rusage_info_v4, RUSAGE_INFO_V4};
+    // SAFETY: proc_pid_rusage writes one complete rusage_info_v4 into the
+    // provided storage for flavor RUSAGE_INFO_V4 and returns 0 on success.
+    let info = unsafe {
+        let mut info: rusage_info_v4 = std::mem::zeroed();
+        if libc::proc_pid_rusage(
+            libc::getpid(),
+            RUSAGE_INFO_V4,
+            (&raw mut info).cast::<rusage_info_t>(),
+        ) != 0
+        {
+            return None;
+        }
+        info
+    };
+    Some(FootprintSample {
+        current_bytes: info.ri_phys_footprint,
+        interval_peak_bytes: info.ri_interval_max_phys_footprint,
+        lifetime_peak_bytes: info.ri_lifetime_max_phys_footprint,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn phys_footprint() -> Option<FootprintSample> {
+    None
+}
+
+/// Restarts the interval high-water mark read by [`phys_footprint`].
+pub fn reset_footprint_interval() {
+    #[cfg(target_os = "macos")]
+    // SAFETY: the call takes only a pid and writes no caller memory.
+    unsafe {
+        let _ = proc_reset_footprint_interval(libc::getpid());
+    }
+}
+
 /// Logs the current physical memory usage at the point of call.
 pub fn print_current_memory_usage(label: &str) {
     if tracing::enabled!(tracing::Level::DEBUG) {
@@ -150,5 +207,37 @@ mod tests {
     #[test]
     fn end_without_start_warns_without_panic() {
         end_memory_tracing_span("test_span_nonexistent");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn footprint_interval_peak_keeps_an_unmapped_transient() {
+        const BYTES: usize = 256 << 20;
+        reset_footprint_interval();
+        let before = phys_footprint().unwrap();
+        // mmap/munmap rather than Vec: libmalloc keeps freed large blocks
+        // resident, so only an unmap guarantees the footprint falls back.
+        // SAFETY: an anonymous private mapping of BYTES, written in bounds
+        // and unmapped once.
+        unsafe {
+            let mapping = libc::mmap(
+                std::ptr::null_mut(),
+                BYTES,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_ANON | libc::MAP_PRIVATE,
+                -1,
+                0,
+            );
+            assert_ne!(mapping, libc::MAP_FAILED);
+            std::ptr::write_bytes(mapping.cast::<u8>(), 1, BYTES);
+            assert_eq!(libc::munmap(mapping, BYTES), 0);
+        }
+        let after = phys_footprint().unwrap();
+        assert!(after.current_bytes < before.current_bytes + BYTES as u64);
+        assert!(after.interval_peak_bytes >= before.current_bytes + BYTES as u64);
+        assert!(after.lifetime_peak_bytes >= after.interval_peak_bytes);
+        reset_footprint_interval();
+        let reset = phys_footprint().unwrap();
+        assert!(reset.interval_peak_bytes < before.current_bytes + BYTES as u64);
     }
 }

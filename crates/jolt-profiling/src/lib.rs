@@ -84,11 +84,14 @@ pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory::{
-    end_memory_tracing_span, peak_rss_bytes, print_current_memory_usage, report_memory_usage,
-    start_memory_tracing_span,
+    end_memory_tracing_span, peak_rss_bytes, phys_footprint, print_current_memory_usage,
+    report_memory_usage, reset_footprint_interval, start_memory_tracing_span, FootprintSample,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use stage_memory::{report_stage_memory, take_stage_memory_rows, StageMemoryLayer};
+pub use stage_memory::{
+    report_stage_footprint, report_stage_memory, set_device_memory_probe, take_stage_memory_rows,
+    StageFootprint, StageMemoryLayer,
+};
 
 #[cfg(target_arch = "wasm32")]
 pub fn peak_rss_bytes() -> Option<u64> {

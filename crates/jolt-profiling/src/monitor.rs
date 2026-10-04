@@ -29,6 +29,7 @@ impl MetricsMonitor {
     ///
     /// Spawns a background thread named `"metrics-monitor"` that logs:
     /// - `counters.memory_gib` — physical memory usage
+    /// - `counters.footprint_gib` — physical footprint incl. Metal (macOS; 0 elsewhere)
     /// - `counters.cpu_percent` — global CPU utilization
     /// - `counters.cores_active_avg` — average active cores
     /// - `counters.cores_active` — cores with >0.1% usage
@@ -50,6 +51,8 @@ impl MetricsMonitor {
 
                     let memory_gib =
                         memory_stats().map_or(0.0, |s| s.physical_mem as f64 / BYTES_PER_GIB);
+                    let footprint_gib = crate::memory::phys_footprint()
+                        .map_or(0.0, |s| s.current_bytes as f64 / BYTES_PER_GIB);
                     let cpu_percent = system.global_cpu_usage();
                     let cores_active_avg = cpu_percent / 100.0 * (system.cpus().len() as f32);
                     let active_cores = system
@@ -67,6 +70,7 @@ impl MetricsMonitor {
 
                     tracing::debug!(
                         counters.memory_gib = memory_gib,
+                        counters.footprint_gib = footprint_gib,
                         counters.cpu_percent = cpu_percent,
                         counters.cores_active_avg = cores_active_avg,
                         counters.cores_active = active_cores,

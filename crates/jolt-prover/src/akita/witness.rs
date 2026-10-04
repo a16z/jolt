@@ -235,6 +235,11 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     };
     let mut selected_rows = vec![0u8; num_rows * num_columns];
     let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
+    tracing::info!(
+        selected_bytes = selected_rows.capacity(),
+        ram_active_bytes = size_of_val(ram_active_rows.as_slice()),
+        "one-hot trace rows"
+    );
     #[cfg(feature = "parallel")]
     if let Some(access) = random_access {
         if num_rows <= access.cycles() {

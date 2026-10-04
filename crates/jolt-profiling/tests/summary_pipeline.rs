@@ -33,6 +33,7 @@ fn fixture_stage_rows() -> Vec<StageMemoryRow> {
         stage: "prove_stage0",
         rss_open_bytes: GIB as u64,
         rss_close_bytes: 2 * GIB as u64,
+        footprint: None,
     }]
 }
 
@@ -239,11 +240,13 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
             stage: "prove_stage0",
             rss_open_bytes: GIB as u64,
             rss_close_bytes: 2 * GIB as u64,
+            footprint: None,
         },
         StageMemoryRow {
             stage: "prove_stage0",
             rss_open_bytes: 3 * GIB as u64,
             rss_close_bytes: 5 * GIB as u64,
+            footprint: None,
         },
     ];
     let summary = build_summary(

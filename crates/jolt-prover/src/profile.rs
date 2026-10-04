@@ -55,8 +55,8 @@ use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
-    format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing_with_trace_path,
-    TracingFormat, BYTES_PER_GIB,
+    format_memory_size, peak_rss_bytes, report_stage_footprint, report_stage_memory,
+    setup_tracing_with_trace_path, TracingFormat, BYTES_PER_GIB,
 };
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing};
@@ -450,6 +450,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
     let peak_rss = peak_rss_bytes();
+    report_stage_footprint();
 
     // Dropping the guards flushes the chrome trace; only then can the
     // flush-time pipeline parse it.
@@ -728,6 +729,12 @@ fn run_workload(
         &input,
     );
     let trace_length = trace_output.trace.len();
+    tracing::info!(
+        rows = trace_length,
+        capacity = trace_output.trace.capacity(),
+        row_bytes = size_of::<JoltTraceRow>(),
+        "witness rows"
+    );
 
     if matches!(workload, Workload::Blake2bChain) {
         let (_, iterations): (([u8; 32], [u8; 32]), u32) =
@@ -938,6 +945,9 @@ fn prove_workload(
         BackendKind::Optimized => crate::akita::JoltAkitaBackend::optimized(),
         #[cfg(all(feature = "metal", target_os = "macos"))]
         BackendKind::Metal => {
+            jolt_profiling::set_device_memory_probe(
+                jolt_kernels::metal::solinas::device_allocated_bytes,
+            );
             crate::akita::JoltAkitaBackend::metal().expect("the Metal backend must initialize")
         }
         #[cfg(all(feature = "metal", target_os = "macos"))]

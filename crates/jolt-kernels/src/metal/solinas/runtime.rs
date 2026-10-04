@@ -299,6 +299,12 @@ impl SolinasMetal {
             return;
         };
         if pool.epoch == epoch {
+            tracing::info!(
+                free_buffers = pool.free.len(),
+                free_bytes = pool.free_bytes,
+                cap_bytes = pool.cap_bytes,
+                "released private buffer pool"
+            );
             pool.cap_bytes = 0;
             pool.free_bytes = 0;
             pool.free.clear();
@@ -460,6 +466,12 @@ impl SolinasMetal {
         }
         Ok(())
     }
+}
+
+/// Bytes the system Metal device has allocated for this process (all
+/// clients: the PIOP kernels and the commitment backend share the device).
+pub fn device_allocated_bytes() -> u64 {
+    Device::system_default().map_or(0, |device| device.current_allocated_size())
 }
 
 pub(crate) fn validate_working_set(
