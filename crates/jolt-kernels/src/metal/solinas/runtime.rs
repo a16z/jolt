@@ -8,9 +8,7 @@ use std::{
     time::Duration,
 };
 
-use super::{
-    residency, source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275,
-};
+use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 use metal::{
     objc::{runtime::Sel, Message},
     Buffer, CommandQueue, CompileOptions, ComputeCommandEncoderRef, ComputePipelineState, Device,
@@ -275,16 +273,6 @@ impl SolinasMetal {
             _owner: owner,
         });
         Ok((buffer, false))
-    }
-
-    /// Shared allocation whose GPU residency is requested on the residency
-    /// helper thread; see [`super::residency`]. Call before the CPU fills it.
-    pub(super) fn new_resident_shared_buffer(&self, bytes: u64) -> Buffer {
-        let buffer = self
-            .device
-            .new_buffer(bytes, MTLResourceOptions::StorageModeShared);
-        residency::prefetch(&buffer);
-        buffer
     }
 
     pub(super) fn begin_private_buffer_pool_epoch(

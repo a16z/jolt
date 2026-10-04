@@ -7,7 +7,7 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
+    buffer_from_slice, completed_command_gpu_time, residency, set_inline_bytes, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
 use super::{
@@ -267,9 +267,17 @@ impl SolinasMetal {
             u64::try_from(resident_bytes).map_err(|_| MetalError::InputTooLong(resident_bytes))?,
         )?;
 
-        let unexpanded_pc = self.new_resident_shared_buffer(value_bytes_u64);
-        let pc = self.new_resident_shared_buffer(value_bytes_u64);
-        let flags = self.new_resident_shared_buffer(flag_bytes_u64);
+        let unexpanded_pc = self
+            .device
+            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
+        let pc = self
+            .device
+            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
+        let flags = self
+            .device
+            .new_buffer(flag_bytes_u64, MTLResourceOptions::StorageModeShared);
+        let _residency =
+            residency::prefetch(vec![unexpanded_pc.clone(), pc.clone(), flags.clone()]);
 
         // SAFETY: the shared buffers above have exactly the element counts used
         // below and are not submitted to Metal until after `fill` returns.

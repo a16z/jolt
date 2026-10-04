@@ -1453,7 +1453,7 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     let mut source = context
         .prepare_instruction_read_raf_stage1_storage(cycles)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
-    source.prefetch_residency();
+    let _residency = source.prefetch_residency();
     let mut bytecode_topology = prepare_bytecode_carrier
         .then(|| context.prepare_bytecode_address_stage1_topology_storage(cycles, explicit_rows))
         .transpose()
@@ -1970,7 +1970,7 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
     let mut source = context
         .prepare_instruction_read_raf_stage1_storage(cycles)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
-    source.prefetch_residency();
+    let _residency = source.prefetch_residency();
     let mut bytecode_topology = prepare_bytecode_carrier
         .then(|| context.prepare_bytecode_address_stage1_topology_storage(cycles, explicit_rows))
         .transpose()
