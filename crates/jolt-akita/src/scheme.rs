@@ -147,6 +147,29 @@ impl RequiredMetalTraceCommitment {
         drop(prepared.insert(key, value.clone()));
         Ok(value)
     }
+
+    /// Drops the CPU NTT slots of every prepared setup; the opening rebuilds
+    /// the slots it needs.
+    fn release_prepared_ntt_slots(&self) -> Result<(), OpeningsError> {
+        let prepared = self
+            .prepared
+            .lock()
+            .map_err(|_| {
+                OpeningsError::InvalidSetup(
+                    "Akita Metal prepared-setup cache is poisoned".to_string(),
+                )
+            })?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for setup in prepared {
+            let _ = setup
+                .cpu_prepared()
+                .drop_built_ntt_slots()
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+        }
+        Ok(())
+    }
 }
 
 /// Prover seam for committing the packed trace directly from selected one-hot rows.
@@ -161,7 +184,10 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
     /// Releases backend state that can be rebuilt before the opening proof.
-    fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
+    fn release_post_commit_residency(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+    ) -> Result<(), OpeningsError>;
 
     /// Builds backend state the trace commit would otherwise pay for on its
     /// critical path (device-resident matrix prefixes). Safe to run
@@ -728,8 +754,18 @@ impl TraceOneHotCommitment for AkitaScheme {
         )
     }
 
-    fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError> {
-        setup.release_post_commit_ntt_residency()
+    fn release_post_commit_residency(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+    ) -> Result<(), OpeningsError> {
+        setup.release_post_commit_ntt_residency()?;
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if let Some(metal) = backend.required_metal() {
+            metal.release_prepared_ntt_slots()?;
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let _ = backend;
+        Ok(())
     }
 
     fn prewarm_trace_commitment(

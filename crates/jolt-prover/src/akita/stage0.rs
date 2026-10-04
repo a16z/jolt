@@ -251,7 +251,7 @@ where
                 committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                     reason: error.to_string(),
                 })?;
-            PCS::release_post_commit_residency(&preprocessing.pcs_setup).map_err(|error| {
+            PCS::release_post_commit_residency(&backend.trace_commitment, &preprocessing.pcs_setup).map_err(|error| {
                 VerifierError::FinalOpeningVerificationFailed {
                     reason: error.to_string(),
                 }
