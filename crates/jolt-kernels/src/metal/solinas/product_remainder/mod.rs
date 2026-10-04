@@ -20,8 +20,8 @@ use super::product_uniskip::{
 };
 use super::{
     buffer_from_slice, completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
-    spartan_outer_uniskip_successor_row_bytes, validate_completed_command, Fp128,
-    InstructionInputRow, MetalError, SolinasMetal,
+    validate_completed_command, Fp128, InstructionInputRow, MetalError, SolinasMetal,
+    SpartanRawRow,
 };
 
 pub(super) const SOURCE: &str = include_str!("shader.metal");
@@ -285,7 +285,7 @@ enum ProductRemainderSource {
     Packed(Buffer),
     SpartanStage1 {
         compact: Buffer,
-        residual: Buffer,
+        raw: Buffer,
         generation: u64,
     },
 }
@@ -317,9 +317,9 @@ impl ProductRemainderRows {
     pub fn allocation_identities(&self) -> Vec<usize> {
         match &self.source {
             ProductRemainderSource::Packed(buffer) => vec![buffer.as_ptr() as usize],
-            ProductRemainderSource::SpartanStage1 {
-                compact, residual, ..
-            } => vec![compact.as_ptr() as usize, residual.as_ptr() as usize],
+            ProductRemainderSource::SpartanStage1 { compact, raw, .. } => {
+                vec![compact.as_ptr() as usize, raw.as_ptr() as usize]
+            }
         }
     }
 
@@ -356,30 +356,28 @@ impl ProductRemainderRows {
     pub(crate) fn stage1_buffers(&self) -> Option<(&Buffer, &Buffer)> {
         match &self.source {
             ProductRemainderSource::Packed(_) => None,
-            ProductRemainderSource::SpartanStage1 {
-                compact, residual, ..
-            } => Some((compact, residual)),
+            ProductRemainderSource::SpartanStage1 { compact, raw, .. } => Some((compact, raw)),
         }
     }
 
     pub(crate) fn from_spartan_stage1(
         compact: Buffer,
-        residual: Buffer,
+        raw: Buffer,
         len: usize,
         device_registry_id: u64,
         generation: u64,
     ) -> Result<Self, MetalError> {
-        let compact_bytes = len
-            .checked_mul(size_of::<InstructionInputRow>())
-            .and_then(|bytes| u64::try_from(bytes).ok())
-            .ok_or(MetalError::InputTooLong(len))?;
-        let residual_bytes = spartan_outer_uniskip_successor_row_bytes(len)?;
+        let row_bytes = |row_size: usize| {
+            len.checked_mul(row_size)
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .ok_or(MetalError::InputTooLong(len))
+        };
         if len < 2
             || !len.is_power_of_two()
             || generation == 0
-            || compact.length() != compact_bytes
-            || residual.length() != residual_bytes
-            || compact.as_ptr() == residual.as_ptr()
+            || compact.length() != row_bytes(size_of::<InstructionInputRow>())?
+            || raw.length() != row_bytes(size_of::<SpartanRawRow>())?
+            || compact.as_ptr() == raw.as_ptr()
         {
             return Err(MetalError::InvalidProductRemainderState(
                 "the Spartan Stage-1 product source has invalid provenance or shape",
@@ -388,7 +386,7 @@ impl ProductRemainderRows {
         Ok(Self {
             source: ProductRemainderSource::SpartanStage1 {
                 compact,
-                residual,
+                raw,
                 generation,
             },
             len,
@@ -1259,14 +1257,14 @@ impl ProductRemainderSequence {
         }
         let params =
             ProductRemainderPhaseParams::materialize(self.layout.rows(), e_in.len(), e_out.len())?;
-        let Some((compact, residual)) = self.buffers.rows.stage1_buffers() else {
+        let Some((compact, raw)) = self.buffers.rows.stage1_buffers() else {
             return Err(MetalError::InvalidProductRemainderState(
                 "joint materialization requires resident Stage-1 rows",
             ));
         };
         self.write_weights(e_in, e_out)?;
         encoder.set_buffer(0, Some(compact), 0);
-        encoder.set_buffer(1, Some(residual), 0);
+        encoder.set_buffer(1, Some(raw), 0);
         encoder.set_buffer(2, Some(&self.buffers.lagrange), 0);
         encoder.set_buffer(4, Some(&self.buffers.e_in), 0);
         encoder.set_buffer(5, Some(&self.buffers.e_out), 0);
@@ -1457,8 +1455,8 @@ impl ProductRemainderSequence {
     pub(in crate::metal::solinas) fn joint_stage1_allocation_identities(
         &self,
     ) -> Option<[usize; 2]> {
-        let (compact, residual) = self.buffers.rows.stage1_buffers()?;
-        Some([compact.as_ptr() as usize, residual.as_ptr() as usize])
+        let (compact, raw) = self.buffers.rows.stage1_buffers()?;
+        Some([compact.as_ptr() as usize, raw.as_ptr() as usize])
     }
 
     pub(in crate::metal::solinas) const fn context(&self) -> &SolinasMetal {
@@ -1743,9 +1741,9 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.uniskip_pipeline);
-            if let Some((compact, residual)) = self.buffers.rows.stage1_buffers() {
+            if let Some((compact, raw)) = self.buffers.rows.stage1_buffers() {
                 encoder.set_buffer(0, Some(compact), 0);
-                encoder.set_buffer(1, Some(residual), 0);
+                encoder.set_buffer(1, Some(raw), 0);
                 encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
                 encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
                 encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
@@ -1926,9 +1924,9 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer().to_owned();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.materialize_pipeline);
-            if let Some((compact, residual)) = self.buffers.rows.stage1_buffers() {
+            if let Some((compact, raw)) = self.buffers.rows.stage1_buffers() {
                 encoder.set_buffer(0, Some(compact), 0);
-                encoder.set_buffer(1, Some(residual), 0);
+                encoder.set_buffer(1, Some(raw), 0);
                 encoder.set_buffer(2, Some(&self.buffers.lagrange), 0);
                 encoder.set_buffer(3, Some(&self.buffers.e_in), 0);
                 encoder.set_buffer(4, Some(&self.buffers.e_out), 0);
@@ -2229,9 +2227,9 @@ impl ProductRemainderSequence {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.openings_pipeline);
-            if let Some((compact, residual)) = self.buffers.rows.stage1_buffers() {
+            if let Some((compact, raw)) = self.buffers.rows.stage1_buffers() {
                 encoder.set_buffer(0, Some(compact), 0);
-                encoder.set_buffer(1, Some(residual), 0);
+                encoder.set_buffer(1, Some(raw), 0);
                 encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
                 encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
                 encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
@@ -2676,9 +2674,11 @@ pub mod reference {
 )]
 mod tests {
     use super::super::product_uniskip::evaluate_product_uniskip_extensions_cpu;
+    use super::super::spartan_outer_uniskip::test_rows::witness;
     use super::super::SpartanOuterUniskipRow;
     use super::*;
     use jolt_field::{Ring as _, Zero as _};
+    use jolt_witness::witnesses::SpartanOuterRow;
 
     fn native_width_boundary_row(index: usize) -> ProductRemainderRow {
         let u32_max = u64::from(u32::MAX);
@@ -2874,27 +2874,25 @@ mod tests {
     #[test]
     fn stage1_source_matches_packed_product_rows() {
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
-        let row_count = 1usize << 8;
-        let packed = (0..row_count)
-            .map(native_width_boundary_row)
-            .collect::<Vec<_>>();
-        let stage1 = packed
+        let witness = witness::<SpartanOuterRow>(8);
+        let packed = witness
             .iter()
             .map(|row| {
-                let mut words = [0u64; 20];
-                let right = row.right_instruction_input().unsigned_abs();
-                words[0] = row.left_instruction_input();
-                words[1] = right as u64;
-                words[2] = (right >> 64) as u64;
-                words[18] = row.lookup_output();
-                words[19] = u64::from(row.jump()) << 5
-                    | u64::from(row.virtual_instruction()) << 9
-                    | u64::from(row.write_lookup_output_to_rd()) << 14
-                    | u64::from(row.right_instruction_input() >= 0) << 17
-                    | u64::from(row.branch()) << 25
-                    | u64::from(row.next_is_noop()) << 26;
-                SpartanOuterUniskipRow::from_words(words)
+                ProductRemainderRow::new(
+                    row.left_instruction_input.0,
+                    row.right_instruction_input.0,
+                    row.jump.0,
+                    row.write_lookup_output_to_rd.0,
+                    row.lookup_output.0,
+                    row.branch_flag.0,
+                    row.next_is_noop.0,
+                    row.virtual_instruction.0,
+                )
             })
+            .collect::<Vec<_>>();
+        let stage1 = witness
+            .iter()
+            .map(SpartanOuterUniskipRow::from_spartan_outer)
             .collect::<Vec<_>>();
         let stage1 = context
             .prepare_spartan_outer_uniskip_rows(&stage1)

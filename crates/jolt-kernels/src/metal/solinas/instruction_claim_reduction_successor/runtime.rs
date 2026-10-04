@@ -728,9 +728,10 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial};
     use metal::Buffer;
 
+    use super::super::super::spartan_outer_uniskip::test_rows::stage1_rows;
     use super::super::super::{
         instruction_claim_reduction::InstructionClaimKernelConfig, ProductRemainderSequenceConfig,
-        SolinasMetal, SpartanOuterUniskipRow,
+        SolinasMetal,
     };
 
     fn fill_buffer_bytes(buffer: &Buffer, value: u8) {
@@ -752,35 +753,7 @@ mod tests {
             return;
         };
         let rows = 1usize << 9;
-        let source = (0..rows)
-            .map(|index| {
-                let mut words = [0u64; 20];
-                let signed = index as i128 - 131;
-                let magnitude = signed.unsigned_abs();
-                let right_lookup =
-                    (u128::from(index as u64) << 69) | u128::from(19 * index as u64 + 3);
-                words[0] = 17 * index as u64 + 1;
-                words[1] = magnitude as u64;
-                words[2] = (magnitude >> 64) as u64;
-                words[13] = 23 * index as u64 + 5;
-                if index % 19 == 0 {
-                    words[13] |= 1u64 << 43;
-                }
-                words[14] = right_lookup as u64;
-                words[15] = (right_lookup >> 64) as u64;
-                words[18] = 29 * index as u64 + 7;
-                if index % 23 == 0 {
-                    words[18] |= 1u64 << 47;
-                }
-                words[19] = u64::from(index % 2 == 0) << 5
-                    | u64::from(index % 3 == 0) << 9
-                    | u64::from(index % 5 == 0) << 14
-                    | u64::from(signed >= 0) << 17
-                    | u64::from(index % 7 == 0) << 25
-                    | u64::from(index % 11 == 0) << 26;
-                SpartanOuterUniskipRow::from_words(words)
-            })
-            .collect::<Vec<_>>();
+        let source = stage1_rows(rows.ilog2() as usize);
         let resident = context
             .prepare_spartan_outer_uniskip_rows(&source)
             .expect("Stage-1 rows should prepare")

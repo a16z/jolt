@@ -486,7 +486,6 @@ mod akita_tests {
                 instruction_input: km::InstructionInputMetalConfig {
                     trace_cutoff_elements: 4,
                     cutoff_elements: instruction_input_cutoff_elements,
-                    dense_storage_mode: km::InstructionInputDenseStorageMode::OuterResidual,
                     ..Default::default()
                 },
                 registers_claim_reduction: km::RegistersClaimReductionMetalConfig {

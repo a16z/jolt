@@ -119,19 +119,20 @@ inline void product_remainder_relation_values(
 
 inline void product_remainder_stage1_relation_values(
     device const InstructionInputRow& compact,
-    device const SpartanOuterSuccessorRow& residual,
+    device const SpartanRawRow& raw,
     device const SolinasFp128* lagrange,
     thread SolinasFp128& left,
     thread SolinasFp128& right)
 {
+    SpartanOuterResidual residual = spartan_outer_decode_current(compact, raw);
     ulong flags = instruction_input_row_word(compact, 5u);
     left = solinas_add(
         solinas_mul_wide(
             lagrange[0],
-            product_remainder_from_u64(spartan_outer_successor_word(residual, 0u))),
+            product_remainder_from_u64(residual.word[0])),
         solinas_mul_wide(
             lagrange[1],
-            product_remainder_from_u64(spartan_outer_successor_word(residual, 13u))));
+            product_remainder_from_u64(residual.word[13])));
     if (product_remainder_flag(flags, SPARTAN_PRODUCT_FLAG_JUMP)) {
         left = solinas_add(left, lagrange[2]);
     }
@@ -139,8 +140,8 @@ inline void product_remainder_stage1_relation_values(
     right = solinas_mul_wide(
         lagrange[0],
         product_remainder_from_signed_u128(
-            spartan_outer_successor_word(residual, 1u),
-            spartan_outer_successor_word(residual, 2u),
+            residual.word[1],
+            residual.word[2],
             product_remainder_flag(flags, SPARTAN_PRODUCT_FLAG_RIGHT_NONNEGATIVE)));
     if (product_remainder_flag(flags, SPARTAN_PRODUCT_FLAG_BRANCH)) {
         right = solinas_add(right, lagrange[1]);
@@ -246,7 +247,7 @@ kernel void solinas_product_remainder_materialize_message(
 
 kernel void solinas_product_remainder_materialize_stage1_message(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* residual_rows [[buffer(1)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
     device const SolinasFp128* lagrange [[buffer(2)]],
     device const SolinasFp128* e_in [[buffer(3)]],
     device const SolinasFp128* e_out [[buffer(4)]],
@@ -274,13 +275,13 @@ kernel void solinas_product_remainder_materialize_stage1_message(
         SolinasFp128 right_high;
         product_remainder_stage1_relation_values(
             compact_rows[low_index],
-            residual_rows[low_index],
+            raw_rows[low_index],
             lagrange,
             left_low,
             right_low);
         product_remainder_stage1_relation_values(
             compact_rows[high_index],
-            residual_rows[high_index],
+            raw_rows[high_index],
             lagrange,
             left_high,
             right_high);
@@ -535,7 +536,7 @@ kernel void solinas_product_remainder_openings(
 
 kernel void solinas_product_remainder_stage1_openings(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* residual_rows [[buffer(1)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device const SolinasFp128* e_out [[buffer(3)]],
     device SolinasFp128* partials [[buffer(4)]],
@@ -555,21 +556,22 @@ kernel void solinas_product_remainder_stage1_openings(
     for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
         uint row_index = x_out * params.e_in_length + x_in;
         device const InstructionInputRow& compact = compact_rows[row_index];
-        device const SpartanOuterSuccessorRow& residual = residual_rows[row_index];
+        SpartanOuterResidual residual =
+            spartan_outer_decode_current(compact, raw_rows[row_index]);
         ulong flags = instruction_input_row_word(compact, 5u);
         SolinasFp128 weight = e_in[x_in];
         sums[0] = solinas_add(
             sums[0],
             solinas_mul_wide(
                 weight,
-                product_remainder_from_u64(spartan_outer_successor_word(residual, 0u))));
+                product_remainder_from_u64(residual.word[0])));
         sums[1] = solinas_add(
             sums[1],
             solinas_mul_wide(
                 weight,
                 product_remainder_from_signed_u128(
-                    spartan_outer_successor_word(residual, 1u),
-                    spartan_outer_successor_word(residual, 2u),
+                    residual.word[1],
+                    residual.word[2],
                     product_remainder_flag(
                         flags,
                         SPARTAN_PRODUCT_FLAG_RIGHT_NONNEGATIVE))));
@@ -583,7 +585,7 @@ kernel void solinas_product_remainder_stage1_openings(
             sums[4],
             solinas_mul_wide(
                 weight,
-                product_remainder_from_u64(spartan_outer_successor_word(residual, 13u))));
+                product_remainder_from_u64(residual.word[13])));
         if (product_remainder_flag(flags, SPARTAN_PRODUCT_FLAG_BRANCH)) {
             sums[5] = solinas_add(sums[5], weight);
         }

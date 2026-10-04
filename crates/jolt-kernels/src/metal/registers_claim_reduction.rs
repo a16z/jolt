@@ -58,7 +58,7 @@ pub(super) struct MetalRegistersClaimOuterSource<'a> {
     pub(super) product_tau_low: &'a [AkitaField],
     pub(super) rows: usize,
     pub(super) compact_storage_id: usize,
-    pub(super) residual_storage_id: usize,
+    pub(super) raw_storage_id: usize,
     pub(super) device_registry_id: u64,
 }
 
@@ -76,7 +76,7 @@ pub(super) struct MetalRegistersClaimPendingStage1Carry {
     product_tau_low: Vec<AkitaField>,
     rows: usize,
     compact_storage_id: usize,
-    residual_storage_id: usize,
+    raw_storage_id: usize,
     device_registry_id: u64,
 }
 
@@ -145,7 +145,7 @@ impl MetalRegistersClaimPendingStage1Carry {
             || submission.explicit_rows > submission.rows
             || submission.device_registry_id != source.device_registry_id
             || submission.source_compact_storage_id != source.compact_storage_id
-            || submission.source_residual_storage_id != source.residual_storage_id
+            || submission.source_raw_storage_id != source.raw_storage_id
         {
             return Err(super::solinas::MetalError::InvalidOuterRemainderConfig(
                 "pending registers-claim carrier provenance is inconsistent",
@@ -159,7 +159,7 @@ impl MetalRegistersClaimPendingStage1Carry {
             product_tau_low: source.product_tau_low.to_vec(),
             rows: source.rows,
             compact_storage_id: source.compact_storage_id,
-            residual_storage_id: source.residual_storage_id,
+            raw_storage_id: source.raw_storage_id,
             device_registry_id: source.device_registry_id,
         })
     }
@@ -184,7 +184,7 @@ impl MetalRegistersClaimPendingStage1Carry {
                 product_tau_low: &self.product_tau_low,
                 rows: self.rows,
                 compact_storage_id: self.compact_storage_id,
-                residual_storage_id: self.residual_storage_id,
+                raw_storage_id: self.raw_storage_id,
                 device_registry_id: self.device_registry_id,
             },
         )
@@ -202,7 +202,7 @@ impl MetalRegistersClaimStage1Carry {
         let geometry = RegistersClaimGeometry::new(source.rows)?;
         let identities = [
             receipt.source_compact_storage_id,
-            receipt.source_residual_storage_id,
+            receipt.source_raw_storage_id,
             receipt.partial_storage_id,
             receipt.component_storage_id,
             receipt.rd_storage_id,
@@ -213,7 +213,7 @@ impl MetalRegistersClaimStage1Carry {
             || receipt.suffix_elements != geometry.suffix_elements()
             || receipt.device_registry_id != source.device_registry_id
             || receipt.source_compact_storage_id != source.compact_storage_id
-            || receipt.source_residual_storage_id != source.residual_storage_id
+            || receipt.source_raw_storage_id != source.raw_storage_id
             || identities.contains(&0)
             || identities
                 .iter()

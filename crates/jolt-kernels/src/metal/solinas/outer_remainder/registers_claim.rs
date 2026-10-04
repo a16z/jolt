@@ -74,7 +74,7 @@ pub(crate) struct OuterRegistersClaimCarrierReceipt {
     pub(crate) device_registry_id: u64,
     pub(crate) source_generation: u64,
     pub(crate) source_compact_storage_id: usize,
-    pub(crate) source_residual_storage_id: usize,
+    pub(crate) source_raw_storage_id: usize,
     pub(crate) partial_storage_id: usize,
     pub(crate) component_storage_id: usize,
     pub(crate) rd_storage_id: usize,
@@ -105,7 +105,7 @@ impl OuterRegistersClaimCarrier {
         let geometry = carrier_geometry(receipt.rows)?;
         let identities = [
             receipt.source_compact_storage_id,
-            receipt.source_residual_storage_id,
+            receipt.source_raw_storage_id,
             receipt.partial_storage_id,
             receipt.component_storage_id,
             receipt.rd_storage_id,

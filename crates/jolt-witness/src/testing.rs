@@ -61,24 +61,6 @@ pub fn with_sample_backend_at_geometry<R>(
         },
         ..Default::default()
     };
-    let mut bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction, store],
-        instruction.address as u64,
-        RV64IMAC_JOLT,
-    )
-    .unwrap();
-    let bytecode_rows = 1usize.checked_shl(log_k as u32).unwrap();
-    assert!(bytecode_rows >= bytecode.bytecode.len());
-    let padding = *bytecode.bytecode.last().unwrap();
-    bytecode.bytecode.resize(bytecode_rows, padding);
-    bytecode.code_size = bytecode_rows;
-    let preprocessing = Arc::new(JoltProgramPreprocessing {
-        bytecode,
-        ram: RAMPreprocessing::default(),
-        memory_layout: Default::default(),
-        max_padded_trace_length: 4.max(1usize << log_t),
-    });
-    let program = Arc::new(JoltProgram::default());
     let rows = vec![
         TraceRow::new(
             instruction,
@@ -118,6 +100,34 @@ pub fn with_sample_backend_at_geometry<R>(
         )
         .unwrap(),
     ];
+    with_trace_backend(vec![instruction, store], rows, log_t, log_k, log_k_chunk, f)
+}
+
+/// Runs `f` against a backend over caller-built bytecode and trace rows.
+#[expect(clippy::unwrap_used, reason = "test fixture construction")]
+pub fn with_trace_backend<R>(
+    instructions: Vec<JoltInstructionRow>,
+    rows: Vec<TraceRow>,
+    log_t: usize,
+    log_k: usize,
+    log_k_chunk: u8,
+    f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R,
+) -> R {
+    let entry_address = instructions[0].address as u64;
+    let mut bytecode =
+        BytecodePreprocessing::preprocess(instructions, entry_address, RV64IMAC_JOLT).unwrap();
+    let bytecode_rows = 1usize.checked_shl(log_k as u32).unwrap();
+    assert!(bytecode_rows >= bytecode.bytecode.len());
+    let padding = *bytecode.bytecode.last().unwrap();
+    bytecode.bytecode.resize(bytecode_rows, padding);
+    bytecode.code_size = bytecode_rows;
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode,
+        ram: RAMPreprocessing::default(),
+        memory_layout: Default::default(),
+        max_padded_trace_length: 4.max(1usize << log_t),
+    });
+    let program = Arc::new(JoltProgram::default());
     let config = JoltVmWitnessConfig::new(
         log_t,
         64,

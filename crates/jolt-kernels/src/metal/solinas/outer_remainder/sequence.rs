@@ -6,10 +6,9 @@ use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer, MTLSize,
 };
 
-use super::super::spartan_outer_uniskip::OuterResidualReleaseReceipt;
 use super::super::{
     completed_command_gpu_time, set_inline_bytes, Fp128, InstructionInputRows, MetalError,
-    SolinasMetal, SpartanOuterUniskipRows,
+    SolinasMetal, SpartanOuterUniskipRows, SpartanStage1RowsKey,
 };
 use super::{
     api::{
@@ -232,7 +231,7 @@ pub(crate) struct OuterRegistersClaimCarrierSubmission {
     pub(crate) device_registry_id: u64,
     pub(crate) source_generation: u64,
     pub(crate) source_compact_storage_id: usize,
-    pub(crate) source_residual_storage_id: usize,
+    pub(crate) source_raw_storage_id: usize,
     pub(crate) partial_storage_id: usize,
     pub(crate) component_storage_id: usize,
     pub(crate) rd_storage_id: usize,
@@ -246,10 +245,10 @@ pub(crate) struct PendingOuterRegistersClaimCarrier {
     context: SolinasMetal,
     command_buffer: Option<CommandBuffer>,
     buffers: Option<RegistersClaimBuffers>,
-    source: super::super::spartan_outer_uniskip::OuterResidualArenaKey,
+    source: SpartanStage1RowsKey,
     explicit_rows: usize,
     source_instruction_input: Buffer,
-    source_residual: Buffer,
+    source_raw: Buffer,
     source_e_in: Buffer,
     source_e_out: Buffer,
 }
@@ -293,7 +292,7 @@ impl PendingOuterRegistersClaimCarrier {
             device_registry_id: self.source.device_registry_id,
             source_generation: self.source.generation,
             source_compact_storage_id: self.source.compact_storage_id,
-            source_residual_storage_id: self.source.storage_id,
+            source_raw_storage_id: self.source.raw_storage_id,
             partial_storage_id: buffers.partials.as_ptr() as usize,
             component_storage_id: buffers.components.as_ptr() as usize,
             rd_storage_id: buffers.rd_write_value.as_ptr() as usize,
@@ -320,10 +319,10 @@ impl PendingOuterRegistersClaimCarrier {
         let device_registry_id = self.context.device_registry_id();
         if self.source.device_registry_id != device_registry_id
             || self.source_instruction_input.as_ptr() as usize != self.source.compact_storage_id
-            || self.source_residual.as_ptr() as usize != self.source.storage_id
+            || self.source_raw.as_ptr() as usize != self.source.raw_storage_id
             || [
                 &self.source_instruction_input,
-                &self.source_residual,
+                &self.source_raw,
                 &self.source_e_in,
                 &self.source_e_out,
                 &buffers.partials,
@@ -369,7 +368,7 @@ impl PendingOuterRegistersClaimCarrier {
             device_registry_id,
             source_generation: self.source.generation,
             source_compact_storage_id: self.source.compact_storage_id,
-            source_residual_storage_id: self.source.storage_id,
+            source_raw_storage_id: self.source.raw_storage_id,
             partial_storage_id: buffers.partials.as_ptr() as usize,
             component_storage_id: buffers.components.as_ptr() as usize,
             rd_storage_id: buffers.rd_write_value.as_ptr() as usize,
@@ -489,21 +488,19 @@ impl OuterRemainderSequence {
         let params = self.phase_params(blocks, e_in.len(), e_out.len())?;
         let rows = self.rows()?;
         let dense = self.dense_storage()?;
-        let cold_rows = rows.cold_buffer()?;
         let queue = self.storage.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.storage.pipelines.materialize);
             encoder.set_buffer(0, Some(rows.instruction_input_buffer()), 0);
-            encoder.set_buffer(1, Some(rows.successor_buffer()), 0);
-            encoder.set_buffer(2, Some(cold_rows), 0);
-            encoder.set_buffer(3, Some(&self.storage.buffers.a_lookup), 0);
-            encoder.set_buffer(4, Some(&self.storage.buffers.e_in), 0);
-            encoder.set_buffer(5, Some(&self.storage.buffers.e_out), 0);
-            encoder.set_buffer(6, Some(&dense.state_a), 0);
-            encoder.set_buffer(7, Some(&self.storage.buffers.message_partials), 0);
-            set_inline_bytes(encoder, 8, &params);
+            encoder.set_buffer(1, Some(rows.raw_buffer()), 0);
+            encoder.set_buffer(2, Some(&self.storage.buffers.a_lookup), 0);
+            encoder.set_buffer(3, Some(&self.storage.buffers.e_in), 0);
+            encoder.set_buffer(4, Some(&self.storage.buffers.e_out), 0);
+            encoder.set_buffer(5, Some(&dense.state_a), 0);
+            encoder.set_buffer(6, Some(&self.storage.buffers.message_partials), 0);
+            set_inline_bytes(encoder, 7, &params);
             encoder.set_threadgroup_memory_length(
                 0,
                 message_threadgroup_bytes(self.storage.threads.materialize),
@@ -785,10 +782,9 @@ impl OuterRemainderSequence {
             })
             .transpose()?;
         let rows = self.rows()?;
-        let source = rows.residual_arena_key();
+        let source = rows.key();
         let source_instruction_input = rows.instruction_input_buffer().clone();
-        let source_residual = rows.successor_buffer().clone();
-        let source_cold = rows.cold_buffer()?.clone();
+        let source_raw = rows.raw_buffer().clone();
         let threads = self.storage.threads.opening;
         let threadgroup_memory =
             opening_threadgroup_memory_lengths(threads, self.config.product_uniskip_carrier)?;
@@ -808,12 +804,11 @@ impl OuterRemainderSequence {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.storage.pipelines.opening);
             encoder.set_buffer(0, Some(&source_instruction_input), 0);
-            encoder.set_buffer(1, Some(&source_residual), 0);
-            encoder.set_buffer(2, Some(&source_cold), 0);
-            encoder.set_buffer(3, Some(&self.storage.buffers.e_in), 0);
-            encoder.set_buffer(4, Some(&self.storage.buffers.e_out), 0);
-            encoder.set_buffer(5, Some(&self.storage.buffers.opening_partials), 0);
-            set_inline_bytes(encoder, 6, &params);
+            encoder.set_buffer(1, Some(&source_raw), 0);
+            encoder.set_buffer(2, Some(&self.storage.buffers.e_in), 0);
+            encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
+            encoder.set_buffer(4, Some(&self.storage.buffers.opening_partials), 0);
+            set_inline_bytes(encoder, 5, &params);
             for (index, bytes) in threadgroup_memory.into_iter().enumerate() {
                 if bytes != 0 {
                     encoder.set_threadgroup_memory_length(index as u64, bytes);
@@ -836,12 +831,11 @@ impl OuterRemainderSequence {
             ) {
                 encoder.set_compute_pipeline_state(build);
                 encoder.set_buffer(0, Some(&source_instruction_input), 0);
-                encoder.set_buffer(1, Some(&source_residual), 0);
-                encoder.set_buffer(2, Some(&source_cold), 0);
-                encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
-                encoder.set_buffer(4, Some(&carrier.partials), 0);
-                encoder.set_buffer(5, Some(&carrier.rd_write_value), 0);
-                set_inline_bytes(encoder, 6, &carrier_params);
+                encoder.set_buffer(1, Some(&source_raw), 0);
+                encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
+                encoder.set_buffer(3, Some(&carrier.partials), 0);
+                encoder.set_buffer(4, Some(&carrier.rd_write_value), 0);
+                set_inline_bytes(encoder, 5, &carrier_params);
                 let build_threads = self.storage.threads.registers_claim_build;
                 let high_per_block = carrier
                     .geometry
@@ -912,19 +906,11 @@ impl OuterRemainderSequence {
                 source,
                 explicit_rows,
                 source_instruction_input,
-                source_residual,
+                source_raw,
                 source_e_in: self.storage.buffers.e_in.clone(),
                 source_e_out: self.storage.buffers.e_out.clone(),
             });
         }
-        drop(source_cold);
-        let cold_storage_id = self.rows_mut()?.retire_cold_buffer()?;
-        tracing::info!(
-            target: "jolt::metal",
-            cold_storage_id,
-            cold_storage_released = true,
-            "retired Stage-1-only outer residual storage"
-        );
         self.phase = OuterRemainderPhase::OpeningsComplete;
         Ok(openings)
     }
@@ -949,15 +935,6 @@ impl OuterRemainderSequence {
             });
         };
         Ok(Some(carrier))
-    }
-
-    pub(crate) fn instruction_input_arena_release_receipt(
-        &self,
-    ) -> Result<OuterResidualReleaseReceipt, MetalError> {
-        self.require_phase(OuterRemainderPhase::OpeningsComplete)?;
-        Ok(OuterResidualReleaseReceipt {
-            key: self.rows()?.residual_arena_key(),
-        })
     }
 
     pub const fn opening_output_count(&self) -> usize {
@@ -998,8 +975,7 @@ impl OuterRemainderSequence {
             owned_bytes: self.storage.owned_bytes,
             buffer_identities: self.storage.buffers.identities(),
             compact_row_identity: rows.instruction_input_allocation_identity(),
-            residual_row_identity: rows.allocation_identity(),
-            cold_row_identity: rows.cold_allocation_identity(),
+            raw_row_identity: rows.allocation_identity(),
             row_device_registry_id: rows.device_registry_id(),
         })
     }
@@ -1010,16 +986,6 @@ impl OuterRemainderSequence {
             .ok_or(MetalError::InvalidOuterRemainderState {
                 expected: "resident split rows",
                 got: self.phase.name(),
-            })
-    }
-
-    fn rows_mut(&mut self) -> Result<&mut SpartanOuterUniskipRows, MetalError> {
-        let phase = self.phase.name();
-        self.rows
-            .as_mut()
-            .ok_or(MetalError::InvalidOuterRemainderState {
-                expected: "resident split rows",
-                got: phase,
             })
     }
 

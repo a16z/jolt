@@ -103,11 +103,10 @@ pub(crate) use instruction_claim_reduction_successor::{
     ProductInstructionRoundService, ProductInstructionRoundStats,
 };
 pub(crate) use instruction_input::{
-    instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
-    instruction_input_sequence_storage_bytes, instruction_input_weight_capacities,
-    InstructionInputSequenceStorage, PendingInstructionInputPrimer,
-    INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS, INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
-    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+    instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
+    instruction_input_weight_capacities, InstructionInputSequenceStorage,
+    PendingInstructionInputPrimer, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+    INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
     InstructionInputRow, InstructionInputRows, InstructionInputSequence,
@@ -203,8 +202,7 @@ pub use spartan_outer_uniskip::{
 };
 pub(crate) use spartan_outer_uniskip::{
     spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_row_bytes,
-    spartan_outer_uniskip_successor_row_bytes, OuterResidualArenaKey, OuterResidualReleaseReceipt,
-    PendingSpartanStage1SourcePrimer, SpartanOuterUniskipColdRow, SpartanOuterUniskipSuccessorRow,
+    PendingSpartanStage1SourcePrimer, SpartanRawRow, SpartanStage1RowsKey,
 };
 
 pub const OFFSET_275: u32 = 275;

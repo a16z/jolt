@@ -324,7 +324,7 @@ impl OuterRemainderCpuMetalEvalFixture {
         let sequence = storage.attach(self.rows.clone())?;
         let metadata = MetalOuterResidentMetadata {
             compact_rows_storage_id: self.rows.instruction_input_allocation_identity(),
-            residual_rows_storage_id: self.rows.allocation_identity(),
+            raw_rows_storage_id: self.rows.allocation_identity(),
             device_registry_id: self.rows.device_registry_id(),
             resident_rows: self.cycles(),
         };

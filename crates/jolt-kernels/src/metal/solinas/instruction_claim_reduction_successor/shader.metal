@@ -9,38 +9,34 @@ struct ProductInstructionPhaseParams {
 
 inline SolinasFp128 stage1_instruction_combined(
     device const InstructionInputRow& compact,
-    device const SpartanOuterSuccessorRow& residual,
+    device const SpartanRawRow& raw,
     constant const SolinasFp128* gamma_powers)
 {
+    SpartanOuterResidual residual = spartan_outer_decode_current(compact, raw);
     ulong flags = instruction_input_row_word(compact, 5u);
-    SolinasFp128 value = product_remainder_from_u64(
-        spartan_outer_successor_word(residual, 13u));
+    SolinasFp128 value = product_remainder_from_u64(residual.word[13]);
     value = solinas_add(
         value,
         solinas_mul_wide(
             gamma_powers[0],
-            product_remainder_from_u64(
-                spartan_outer_successor_word(residual, 8u))));
+            product_remainder_from_u64(residual.word[8])));
     value = solinas_add(
         value,
         solinas_mul_wide(
             gamma_powers[1],
-            instruction_claim_from_u128(
-                spartan_outer_successor_word(residual, 9u),
-                spartan_outer_successor_word(residual, 10u))));
+            instruction_claim_from_u128(residual.word[9], residual.word[10])));
     value = solinas_add(
         value,
         solinas_mul_wide(
             gamma_powers[2],
-            product_remainder_from_u64(
-                spartan_outer_successor_word(residual, 0u))));
+            product_remainder_from_u64(residual.word[0])));
     value = solinas_add(
         value,
         solinas_mul_wide(
             gamma_powers[3],
             product_remainder_from_signed_u128(
-                spartan_outer_successor_word(residual, 1u),
-                spartan_outer_successor_word(residual, 2u),
+                residual.word[1],
+                residual.word[2],
                 product_remainder_flag(
                     flags,
                     SPARTAN_PRODUCT_FLAG_RIGHT_NONNEGATIVE))));
@@ -49,7 +45,7 @@ inline SolinasFp128 stage1_instruction_combined(
 
 kernel void solinas_instruction_claim_materialize_stage1_rows(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* residual_rows [[buffer(1)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
     constant const SolinasFp128* gamma_powers [[buffer(2)]],
     device const SolinasFp128* e_in [[buffer(3)]],
     device const SolinasFp128* e_out [[buffer(4)]],
@@ -75,9 +71,9 @@ kernel void solinas_instruction_claim_materialize_stage1_rows(
         uint low_index = 2u * pair;
         uint high_index = low_index + 1u;
         SolinasFp128 low = stage1_instruction_combined(
-            compact_rows[low_index], residual_rows[low_index], gamma_powers);
+            compact_rows[low_index], raw_rows[low_index], gamma_powers);
         SolinasFp128 high = stage1_instruction_combined(
-            compact_rows[high_index], residual_rows[high_index], gamma_powers);
+            compact_rows[high_index], raw_rows[high_index], gamma_powers);
         state[low_index] = low;
         state[high_index] = high;
 
@@ -105,7 +101,7 @@ kernel void solinas_instruction_claim_materialize_stage1_rows(
 
 kernel void solinas_instruction_claim_open_stage1_lookup_operands(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* residual_rows [[buffer(1)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device const SolinasFp128* e_out [[buffer(3)]],
     device SolinasFp128* partials [[buffer(4)]],
@@ -128,21 +124,19 @@ kernel void solinas_instruction_claim_open_stage1_lookup_operands(
     sums[1] = solinas_zero();
     for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
         uint row_index = x_out * params.e_in_length + x_in;
-        device const SpartanOuterSuccessorRow& residual = residual_rows[row_index];
+        SpartanOuterResidual residual =
+            spartan_outer_decode_current(compact_rows[row_index], raw_rows[row_index]);
         SolinasFp128 weight = e_in[x_in];
         sums[0] = solinas_add(
             sums[0],
             solinas_mul_wide(
                 weight,
-                instruction_claim_from_u64(
-                    spartan_outer_successor_word(residual, 8u))));
+                instruction_claim_from_u64(residual.word[8])));
         sums[1] = solinas_add(
             sums[1],
             solinas_mul_wide(
                 weight,
-                instruction_claim_from_u128(
-                    spartan_outer_successor_word(residual, 9u),
-                    spartan_outer_successor_word(residual, 10u))));
+                instruction_claim_from_u128(residual.word[9], residual.word[10])));
     }
 
     instruction_claim_finish_block(
@@ -160,7 +154,7 @@ kernel void solinas_instruction_claim_open_stage1_lookup_operands(
 
 kernel void solinas_product_instruction_materialize_stage1_message(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* residual_rows [[buffer(1)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
     device const SolinasFp128* lagrange [[buffer(2)]],
     constant const SolinasFp128* gamma_powers [[buffer(3)]],
     device const SolinasFp128* e_in [[buffer(4)]],
@@ -196,20 +190,20 @@ kernel void solinas_product_instruction_materialize_stage1_message(
         SolinasFp128 right_high;
         product_remainder_stage1_relation_values(
             compact_rows[low_index],
-            residual_rows[low_index],
+            raw_rows[low_index],
             lagrange,
             left_low,
             right_low);
         product_remainder_stage1_relation_values(
             compact_rows[high_index],
-            residual_rows[high_index],
+            raw_rows[high_index],
             lagrange,
             left_high,
             right_high);
         SolinasFp128 instruction_low = stage1_instruction_combined(
-            compact_rows[low_index], residual_rows[low_index], gamma_powers);
+            compact_rows[low_index], raw_rows[low_index], gamma_powers);
         SolinasFp128 instruction_high = stage1_instruction_combined(
-            compact_rows[high_index], residual_rows[high_index], gamma_powers);
+            compact_rows[high_index], raw_rows[high_index], gamma_powers);
 
         product_state[low_index] = left_low;
         product_state[high_index] = left_high;
@@ -309,7 +303,7 @@ inline void product_instruction_terminal_cache_exception(
 
 kernel void solinas_product_instruction_materialize_stage1_message_cached(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* residual_rows [[buffer(1)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
     device const SolinasFp128* lagrange [[buffer(2)]],
     constant const SolinasFp128* gamma_powers [[buffer(3)]],
     device const SolinasFp128* e_in [[buffer(4)]],
@@ -355,20 +349,20 @@ kernel void solinas_product_instruction_materialize_stage1_message_cached(
         SolinasFp128 right_high;
         product_remainder_stage1_relation_values(
             compact_rows[low_index],
-            residual_rows[low_index],
+            raw_rows[low_index],
             lagrange,
             left_low,
             right_low);
         product_remainder_stage1_relation_values(
             compact_rows[high_index],
-            residual_rows[high_index],
+            raw_rows[high_index],
             lagrange,
             left_high,
             right_high);
         SolinasFp128 instruction_low = stage1_instruction_combined(
-            compact_rows[low_index], residual_rows[low_index], gamma_powers);
+            compact_rows[low_index], raw_rows[low_index], gamma_powers);
         SolinasFp128 instruction_high = stage1_instruction_combined(
-            compact_rows[high_index], residual_rows[high_index], gamma_powers);
+            compact_rows[high_index], raw_rows[high_index], gamma_powers);
 
         product_state[low_index] = left_low;
         product_state[high_index] = left_high;
@@ -377,10 +371,12 @@ kernel void solinas_product_instruction_materialize_stage1_message_cached(
         instruction_state[low_index] = instruction_low;
         instruction_state[high_index] = instruction_high;
 
-        ulong low_lookup = spartan_outer_successor_word(residual_rows[low_index], 13u);
-        ulong high_lookup = spartan_outer_successor_word(residual_rows[high_index], 13u);
-        ulong low_left_lookup = spartan_outer_successor_word(residual_rows[low_index], 8u);
-        ulong high_left_lookup = spartan_outer_successor_word(residual_rows[high_index], 8u);
+        ulong low_lookup = spartan_raw_row_word(raw_rows[low_index], 3u);
+        ulong high_lookup = spartan_raw_row_word(raw_rows[high_index], 3u);
+        ulong low_left_lookup =
+            spartan_outer_decode_current(compact_rows[low_index], raw_rows[low_index]).word[8];
+        ulong high_left_lookup =
+            spartan_outer_decode_current(compact_rows[high_index], raw_rows[high_index]).word[8];
         lookup_low[low_index] = uint(low_lookup);
         lookup_low[high_index] = uint(high_lookup);
         left_lookup_low[low_index] = uint(low_left_lookup);

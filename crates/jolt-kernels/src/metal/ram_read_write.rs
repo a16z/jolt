@@ -36,7 +36,7 @@ use crate::{
 use super::solinas::{
     InstructionInputRow, InstructionReadRafStage1Owner, MetalError, ProductRemainderRows,
     ProductRemainderSourceKind, RamRafSegmentedAddressPlane, RamReadWriteDispatchTiming,
-    RamReadWriteFinish, RamReadWriteSequence, SparseCycleProduct, SpartanOuterUniskipSuccessorRow,
+    RamReadWriteFinish, RamReadWriteSequence, SparseCycleProduct, SpartanRawRow,
     RAM_READ_WRITE_CYCLE_TILE_LOG2,
 };
 
@@ -103,7 +103,7 @@ impl RamReadWriteDirectProjection {
 
 struct RamReadWriteStage1Values<'a> {
     compact: &'a [InstructionInputRow],
-    residual: &'a [SpartanOuterUniskipSuccessorRow],
+    raw: &'a [SpartanRawRow],
 }
 
 impl RamReadWriteStage1Values<'_> {
@@ -114,7 +114,7 @@ impl RamReadWriteStage1Values<'_> {
                 "Stage-1 RAM metadata does not identify one access kind",
             ));
         }
-        let pre_value = self.residual[row].stage1_ram_pre_value();
+        let pre_value = self.raw[row].stage1_ram_pre_value();
         Ok((pre_value, if load { pre_value } else { rs2 }))
     }
 }
@@ -147,9 +147,7 @@ impl RamReadWriteStage1Source {
         let product_bytes = self
             .product
             .stage1_buffers()
-            .map_or(0, |(compact, residual)| {
-                compact.length() + residual.length()
-            });
+            .map_or(0, |(compact, raw)| compact.length() + raw.length());
         self.instruction.receipt().row_bytes() + product_bytes
     }
 
@@ -159,7 +157,7 @@ impl RamReadWriteStage1Source {
 
     fn values(&self) -> Result<RamReadWriteStage1Values<'_>, KernelError<AkitaField>> {
         let rows = self.rows();
-        let (compact, residual) =
+        let (compact, raw) =
             self.product
                 .stage1_buffers()
                 .ok_or(KernelError::InvariantViolation {
@@ -171,16 +169,9 @@ impl RamReadWriteStage1Source {
             slice::from_raw_parts(compact.contents().cast::<InstructionInputRow>(), rows)
         };
         // SAFETY: ProductRemainderRows validates this allocation against the
-        // successor-row ABI and keeps it alive for the returned borrow.
-        let residual = unsafe {
-            slice::from_raw_parts(
-                residual
-                    .contents()
-                    .cast::<SpartanOuterUniskipSuccessorRow>(),
-                rows,
-            )
-        };
-        Ok(RamReadWriteStage1Values { compact, residual })
+        // raw-row ABI and keeps it alive for the returned borrow.
+        let raw = unsafe { slice::from_raw_parts(raw.contents().cast::<SpartanRawRow>(), rows) };
+        Ok(RamReadWriteStage1Values { compact, raw })
     }
 
     fn collect_direct_addresses(

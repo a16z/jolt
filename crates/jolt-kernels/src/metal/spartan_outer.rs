@@ -24,7 +24,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::backend::{MetalBackend, MetalConfig};
-use super::instruction_input::{InstructionInputDenseStorageMode, PreparedInstructionInput};
+use super::instruction_input::PreparedInstructionInput;
 use super::registers_claim_reduction::{
     MetalRegistersClaimAsyncStage1Carry, MetalRegistersClaimOuterSource,
     MetalRegistersClaimPendingStage1Carry, MetalRegistersClaimStage1Carry,
@@ -35,10 +35,9 @@ use super::solinas::bytecode_read_raf_address::{
 };
 use super::solinas::spartan_shift::{SpartanShiftFlagWord, SPARTAN_SHIFT_FLAG_ROWS_PER_WORD};
 use super::solinas::{
-    instruction_input_row_bytes, instruction_input_sequence_auxiliary_storage_bytes,
-    instruction_input_sequence_storage_bytes, instruction_read_raf_stage1_claim_bytes,
-    instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
-    outer_remainder_sequence_max_buffer_bytes_with_config,
+    instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
+    instruction_read_raf_stage1_claim_bytes, instruction_read_raf_stage1_device_bytes,
+    instruction_read_raf_stage1_row_bytes, outer_remainder_sequence_max_buffer_bytes_with_config,
     outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
     spartan_outer_uniskip_row_bytes, InstructionInputRows, MetalError, OuterRemainderPhase,
     OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
@@ -122,7 +121,6 @@ fn resident_row_working_set(
     stage1: bool,
     instruction_input: bool,
     instruction_read_raf_owner: bool,
-    borrow_outer_residual: bool,
     spartan_shift: bool,
     metal_uniskip: bool,
     metal_remainder: bool,
@@ -135,14 +133,7 @@ fn resident_row_working_set(
     } else {
         0
     };
-    let instruction_input_bytes = if instruction_input && borrow_outer_residual {
-        if !stage1 {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer residual borrowing requires resident Stage-1 rows",
-            ));
-        }
-        instruction_input_sequence_auxiliary_storage_bytes(cycles)?
-    } else if instruction_input {
+    let instruction_input_bytes = if instruction_input {
         instruction_input_sequence_storage_bytes(cycles)?
     } else {
         0
@@ -469,11 +460,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 if (prepare_bytecode_carrier || prepare_registers_read_write) && !candidate.stage1 {
                     continue;
                 }
-                let borrow_outer_residual = self.config.instruction_input.dense_storage_mode
-                    == InstructionInputDenseStorageMode::OuterResidual;
-                if borrow_outer_residual && candidate.instruction_input && !candidate.stage1 {
-                    continue;
-                }
                 let residual_bytes = if candidate.stage1 {
                     spartan_outer_uniskip_row_bytes(cycles)
                         .map_err(metal_prepare_error)?
@@ -532,7 +518,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                 candidate.stage1,
                                 candidate.instruction_input,
                                 stage1_projection_owner_requested && candidate.stage1,
-                                borrow_outer_residual && candidate.instruction_input,
                                 candidate.stage1
                                     && cycles >= self.config.spartan_shift.trace_cutoff_elements,
                                 candidate.stage1
@@ -995,7 +980,7 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         }
         let storage_owned_bytes = storage.owned_bytes();
         let compact_rows_storage_id = rows.instruction_input_allocation_identity();
-        let residual_rows_storage_id = rows.allocation_identity();
+        let raw_rows_storage_id = rows.allocation_identity();
         let device_registry_id = rows.device_registry_id();
         let rows =
             session
@@ -1033,7 +1018,7 @@ impl PrepareKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let metadata = MetalOuterResidentMetadata {
             compact_rows_storage_id,
-            residual_rows_storage_id,
+            raw_rows_storage_id,
             device_registry_id,
             resident_rows: cycles,
         };
@@ -1315,7 +1300,7 @@ impl MetalOuterRemainderHost {
 #[derive(Clone, Copy)]
 struct MetalOuterResidentMetadata {
     compact_rows_storage_id: usize,
-    residual_rows_storage_id: usize,
+    raw_rows_storage_id: usize,
     device_registry_id: u64,
     resident_rows: usize,
 }
@@ -1327,7 +1312,7 @@ struct MetalOuterRemainderKernel {
     host_tail: Option<(Vec<AkitaField>, Vec<AkitaField>)>,
     pending_endpoints: Option<(AkitaField, AkitaField)>,
     compact_rows_storage_id: usize,
-    residual_rows_storage_id: usize,
+    raw_rows_storage_id: usize,
     device_registry_id: u64,
     resident_rows: usize,
     cpu_tail_elements: usize,
@@ -1410,7 +1395,7 @@ impl MetalOuterRemainderKernel {
             )),
             pending_endpoints: Some((endpoints[0], endpoints[1])),
             compact_rows_storage_id: metadata.compact_rows_storage_id,
-            residual_rows_storage_id: metadata.residual_rows_storage_id,
+            raw_rows_storage_id: metadata.raw_rows_storage_id,
             device_registry_id: metadata.device_registry_id,
             resident_rows: metadata.resident_rows,
             cpu_tail_elements: tail_elements,
@@ -1637,7 +1622,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
                         product_tau_low: &product_tau_low,
                         rows: self.resident_rows,
                         compact_storage_id: self.compact_rows_storage_id,
-                        residual_storage_id: self.residual_rows_storage_id,
+                        raw_storage_id: self.raw_rows_storage_id,
                         device_registry_id: self.device_registry_id,
                     },
                 )
@@ -1653,7 +1638,7 @@ impl SumcheckKernel<AkitaField> for MetalOuterRemainderKernel {
         }
         let storage = sequence.storage_stats().map_err(metal_output_error)?;
         if storage.compact_row_identity != self.compact_rows_storage_id
-            || storage.residual_row_identity != self.residual_rows_storage_id
+            || storage.raw_row_identity != self.raw_rows_storage_id
             || storage.row_device_registry_id != self.device_registry_id
         {
             return Err(SumcheckKernelError::InvariantViolation {
@@ -1824,55 +1809,48 @@ mod tests {
 
     #[test]
     fn aggregate_instruction_input_working_set_matches_production_geometry() {
-        let working_set = |cycles,
-                           stage1,
-                           instruction_input,
-                           instruction_read_raf,
-                           borrow_outer_residual,
-                           shift,
-                           uniskip,
-                           remainder| {
-            resident_row_working_set(
-                cycles,
-                stage1,
-                instruction_input,
-                instruction_read_raf,
-                borrow_outer_residual,
-                shift,
-                uniskip,
-                remainder,
-                Default::default(),
-            )
-            .unwrap()
-        };
+        let working_set =
+            |cycles, stage1, instruction_input, instruction_read_raf, shift, uniskip, remainder| {
+                resident_row_working_set(
+                    cycles,
+                    stage1,
+                    instruction_input,
+                    instruction_read_raf,
+                    shift,
+                    uniskip,
+                    remainder,
+                    Default::default(),
+                )
+                .unwrap()
+            };
 
         assert_eq!(
-            working_set(1 << 26, true, true, false, false, true, true, true),
-            21_507_674_448
+            working_set(1 << 26, true, true, false, true, true, true),
+            16_138_965_328
         );
         assert_eq!(
-            working_set(1 << 28, true, true, false, false, true, true, true),
-            86_010_499_408
+            working_set(1 << 28, true, true, false, true, true, true),
+            64_535_662_928
         );
         assert_eq!(
-            working_set(1 << 26, true, true, true, false, true, true, true),
-            23_722_266_960
+            working_set(1 << 26, true, true, true, true, true, true),
+            18_353_557_840
         );
         assert_eq!(
-            working_set(1 << 27, true, true, true, false, true, true, true),
-            47_438_500_176
+            working_set(1 << 27, true, true, true, true, true, true),
+            36_701_081_936
         );
         assert_eq!(
-            working_set(1 << 26, false, true, false, false, false, false, false),
+            working_set(1 << 26, false, true, false, false, false, false),
             9_664_659_456
         );
         assert_eq!(
-            working_set(1 << 28, false, true, false, false, false, false, false),
+            working_set(1 << 28, false, true, false, false, false, false),
             38_656_671_744
         );
         assert_eq!(
-            working_set(1 << 28, true, false, false, false, true, true, true),
-            60_238_729_552
+            working_set(1 << 28, true, false, false, true, true, true),
+            38_763_893_072
         );
     }
 

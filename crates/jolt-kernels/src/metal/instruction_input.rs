@@ -21,7 +21,7 @@ use super::solinas::{
     instruction_input_weight_capacities, InstructionInputRows, InstructionInputSequence,
     InstructionInputSequenceConfig, InstructionInputSequenceStorage,
     InstructionInputStorageInitialization, MetalError, OuterRemainderSequence,
-    PendingInstructionInputPrimer, SpartanOuterUniskipRows, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+    PendingInstructionInputPrimer, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
     INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
     INSTRUCTION_INPUT_TABLES,
 };
@@ -32,18 +32,10 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum InstructionInputDenseStorageMode {
-    #[default]
-    Owned,
-    OuterResidual,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionInputMetalConfig {
     pub trace_cutoff_elements: usize,
     pub cutoff_elements: usize,
-    pub dense_storage_mode: InstructionInputDenseStorageMode,
     pub dispatch: InstructionInputSequenceConfig,
 }
 
@@ -52,7 +44,6 @@ impl Default for InstructionInputMetalConfig {
         Self {
             trace_cutoff_elements: 1 << 25,
             cutoff_elements: 1 << 16,
-            dense_storage_mode: InstructionInputDenseStorageMode::Owned,
             dispatch: InstructionInputSequenceConfig {
                 storage_initialization: InstructionInputStorageInitialization::Minimal,
                 ..InstructionInputSequenceConfig::default()
@@ -132,36 +123,18 @@ impl MetalBackend {
             "MetalInstructionInput::storage_prepare",
             trace_elements,
             cutoff_elements = config.cutoff_elements,
-            dense_storage_mode = ?config.dense_storage_mode,
             host_tail_bytes,
             resident_rows_storage_id,
             resident_rows = resident_row_count,
             resident_row_bytes
         )
         .entered();
-        let storage = match config.dense_storage_mode {
-            InstructionInputDenseStorageMode::Owned => {
-                self.context.prepare_instruction_input_sequence_storage(
-                    trace_elements,
-                    e_in_capacity,
-                    e_out_capacity,
-                    config.dispatch,
-                )
-            }
-            InstructionInputDenseStorageMode::OuterResidual => {
-                let Some(outer_rows) = session.state::<SpartanOuterUniskipRows>() else {
-                    return Ok(());
-                };
-                self.context
-                    .prepare_instruction_input_sequence_storage_from_outer(
-                        outer_rows,
-                        e_in_capacity,
-                        e_out_capacity,
-                        config.dispatch,
-                    )
-            }
-        };
-        match storage {
+        match self.context.prepare_instruction_input_sequence_storage(
+            trace_elements,
+            e_in_capacity,
+            e_out_capacity,
+            config.dispatch,
+        ) {
             Ok(storage) => {
                 tracing::info!(
                     target: "jolt::metal",
@@ -192,6 +165,7 @@ impl MetalBackend {
         &self,
         session: &mut ProofSession,
     ) -> Result<(), KernelError<AkitaField>> {
+        drop(session.take::<OuterRemainderSequence>());
         let prepared = session.take::<PreparedInstructionInput>();
         let resident_rows = session.take::<InstructionInputRows>();
         let (prepared, resident_rows) = match (prepared, resident_rows) {
@@ -226,7 +200,7 @@ impl MetalBackend {
             }
         };
         let PreparedInstructionInput { device, host_tail } = prepared;
-        let PreparedInstructionInputDevice::Storage(mut storage) = device else {
+        let PreparedInstructionInputDevice::Storage(storage) = device else {
             return Err(KernelError::InvariantViolation {
                 reason: "InstructionInput Metal prefetch expected unprimed storage",
             });
@@ -245,37 +219,6 @@ impl MetalBackend {
             return Err(KernelError::InvariantViolation {
                 reason: "InstructionInput Metal storage disagrees with the prefetched geometry",
             });
-        }
-        if storage.requires_outer_residual_release() {
-            let Some(outer) = session.take::<OuterRemainderSequence>() else {
-                tracing::warn!(
-                    target: "jolt::metal",
-                    "InstructionInput Outer residual arena was not released; selecting CPU"
-                );
-                return Ok(());
-            };
-            let receipt = outer
-                .instruction_input_arena_release_receipt()
-                .map_err(metal_prepare_error)?;
-            let outer_residual_generation = receipt.key.generation;
-            let outer_storage = outer.storage_stats().map_err(metal_prepare_error)?;
-            storage
-                .unlock_outer_residual(receipt, &resident_rows)
-                .map_err(metal_prepare_error)?;
-            let _transfer = tracing::info_span!(
-                "MetalInstructionInput::outer_residual_transfer",
-                resident_rows = trace_elements,
-                outer_residual_generation,
-                compact_rows_storage_id = outer_storage.compact_row_identity,
-                residual_rows_storage_id = outer_storage.residual_row_identity,
-                device_registry_id = outer_storage.row_device_registry_id,
-                outer_sequence_owned_bytes = outer_storage.owned_bytes,
-                outer_sequence_consumed = true,
-                compact_rows_transferred = true,
-                residual_rows_transferred = true,
-            )
-            .entered();
-            drop(outer);
         }
         if !native_primer_supported(trace_elements, e_in_capacity, e_out_capacity) {
             session.park(PreparedInstructionInput {

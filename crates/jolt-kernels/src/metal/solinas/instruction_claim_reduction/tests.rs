@@ -1,5 +1,6 @@
 use core::mem::{align_of, size_of};
 
+use super::super::spartan_outer_uniskip::test_rows::{stage1_rows, witness};
 use crate::optimized::instruction_claim_reduction::InstructionOperandRow;
 use jolt_field::{FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField};
 use jolt_field::{One as _, Zero as _};
@@ -722,48 +723,12 @@ fn stage1_sequence_matches_standalone_sequence() {
     let Ok(context) = super::super::SolinasMetal::for_akita() else {
         return;
     };
-    let rows: usize = 1 << 8;
+    let log_t = 8;
     let gamma = AkitaField::from_u64(17);
-    let core = (0..rows)
-        .map(|index| {
-            InstructionClaimCoreRow::new(
-                13 * index as u64 + 1,
-                17 * index as u64 + 2,
-                (u128::from(index as u64) << 73) | u128::from(19 * index as u64 + 3),
-                23 * index as u64 + 4,
-            )
-        })
-        .collect::<Vec<_>>();
-    let right = (0..rows)
-        .map(|index| {
-            InstructionClaimRightInput::new(if index.is_multiple_of(2) {
-                -(29 * index as i128 + 5)
-            } else {
-                31 * index as i128 + 6
-            })
-        })
-        .collect::<Vec<_>>();
-    let planes = operand_planes(&core, &right);
-    let stage1 = core
-        .iter()
-        .zip(&right)
-        .map(|(core, right)| {
-            let mut words = [0u64; 20];
-            let right_input = right.value().unsigned_abs();
-            let right_lookup = core.right_lookup_operand();
-            words[0] = core.left_instruction_input();
-            words[1] = right_input as u64;
-            words[2] = (right_input >> 64) as u64;
-            words[13] = core.left_lookup_operand();
-            words[14] = right_lookup as u64;
-            words[15] = (right_lookup >> 64) as u64;
-            words[18] = core.lookup_output();
-            words[19] = u64::from(right.value() >= 0) << 17;
-            super::super::SpartanOuterUniskipRow::from_words(words)
-        })
-        .collect::<Vec<_>>();
+    let planes = split_operand_rows(&witness::<InstructionOperandRow>(log_t))
+        .expect("witness operand rows are valid");
     let stage1 = context
-        .prepare_spartan_outer_uniskip_rows(&stage1)
+        .prepare_spartan_outer_uniskip_rows(&stage1_rows(log_t))
         .expect("Stage-1 rows should prepare")
         .share_product_remainder_rows()
         .expect("Stage-1 rows should expose an instruction view");
@@ -777,7 +742,6 @@ fn stage1_sequence_matches_standalone_sequence() {
     let mut standalone = context
         .prepare_instruction_claim_sequence(&planes, gamma, InstructionClaimKernelConfig::default())
         .expect("standalone instruction sequence should prepare");
-    let log_t = rows.trailing_zeros() as usize;
     let point = (0..log_t)
         .map(|index| AkitaField::from_u64(101 + 2 * index as u64))
         .collect::<Vec<_>>();

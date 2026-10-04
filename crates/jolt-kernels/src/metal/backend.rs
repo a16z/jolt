@@ -13,7 +13,7 @@ use super::bytecode_read_raf::{
 };
 use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_claim_reduction::InstructionClaimReductionMetalConfig;
-use super::instruction_input::{InstructionInputDenseStorageMode, InstructionInputMetalConfig};
+use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
 use super::instruction_read_raf::InstructionReadRafMetalConfig;
 use super::ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
@@ -120,8 +120,6 @@ impl MetalConfig {
             .storage_initialization = OuterRemainderStorageInitialization::Lazy;
         config.instruction_input.dispatch.storage_initialization =
             InstructionInputStorageInitialization::Lazy;
-        config.instruction_input.dense_storage_mode =
-            InstructionInputDenseStorageMode::OuterResidual;
         config.registers_val_evaluation.source = RegistersValEvaluationSource::Stage1Resident;
         config.registers_val_evaluation.trace_cutoff_elements = 1 << 26;
         config.ram_read_write.gpu_record_scatter_cutoff_elements = 1 << 29;
@@ -258,15 +256,6 @@ impl MetalBackend {
         {
             return Err(MetalError::InvalidRegistersValState(
                 "Stage-1 resident RegistersVal requires the grouped owner at its trace cutoff and a smaller tail cutoff",
-            ));
-        }
-        if config.instruction_input.dense_storage_mode
-            == InstructionInputDenseStorageMode::OuterResidual
-            && config.spartan_outer_remainder.trace_cutoff_elements
-                > config.instruction_input.trace_cutoff_elements
-        {
-            return Err(MetalError::InvalidInstructionInputState(
-                "Outer-residual InstructionInput storage requires an active OuterRemainder producer",
             ));
         }
         let cutoff = config.instruction_read_raf.cutoff_elements;
@@ -465,10 +454,6 @@ mod tests {
             config.instruction_input.dispatch.storage_initialization,
             InstructionInputStorageInitialization::Lazy
         );
-        assert_eq!(
-            config.instruction_input.dense_storage_mode,
-            InstructionInputDenseStorageMode::OuterResidual
-        );
         assert!(!config.spartan_product_remainder.dispatch.prime_workspace);
         assert!(config.spartan_product_remainder.dispatch.async_state_b_fill);
         assert_eq!(
@@ -499,19 +484,6 @@ mod tests {
         assert!(matches!(
             MetalBackend::validate_config(&config),
             Err(MetalError::InvalidRegistersValState(_))
-        ));
-    }
-
-    #[test]
-    fn outer_residual_instruction_input_requires_an_active_outer_producer() {
-        let mut config = MetalConfig::production();
-        config.spartan_outer_remainder.trace_cutoff_elements = 1 << 26;
-        config.instruction_input.trace_cutoff_elements = 1 << 25;
-        config.registers_claim_reduction.trace_cutoff_elements = 1 << 26;
-
-        assert!(matches!(
-            MetalBackend::validate_config(&config),
-            Err(MetalError::InvalidInstructionInputState(_))
         ));
     }
 }

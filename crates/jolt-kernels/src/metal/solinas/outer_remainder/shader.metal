@@ -75,8 +75,7 @@ inline SolinasFp128 outer_bind(
 
 inline void outer_row_memory(
     device const InstructionInputRow& compact,
-    device const SpartanOuterSuccessorRow& successor,
-    device const SpartanOuterColdRow& cold,
+    thread const SpartanOuterResidual& residual,
     thread ulong& ram_address,
     thread ulong& rs2,
     thread ulong& rd_write,
@@ -86,8 +85,8 @@ inline void outer_row_memory(
     ulong flags = instruction_input_row_word(compact, 5u);
     bool load = outer_flag(flags, 0u) != 0;
     bool store = outer_flag(flags, 1u) != 0;
-    ulong memory_0 = spartan_outer_residual_word(successor, cold, 6u);
-    ulong memory_1 = spartan_outer_residual_word(successor, cold, 7u);
+    ulong memory_0 = residual.word[6];
+    ulong memory_1 = residual.word[7];
     rs2 = instruction_input_row_word(compact, 2u);
     ram_address = load || store ? memory_0 : 0ul;
     rd_write = store ? 0ul : (load ? memory_1 : memory_0);
@@ -273,8 +272,7 @@ inline SolinasFp128 outer_deferred_s320_reduce(OuterDeferredSigned320 value) {
 }
 
 inline SolinasFp128 outer_fold_b_first(
-    device const SpartanOuterSuccessorRow& successor,
-    device const SpartanOuterColdRow& cold,
+    thread const SpartanOuterResidual& residual,
     ulong flags,
     ulong ram_address,
     ulong rs2,
@@ -290,17 +288,17 @@ inline SolinasFp128 outer_fold_b_first(
     outer_deferred_s320_fmadd_u64(sum, coefficients[3], rd_write);
     outer_deferred_s320_fmadd_u64(sum, coefficients[4], rs2);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[5], spartan_outer_residual_word(successor, cold, 8u));
+        sum, coefficients[5], residual.word[8]);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[6], spartan_outer_residual_word(successor, cold, 0u));
+        sum, coefficients[6], residual.word[0]);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[7], spartan_outer_residual_word(successor, cold, 13u));
+        sum, coefficients[7], residual.word[13]);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[8], spartan_outer_residual_word(successor, cold, 11u));
+        sum, coefficients[8], residual.word[11]);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[9], spartan_outer_residual_word(successor, cold, 12u));
+        sum, coefficients[9], residual.word[12]);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[10], spartan_outer_residual_word(successor, cold, 5u));
+        sum, coefficients[10], residual.word[5]);
     outer_deferred_s320_add_field(sum, coefficients[11]);
     if (outer_flag(flags, 15u) != 0) {
         outer_deferred_s320_add_field(sum, coefficients[12]);
@@ -310,8 +308,7 @@ inline SolinasFp128 outer_fold_b_first(
 
 inline SolinasFp128 outer_fold_b_second(
     device const InstructionInputRow& compact,
-    device const SpartanOuterSuccessorRow& successor,
-    device const SpartanOuterColdRow& cold,
+    thread const SpartanOuterResidual& residual,
     ulong flags,
     ulong ram_address,
     ulong rd_write,
@@ -330,30 +327,30 @@ inline SolinasFp128 outer_fold_b_second(
     outer_deferred_s320_fmadd_signed_u128(
         sum,
         coefficients[3],
-        spartan_outer_residual_word(successor, cold, 9u),
-        spartan_outer_residual_word(successor, cold, 10u),
+        residual.word[9],
+        residual.word[10],
         true);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[4], spartan_outer_residual_word(successor, cold, 0u));
+        sum, coefficients[4], residual.word[0]);
     outer_deferred_s320_fmadd_signed_u128(
         sum,
         coefficients[5],
-        spartan_outer_residual_word(successor, cold, 1u),
-        spartan_outer_residual_word(successor, cold, 2u),
+        residual.word[1],
+        residual.word[2],
         outer_flag(flags, 17u) != 0);
     outer_deferred_s320_fmadd_signed_u128(
         sum,
         coefficients[6],
-        spartan_outer_residual_word(successor, cold, 3u),
-        spartan_outer_residual_word(successor, cold, 4u),
+        residual.word[3],
+        residual.word[4],
         outer_flag(flags, 19u) != 0);
     outer_deferred_s320_fmadd_u64(sum, coefficients[7], rd_write);
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[8], spartan_outer_residual_word(successor, cold, 13u));
+        sum, coefficients[8], residual.word[13]);
     outer_deferred_s320_fmadd_u64(
         sum, coefficients[9], instruction_input_row_word(compact, 1u));
     outer_deferred_s320_fmadd_u64(
-        sum, coefficients[10], spartan_outer_residual_word(successor, cold, 11u));
+        sum, coefficients[10], residual.word[11]);
     outer_deferred_s320_add_field(sum, coefficients[11]);
     outer_deferred_s320_add_field(sum, coefficients[12]);
     if (outer_flag(flags, 16u) != 0) {
@@ -402,14 +399,13 @@ inline void outer_finish_two_columns(
 
 kernel void solinas_outer_remainder_materialize_b_and_message(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* successor_rows [[buffer(1)]],
-    device const SpartanOuterColdRow* cold_rows [[buffer(2)]],
-    constant const SolinasFp128* a_lookup [[buffer(3)]],
-    device const SolinasFp128* e_in [[buffer(4)]],
-    device const SolinasFp128* e_out [[buffer(5)]],
-    device SolinasFp128* b_state [[buffer(6)]],
-    device SolinasFp128* partials [[buffer(7)]],
-    constant OuterRemainderPhaseParams& params [[buffer(8)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
+    constant const SolinasFp128* a_lookup [[buffer(2)]],
+    device const SolinasFp128* e_in [[buffer(3)]],
+    device const SolinasFp128* e_out [[buffer(4)]],
+    device SolinasFp128* b_state [[buffer(5)]],
+    device SolinasFp128* partials [[buffer(6)]],
+    constant OuterRemainderPhaseParams& params [[buffer(7)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint block [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -418,6 +414,7 @@ kernel void solinas_outer_remainder_materialize_b_and_message(
     uint threads [[threads_per_threadgroup]])
 {
     bool accumulate = false;
+    uint rows = params.e_in_length * params.e_out_length;
     for (uint x_out = block;
          x_out < params.e_out_length;
          x_out += params.blocks) {
@@ -425,6 +422,8 @@ kernel void solinas_outer_remainder_materialize_b_and_message(
         SolinasFp128 q_infinity = solinas_zero();
         for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
             uint cycle = x_out * params.e_in_length + x_in;
+            SpartanOuterResidual residual =
+                spartan_outer_decode_residual(compact_rows, raw_rows, cycle, rows);
             SolinasFp128 az_0 = outer_fold_a_lookup(
                 compact_rows[cycle], a_lookup + 10u);
             SolinasFp128 az_1 = outer_fold_a_lookup(
@@ -437,16 +436,14 @@ kernel void solinas_outer_remainder_materialize_b_and_message(
             ulong ram_write;
             outer_row_memory(
                 compact_rows[cycle],
-                successor_rows[cycle],
-                cold_rows[cycle],
+                residual,
                 ram_address,
                 rs2,
                 rd_write,
                 ram_read,
                 ram_write);
             SolinasFp128 bz_0 = outer_fold_b_first(
-                successor_rows[cycle],
-                cold_rows[cycle],
+                residual,
                 flags,
                 ram_address,
                 rs2,
@@ -456,8 +453,7 @@ kernel void solinas_outer_remainder_materialize_b_and_message(
                 a_lookup + OUTER_REMAINDER_FIRST_B_OFFSET);
             SolinasFp128 bz_1 = outer_fold_b_second(
                 compact_rows[cycle],
-                successor_rows[cycle],
-                cold_rows[cycle],
+                residual,
                 flags,
                 ram_address,
                 rd_write,
@@ -865,12 +861,11 @@ inline ulong outer_opening_u64(
 
 kernel void solinas_outer_remainder_opening_tiles(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* successor_rows [[buffer(1)]],
-    device const SpartanOuterColdRow* cold_rows [[buffer(2)]],
-    device const SolinasFp128* e_in [[buffer(3)]],
-    device const SolinasFp128* e_out [[buffer(4)]],
-    device SolinasFp128* partials [[buffer(5)]],
-    constant OuterRemainderOpeningParams& params [[buffer(6)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
+    device const SolinasFp128* e_in [[buffer(2)]],
+    device const SolinasFp128* e_out [[buffer(3)]],
+    device SolinasFp128* partials [[buffer(4)]],
+    constant OuterRemainderOpeningParams& params [[buffer(5)]],
     threadgroup ulong* row_words [[threadgroup(0)]],
     threadgroup SolinasFp128* tile_weights [[threadgroup(1)]],
     threadgroup SolinasFp128* shard_sums [[threadgroup(2)]],
@@ -882,6 +877,7 @@ kernel void solinas_outer_remainder_opening_tiles(
 {
     (void)shard_sums;
     uint simdgroups = threads / OUTER_REMAINDER_SIMD_WIDTH;
+    uint rows = params.e_in_length * params.e_out_length;
     if (tid < params.columns) {
         partials[block * params.columns + tid] = solinas_zero();
     }
@@ -906,17 +902,17 @@ kernel void solinas_outer_remainder_opening_tiles(
             uint tile_count = min(
                 OUTER_REMAINDER_TILE_ROWS,
                 block_rows - tile_start);
-            for (uint flat = tid; flat < tile_count * 20u; flat += threads) {
-                uint tile_row = flat / 20u;
-                uint word = flat - tile_row * 20u;
+            for (uint tile_row = tid; tile_row < tile_count; tile_row += threads) {
                 uint source_row = block_start + tile_start + tile_row;
-                uint residual_word = word - 6u;
-                row_words[flat] = word < 6u
-                    ? instruction_input_row_word(compact_rows[source_row], word)
-                    : spartan_outer_residual_word(
-                        successor_rows[source_row],
-                        cold_rows[source_row],
-                        residual_word);
+                threadgroup ulong* staged = row_words + tile_row * 20u;
+                for (uint word = 0u; word < 6u; word++) {
+                    staged[word] = instruction_input_row_word(compact_rows[source_row], word);
+                }
+                SpartanOuterResidual residual =
+                    spartan_outer_decode_residual(compact_rows, raw_rows, source_row, rows);
+                for (uint word = 0u; word < 14u; word++) {
+                    staged[6u + word] = residual.word[word];
+                }
             }
             for (uint tile_row = tid; tile_row < tile_count; tile_row += threads) {
                 tile_weights[tile_row] = e_in[tile_start + tile_row];
@@ -987,12 +983,11 @@ kernel void solinas_outer_remainder_opening_tiles(
 
 kernel void solinas_outer_remainder_build_registers_claim(
     device const InstructionInputRow* compact_rows [[buffer(0)]],
-    device const SpartanOuterSuccessorRow* successor_rows [[buffer(1)]],
-    device const SpartanOuterColdRow* cold_rows [[buffer(2)]],
-    device const SolinasFp128* e_out [[buffer(3)]],
-    device SolinasFp128* q_partials [[buffer(4)]],
-    device ulong* rd_write_value [[buffer(5)]],
-    constant OuterRemainderOpeningParams& params [[buffer(6)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
+    device const SolinasFp128* e_out [[buffer(2)]],
+    device SolinasFp128* q_partials [[buffer(3)]],
+    device ulong* rd_write_value [[buffer(4)]],
+    constant OuterRemainderOpeningParams& params [[buffer(5)]],
     threadgroup SolinasFp128* outer_weights [[threadgroup(0)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -1027,17 +1022,12 @@ kernel void solinas_outer_remainder_build_registers_claim(
         ulong rd = 0ul;
         if (row < params.source_elements) {
             device const InstructionInputRow& compact = compact_rows[row];
-            device const SpartanOuterSuccessorRow& successor = successor_rows[row];
-            device const SpartanOuterColdRow& cold = cold_rows[row];
             ulong flags = instruction_input_row_word(compact, 5u);
             bool load = outer_flag(flags, 0u) != 0;
             bool store = outer_flag(flags, 1u) != 0;
             rs1 = instruction_input_row_word(compact, 0u);
             rs2 = instruction_input_row_word(compact, 2u);
-            rd = store
-                ? 0ul
-                : spartan_outer_residual_word(
-                    successor, cold, load ? 7u : 6u);
+            rd = store ? 0ul : spartan_raw_row_word(raw_rows[row], load ? 2u : 1u);
         }
         rd_write_value[row] = rd;
         SolinasFp128 weight = outer_weights[high];

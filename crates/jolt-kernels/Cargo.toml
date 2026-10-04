@@ -56,6 +56,7 @@ metal = { workspace = true, optional = true }
 common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
+jolt-program = { workspace = true, features = ["image"] }
 jolt-witness = { workspace = true, features = ["test-utils"] }
 jolt-transcript.workspace = true
 rand_chacha.workspace = true
