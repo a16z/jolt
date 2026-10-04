@@ -19,10 +19,12 @@ pub const REGISTERS_CLAIM_AKITA_OFFSET: u32 = 0xffff_a7f7;
 pub const INSTRUCTION_INPUT_RS1_TABLE: usize = 1;
 pub const INSTRUCTION_INPUT_RS2_TABLE: usize = 5;
 
-pub const ALIAS_FOLD_RD_WRITE_VALUE_SLOT: u64 = 0;
-pub const ALIAS_FOLD_EQ_PREFIX_SLOT: u64 = 1;
-pub const ALIAS_FOLD_OUTPUT_SLOT: u64 = 2;
-pub const ALIAS_FOLD_PARAMS_SLOT: u64 = 3;
+pub const ALIAS_FOLD_COMPACT_ROWS_SLOT: u64 = 0;
+pub const ALIAS_FOLD_RAW_ROWS_SLOT: u64 = 1;
+pub const ALIAS_FOLD_EQ_PREFIX_SLOT: u64 = 2;
+pub const ALIAS_FOLD_OUTPUT_SLOT: u64 = 3;
+pub const ALIAS_FOLD_PARAMS_SLOT: u64 = 4;
+pub const ALIAS_FOLD_RD_POST_SLOT: u64 = 5;
 pub const ALIAS_FOLD_THREADGROUP_SLOT: u64 = 0;
 
 pub(crate) const ALIAS_FOLD_PIPELINE: &str = "solinas_registers_claim_fold_alias_rd";
@@ -33,10 +35,11 @@ pub struct RegistersClaimParams {
     pub rows: u32,
     pub prefix_elements: u32,
     pub suffix_elements: u32,
-    pub reserved: u32,
+    pub explicit_rows: u32,
+    pub write_rd_post: u32,
 }
 
-const _: [(); 16] = [(); size_of::<RegistersClaimParams>()];
+const _: [(); 20] = [(); size_of::<RegistersClaimParams>()];
 const _: [(); 4] = [(); align_of::<RegistersClaimParams>()];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,12 +116,23 @@ impl RegistersClaimGeometry {
         suffix_elements: usize,
     }}
 
-    pub fn params(self) -> Result<RegistersClaimParams, RegistersClaimPlanError> {
+    pub fn params(
+        self,
+        explicit_rows: usize,
+        write_rd_post: bool,
+    ) -> Result<RegistersClaimParams, RegistersClaimPlanError> {
+        if explicit_rows > self.rows {
+            return Err(RegistersClaimPlanError::ExplicitRows {
+                explicit: explicit_rows,
+                rows: self.rows,
+            });
+        }
         Ok(RegistersClaimParams {
             rows: abi_count("rows", self.rows)?,
             prefix_elements: abi_count("prefix elements", self.prefix_elements)?,
             suffix_elements: abi_count("suffix elements", self.suffix_elements)?,
-            reserved: 0,
+            explicit_rows: abi_count("explicit rows", explicit_rows)?,
+            write_rd_post: u32::from(write_rd_post),
         })
     }
 }
@@ -420,6 +434,8 @@ pub enum RegistersClaimPlanError {
     SizeOverflow { name: &'static str },
     #[error("{phase} threadgroup width {width} is not a nonzero multiple of 32")]
     InvalidThreadgroupWidth { phase: &'static str, width: usize },
+    #[error("{explicit} explicit rows exceed the {rows}-row domain")]
+    ExplicitRows { explicit: usize, rows: usize },
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]

@@ -1,4 +1,5 @@
-// Concatenate after the offset-specialized fp128.metal and simd_reduce.metal.
+// Concatenate after the offset-specialized fp128.metal, simd_reduce.metal and
+// spartan_outer_common.metal.
 
 #define REGISTERS_CLAIM_WIDE_LIMBS 7u
 
@@ -6,7 +7,8 @@ struct RegistersClaimParams {
     uint rows;
     uint prefix_elements;
     uint suffix_elements;
-    uint reserved;
+    uint explicit_rows;
+    uint write_rd_post;
 };
 
 struct RegistersClaimWide224 {
@@ -82,10 +84,12 @@ inline SolinasFp128 registers_claim_reduce_wide(
 }
 
 kernel void solinas_registers_claim_fold_alias_rd(
-    device const ulong* rd_write_value [[buffer(0)]],
-    device const SolinasFp128* eq_prefix [[buffer(1)]],
-    device SolinasFp128* rd_dense [[buffer(2)]],
-    constant RegistersClaimParams& params [[buffer(3)]],
+    device const InstructionInputRow* compact_rows [[buffer(0)]],
+    device const SpartanRawRow* raw_rows [[buffer(1)]],
+    device const SolinasFp128* eq_prefix [[buffer(2)]],
+    device SolinasFp128* rd_dense [[buffer(3)]],
+    constant RegistersClaimParams& params [[buffer(4)]],
+    device ulong* rd_post [[buffer(5)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_hi [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -100,10 +104,14 @@ kernel void solinas_registers_claim_fold_alias_rd(
     RegistersClaimWide224 accumulator = registers_claim_wide_zero();
     uint row_start = x_hi * params.prefix_elements;
     for (uint x_lo = tid; x_lo < params.prefix_elements; x_lo += threads) {
-        registers_claim_accumulate_u64(
-            accumulator,
-            eq_prefix[x_lo],
-            rd_write_value[row_start + x_lo]);
+        uint row = row_start + x_lo;
+        ulong rd = row < params.explicit_rows
+            ? spartan_row_rd_write_value(compact_rows[row], raw_rows[row])
+            : 0ul;
+        if (params.write_rd_post != 0u) {
+            rd_post[row] = rd;
+        }
+        registers_claim_accumulate_u64(accumulator, eq_prefix[x_lo], rd);
     }
 
     SolinasFp128 sum = solinas_simd_sum_32(

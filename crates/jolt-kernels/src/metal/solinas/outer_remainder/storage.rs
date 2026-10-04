@@ -108,7 +108,6 @@ pub(super) struct Buffers {
 pub(super) struct RegistersClaimBuffers {
     pub(super) partials: Buffer,
     pub(super) components: Buffer,
-    pub(super) rd_write_value: Buffer,
     pub(super) geometry: RegistersClaimCarrierGeometry,
 }
 
@@ -377,17 +376,12 @@ impl SolinasMetal {
         let opening_outputs = opening_output_count(config.product_uniskip_carrier);
         let registers_claim = if config.registers_claim_carrier {
             let geometry = carrier_geometry(cycles)?;
-            for bytes in [
-                geometry.partial_bytes,
-                geometry.component_bytes,
-                geometry.rd_bytes,
-            ] {
+            for bytes in [geometry.partial_bytes, geometry.component_bytes] {
                 self.validate_buffer_length(bytes)?;
             }
             Some(RegistersClaimBuffers {
                 partials: new_private_buffer(self, geometry.partial_bytes)?,
                 components: new_buffer(self, geometry.component_bytes)?,
-                rd_write_value: new_private_buffer(self, geometry.rd_bytes)?,
                 geometry,
             })
         } else {

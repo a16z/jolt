@@ -18,6 +18,23 @@ inline ulong spartan_raw_row_word(device const SpartanRawRow& row, uint word) {
     return row.chunks[word >> 1][word & 1u];
 }
 
+// RdWriteValue from the memory slots of SpartanOuterUniskipRow::split.
+inline ulong spartan_rd_write_value(ulong flags, ulong memory_0, ulong memory_1) {
+    bool load = (flags & 1ul) != 0;
+    bool store = ((flags >> 1) & 1ul) != 0;
+    return store ? 0ul : (load ? memory_1 : memory_0);
+}
+
+inline ulong spartan_row_rd_write_value(
+    device const InstructionInputRow& compact,
+    device const SpartanRawRow& raw)
+{
+    return spartan_rd_write_value(
+        instruction_input_row_word(compact, 5u),
+        spartan_raw_row_word(raw, 1u),
+        spartan_raw_row_word(raw, 2u));
+}
+
 // Two's-complement 128-bit value: lo, hi.
 struct SpartanU128 {
     ulong lo;

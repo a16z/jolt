@@ -78,13 +78,13 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
         BYTECODE_READ_RAF_ADDRESS_SOURCE,
         BYTECODE_READ_RAF_OFFSET,
     ),
+    SourceFragment::new("deferred_sum", DEFERRED_SUM_SOURCE),
+    SourceFragment::new("instruction_read_raf", INSTRUCTION_READ_RAF_SOURCE),
+    SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
     SourceFragment::new(
         "registers_claim_reduction",
         REGISTERS_CLAIM_REDUCTION_SOURCE,
     ),
-    SourceFragment::new("deferred_sum", DEFERRED_SUM_SOURCE),
-    SourceFragment::new("instruction_read_raf", INSTRUCTION_READ_RAF_SOURCE),
-    SourceFragment::new("spartan_outer_common", SPARTAN_OUTER_COMMON_SOURCE),
     SourceFragment::new("instruction_ra_common", INSTRUCTION_RA_COMMON_SOURCE),
     SourceFragment::new(
         "instruction_claim_reduction",

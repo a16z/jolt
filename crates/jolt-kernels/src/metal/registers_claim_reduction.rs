@@ -11,6 +11,7 @@ use super::backend::MetalBackend;
 use super::solinas::registers_claim_reduction::{
     RegistersClaimAliasSnapshot, RegistersClaimDenseOutputs, RegistersClaimGeometry,
     RegistersClaimKernelConfig, RegistersClaimPartialQHandoff, RegistersClaimResidentRdPlane,
+    RegistersClaimResidentRows,
 };
 #[cfg(feature = "allocative")]
 use super::solinas::OuterRegistersClaimCarrierSubmission;
@@ -65,7 +66,7 @@ pub(super) struct MetalRegistersClaimOuterSource<'a> {
 pub(super) struct MetalRegistersClaimStage1Carry {
     receipt: OuterRegistersClaimCarrierReceipt,
     partial_q: RegistersClaimPartialQHandoff<AkitaField>,
-    rd: RegistersClaimResidentRdPlane,
+    rows: RegistersClaimResidentRows,
 }
 
 pub(super) struct MetalRegistersClaimPendingStage1Carry {
@@ -92,9 +93,7 @@ impl allocative::Allocative for MetalRegistersClaimAsyncStage1Carry {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("device_storage"),
-            (self.submission.partial_bytes
-                + self.submission.component_bytes
-                + self.submission.rd_bytes) as usize,
+            (self.submission.partial_bytes + self.submission.component_bytes) as usize,
         );
         visitor.exit();
     }
@@ -198,14 +197,13 @@ impl MetalRegistersClaimStage1Carry {
         carrier: OuterRegistersClaimCarrier,
         source: MetalRegistersClaimOuterSource<'_>,
     ) -> Result<Self, super::solinas::registers_claim_reduction::RegistersClaimError> {
-        let (receipt, components, rd_buffer) = carrier.into_parts();
+        let (receipt, components, [compact_rows, raw_rows]) = carrier.into_parts();
         let geometry = RegistersClaimGeometry::new(source.rows)?;
         let identities = [
             receipt.source_compact_storage_id,
             receipt.source_raw_storage_id,
             receipt.partial_storage_id,
             receipt.component_storage_id,
-            receipt.rd_storage_id,
         ];
         if receipt.rows != source.rows
             || receipt.explicit_rows > receipt.rows
@@ -237,16 +235,17 @@ impl MetalRegistersClaimStage1Carry {
                 "Outer registers-claim component handoff is invalid",
             )
         })?;
-        let rd = source.context.attach_registers_claim_resident_rd_plane(
-            rd_buffer,
+        let rows = source.context.attach_registers_claim_resident_rows(
+            compact_rows,
+            raw_rows,
             source.rows,
+            receipt.explicit_rows,
             receipt.source_generation,
-            receipt.completion_serial,
         )?;
         Ok(Self {
             receipt,
             partial_q,
-            rd,
+            rows,
         })
     }
 }
@@ -255,10 +254,6 @@ impl MetalRegistersClaimStage1Carry {
 impl allocative::Allocative for MetalRegistersClaimStage1Carry {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            allocative::Key::new("rd_device_bytes"),
-            self.rd.resident_bytes() as usize,
-        );
         let components = self.partial_q.components();
         visitor.visit_simple(
             allocative::Key::new("partial_q"),
@@ -523,24 +518,35 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                 };
                 if carry.receipt.rows != cycles
                     || carry.receipt.source_generation == 0
-                    || carry.rd.geometry() != geometry
-                    || carry.rd.source_generation() != carry.receipt.source_generation
-                    || carry.rd.device_registry_id() != self.context.device_registry_id()
-                    || carry.rd.allocation_identity() != carry.receipt.rd_storage_id
+                    || carry.rows.geometry() != geometry
+                    || carry.rows.source_generation() != carry.receipt.source_generation
+                    || carry.rows.compact_allocation_identity()
+                        != carry.receipt.source_compact_storage_id
                 {
                     return Err(KernelError::InvariantViolation {
                         reason: "registers claim-reduction stage-1 carry changed provenance",
                     });
                 }
-                if session.state::<RegistersReadWriteStage1Source>().is_some() {
+                let rd_post = if session.state::<RegistersReadWriteStage1Source>().is_some() {
                     if session.state::<RegistersClaimResidentRdPlane>().is_some() {
                         return Err(KernelError::InvariantViolation {
                             reason: "resident register rd-post plane was already parked",
                         });
                     }
-                    let rd_post = carry.rd.clone();
-                    session.park(rd_post);
-                }
+                    let rd_post = self
+                        .context
+                        .prepare_registers_claim_rd_post(
+                            &carry.rows,
+                            carry.receipt.completion_serial,
+                        )
+                        .map_err(metal_prepare_error)?;
+                    // Parked before the midpoint fold writes it: its Stage-4
+                    // reader prepares only after this Stage-3 batch completes.
+                    session.park(rd_post.clone());
+                    Some(rd_post)
+                } else {
+                    None
+                };
                 let prefix = carry
                     .partial_q
                     .stage3_prefix_tables(
@@ -554,7 +560,8 @@ impl PrepareKernel<AkitaField, RegistersClaimReduction<AkitaField>> for MetalBac
                 let _ = route_span.record("fallback_reason", "none");
                 (
                     RegistersClaimMidpointSource::OuterCarrier {
-                        rd: carry.rd,
+                        rows: carry.rows,
+                        rd_post,
                         aliases,
                         source_compact_storage_id: carry.receipt.source_compact_storage_id,
                     },
@@ -606,7 +613,8 @@ type DenseTables<'a> = (
 
 enum RegistersClaimMidpointSource {
     OuterCarrier {
-        rd: RegistersClaimResidentRdPlane,
+        rows: RegistersClaimResidentRows,
+        rd_post: Option<RegistersClaimResidentRdPlane>,
         aliases: RegistersClaimAliasReceiver,
         source_compact_storage_id: usize,
     },
@@ -639,12 +647,6 @@ impl allocative::Allocative for MetalRegistersClaimReductionKernel {
             allocative::Key::new("bound_challenges"),
             vec_heap_bytes(&self.bound_challenges),
         );
-        if let Some(source) = &self.midpoint_source {
-            let bytes = match source {
-                RegistersClaimMidpointSource::OuterCarrier { rd, .. } => rd.resident_bytes(),
-            };
-            visitor.visit_simple(allocative::Key::new("device_rows"), bytes as usize);
-        }
         let host_phase = match &self.phase {
             RegistersClaimPhase::Prefix { p, q } => vec_heap_bytes(p) + vec_heap_bytes(q),
             RegistersClaimPhase::Dense {
@@ -710,7 +712,8 @@ impl MetalRegistersClaimReductionKernel {
         })?;
         let outputs = match source {
             RegistersClaimMidpointSource::OuterCarrier {
-                rd,
+                rows,
+                rd_post,
                 aliases,
                 source_compact_storage_id,
             } => {
@@ -728,7 +731,12 @@ impl MetalRegistersClaimReductionKernel {
                 )?;
                 let invocation = self
                     .context
-                    .prepare_registers_claim_alias_fold(&rd, &self.bound_challenges, self.config)
+                    .prepare_registers_claim_alias_fold(
+                        &rows,
+                        rd_post.as_ref(),
+                        &self.bound_challenges,
+                        self.config,
+                    )
                     .map_err(metal_round_error)?;
                 let observation = invocation.execute_timed().map_err(metal_round_error)?;
                 let _ = phase.record("gpu_active_ns", duration_nanos(observation.gpu_active));

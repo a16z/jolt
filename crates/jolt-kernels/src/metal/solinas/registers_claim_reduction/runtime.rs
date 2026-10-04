@@ -9,14 +9,14 @@ use metal::{
 use thiserror::Error;
 
 use super::super::{
-    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
-    PipelineLimits, SolinasMetal,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, InstructionInputRow,
+    MetalError, PipelineLimits, SolinasMetal, SpartanRawRow,
 };
 use super::{
     RegistersClaimGeometry, RegistersClaimKernelConfig, RegistersClaimPlanError,
-    ALIAS_FOLD_EQ_PREFIX_SLOT, ALIAS_FOLD_OUTPUT_SLOT, ALIAS_FOLD_PARAMS_SLOT, ALIAS_FOLD_PIPELINE,
-    ALIAS_FOLD_RD_WRITE_VALUE_SLOT, ALIAS_FOLD_THREADGROUP_SLOT, REGISTERS_CLAIM_AKITA_OFFSET,
-    REGISTERS_CLAIM_SIMD_WIDTH,
+    ALIAS_FOLD_COMPACT_ROWS_SLOT, ALIAS_FOLD_EQ_PREFIX_SLOT, ALIAS_FOLD_OUTPUT_SLOT,
+    ALIAS_FOLD_PARAMS_SLOT, ALIAS_FOLD_PIPELINE, ALIAS_FOLD_RAW_ROWS_SLOT, ALIAS_FOLD_RD_POST_SLOT,
+    ALIAS_FOLD_THREADGROUP_SLOT, REGISTERS_CLAIM_AKITA_OFFSET, REGISTERS_CLAIM_SIMD_WIDTH,
 };
 
 #[derive(Debug, Error)]
@@ -137,6 +137,50 @@ impl allocative::Allocative for RegistersClaimResidentRdPlane {
     }
 }
 
+/// The registers-claim view of the resident Stage-1 rows: RdWriteValue
+/// decodes from the compact flags and the raw memory words
+/// (`spartan_row_rd_write_value`); rows at or past `explicit_rows` are zero.
+#[derive(Clone)]
+pub(crate) struct RegistersClaimResidentRows {
+    compact: Buffer,
+    raw: Buffer,
+    geometry: RegistersClaimGeometry,
+    explicit_rows: usize,
+    source_generation: u64,
+}
+
+impl RegistersClaimResidentRows {
+    pub(crate) const fn geometry(&self) -> RegistersClaimGeometry {
+        self.geometry
+    }
+
+    pub(crate) const fn source_generation(&self) -> u64 {
+        self.source_generation
+    }
+
+    pub(crate) fn compact_allocation_identity(&self) -> usize {
+        self.compact.as_ptr() as usize
+    }
+
+    fn validate_for(&self, context: &SolinasMetal) -> Result<(), RegistersClaimError> {
+        let rows = self.geometry.rows();
+        for (name, buffer, row_bytes) in [
+            (
+                "resident compact rows",
+                &self.compact,
+                size_of::<InstructionInputRow>(),
+            ),
+            ("resident raw rows", &self.raw, size_of::<SpartanRawRow>()),
+        ] {
+            let bytes = rows
+                .checked_mul(row_bytes)
+                .ok_or(MetalError::InputTooLong(rows))?;
+            validate_buffer_shape(buffer, name, to_u64(bytes)?, context.device_registry_id())?;
+        }
+        Ok(())
+    }
+}
+
 struct AliasFoldBuffers {
     eq_prefix: Buffer,
     rd_dense: Buffer,
@@ -144,7 +188,8 @@ struct AliasFoldBuffers {
 
 pub(crate) struct RegistersClaimAliasFoldInvocation {
     context: SolinasMetal,
-    rd: RegistersClaimResidentRdPlane,
+    rows: RegistersClaimResidentRows,
+    rd_post: Option<RegistersClaimResidentRdPlane>,
     pipeline: ComputePipelineState,
     limits: PipelineLimits,
     buffers: AliasFoldBuffers,
@@ -229,9 +274,62 @@ impl SolinasMetal {
         })
     }
 
+    pub(crate) fn attach_registers_claim_resident_rows(
+        &self,
+        compact: Buffer,
+        raw: Buffer,
+        rows: usize,
+        explicit_rows: usize,
+        source_generation: u64,
+    ) -> Result<RegistersClaimResidentRows, RegistersClaimError> {
+        let geometry = RegistersClaimGeometry::new(rows)?;
+        let _ = geometry.params(explicit_rows, false)?;
+        if source_generation == 0 {
+            return Err(RegistersClaimError::InvalidState(
+                "resident rows receipt is incomplete",
+            ));
+        }
+        let rows = RegistersClaimResidentRows {
+            compact,
+            raw,
+            geometry,
+            explicit_rows,
+            source_generation,
+        };
+        rows.validate_for(self)?;
+        Ok(rows)
+    }
+
+    /// Allocates the RdWriteValue plane the Stage-4 registers read-write
+    /// source binds; the alias fold over `rows` writes it.
+    pub(crate) fn prepare_registers_claim_rd_post(
+        &self,
+        rows: &RegistersClaimResidentRows,
+        completion_serial: u64,
+    ) -> Result<RegistersClaimResidentRdPlane, RegistersClaimError> {
+        let row_count = rows.geometry.rows();
+        let bytes = to_u64(
+            row_count
+                .checked_mul(size_of::<u64>())
+                .ok_or(MetalError::InputTooLong(row_count))?,
+        )?;
+        self.validate_buffer_length(bytes)?;
+        self.validate_additional_working_set(bytes)?;
+        let buffer = self
+            .device
+            .new_buffer(bytes, MTLResourceOptions::StorageModeShared);
+        self.attach_registers_claim_resident_rd_plane(
+            buffer,
+            row_count,
+            rows.source_generation,
+            completion_serial,
+        )
+    }
+
     pub(crate) fn prepare_registers_claim_alias_fold(
         &self,
-        rd: &RegistersClaimResidentRdPlane,
+        rows: &RegistersClaimResidentRows,
+        rd_post: Option<&RegistersClaimResidentRdPlane>,
         prefix_challenges: &[AkitaField],
         config: RegistersClaimKernelConfig,
     ) -> Result<RegistersClaimAliasFoldInvocation, RegistersClaimError> {
@@ -241,8 +339,11 @@ impl SolinasMetal {
                 got: self.offset,
             });
         }
-        let geometry = rd.geometry();
-        rd.validate_for(self, geometry)?;
+        let geometry = rows.geometry();
+        rows.validate_for(self)?;
+        if let Some(rd_post) = rd_post {
+            rd_post.validate_for(self, geometry)?;
+        }
         if prefix_challenges.len() != geometry.prefix_vars() {
             return Err(RegistersClaimError::WrongPrefixChallengeCount {
                 expected: geometry.prefix_vars(),
@@ -296,19 +397,28 @@ impl SolinasMetal {
             buffers.rd_dense.as_ptr() as usize,
         ];
         if buffer_identities[0] == buffer_identities[1]
-            || buffer_identities.contains(&rd.allocation_identity())
+            || rd_post.is_some_and(|rd_post| {
+                [
+                    rows.compact_allocation_identity(),
+                    rows.raw.as_ptr() as usize,
+                    buffer_identities[0],
+                    buffer_identities[1],
+                ]
+                .contains(&rd_post.allocation_identity())
+            })
         {
             return Err(RegistersClaimError::AliasedInvocationBuffers);
         }
         Ok(RegistersClaimAliasFoldInvocation {
             context: self.clone(),
-            rd: rd.clone(),
+            rows: rows.clone(),
+            rd_post: rd_post.cloned(),
             pipeline,
             limits,
             buffers,
             buffer_identities,
             geometry,
-            params: geometry.params()?,
+            params: geometry.params(rows.explicit_rows, rd_post.is_some())?,
             threads_per_threadgroup,
             dynamic_threadgroup_bytes,
         })
@@ -324,10 +434,18 @@ impl RegistersClaimAliasFoldInvocation {
             let command_buffer = self.context.queue.new_command_buffer();
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipeline);
-            encoder.set_buffer(ALIAS_FOLD_RD_WRITE_VALUE_SLOT, Some(&self.rd.buffer), 0);
+            encoder.set_buffer(ALIAS_FOLD_COMPACT_ROWS_SLOT, Some(&self.rows.compact), 0);
+            encoder.set_buffer(ALIAS_FOLD_RAW_ROWS_SLOT, Some(&self.rows.raw), 0);
             encoder.set_buffer(ALIAS_FOLD_EQ_PREFIX_SLOT, Some(&self.buffers.eq_prefix), 0);
             encoder.set_buffer(ALIAS_FOLD_OUTPUT_SLOT, Some(&self.buffers.rd_dense), 0);
             set_inline_bytes(encoder, ALIAS_FOLD_PARAMS_SLOT, &self.params);
+            // Without a plane `write_rd_post` is zero and the kernel never
+            // writes this slot; it is bound so no argument is nil.
+            let rd_post = self
+                .rd_post
+                .as_ref()
+                .map_or(&self.buffers.rd_dense, |rd_post| &rd_post.buffer);
+            encoder.set_buffer(ALIAS_FOLD_RD_POST_SLOT, Some(rd_post), 0);
             encoder.set_threadgroup_memory_length(
                 ALIAS_FOLD_THREADGROUP_SLOT,
                 to_u64(self.dynamic_threadgroup_bytes)?,
@@ -369,8 +487,15 @@ impl RegistersClaimAliasFoldInvocation {
     }
 
     fn validate_state(&self) -> Result<(), RegistersClaimError> {
-        self.rd.validate_for(&self.context, self.geometry)?;
-        if self.params != self.geometry.params()?
+        self.rows.validate_for(&self.context)?;
+        if let Some(rd_post) = &self.rd_post {
+            rd_post.validate_for(&self.context, self.geometry)?;
+        }
+        if self.rows.geometry != self.geometry
+            || self.params
+                != self
+                    .geometry
+                    .params(self.rows.explicit_rows, self.rd_post.is_some())?
             || self.limits.thread_execution_width != REGISTERS_CLAIM_SIMD_WIDTH
             || self.threads_per_threadgroup > self.limits.max_total_threads_per_threadgroup
             || !self
@@ -414,6 +539,21 @@ fn validate_buffer_binding(
     expected_device: u64,
     expected_identity: usize,
 ) -> Result<(), RegistersClaimError> {
+    validate_buffer_shape(buffer, name, expected_bytes, expected_device)?;
+    if buffer.as_ptr() as usize != expected_identity {
+        return Err(RegistersClaimError::InvalidState(
+            "buffer allocation identity changed",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_buffer_shape(
+    buffer: &Buffer,
+    name: &'static str,
+    expected_bytes: u64,
+    expected_device: u64,
+) -> Result<(), RegistersClaimError> {
     let got_device = buffer.device().registry_id();
     if got_device != expected_device {
         return Err(RegistersClaimError::BufferDevice {
@@ -429,11 +569,6 @@ fn validate_buffer_binding(
             actual: buffer.length(),
         });
     }
-    if buffer.as_ptr() as usize != expected_identity {
-        return Err(RegistersClaimError::InvalidState(
-            "buffer allocation identity changed",
-        ));
-    }
     Ok(())
 }
 
@@ -443,4 +578,86 @@ fn encode_fields(values: &[AkitaField]) -> Vec<Fp128> {
 
 fn to_u64(value: usize) -> Result<u64, MetalError> {
     u64::try_from(value).map_err(|_| MetalError::InputTooLong(value))
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use jolt_field::FromPrimitiveInt;
+    use jolt_witness::witnesses::SpartanOuterRow;
+
+    use super::super::super::spartan_outer_uniskip::test_rows::{splitmix, witness};
+    use super::super::super::SpartanOuterUniskipRow;
+    use super::*;
+
+    #[test]
+    fn alias_fold_decodes_rd_write_value_from_the_resident_rows() {
+        let Ok(context) = SolinasMetal::for_akita() else {
+            return;
+        };
+        let witness = witness::<SpartanOuterRow>(15);
+        let explicit_rows = witness.len() - 1;
+        let mut stage1 = witness
+            .iter()
+            .map(SpartanOuterUniskipRow::from_spartan_outer)
+            .collect::<Vec<_>>();
+        let writer = witness
+            .iter()
+            .position(|row| row.rd_write_value.0 != 0)
+            .unwrap();
+        stage1[explicit_rows] = stage1[writer];
+        let resident = context.prepare_spartan_outer_uniskip_rows(&stage1).unwrap();
+        let rows = context
+            .attach_registers_claim_resident_rows(
+                resident.instruction_input_buffer().clone(),
+                resident.raw_buffer().clone(),
+                resident.len(),
+                explicit_rows,
+                resident.key().generation,
+            )
+            .unwrap();
+        let geometry = rows.geometry();
+        let expected_rd = witness
+            .iter()
+            .take(explicit_rows)
+            .map(|row| row.rd_write_value.0)
+            .chain([0])
+            .collect::<Vec<_>>();
+        let challenges = (0..geometry.prefix_vars() as u64)
+            .map(|index| AkitaField::from_u64(splitmix(index)))
+            .collect::<Vec<_>>();
+        let prefix_point = challenges.iter().rev().copied().collect::<Vec<_>>();
+        let eq_prefix = EqPolynomial::<AkitaField>::evals(&prefix_point, None);
+        let expected_fold = expected_rd
+            .chunks(geometry.prefix_elements())
+            .map(|block| {
+                block
+                    .iter()
+                    .zip(&eq_prefix)
+                    .map(|(&rd, &weight)| weight * AkitaField::from_u64(rd))
+                    .sum::<AkitaField>()
+            })
+            .collect::<Vec<_>>();
+
+        let rd_post = context.prepare_registers_claim_rd_post(&rows, 1).unwrap();
+        for plane in [None, Some(&rd_post)] {
+            let observation = context
+                .prepare_registers_claim_alias_fold(
+                    &rows,
+                    plane,
+                    &challenges,
+                    RegistersClaimKernelConfig::default(),
+                )
+                .unwrap()
+                .execute_timed()
+                .unwrap();
+            assert_eq!(observation.rd_write_value, expected_fold);
+        }
+        // SAFETY: the completed fold wrote one u64 per row into the shared
+        // plane and no command buffer still references it.
+        let plane = unsafe {
+            slice::from_raw_parts(rd_post.buffer().contents().cast::<u64>(), geometry.rows())
+        };
+        assert_eq!(plane, expected_rd);
+    }
 }

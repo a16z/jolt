@@ -21,7 +21,6 @@ pub(super) struct RegistersClaimCarrierGeometry {
     pub(super) component_elements: usize,
     pub(super) partial_bytes: u64,
     pub(super) component_bytes: u64,
-    pub(super) rd_bytes: u64,
     pub(super) owned_bytes: u64,
     pub(super) max_buffer_bytes: u64,
 }
@@ -45,10 +44,8 @@ pub(super) fn carrier_geometry(rows: usize) -> Result<RegistersClaimCarrierGeome
         .ok_or(MetalError::InputTooLong(rows))?;
     let partial_bytes = field_bytes(partial_elements)?;
     let component_bytes = field_bytes(component_elements)?;
-    let rd_bytes = byte_length::<u64>(rows)?;
     let owned_bytes = partial_bytes
         .checked_add(component_bytes)
-        .and_then(|value| value.checked_add(rd_bytes))
         .ok_or(MetalError::InputTooLong(rows))?;
     Ok(RegistersClaimCarrierGeometry {
         prefix_elements,
@@ -58,9 +55,8 @@ pub(super) fn carrier_geometry(rows: usize) -> Result<RegistersClaimCarrierGeome
         component_elements,
         partial_bytes,
         component_bytes,
-        rd_bytes,
         owned_bytes,
-        max_buffer_bytes: partial_bytes.max(component_bytes).max(rd_bytes),
+        max_buffer_bytes: partial_bytes.max(component_bytes),
     })
 }
 
@@ -77,10 +73,8 @@ pub(crate) struct OuterRegistersClaimCarrierReceipt {
     pub(crate) source_raw_storage_id: usize,
     pub(crate) partial_storage_id: usize,
     pub(crate) component_storage_id: usize,
-    pub(crate) rd_storage_id: usize,
     pub(crate) partial_bytes: u64,
     pub(crate) component_bytes: u64,
-    pub(crate) rd_bytes: u64,
     pub(crate) completion_serial: u64,
     pub(crate) row_scans: usize,
     pub(crate) command_buffers: usize,
@@ -90,17 +84,21 @@ pub(crate) struct OuterRegistersClaimCarrierReceipt {
     pub(crate) complete_overwrite: bool,
 }
 
+/// The Stage-1 linear components plus the resident Stage-1 rows they were
+/// reduced from; the Stage-3 alias fold decodes RdWriteValue from those rows.
 pub(crate) struct OuterRegistersClaimCarrier {
     receipt: OuterRegistersClaimCarrierReceipt,
     components: RegistersClaimLinearComponents<AkitaField>,
-    rd_write_value: Buffer,
+    compact_rows: Buffer,
+    raw_rows: Buffer,
 }
 
 impl OuterRegistersClaimCarrier {
     pub(super) fn new(
         receipt: OuterRegistersClaimCarrierReceipt,
         components: RegistersClaimLinearComponents<AkitaField>,
-        rd_write_value: Buffer,
+        compact_rows: Buffer,
+        raw_rows: Buffer,
     ) -> Result<Self, MetalError> {
         let geometry = carrier_geometry(receipt.rows)?;
         let identities = [
@@ -108,7 +106,6 @@ impl OuterRegistersClaimCarrier {
             receipt.source_raw_storage_id,
             receipt.partial_storage_id,
             receipt.component_storage_id,
-            receipt.rd_storage_id,
         ];
         if receipt.completion_serial == 0
             || receipt.source_generation == 0
@@ -119,7 +116,6 @@ impl OuterRegistersClaimCarrier {
             || receipt.blocks != geometry.blocks
             || receipt.partial_bytes != geometry.partial_bytes
             || receipt.component_bytes != geometry.component_bytes
-            || receipt.rd_bytes != geometry.rd_bytes
             || !receipt.complete_overwrite
             || receipt.row_scans != 2
             || receipt.command_buffers != 1
@@ -131,9 +127,11 @@ impl OuterRegistersClaimCarrier {
                 .iter()
                 .enumerate()
                 .any(|(index, identity)| identities[..index].contains(identity))
-            || receipt.rd_storage_id != rd_write_value.as_ptr() as usize
-            || receipt.rd_bytes != rd_write_value.length()
-            || receipt.device_registry_id != rd_write_value.device().registry_id()
+            || receipt.source_compact_storage_id != compact_rows.as_ptr() as usize
+            || receipt.source_raw_storage_id != raw_rows.as_ptr() as usize
+            || [&compact_rows, &raw_rows]
+                .into_iter()
+                .any(|rows| rows.device().registry_id() != receipt.device_registry_id)
         {
             return Err(MetalError::InvalidOuterRemainderConfig(
                 "registers-claim carrier receipt is inconsistent",
@@ -155,7 +153,8 @@ impl OuterRegistersClaimCarrier {
         Ok(Self {
             receipt,
             components,
-            rd_write_value,
+            compact_rows,
+            raw_rows,
         })
     }
 
@@ -164,9 +163,13 @@ impl OuterRegistersClaimCarrier {
     ) -> (
         OuterRegistersClaimCarrierReceipt,
         RegistersClaimLinearComponents<AkitaField>,
-        Buffer,
+        [Buffer; 2],
     ) {
-        (self.receipt, self.components, self.rd_write_value)
+        (
+            self.receipt,
+            self.components,
+            [self.compact_rows, self.raw_rows],
+        )
     }
 }
 
@@ -206,8 +209,7 @@ mod tests {
         assert_eq!(log_25.blocks, 256);
         assert_eq!(log_25.partial_bytes, 100_663_296);
         assert_eq!(log_25.component_bytes, 393_216);
-        assert_eq!(log_25.rd_bytes, 268_435_456);
-        assert_eq!(log_25.owned_bytes, 369_491_968);
+        assert_eq!(log_25.owned_bytes, 101_056_512);
 
         let log_26 = carrier_geometry(1 << 26).unwrap();
         assert_eq!(log_26.prefix_elements, 8192);
@@ -215,19 +217,18 @@ mod tests {
         assert_eq!(log_26.blocks, 256);
         assert_eq!(log_26.partial_bytes, 100_663_296);
         assert_eq!(log_26.component_bytes, 393_216);
-        assert_eq!(log_26.rd_bytes, 536_870_912);
-        assert_eq!(log_26.owned_bytes, 637_927_424);
+        assert_eq!(log_26.owned_bytes, 101_056_512);
 
         let log_27 = carrier_geometry(1 << 27).unwrap();
         assert_eq!(log_27.prefix_elements, 16_384);
         assert_eq!(log_27.suffix_elements, 8192);
         assert_eq!(log_27.blocks, 256);
-        assert_eq!(log_27.owned_bytes, 1_275_854_848);
+        assert_eq!(log_27.owned_bytes, 202_113_024);
 
         let log_28 = carrier_geometry(1 << 28).unwrap();
         assert_eq!(log_28.prefix_elements, 16_384);
         assert_eq!(log_28.suffix_elements, 16_384);
         assert_eq!(log_28.blocks, 256);
-        assert_eq!(log_28.owned_bytes, 2_349_596_672);
+        assert_eq!(log_28.owned_bytes, 202_113_024);
     }
 }

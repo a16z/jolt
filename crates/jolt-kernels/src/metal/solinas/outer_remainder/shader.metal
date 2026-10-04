@@ -89,7 +89,7 @@ inline void outer_row_memory(
     ulong memory_1 = residual.word[7];
     rs2 = instruction_input_row_word(compact, 2u);
     ram_address = load || store ? memory_0 : 0ul;
-    rd_write = store ? 0ul : (load ? memory_1 : memory_0);
+    rd_write = spartan_rd_write_value(flags, memory_0, memory_1);
     ram_read = load || store ? memory_1 : 0ul;
     ram_write = load ? memory_1 : (store ? rs2 : 0ul);
 }
@@ -986,8 +986,7 @@ kernel void solinas_outer_remainder_build_registers_claim(
     device const SpartanRawRow* raw_rows [[buffer(1)]],
     device const SolinasFp128* e_out [[buffer(2)]],
     device SolinasFp128* q_partials [[buffer(3)]],
-    device ulong* rd_write_value [[buffer(4)]],
-    constant OuterRemainderOpeningParams& params [[buffer(5)]],
+    constant OuterRemainderOpeningParams& params [[buffer(4)]],
     threadgroup SolinasFp128* outer_weights [[threadgroup(0)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -1022,14 +1021,10 @@ kernel void solinas_outer_remainder_build_registers_claim(
         ulong rd = 0ul;
         if (row < params.source_elements) {
             device const InstructionInputRow& compact = compact_rows[row];
-            ulong flags = instruction_input_row_word(compact, 5u);
-            bool load = outer_flag(flags, 0u) != 0;
-            bool store = outer_flag(flags, 1u) != 0;
             rs1 = instruction_input_row_word(compact, 0u);
             rs2 = instruction_input_row_word(compact, 2u);
-            rd = store ? 0ul : spartan_raw_row_word(raw_rows[row], load ? 2u : 1u);
+            rd = spartan_row_rd_write_value(compact, raw_rows[row]);
         }
-        rd_write_value[row] = rd;
         SolinasFp128 weight = outer_weights[high];
         sums[0] = solinas_add(
             sums[0], solinas_half_width_mul_u64(weight, rd));

@@ -234,10 +234,8 @@ pub(crate) struct OuterRegistersClaimCarrierSubmission {
     pub(crate) source_raw_storage_id: usize,
     pub(crate) partial_storage_id: usize,
     pub(crate) component_storage_id: usize,
-    pub(crate) rd_storage_id: usize,
     pub(crate) partial_bytes: u64,
     pub(crate) component_bytes: u64,
-    pub(crate) rd_bytes: u64,
 }
 
 #[must_use = "a submitted outer registers-claim carrier must be joined"]
@@ -295,10 +293,8 @@ impl PendingOuterRegistersClaimCarrier {
             source_raw_storage_id: self.source.raw_storage_id,
             partial_storage_id: buffers.partials.as_ptr() as usize,
             component_storage_id: buffers.components.as_ptr() as usize,
-            rd_storage_id: buffers.rd_write_value.as_ptr() as usize,
             partial_bytes: buffers.geometry.partial_bytes,
             component_bytes: buffers.geometry.component_bytes,
-            rd_bytes: buffers.geometry.rd_bytes,
         })
     }
 
@@ -327,7 +323,6 @@ impl PendingOuterRegistersClaimCarrier {
                 &self.source_e_out,
                 &buffers.partials,
                 &buffers.components,
-                &buffers.rd_write_value,
             ]
             .into_iter()
             .any(|buffer| buffer.device().registry_id() != device_registry_id)
@@ -371,10 +366,8 @@ impl PendingOuterRegistersClaimCarrier {
             source_raw_storage_id: self.source.raw_storage_id,
             partial_storage_id: buffers.partials.as_ptr() as usize,
             component_storage_id: buffers.components.as_ptr() as usize,
-            rd_storage_id: buffers.rd_write_value.as_ptr() as usize,
             partial_bytes: buffers.geometry.partial_bytes,
             component_bytes: buffers.geometry.component_bytes,
-            rd_bytes: buffers.geometry.rd_bytes,
             completion_serial: next_completion_serial()?,
             row_scans: 2,
             command_buffers: 1,
@@ -383,7 +376,12 @@ impl PendingOuterRegistersClaimCarrier {
             prezero_dispatches: 0,
             complete_overwrite: true,
         };
-        let carrier = OuterRegistersClaimCarrier::new(receipt, components, buffers.rd_write_value)?;
+        let carrier = OuterRegistersClaimCarrier::new(
+            receipt,
+            components,
+            self.source_instruction_input.clone(),
+            self.source_raw.clone(),
+        )?;
         drop(buffers.partials);
         drop(buffers.components);
         Ok(carrier)
@@ -834,8 +832,7 @@ impl OuterRemainderSequence {
                 encoder.set_buffer(1, Some(&source_raw), 0);
                 encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
                 encoder.set_buffer(3, Some(&carrier.partials), 0);
-                encoder.set_buffer(4, Some(&carrier.rd_write_value), 0);
-                set_inline_bytes(encoder, 5, &carrier_params);
+                set_inline_bytes(encoder, 4, &carrier_params);
                 let build_threads = self.storage.threads.registers_claim_build;
                 let high_per_block = carrier
                     .geometry

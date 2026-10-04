@@ -124,7 +124,7 @@ inline void spartan_outer_accumulate_contribution(
     ulong memory_0 = residual.word[6];
     ulong memory_1 = residual.word[7];
     ulong ram_address = load != 0 || store != 0 ? memory_0 : 0;
-    ulong rd_write = store != 0 ? 0 : (load != 0 ? memory_1 : memory_0);
+    ulong rd_write = spartan_rd_write_value(flags, memory_0, memory_1);
     ulong ram_read = load != 0 || store != 0 ? memory_1 : 0;
     ulong ram_write = load != 0 ? memory_1 : (store != 0 ? rs2 : 0);
 
