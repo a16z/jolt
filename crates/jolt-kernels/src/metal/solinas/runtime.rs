@@ -299,12 +299,6 @@ impl SolinasMetal {
             return;
         };
         if pool.epoch == epoch {
-            tracing::info!(
-                free_buffers = pool.free.len(),
-                free_bytes = pool.free_bytes,
-                cap_bytes = pool.cap_bytes,
-                "released private buffer pool"
-            );
             pool.cap_bytes = 0;
             pool.free_bytes = 0;
             pool.free.clear();

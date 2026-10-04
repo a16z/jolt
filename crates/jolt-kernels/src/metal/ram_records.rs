@@ -1780,12 +1780,6 @@ impl RamAccessColumns {
         if session.state::<Arc<Self>>().is_none() {
             let (columns, values, activity, tape) = Self::collect(witness, log_t)?;
             debug_assert_eq!(activity.cycles.len(), activity.increments.len());
-            tracing::info!(
-                address_bytes = columns.addresses.capacity() * size_of::<u32>(),
-                value_bytes = (values.pre_values.capacity() + values.post_values.capacity())
-                    * size_of::<u64>(),
-                "RAM access columns"
-            );
             let columns = Arc::new(columns);
             session.park(columns);
             session.park(values);
