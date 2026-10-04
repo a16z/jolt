@@ -38,11 +38,20 @@ impl Drop for ResidencyPrefetch {
     }
 }
 
-/// Requests residency for `buffers` on a helper thread until the guard drops.
+/// Starts a best-effort residency warm-up for `buffers` on a helper thread;
+/// dropping the guard joins it.
 pub(super) fn prefetch(buffers: Vec<Buffer>) -> ResidencyPrefetch {
+    prefetch_after(buffers, || {})
+}
+
+fn prefetch_after(
+    buffers: Vec<Buffer>,
+    before: impl FnOnce() + Send + 'static,
+) -> ResidencyPrefetch {
     let helper = Builder::new()
         .name("jolt-metal-residency".into())
         .spawn(move || {
+            before();
             for buffer in &buffers {
                 autoreleasepool(|| request_residency(buffer));
             }
@@ -86,10 +95,13 @@ fn request_residency(buffer: &Buffer) {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
+    use std::{sync::mpsc, thread, time::Duration};
+
     use metal::{Device, MTLResourceOptions};
 
-    use super::prefetch;
+    use super::prefetch_after;
 
     #[test]
     fn dropped_guard_releases_the_retired_rows() {
@@ -97,12 +109,26 @@ mod tests {
             return;
         };
         let before = device.current_allocated_size();
-        let rows: Vec<_> = (0..8)
-            .map(|_| device.new_buffer(256 << 20, MTLResourceOptions::StorageModeShared))
-            .collect();
-        let guard = prefetch(rows.clone());
+        let rows = vec![device.new_buffer(1 << 20, MTLResourceOptions::StorageModeShared)];
+        let (open_gate, gate) = mpsc::channel::<()>();
+        let guard = prefetch_after(rows.clone(), move || {
+            let _ = gate.recv();
+        });
         drop(rows);
+        // The helper stays pending until the gate opens: after the check
+        // below, or after the timeout that keeps a joining drop live.
+        let (checked, checked_signal) = mpsc::channel::<()>();
+        let releaser = thread::spawn(move || {
+            let _ = checked_signal.recv_timeout(Duration::from_millis(500));
+            let _ = open_gate.send(());
+        });
         drop(guard);
-        assert_eq!(device.current_allocated_size(), before);
+        let released = device.current_allocated_size() == before;
+        let _ = checked.send(());
+        releaser.join().unwrap();
+        assert!(
+            released,
+            "a dropped guard left the helper holding retired rows"
+        );
     }
 }

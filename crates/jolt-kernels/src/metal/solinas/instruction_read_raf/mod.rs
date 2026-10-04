@@ -177,10 +177,9 @@ impl SolinasMetal {
 }
 
 impl InstructionReadRafStage1Storage {
-    /// Requests GPU residency for the unpublished row and claim allocations
-    /// until the guard drops; see [`super::residency`]. Stage 0 holds it across
-    /// the fill, so the Stage-1 consumer does not wire them in its first
-    /// command buffer.
+    /// Starts a best-effort residency warm-up for the unpublished row and
+    /// claim allocations; dropping the guard joins it. See
+    /// [`super::residency`].
     pub(crate) fn prefetch_residency(&self) -> ResidencyPrefetch {
         residency::prefetch(vec![self.row_buffer.clone(), self.claim_buffer.clone()])
     }
