@@ -2002,7 +2002,7 @@ mod tests {
         });
     }
 
-    fn assert_read_write_after_witness_prepare(config: MetalConfig, dense: bool) {
+    fn assert_read_write_after_witness_prepare(config: &MetalConfig, dense: bool) {
         // The resident RAM RAF planes the witness prepare builds need 2^15 rows.
         let shape = FixtureShape {
             log_t: 15,
@@ -2019,7 +2019,7 @@ mod tests {
             RamOp::Write { word: 7, post: 6 },
         ];
         with_ram_fixture_backend(shape, ops, |witness| {
-            let metal = MetalBackend::new(config).unwrap();
+            let metal = MetalBackend::new(*config).unwrap();
             let mut session = ProofSession::default();
             metal
                 .prepare_ram_raf_witness(&mut session, shape.log_t, witness)
@@ -2071,7 +2071,7 @@ mod tests {
     fn sparse_route_releases_value_columns_at_witness_prepare() {
         let mut config = MetalConfig::default();
         config.ram_raf_evaluation.dispatch.trace_cutoff = 2;
-        assert_read_write_after_witness_prepare(config, false);
+        assert_read_write_after_witness_prepare(&config, false);
     }
 
     #[test]
@@ -2081,7 +2081,7 @@ mod tests {
         config.ram_read_write.trace_cutoff_elements = 2;
         config.ram_read_write.minimum_accesses = 1;
         config.ram_read_write.gpu_record_scatter_cutoff_elements = 2;
-        assert_read_write_after_witness_prepare(config, true);
+        assert_read_write_after_witness_prepare(&config, true);
     }
 
     #[test]
