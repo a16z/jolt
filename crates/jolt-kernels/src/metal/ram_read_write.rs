@@ -1574,11 +1574,7 @@ impl PrepareKernel<AkitaField, RamReadWriteChecking<AkitaField>> for MetalBacken
             readbacks = 0,
         );
         let _sparse_prepare_guard = sparse_prepare.enter();
-        let _ = session
-            .take::<RamAccessValues>()
-            .ok_or(KernelError::InvariantViolation {
-                reason: "RAM sparse read-write lost the shared value columns",
-            })?;
+        drop(session.take::<RamAccessValues>());
 
         let mut val_init = owner
             .final_memory()
@@ -1729,7 +1725,7 @@ mod tests {
 
     use super::*;
     use crate::metal::solinas::ram_cycle_family::RamCycleFamilyOwner;
-    use crate::metal::solinas::SolinasMetal;
+    use crate::metal::solinas::{SolinasMetal, RAM_RAF_ADDRESS_DOMAIN};
     use crate::metal::MetalConfig;
     use crate::optimized::parity::run_lockstep;
     use crate::optimized::spartan_outer::prepare_metal_spartan_outer_stage1_owner_witness_rows;
@@ -2004,6 +2000,88 @@ mod tests {
                 .validate_derived_tables(&relation, &points, &output_points, &challenges)
                 .unwrap();
         });
+    }
+
+    fn assert_read_write_after_witness_prepare(config: MetalConfig, dense: bool) {
+        // The resident RAM RAF planes the witness prepare builds need 2^15 rows.
+        let shape = FixtureShape {
+            log_t: 15,
+            ram_k: RAM_RAF_ADDRESS_DOMAIN,
+        };
+        let ops = vec![
+            RamOp::Write { word: 3, post: 5 },
+            RamOp::Read { word: 3 },
+            RamOp::Write { word: 3, post: 9 },
+            RamOp::Read { word: 7 },
+            RamOp::None,
+            RamOp::Write { word: 4, post: 2 },
+            RamOp::Read { word: 3 },
+            RamOp::Write { word: 7, post: 6 },
+        ];
+        with_ram_fixture_backend(shape, ops, |witness| {
+            let metal = MetalBackend::new(config).unwrap();
+            let mut session = ProofSession::default();
+            metal
+                .prepare_ram_raf_witness(&mut session, shape.log_t, witness)
+                .unwrap();
+            assert!(session.state::<Arc<RamAccessColumns>>().is_some());
+            assert_eq!(session.state::<RamAccessValues>().is_some(), dense);
+
+            let tau_low = point(17, shape.log_t);
+            let relation = RamReadWriteChecking::<AkitaField>::new(
+                ReadWriteDimensions::new(shape.log_t, shape.log_k(), shape.log_t, shape.log_k()),
+                shape.log_k(),
+                tau_low.clone(),
+            );
+            let claims = RamReadWriteInputClaims::<AkitaField>::default();
+            let points = RamReadWriteInputClaims::<Vec<AkitaField>>::default();
+            let challenges = RamReadWriteChallenges {
+                gamma: AkitaField::from_u64(23),
+            };
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+            let mut expected = OptimizedBackend
+                .prepare(&mut ProofSession::default(), witness, inputs())
+                .unwrap();
+            let mut actual =
+                PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
+            assert_eq!(metal.ram_read_write_metal_sequences(), usize::from(dense));
+            assert_eq!(metal.ram_read_write_sparse_sequences(), usize::from(!dense));
+
+            let input_claim = dense_input_claim(witness, &tau_low, challenges.gamma, shape.ram_k);
+            let round_challenges = point(211, shape.log_t + shape.log_k());
+            run_lockstep(
+                expected.as_mut(),
+                actual.as_mut(),
+                input_claim,
+                &round_challenges,
+            );
+            assert_eq!(
+                actual.output_claims(&claims).unwrap(),
+                expected.output_claims(&claims).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn sparse_route_releases_value_columns_at_witness_prepare() {
+        let mut config = MetalConfig::default();
+        config.ram_raf_evaluation.dispatch.trace_cutoff = 2;
+        assert_read_write_after_witness_prepare(config, false);
+    }
+
+    #[test]
+    fn dense_route_keeps_value_columns_for_read_write() {
+        let mut config = MetalConfig::default();
+        config.ram_raf_evaluation.dispatch.trace_cutoff = 2;
+        config.ram_read_write.trace_cutoff_elements = 2;
+        config.ram_read_write.minimum_accesses = 1;
+        config.ram_read_write.gpu_record_scatter_cutoff_elements = 2;
+        assert_read_write_after_witness_prepare(config, true);
     }
 
     #[test]

@@ -27,7 +27,7 @@ use super::solinas::{
     MetalError, PendingRamRafSequence, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
     RamRafSegmentedAddressPlane, RamRafTailOutput, RAM_RAF_ADDRESS_DOMAIN,
 };
-use crate::metal::ram_records::RamAccessColumns;
+use crate::metal::ram_records::{RamAccessColumns, RamAccessValues};
 use crate::optimized::OptimizedBackend;
 use crate::ram_access::RamAccessTape;
 use crate::{
@@ -264,6 +264,15 @@ impl MetalBackend {
             && increment_compatible
             && ram_ra_compatible
             && hamming_exact;
+        if !high_activity {
+            if let Some(values) = session.take::<RamAccessValues>() {
+                tracing::info!(
+                    value_bytes = size_of_val(values.pre_values.as_slice())
+                        + size_of_val(values.post_values.as_slice()),
+                    "released RAM value columns: only the dense read-write route reads them"
+                );
+            }
+        }
         let requested = if high_activity {
             "metal_address_segmented_v1"
         } else {
