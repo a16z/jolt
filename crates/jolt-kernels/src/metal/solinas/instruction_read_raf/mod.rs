@@ -600,6 +600,31 @@ pub(crate) fn instruction_read_raf_stage1_device_bytes(rows: usize) -> Result<u6
         .ok_or(MetalError::InputTooLong(rows))
 }
 
+/// Peak Metal bytes Stage 5 adds when it builds the Stage-1 owner itself,
+/// reached when the cycle transition allocates the Product5 tables: the
+/// owner, the scatter planes that outlive the address phases, the Product5
+/// tables, and RegistersVal's dense pair when it leases the owner. Sub-linear
+/// scratch is not counted.
+pub(crate) fn instruction_read_raf_stage5_owner_overlap_bytes(
+    rows: usize,
+    registers_val_lease: bool,
+) -> Result<u64, MetalError> {
+    let registers_val = if registers_val_lease {
+        super::registers_val::registers_val_dense_bytes(rows)?
+    } else {
+        0
+    };
+    [
+        instruction_read_raf_stage1_device_bytes(rows)?,
+        scatter::compatibility_scatter_cycle_plane_bytes(rows)?,
+        super::product5::product5_table_bytes(rows / 2)?,
+        registers_val,
+    ]
+    .into_iter()
+    .try_fold(0u64, u64::checked_add)
+    .ok_or(MetalError::InputTooLong(rows))
+}
+
 pub(crate) fn instruction_read_raf_stage1_count_bytes(rows: usize) -> Result<usize, MetalError> {
     rows.div_ceil(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS)
         .checked_mul(INSTRUCTION_READ_RAF_SEGMENTS)

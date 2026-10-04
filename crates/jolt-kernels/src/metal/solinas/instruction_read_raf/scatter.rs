@@ -40,6 +40,16 @@ const BYTECODE_MAX_DESCRIPTORS_PER_CHUNK: usize = INSTRUCTION_READ_RAF_PRODUCER_
 const BYTECODE_MAX_PIVOTS_PER_CHUNK: usize = 15;
 const THREADGROUP_ALLOCATION_ALIGNMENT: u64 = 16;
 
+/// Bytes of the scatter planes that outlive the address phases: all but the
+/// address weights, which the address sequence retires at its first cycle
+/// kernel.
+pub(super) fn compatibility_scatter_cycle_plane_bytes(rows: usize) -> Result<u64, MetalError> {
+    checked_row_bytes(
+        rows,
+        PACKED_BYTES_PER_ROW + LOOKUP_BYTES_PER_ROW + INVERSE_BYTES_PER_ROW,
+    )
+}
+
 type ScatterLayout = (
     Vec<u32>,
     [u32; INSTRUCTION_READ_RAF_SEGMENTS + 1],

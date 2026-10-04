@@ -1782,7 +1782,6 @@ mod tests {
                 false,
                 false,
                 false,
-                false,
             )
             .unwrap();
             let product_rows = outer_rows.share_product_remainder_rows().unwrap();
@@ -2134,7 +2133,6 @@ mod tests {
                 false,
                 false,
                 false,
-                false,
                 true,
             )
             .unwrap();
@@ -2222,7 +2220,6 @@ mod tests {
                 &metal.context,
                 witness,
                 1 << shape.log_t,
-                false,
                 false,
                 false,
                 false,

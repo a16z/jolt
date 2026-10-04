@@ -43,8 +43,7 @@ use super::solinas::{
     spartan_outer_uniskip_row_bytes, InstructionInputRows, MetalError, OuterRemainderPhase,
     OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
     PendingRegistersReadWriteStage1Pipelines, PendingSpartanStage1SourcePrimer,
-    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source,
-    RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest, SolinasMetal,
+    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source, SolinasMetal,
     SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
 use super::spartan_dense::SpartanDenseResidentOwner;
@@ -363,10 +362,6 @@ pub(super) fn publish_instruction_read_raf_stage1(
             && session
                 .state::<super::solinas::bytecode_read_raf_address::BytecodeAddressStage1TopologyOwner>()
                 .is_some())
-        || (ready.registers_val.is_some()
-            && session
-                .state::<RegistersValInstructionSourceRequest>()
-                .is_some())
         || (ready.registers_read_write.is_some()
             && session.state::<RegistersReadWriteStage1Source>().is_some())
         || (ready.registers_read_write.is_some()
@@ -396,9 +391,6 @@ pub(super) fn publish_instruction_read_raf_stage1(
             RegistersReadWriteStage1Plan::Cpu(capacity) => session.park(capacity),
         }
     }
-    if let Some(request) = ready.registers_val {
-        session.park(request);
-    }
     if let Some(ram_access) = ready.ram_access {
         ram_access.publish(session)?;
     }
@@ -426,29 +418,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let register_val_owner_requested = self.config.registers_val_evaluation.source
             == RegistersValEvaluationSource::Stage1Resident
             && cycles >= self.config.registers_val_evaluation.trace_cutoff_elements;
-        let prepare_registers_val = register_val_owner_requested && (26..=28).contains(&log_t);
         let prepare_registers_read_write = register_val_owner_requested && log_t == 28;
-        if prepare_registers_val
-            && witness
-                .owned_rows()
-                .is_none_or(|rows| cycles > rows.cycles())
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "RegistersVal Stage-1 source requires random-access witness rows",
-            });
-        }
-        if prepare_registers_val
-            && (session
-                .state::<RegistersValInstructionSourceRequest>()
-                .is_some()
-                || session
-                    .state::<RegistersValInstructionSourceLease>()
-                    .is_some())
-        {
-            return Err(KernelError::InvariantViolation {
-                reason: "RegistersVal Stage-1 owner was already parked",
-            });
-        }
         if prepare_registers_read_write
             && session.state::<RegistersReadWriteStage1Source>().is_some()
         {
@@ -456,9 +426,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 reason: "registers read-write Stage-1 source was already parked",
             });
         }
-        let stage1_projection_owner_requested = instruction_read_raf_owner_requested
-            || prepare_registers_val
-            || prepare_registers_read_write;
+        let stage1_projection_owner_requested =
+            instruction_read_raf_owner_requested || prepare_registers_read_write;
         let prepare_ram_access =
             stage1_projection_owner_requested && self.ram_raf_witness_requested(log_t, witness)?;
         let prepare_ram_read_write_records = stage1_projection_owner_requested
@@ -497,11 +466,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             for candidate in
                 resident_row_admission_candidates(stage1_eligible, instruction_input_eligible)
             {
-                if (prepare_bytecode_carrier
-                    || prepare_registers_val
-                    || prepare_registers_read_write)
-                    && !candidate.stage1
-                {
+                if (prepare_bytecode_carrier || prepare_registers_read_write) && !candidate.stage1 {
                     continue;
                 }
                 let borrow_outer_residual = self.config.instruction_input.dense_storage_mode
@@ -618,9 +583,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 }
             }
         }
-        if (prepare_bytecode_carrier || prepare_registers_val || prepare_registers_read_write)
-            && admitted_plan.is_none()
-        {
+        if (prepare_bytecode_carrier || prepare_registers_read_write) && admitted_plan.is_none() {
             return Err(last_admission_error.map_or(
                 KernelError::InvariantViolation {
                     reason: "required Stage-1 owner plan was not admitted",
@@ -653,7 +616,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             cycles,
                             prepare_bytecode_carrier,
                             prepare_registers_read_write,
-                            prepare_registers_val,
                             prepare_ram_access,
                             prepare_ram_read_write_records,
                         )
@@ -685,11 +647,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             session.park(owner);
                             (rows, instruction_read_raf)
                         }
-                        Err(error)
-                            if error.is_capacity_error()
-                                && !prepare_bytecode_carrier
-                                && !prepare_registers_val =>
-                        {
+                        Err(error) if error.is_capacity_error() && !prepare_bytecode_carrier => {
                             let _ = span.record("admitted", false);
                             let _ = span.record("fallback_reason", "shift_capacity");
                             tracing::warn!(
@@ -704,7 +662,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     cycles,
                                     prepare_bytecode_carrier,
                                     prepare_registers_read_write,
-                                    prepare_registers_val,
                                     prepare_ram_access,
                                     prepare_ram_read_write_records,
                                 )
@@ -730,7 +687,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                         cycles,
                         prepare_bytecode_carrier,
                         prepare_registers_read_write,
-                        prepare_registers_val,
                         prepare_ram_access,
                         prepare_ram_read_write_records,
                     )

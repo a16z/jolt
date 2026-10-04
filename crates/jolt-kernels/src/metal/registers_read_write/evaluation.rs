@@ -232,7 +232,7 @@ impl RegistersReadWriteCpuMetalEvalFixture {
         );
         let (stage1_source, stage1_rd_post) = if stage1_source {
             let (outer_rows, mut ready) = prepare_metal_spartan_outer_stage1_owner_witness_rows(
-                &context, witness, cycles, false, true, false, false, false,
+                &context, witness, cycles, false, true, false, false,
             )
             .map_err(|error| RegistersReadWriteEvalError::Kernel(format!("{error:?}")))?;
             let source = ready.registers_read_write.take().ok_or_else(|| {

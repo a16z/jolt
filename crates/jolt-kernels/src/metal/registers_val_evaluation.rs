@@ -45,6 +45,16 @@ pub struct RegistersValEvaluationMetalConfig {
     pub dense_transition: RegistersValDenseConfig,
 }
 
+impl RegistersValEvaluationMetalConfig {
+    /// Whether RegistersVal reads its rd/increment source from the
+    /// InstructionReadRAF Stage-1 owner, which Stage 5 leases to it when the
+    /// owner was admitted.
+    pub(crate) fn shares_instruction_source(&self, cycles: usize) -> bool {
+        self.source == RegistersValEvaluationSource::Stage1Resident
+            && cycles >= self.trace_cutoff_elements
+    }
+}
+
 impl Default for RegistersValEvaluationMetalConfig {
     fn default() -> Self {
         Self {
@@ -123,18 +133,21 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
             challenges: inputs.challenges,
         };
         let resident_from_stage1 = config.source == RegistersValEvaluationSource::Stage1Resident;
-        let resident_requested = resident_from_stage1
-            && cycles >= config.trace_cutoff_elements
-            && (26..=28).contains(&log_t);
         let resident_route = "instruction_rows_v1";
-        if !resident_requested {
-            if session
-                .state::<RegistersValInstructionSourceLease>()
-                .is_some()
-            {
-                return Err(KernelError::InvariantViolation {
-                    reason: "registers value found an unexpected Stage-1 source lease",
-                });
+        let lease = session.take::<RegistersValInstructionSourceLease>();
+        if lease.is_some() && !config.shares_instruction_source(cycles) {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers value found an unexpected Stage-1 source lease",
+            });
+        }
+        if lease.is_none() {
+            if config.shares_instruction_source(cycles) {
+                record_route(
+                    cycles,
+                    resident_route,
+                    "optimized_cpu",
+                    "instruction_source_not_admitted",
+                );
             }
             if resident_from_stage1
                 || cycles < config.trace_cutoff_elements
@@ -154,12 +167,7 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
         let split_handoff = cycles >> split_bits.saturating_sub(1);
         let cutoff_elements = config.cutoff_elements.max(split_handoff);
 
-        if resident_requested {
-            let lease = session.take::<RegistersValInstructionSourceLease>().ok_or(
-                KernelError::InvariantViolation {
-                    reason: "RegistersVal stage1 route is missing its instruction-source lease",
-                },
-            )?;
+        if let Some(lease) = lease {
             if cutoff_elements >= cycles {
                 return Err(KernelError::InvariantViolation {
                     reason: "registers value resident route cannot hand off before dispatch",
@@ -748,6 +756,32 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(cpu_only.registers_val_sequences(), 0);
+
+                let declined_owner = MetalBackend::new(super::super::MetalConfig {
+                    instruction_read_raf: super::super::InstructionReadRafMetalConfig {
+                        address_cutoff_elements: 4,
+                        ..Default::default()
+                    },
+                    registers_val_evaluation: RegistersValEvaluationMetalConfig {
+                        source: RegistersValEvaluationSource::Stage1Resident,
+                        trace_cutoff_elements: 4,
+                        cutoff_elements: 2,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .unwrap();
+                let _ = <MetalBackend as PrepareKernel<
+                    AkitaField,
+                    RegistersValEvaluation<AkitaField>,
+                >>::prepare(
+                    &declined_owner,
+                    &mut ProofSession::default(),
+                    witness,
+                    inputs(),
+                )
+                .unwrap();
+                assert_eq!(declined_owner.registers_val_sequences(), 0);
             });
         }
     }

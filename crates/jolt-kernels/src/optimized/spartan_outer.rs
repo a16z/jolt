@@ -41,6 +41,8 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S192, S256, S64};
@@ -55,7 +57,7 @@ use jolt_poly::lagrange::{
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
 #[cfg(all(feature = "metal", target_os = "macos"))]
-use jolt_riscv::InterleavedBitsMarker;
+use jolt_riscv::{InterleavedBitsMarker, JoltTraceRow};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -99,15 +101,13 @@ use crate::metal::solinas::spartan_shift::{
 };
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::{
-    instruction_input_row_bytes, instruction_read_raf_claim_and_count_rank,
-    spartan_outer_uniskip_successor_row_bytes, BooleanityRow, InstructionInputRow,
+    instruction_read_raf_claim_and_count_rank, BooleanityRow, InstructionInputRow,
     InstructionInputRows, InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Owner,
     InstructionReadRafStage1Storage, MetalError, RegistersReadWriteStage1ChunkWriter,
-    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Storage,
-    RegistersValInstructionSourceRequest, SolinasMetal, SpartanOuterUniskipColdRow,
-    SpartanOuterUniskipConfig, SpartanOuterUniskipRow, SpartanOuterUniskipRows,
-    SpartanOuterUniskipSuccessorRow, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
-    RAM_READ_WRITE_CYCLE_TILE_LOG2,
+    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Storage, SolinasMetal,
+    SpartanOuterUniskipColdRow, SpartanOuterUniskipConfig, SpartanOuterUniskipRow,
+    SpartanOuterUniskipRows, SpartanOuterUniskipSuccessorRow,
+    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, RAM_READ_WRITE_CYCLE_TILE_LOG2,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -364,8 +364,8 @@ struct Stage1ProjectionRow {
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl WitnessBundle for Stage1ProjectionRow {
     fn from_row(
-        row: &jolt_riscv::JoltTraceRow,
-        next: Option<&jolt_riscv::JoltTraceRow>,
+        row: &JoltTraceRow,
+        next: Option<&JoltTraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let outer = SpartanOuterRow::from_row(row, next, env)?;
@@ -412,7 +412,7 @@ impl WitnessBundle for Stage1ProjectionRow {
         })
     }
 
-    fn annotated_ids() -> Vec<jolt_claims::protocols::jolt::JoltPolynomialId> {
+    fn annotated_ids() -> Vec<JoltPolynomialId> {
         SpartanOuterRow::annotated_ids()
     }
 }
@@ -1406,7 +1406,6 @@ pub(crate) struct InstructionReadRafStage1Ready {
     pub(crate) owner: InstructionReadRafStage1Owner,
     pub(crate) bytecode_topology: Option<BytecodeAddressStage1TopologyOwner>,
     pub(crate) registers_read_write: Option<RegistersReadWriteStage1Plan>,
-    pub(crate) registers_val: Option<RegistersValInstructionSourceRequest>,
     pub(crate) ram_access: Option<RamAccessCollection>,
     pub(crate) ram_read_write_records: Option<RamReadWriteRecordCollection>,
 }
@@ -1422,17 +1421,12 @@ type ShiftStage1OwnerPreparedRows = (
 );
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Stage-1 admission selects each optional resident owner independently"
-)]
 pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     context: &SolinasMetal,
     witness: &dyn JoltWitnessPlane<AkitaField>,
     cycles: usize,
     prepare_bytecode_carrier: bool,
     prepare_registers_read_write: bool,
-    prepare_registers_val: bool,
     prepare_ram_access: bool,
     prepare_ram_read_write_records: bool,
 ) -> Result<Stage1OwnerPreparedRows, MetalSpartanDenseRowsError> {
@@ -1649,15 +1643,6 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
         })
         .transpose()
         .map_err(MetalSpartanDenseRowsError::Metal)?;
-    let source_storage_ids = [
-        outer_rows.instruction_input_allocation_identity(),
-        outer_rows.allocation_identity(),
-    ];
-    let source_storage_bytes = [
-        instruction_input_row_bytes(cycles).map_err(MetalSpartanDenseRowsError::Metal)?,
-        spartan_outer_uniskip_successor_row_bytes(cycles)
-            .map_err(MetalSpartanDenseRowsError::Metal)?,
-    ];
     let bytecode_topology = bytecode_topology
         .map(|topology| topology.seal(&owner))
         .transpose()
@@ -1670,26 +1655,11 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
         .map(RamReadWriteRecordCollectionStorage::seal)
         .transpose()
         .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
-    let registers_val = prepare_registers_val
-        .then(|| {
-            context.prepare_registers_val_instruction_source_request(
-                cycles,
-                explicit_rows,
-                source_storage_ids[0],
-                source_storage_bytes[0],
-                source_storage_ids[1],
-                source_storage_bytes[1],
-                owner.receipt(),
-            )
-        })
-        .transpose()
-        .map_err(MetalSpartanDenseRowsError::Metal)?;
     record_bytecode_stage1_topology_span(&owner, bytecode_topology.as_ref(), explicit_rows);
     let prepared = InstructionReadRafStage1Ready {
         owner,
         bytecode_topology,
         registers_read_write,
-        registers_val,
         ram_access,
         ram_read_write_records,
     };
@@ -1699,6 +1669,138 @@ pub(crate) fn prepare_metal_spartan_outer_stage1_owner_witness_rows(
     );
     let _ = span.record("residual_rows_storage_id", outer_rows.allocation_identity());
     Ok((outer_rows, prepared))
+}
+
+/// The facts one cycle contributes to the InstructionReadRAF Stage-1 owner,
+/// without the Spartan outer row the Stage-0 projection also derives.
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[derive(Clone, Copy, Debug)]
+struct Stage1OwnerSourceRow {
+    instruction: Stage1InstructionFacts,
+    ram_access: RamAccessBundle,
+    register_write: Option<(u8, u64, u64)>,
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+impl WitnessBundle for Stage1OwnerSourceRow {
+    fn from_row(
+        row: &JoltTraceRow,
+        next: Option<&JoltTraceRow>,
+        env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        let instruction = Stage1InstructionFacts::from_row(row, next, env)?;
+        Ok(Self {
+            instruction,
+            ram_access: RamAccessBundle {
+                address: instruction.remapped_ram_address,
+                pre_value: Stage1RamReadValue(row.ram_read_value()),
+                post_value: Stage1RamWriteValue(row.ram_write_value()),
+                ram_inc: RamInc::extract(row, next, env)?,
+                ram_hamming_weight: RamHammingWeight::extract(row, next, env)?,
+            },
+            register_write: row
+                .rd_index()
+                .map(|register| (register, row.rd_pre_value(), row.rd_write_value())),
+        })
+    }
+
+    fn annotated_ids() -> Vec<JoltPolynomialId> {
+        Stage1InstructionFacts::annotated_ids()
+    }
+}
+
+/// Builds the InstructionReadRAF Stage-1 owner alone, for a stage that runs
+/// after Stage 0 could not co-produce it with the resident Stage-1 rows: one
+/// witness pass writing the Shared owner directly, padded exactly as the
+/// co-producing pass pads it.
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn prepare_metal_instruction_read_raf_stage1_owner(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<InstructionReadRafStage1Owner, MetalSpartanDenseRowsError> {
+    let access = witness
+        .owned_rows()
+        .filter(|rows| cycles <= rows.cycles())
+        .ok_or(MetalSpartanDenseRowsError::Kernel(
+            KernelError::InvariantViolation {
+                reason: "InstructionReadRAF Stage-1 ownership requires a random-access witness",
+            },
+        ))?;
+    let explicit_rows = access.physical_rows().min(cycles);
+    let padding = Stage1PaddingRows::new(&access, explicit_rows, cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let span = tracing::info_span!(
+        "MetalInstructionReadRaf::stage1_owner_prepare",
+        cycles,
+        explicit_rows,
+        source_windows = padding.source_window_count(explicit_rows),
+    );
+    let _entered = span.enter();
+    let mut source = context
+        .prepare_instruction_read_raf_stage1_storage(cycles)
+        .map_err(MetalSpartanDenseRowsError::Metal)?;
+    with_stage1_owner_chunks(&mut source, None, None, None, None, |owner_chunks| {
+        let fill_chunk = |chunk: usize,
+                          owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>,
+                          scratch: &mut BytecodeAddressStage1TopologyScratch|
+         -> Result<(), MetalError> {
+            let chunk_start = chunk * INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS;
+            let parts = stage1_chunk_parts(chunk_start, owner.len(), explicit_rows, cycles);
+            for row_index in chunk_start..chunk_start + parts.physical {
+                let row: Stage1OwnerSourceRow = access.window(row_index).map_err(|error| {
+                    MetalError::SpartanOuterRowExtraction {
+                        row: row_index,
+                        message: error.to_string(),
+                    }
+                })?;
+                owner.push(
+                    row_index,
+                    explicit_rows,
+                    row.instruction,
+                    row.ram_access,
+                    [None, None],
+                    row.register_write,
+                    scratch,
+                )?;
+            }
+            for (count, template, missing) in [
+                (
+                    parts.regular_padding,
+                    padding.regular,
+                    "regular Stage-1 padding template is missing",
+                ),
+                (
+                    parts.terminal_padding,
+                    padding.terminal,
+                    "terminal Stage-1 padding template is missing",
+                ),
+            ] {
+                if count != 0 {
+                    let template = template.ok_or_else(|| {
+                        MetalError::InvalidInstructionReadRafGrouped(missing.to_owned())
+                    })?;
+                    owner.fill_padding(&template, count)?;
+                }
+            }
+            owner.finish(scratch)
+        };
+        #[cfg(feature = "parallel")]
+        owner_chunks.par_iter_mut().enumerate().try_for_each_init(
+            BytecodeAddressStage1TopologyScratch::new,
+            |scratch, (chunk, owner)| fill_chunk(chunk, owner, scratch),
+        )?;
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut scratch = BytecodeAddressStage1TopologyScratch::new();
+            for (chunk, owner) in owner_chunks.iter_mut().enumerate() {
+                fill_chunk(chunk, owner, &mut scratch)?;
+            }
+        }
+        Ok(())
+    })
+    .map_err(MetalSpartanDenseRowsError::Metal)?;
+    source.seal().map_err(MetalSpartanDenseRowsError::Metal)
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -1832,17 +1934,12 @@ pub(crate) fn prepare_metal_spartan_outer_shift_witness_rows(
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Stage-1 admission selects each optional resident owner independently"
-)]
 pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
     context: &SolinasMetal,
     witness: &dyn JoltWitnessPlane<AkitaField>,
     cycles: usize,
     prepare_bytecode_carrier: bool,
     prepare_registers_read_write: bool,
-    prepare_registers_val: bool,
     prepare_ram_access: bool,
     prepare_ram_read_write_records: bool,
 ) -> Result<ShiftStage1OwnerPreparedRows, MetalSpartanDenseRowsError> {
@@ -2137,15 +2234,6 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
         })
         .transpose()
         .map_err(MetalSpartanDenseRowsError::Metal)?;
-    let source_storage_ids = [
-        outer_rows.instruction_input_allocation_identity(),
-        outer_rows.allocation_identity(),
-    ];
-    let source_storage_bytes = [
-        instruction_input_row_bytes(cycles).map_err(MetalSpartanDenseRowsError::Metal)?,
-        spartan_outer_uniskip_successor_row_bytes(cycles)
-            .map_err(MetalSpartanDenseRowsError::Metal)?,
-    ];
     let bytecode_topology = bytecode_topology
         .map(|topology| topology.seal(&owner))
         .transpose()
@@ -2158,26 +2246,11 @@ pub(crate) fn prepare_metal_spartan_outer_shift_stage1_owner_witness_rows(
         .map(RamReadWriteRecordCollectionStorage::seal)
         .transpose()
         .map_err(|error| MetalSpartanDenseRowsError::Kernel(error.into_kernel_error()))?;
-    let registers_val = prepare_registers_val
-        .then(|| {
-            context.prepare_registers_val_instruction_source_request(
-                cycles,
-                explicit_rows,
-                source_storage_ids[0],
-                source_storage_bytes[0],
-                source_storage_ids[1],
-                source_storage_bytes[1],
-                owner.receipt(),
-            )
-        })
-        .transpose()
-        .map_err(MetalSpartanDenseRowsError::Metal)?;
     record_bytecode_stage1_topology_span(&owner, bytecode_topology.as_ref(), explicit_rows);
     let prepared = InstructionReadRafStage1Ready {
         owner,
         bytecode_topology,
         registers_read_write,
-        registers_val,
         ram_access,
         ram_read_write_records,
     };

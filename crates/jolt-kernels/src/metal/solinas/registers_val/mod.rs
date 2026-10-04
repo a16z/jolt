@@ -21,10 +21,7 @@ use super::{
 
 mod stage1;
 
-pub(crate) use stage1::{
-    RegistersValInstructionSourceLease, RegistersValInstructionSourceReceipt,
-    RegistersValInstructionSourceRequest,
-};
+pub(crate) use stage1::{RegistersValInstructionSourceLease, RegistersValInstructionSourceReceipt};
 
 const SIMD_WIDTH: usize = 32;
 const SAMPLES: usize = 3;
@@ -36,6 +33,20 @@ const MESSAGE_PIPELINE: &str = "solinas_registers_val_first_message_factorized";
 const NATIVE_TRANSITION_PIPELINE: &str = "solinas_registers_val_native_transition";
 const DENSE_TRANSITION_PIPELINE: &str = "solinas_registers_val_dense_transition";
 const REDUCTION_PIPELINE: &str = "solinas_registers_val_reduce";
+
+const fn registers_val_dense_elements(cycles: usize) -> (usize, usize) {
+    (cycles, cycles / 2)
+}
+
+/// Bytes of the dense A/B pair the first message allocates for `cycles`.
+pub(super) fn registers_val_dense_bytes(cycles: usize) -> Result<u64, MetalError> {
+    let (dense_a, dense_b) = registers_val_dense_elements(cycles);
+    dense_a
+        .checked_add(dense_b)
+        .and_then(|elements| elements.checked_mul(size_of::<Fp128>()))
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(MetalError::InputTooLong(cycles))
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RegistersValFirstMessageConfig {
@@ -483,8 +494,9 @@ impl SolinasMetal {
         };
         let partial_a = self.new_registers_val_buffer(partial_elements)?;
         let partial_b = self.new_registers_val_buffer(partial_elements)?;
-        let dense_a = self.new_registers_val_buffer(cycles)?;
-        let dense_b = self.new_registers_val_buffer(cycles / 2)?;
+        let (dense_a_elements, dense_b_elements) = registers_val_dense_elements(cycles);
+        let dense_a = self.new_registers_val_buffer(dense_a_elements)?;
+        let dense_b = self.new_registers_val_buffer(dense_b_elements)?;
 
         let mut reduction_steps = Vec::new();
         let mut input_count = partial_count;

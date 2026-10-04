@@ -36,6 +36,16 @@ fn stage1_source_byte_ledgers_are_exact() {
         instruction_read_raf_stage1_count_bytes(1 << 27).unwrap(),
         14_680_064
     );
+    // 33 B/row owner + 21 B/row cycle scatter planes + 60 B/row Product5
+    // tables (+ 24 B/row RegistersVal dense pair).
+    assert_eq!(
+        instruction_read_raf_stage5_owner_overlap_bytes(1 << 29, false).unwrap(),
+        61_203_283_968
+    );
+    assert_eq!(
+        instruction_read_raf_stage5_owner_overlap_bytes(1 << 29, true).unwrap(),
+        74_088_185_856
+    );
 }
 
 #[test]

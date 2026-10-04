@@ -8,6 +8,7 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::{JoltWitnessPlane, PolynomialEncoding};
+use tracing::field::Empty;
 
 use super::backend::MetalBackend;
 use super::solinas::bytecode_read_raf_address::{
@@ -15,16 +16,19 @@ use super::solinas::bytecode_read_raf_address::{
     BytecodeAddressStage1TopologyOwner,
 };
 use super::solinas::{
-    AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, BooleanityRows,
+    instruction_read_raf_stage5_owner_overlap_bytes, AddressPhaseSequence,
+    AddressPhaseSequenceConfig, AddressPhaseSums, BooleanityRows,
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
     InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
     InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt,
     PendingInstructionReadRafSourcePrimer, Product5Sequence, Product5SequenceConfig,
-    RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest,
-    ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
+    RegistersValInstructionSourceLease, ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
     prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
+};
+use crate::optimized::spartan_outer::{
+    prepare_metal_instruction_read_raf_stage1_owner, MetalSpartanDenseRowsError,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, Stage5InstructionReadRafPrefetch,
@@ -158,6 +162,53 @@ impl MetalBackend {
         self.submit_source_primer(session, &owner)
     }
 
+    /// Builds the Stage-1 owner at Stage 5 when Stage 0 could not co-produce
+    /// it: only for a random-access witness, and only when the whole Stage-5
+    /// Metal overlap fits the working set. Otherwise Stage 5 keeps its
+    /// CPU-built route and RegistersVal its CPU kernel.
+    fn prepare_stage5_owner(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<AkitaField>,
+        rows: usize,
+        registers_val_lease: bool,
+    ) -> Result<(), KernelError<AkitaField>> {
+        if witness
+            .owned_rows()
+            .is_none_or(|owned| rows > owned.cycles())
+        {
+            return Ok(());
+        }
+        let overlap_bytes =
+            instruction_read_raf_stage5_owner_overlap_bytes(rows, registers_val_lease)
+                .map_err(metal_prepare_error)?;
+        let span = tracing::info_span!(
+            "MetalInstructionReadRaf::stage5_owner_admission",
+            rows,
+            overlap_bytes,
+            registers_val_lease,
+            admitted = Empty,
+        );
+        let _entered = span.enter();
+        if let Err(error) = self.context.validate_additional_working_set(overlap_bytes) {
+            if !error.is_capacity_error() {
+                return Err(metal_prepare_error(error));
+            }
+            let _ = span.record("admitted", false);
+            tracing::warn!(
+                target: "jolt::metal",
+                %error,
+                "Stage-5 InstructionReadRAF owner was not admitted; using the CPU-built route"
+            );
+            return Ok(());
+        }
+        let _ = span.record("admitted", true);
+        let owner = prepare_metal_instruction_read_raf_stage1_owner(&self.context, witness, rows)
+            .map_err(MetalSpartanDenseRowsError::into_kernel_error)?;
+        session.park(owner);
+        Ok(())
+    }
+
     fn submit_source_primer(
         &self,
         session: &mut ProofSession,
@@ -228,7 +279,10 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             } else {
                 None
             };
-            let registers_val_request = session.take::<RegistersValInstructionSourceRequest>();
+            let share_registers_val = self
+                .config
+                .registers_val_evaluation
+                .shares_instruction_source(rows);
             let context = Arc::clone(&self.context);
             let config = self.config.instruction_read_raf;
             let worker_point = point.clone();
@@ -254,13 +308,12 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                                 .map_err(|error| error.to_string())
                         })
                         .transpose()?;
-                    let registers_val_lease = registers_val_request
-                        .map(|request| {
+                    let registers_val_lease = share_registers_val
+                        .then(|| {
                             let register_source = owner
                                 .lease(rows, context.device_registry_id())
                                 .map_err(|error| error.to_string())?;
-                            request
-                                .publish(&context, register_source)
+                            RegistersValInstructionSourceLease::new(&context, register_source)
                                 .map_err(|error| error.to_string())
                         })
                         .transpose()?;
@@ -281,7 +334,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         "MetalInstructionReadRaf::address_prefetch",
                         rows,
                         suffix_bits = INITIAL_ADDRESS_SUFFIX_BITS,
-                        complete = tracing::field::Empty,
+                        complete = Empty,
                     );
                     let _entered = span.enter();
                     let mut sequence = context
@@ -363,21 +416,30 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             || prefetched_scatter
                 .as_ref()
                 .is_some_and(|prefetched| prefetched.bytecode_carrier.is_some());
-        let share_registers_val_source = prefetched_scatter
-            .as_ref()
-            .is_some_and(|prefetched| prefetched.registers_val_lease.is_some())
-            || session
-                .state::<RegistersValInstructionSourceRequest>()
-                .is_some();
         let retain_lookup_plane = trace_elements
             >= self
                 .config
                 .instruction_ra_virtualization
                 .trace_cutoff_elements;
-        let stage1_owner = (use_metal_address
-            && dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS)
+        let resident_owner_geometry =
+            use_metal_address && dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS;
+        let share_registers_val = self
+            .config
+            .registers_val_evaluation
+            .shares_instruction_source(trace_elements);
+        if resident_owner_geometry
+            && prefetched_scatter.is_none()
+            && session.state::<InstructionReadRafStage1Owner>().is_none()
+        {
+            self.prepare_stage5_owner(session, witness, trace_elements, share_registers_val)?;
+        }
+        let stage1_owner = resident_owner_geometry
             .then(|| session.take::<InstructionReadRafStage1Owner>())
             .flatten();
+        let share_registers_val_source = prefetched_scatter
+            .as_ref()
+            .is_some_and(|prefetched| prefetched.registers_val_lease.is_some())
+            || (prefetched_scatter.is_none() && share_registers_val && stage1_owner.is_some());
         if prefetched_scatter.is_some() && stage1_owner.is_none() {
             return Err(KernelError::InvariantViolation {
                 reason: "prefetched Instruction Read-RAF scatter requires its Stage-1 owner",
@@ -441,17 +503,11 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         None
                     };
                     let registers_val_lease = if share_registers_val_source {
-                        let request = session
-                            .take::<RegistersValInstructionSourceRequest>()
-                            .ok_or(KernelError::InvariantViolation {
-                                reason: "RegistersVal instruction-source request is missing",
-                            })?;
                         let source = owner
                             .lease(trace_elements, device_registry_id)
                             .map_err(metal_prepare_error)?;
                         Some(
-                            request
-                                .publish(&self.context, source)
+                            RegistersValInstructionSourceLease::new(&self.context, source)
                                 .map_err(metal_prepare_error)?,
                         )
                     } else {
@@ -519,22 +575,14 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         });
                     }
                     let source_receipt = lease.receipt();
-                    let source_ids = source_receipt.source_storage_ids();
-                    let source_bytes = source_receipt.source_storage_bytes();
                     let _span = tracing::info_span!(
                         "MetalRegistersValEvaluation::instruction_source_publish",
                         cycles = source_receipt.cycles(),
-                        explicit_rows = source_receipt.explicit_rows(),
                         source = "instruction_read_raf_stage1_rows_v1",
                         row_layout = "column_major_packed_u64_v3",
                         source_generation = source_receipt.generation(),
                         source_device_registry_id = source_receipt.device_registry_id(),
                         source_ready_serial = source_receipt.completion_serial(),
-                        source_compact_storage_id = source_ids[0],
-                        source_compact_bytes = source_bytes[0],
-                        source_residual_storage_id = source_ids[1],
-                        source_residual_bytes = source_bytes[1],
-                        source_residual_allocations = 1usize,
                         instruction_rows_storage_id = source_receipt.instruction_rows_storage_id(),
                         instruction_rows_bytes = source_receipt.instruction_rows_bytes(),
                         producer_plane_allocations = 0usize,
@@ -1051,10 +1099,262 @@ fn metal_prepare_error(error: impl ToString) -> KernelError<AkitaField> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "Metal Stage-5 owner fixtures")]
 mod tests {
-    use jolt_witness::testing::with_sample_backend_at_log_t;
+    use std::num::NonZeroUsize;
 
-    use super::committed_hamming_log_k_chunk;
+    use jolt_claims::protocols::jolt::geometry::dimensions::{
+        TraceDimensions, REGISTER_ADDRESS_BITS,
+    };
+    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
+    use jolt_claims::protocols::jolt::relations::instruction::{
+        InstructionReadRafChallenges, InstructionReadRafInputClaims,
+    };
+    use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
+    use jolt_claims::NoChallenges;
+    use jolt_field::FromPrimitiveInt as _;
+    use jolt_lookup_tables::XLEN as RISCV_XLEN;
+    use jolt_poly::Polynomial;
+    use jolt_verifier::stages::relations::ConcreteSumcheck;
+    use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+    use jolt_verifier::stages::stage5::registers_val_evaluation::{
+        RegistersValEvaluation, RegistersValEvaluationInputClaims,
+    };
+    use jolt_witness::testing::with_sample_backend_at_log_t;
+    use jolt_witness::JoltWitnessOracle;
+
+    use super::*;
+    use crate::metal::solinas::INSTRUCTION_READ_RAF_SEGMENTS;
+    use crate::metal::{
+        MetalConfig, RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
+    };
+    use crate::optimized::instruction_read_raf::OptimizedInstructionReadRaf;
+    use crate::optimized::parity::run_lockstep;
+    use crate::optimized::registers_val_evaluation::OptimizedRegistersValEvaluation;
+    use crate::optimized::testing::{with_ram_fixture_backend, FixtureShape, RamOp};
+    use crate::uniskip::UniskipKernel;
+
+    const LOG_T: usize = 15;
+
+    fn point(len: usize, seed: u64) -> Vec<AkitaField> {
+        (0..len as u64)
+            .map(|index| AkitaField::from_u64(seed + 37 * index + 5))
+            .collect()
+    }
+
+    fn owner_contents(
+        owner: &InstructionReadRafStage1Owner,
+        device_registry_id: u64,
+    ) -> (
+        Vec<u64>,
+        Vec<u8>,
+        Vec<[u32; INSTRUCTION_READ_RAF_SEGMENTS]>,
+        bool,
+    ) {
+        let rows = owner.receipt().rows();
+        let lease = owner.lease(rows, device_registry_id).unwrap();
+        // SAFETY: a sealed owner's row buffer holds its four complete u64
+        // columns, and the lease keeps the buffer alive while it is copied.
+        let columns = unsafe {
+            std::slice::from_raw_parts(lease.row_buffer().contents().cast::<u64>(), 4 * rows)
+        }
+        .to_vec();
+        (
+            columns,
+            lease.claim_slice().to_vec(),
+            lease.counts().to_vec(),
+            owner.ram_remap_compatible(),
+        )
+    }
+
+    #[test]
+    fn stage5_owner_matches_the_stage0_owner() {
+        // Loads of falling values give rd a negative increment in the first
+        // two producer chunks; stores, no-ops and the padded tail cover the
+        // RAM and padding rows.
+        let falling_loads = [
+            RamOp::Write { word: 3, post: 9 },
+            RamOp::Read { word: 3 },
+            RamOp::Write { word: 4, post: 2 },
+            RamOp::Read { word: 4 },
+        ];
+        let mut ops = falling_loads.to_vec();
+        ops.extend(std::iter::repeat_n(RamOp::None, 4_096));
+        ops.extend(falling_loads);
+        let shape = FixtureShape {
+            log_t: LOG_T,
+            ram_k: 1 << 8,
+        };
+        with_ram_fixture_backend(shape, ops, |witness| {
+            let backend = MetalBackend::new(MetalConfig {
+                instruction_read_raf: InstructionReadRafMetalConfig {
+                    address_cutoff_elements: 1 << LOG_T,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            let mut session = ProofSession::default();
+            <MetalBackend as UniskipKernel<AkitaField, OuterRemainder<AkitaField>>>::prepare_witness(
+                &backend,
+                &mut session,
+                LOG_T,
+                witness,
+            )
+            .unwrap();
+            let stage0 = session.take::<InstructionReadRafStage1Owner>().unwrap();
+            let stage5 = prepare_metal_instruction_read_raf_stage1_owner(
+                &backend.context,
+                witness,
+                1 << LOG_T,
+            )
+            .unwrap();
+
+            let registry_id = backend.context.device_registry_id();
+            assert_eq!(stage5.receipt().row_bytes(), stage0.receipt().row_bytes());
+            assert_eq!(
+                owner_contents(&stage5, registry_id),
+                owner_contents(&stage0, registry_id)
+            );
+        });
+    }
+
+    #[test]
+    fn stage5_owner_is_leased_to_registers_val_before_its_prepare() {
+        with_sample_backend_at_log_t(LOG_T, 8, |witness| {
+            let backend = MetalBackend::new(MetalConfig {
+                instruction_read_raf: InstructionReadRafMetalConfig {
+                    address_cutoff_elements: 1 << LOG_T,
+                    cutoff_elements: 8,
+                    ..Default::default()
+                },
+                registers_val_evaluation: RegistersValEvaluationMetalConfig {
+                    source: RegistersValEvaluationSource::Stage1Resident,
+                    trace_cutoff_elements: 1 << LOG_T,
+                    cutoff_elements: 16,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+
+            let instruction_relation = InstructionReadRaf::new(InstructionReadRafDimensions::new(
+                LOG_T,
+                2 * RISCV_XLEN,
+                NonZeroUsize::new(4).unwrap(),
+            ));
+            let reduction_point = point(LOG_T, 151);
+            let opening = |polynomial| {
+                let table = JoltWitnessOracle::<AkitaField>::oracle_table(
+                    witness,
+                    JoltPolynomialId::Virtual(polynomial),
+                )
+                .unwrap();
+                Polynomial::new(table).evaluate(&reduction_point)
+            };
+            let instruction_claims = InstructionReadRafInputClaims {
+                lookup_output: opening(JoltVirtualPolynomial::LookupOutput),
+                left_lookup_operand: opening(JoltVirtualPolynomial::LeftLookupOperand),
+                right_lookup_operand: opening(JoltVirtualPolynomial::RightLookupOperand),
+            };
+            let instruction_points = InstructionReadRafInputClaims {
+                lookup_output: reduction_point.clone(),
+                left_lookup_operand: reduction_point.clone(),
+                right_lookup_operand: reduction_point.clone(),
+            };
+            let instruction_challenges = InstructionReadRafChallenges {
+                gamma: AkitaField::from_u64(167),
+            };
+            let instruction_inputs = || ProverInputs {
+                relation: &instruction_relation,
+                claims: &instruction_claims,
+                points: &instruction_points,
+                challenges: &instruction_challenges,
+            };
+
+            let registers_relation = RegistersValEvaluation::new(TraceDimensions::new(LOG_T));
+            let registers_point = point(REGISTER_ADDRESS_BITS + LOG_T, 19);
+            let registers_table = JoltWitnessOracle::<AkitaField>::oracle_table(
+                witness,
+                JoltPolynomialId::Virtual(JoltVirtualPolynomial::RegistersVal),
+            )
+            .unwrap();
+            let registers_claims = RegistersValEvaluationInputClaims {
+                registers_val: Polynomial::new(registers_table).evaluate(&registers_point),
+            };
+            let registers_points = RegistersValEvaluationInputClaims {
+                registers_val: registers_point,
+            };
+            let no_challenges = NoChallenges::default();
+            let registers_inputs = || ProverInputs {
+                relation: &registers_relation,
+                claims: &registers_claims,
+                points: &registers_points,
+                challenges: &no_challenges,
+            };
+
+            let mut session = ProofSession::default();
+            let mut instruction_actual = <MetalBackend as PrepareKernel<
+                AkitaField,
+                InstructionReadRaf<AkitaField>,
+            >>::prepare(
+                &backend, &mut session, witness, instruction_inputs()
+            )
+            .unwrap();
+            assert!(session.state::<InstructionReadRafStage1Owner>().is_none());
+            assert!(session
+                .state::<RegistersValInstructionSourceLease>()
+                .is_some());
+            let mut registers_actual = <MetalBackend as PrepareKernel<
+                AkitaField,
+                RegistersValEvaluation<AkitaField>,
+            >>::prepare(
+                &backend, &mut session, witness, registers_inputs()
+            )
+            .unwrap();
+            assert!(session
+                .state::<RegistersValInstructionSourceLease>()
+                .is_none());
+            assert_eq!(backend.registers_val_sequences(), 1);
+
+            let mut instruction_expected = OptimizedInstructionReadRaf
+                .prepare(&mut ProofSession::default(), witness, instruction_inputs())
+                .unwrap();
+            let claim = instruction_relation
+                .input_claim(&instruction_claims, &instruction_challenges)
+                .unwrap();
+            let challenges = point(instruction_expected.num_rounds(), 211);
+            run_lockstep(
+                instruction_expected.as_mut(),
+                instruction_actual.as_mut(),
+                claim,
+                &challenges,
+            );
+            assert_eq!(
+                instruction_actual
+                    .output_claims(&instruction_claims)
+                    .unwrap(),
+                instruction_expected
+                    .output_claims(&instruction_claims)
+                    .unwrap()
+            );
+
+            let mut registers_expected = OptimizedRegistersValEvaluation
+                .prepare(&mut ProofSession::default(), witness, registers_inputs())
+                .unwrap();
+            let challenges = point(LOG_T, 223);
+            run_lockstep(
+                registers_expected.as_mut(),
+                registers_actual.as_mut(),
+                registers_claims.registers_val,
+                &challenges,
+            );
+            assert_eq!(
+                registers_actual.output_claims(&registers_claims).unwrap(),
+                registers_expected.output_claims(&registers_claims).unwrap()
+            );
+        });
+    }
 
     #[test]
     fn derives_committed_chunk_width_from_the_witness_grid() {

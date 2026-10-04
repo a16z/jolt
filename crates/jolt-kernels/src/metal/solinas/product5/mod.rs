@@ -74,6 +74,23 @@ fn buffer_bytes(elements: usize) -> Result<u64, MetalError> {
     u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(elements))
 }
 
+/// Field elements of the ping-pong tables: all factors, then half of them
+/// after the first fused bind.
+fn product5_table_elements(elements_per_table: usize) -> Result<(usize, usize), MetalError> {
+    let tables_a = PRODUCT5_FACTORS
+        .checked_mul(elements_per_table)
+        .ok_or(MetalError::InputTooLong(elements_per_table))?;
+    Ok((tables_a, tables_a / 2))
+}
+
+/// Bytes of the ping-pong tables a sequence over `elements_per_table` allocates.
+pub(super) fn product5_table_bytes(elements_per_table: usize) -> Result<u64, MetalError> {
+    let (tables_a, tables_b) = product5_table_elements(elements_per_table)?;
+    buffer_bytes(tables_a)?
+        .checked_add(buffer_bytes(tables_b)?)
+        .ok_or(MetalError::InputTooLong(elements_per_table))
+}
+
 struct Product5SequenceBuffers {
     tables_a: Buffer,
     tables_b: Buffer,
@@ -207,9 +224,6 @@ impl SolinasMetal {
                 got: elements_per_table,
             });
         }
-        let table_elements = PRODUCT5_FACTORS
-            .checked_mul(elements_per_table)
-            .ok_or(MetalError::InputTooLong(elements_per_table))?;
         let covered = e_in_capacity
             .checked_mul(e_out_capacity)
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
@@ -248,8 +262,9 @@ impl SolinasMetal {
             transition_limits,
         )?;
 
-        let tables_a = self.new_product5_buffer(table_elements)?;
-        let tables_b = self.new_product5_buffer(table_elements / 2)?;
+        let (tables_a_elements, tables_b_elements) = product5_table_elements(elements_per_table)?;
+        let tables_a = self.new_product5_buffer(tables_a_elements)?;
+        let tables_b = self.new_product5_buffer(tables_b_elements)?;
         let e_in_buffer = self.new_product5_buffer(e_in_capacity)?;
         let e_out_buffer = self.new_product5_buffer(e_out_capacity)?;
         let partial_elements = PRODUCT5_FACTORS

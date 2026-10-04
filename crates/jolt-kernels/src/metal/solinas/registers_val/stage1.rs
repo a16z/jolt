@@ -1,18 +1,13 @@
 use metal::foreign_types::ForeignType;
 
-use super::super::{
-    InstructionReadRafStage1Lease, InstructionReadRafStage1Receipt, MetalError, SolinasMetal,
-};
+use super::super::{InstructionReadRafStage1Lease, MetalError, SolinasMetal};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RegistersValInstructionSourceReceipt {
     cycles: usize,
-    explicit_rows: usize,
     device_registry_id: u64,
     generation: u64,
     completion_serial: u64,
-    source_storage_ids: [usize; 2],
-    source_storage_bytes: [u64; 2],
     instruction_rows_storage_id: usize,
     instruction_rows_bytes: u64,
 }
@@ -20,17 +15,17 @@ pub(crate) struct RegistersValInstructionSourceReceipt {
 impl RegistersValInstructionSourceReceipt {
     copy_field_getters! { pub(crate), {
         cycles: usize,
-        explicit_rows: usize,
         device_registry_id: u64,
         generation: u64,
         completion_serial: u64,
-        source_storage_ids: [usize; 2],
-        source_storage_bytes: [u64; 2],
         instruction_rows_storage_id: usize,
         instruction_rows_bytes: u64,
     } }
 }
 
+/// RegistersVal's lease on the InstructionReadRAF Stage-1 owner: its shader
+/// reads only the owner's fused-increment and packed-metadata columns, so the
+/// owner's sealed receipt is the whole provenance.
 pub(crate) struct RegistersValInstructionSourceLease {
     receipt: RegistersValInstructionSourceReceipt,
     source: InstructionReadRafStage1Lease,
@@ -38,6 +33,32 @@ pub(crate) struct RegistersValInstructionSourceLease {
 
 impl RegistersValInstructionSourceLease {
     copy_field_getters! { pub(crate), { receipt: RegistersValInstructionSourceReceipt }}
+
+    pub(crate) fn new(
+        context: &SolinasMetal,
+        source: InstructionReadRafStage1Lease,
+    ) -> Result<Self, MetalError> {
+        let source_receipt = source.receipt();
+        let cycles = source_receipt.rows();
+        if cycles < 4 || !cycles.is_power_of_two() {
+            return Err(invalid(
+                "RegistersVal instruction source needs a power-of-two domain of at least four cycles",
+            ));
+        }
+        let lease = Self {
+            receipt: RegistersValInstructionSourceReceipt {
+                cycles,
+                device_registry_id: source_receipt.device_registry_id(),
+                generation: source_receipt.source_generation(),
+                completion_serial: source_receipt.completion_serial(),
+                instruction_rows_storage_id: source_receipt.row_allocation_identity(),
+                instruction_rows_bytes: source_receipt.row_bytes(),
+            },
+            source,
+        };
+        validate_instruction_source_lease(&lease, context, cycles)?;
+        Ok(lease)
+    }
 
     pub(crate) fn into_parts(
         self,
@@ -52,95 +73,6 @@ impl RegistersValInstructionSourceLease {
     > {
         validate_instruction_source_lease(&self, context, expected_cycles)?;
         Ok((self.receipt, self.source))
-    }
-}
-
-pub(crate) struct RegistersValInstructionSourceRequest {
-    cycles: usize,
-    explicit_rows: usize,
-    device_registry_id: u64,
-    source_storage_ids: [usize; 2],
-    source_storage_bytes: [u64; 2],
-    instruction_source: InstructionReadRafStage1Receipt,
-}
-
-impl RegistersValInstructionSourceRequest {
-    pub(crate) fn publish(
-        self,
-        context: &SolinasMetal,
-        source: InstructionReadRafStage1Lease,
-    ) -> Result<RegistersValInstructionSourceLease, MetalError> {
-        let source_receipt = source.receipt();
-        if source_receipt != self.instruction_source
-            || source_receipt.device_registry_id() != self.device_registry_id
-            || source_receipt.rows() != self.cycles
-            || source.row_buffer().device().registry_id() != self.device_registry_id
-            || source.row_buffer().as_ptr() as usize != source_receipt.row_allocation_identity()
-            || source.row_buffer().length() != source_receipt.row_bytes()
-        {
-            return Err(invalid(
-                "RegistersVal instruction source does not match its Stage-1 request",
-            ));
-        }
-        let lease = RegistersValInstructionSourceLease {
-            receipt: RegistersValInstructionSourceReceipt {
-                cycles: self.cycles,
-                explicit_rows: self.explicit_rows,
-                device_registry_id: self.device_registry_id,
-                generation: source_receipt.source_generation(),
-                completion_serial: source_receipt.completion_serial(),
-                source_storage_ids: self.source_storage_ids,
-                source_storage_bytes: self.source_storage_bytes,
-                instruction_rows_storage_id: source_receipt.row_allocation_identity(),
-                instruction_rows_bytes: source_receipt.row_bytes(),
-            },
-            source,
-        };
-        validate_instruction_source_lease(&lease, context, self.cycles)?;
-        Ok(lease)
-    }
-}
-
-impl SolinasMetal {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the request validates two source allocations and their provenance at one boundary"
-    )]
-    pub(crate) fn prepare_registers_val_instruction_source_request(
-        &self,
-        cycles: usize,
-        explicit_rows: usize,
-        source_compact_storage_id: usize,
-        source_compact_bytes: u64,
-        source_residual_storage_id: usize,
-        source_residual_bytes: u64,
-        instruction_source: InstructionReadRafStage1Receipt,
-    ) -> Result<RegistersValInstructionSourceRequest, MetalError> {
-        if cycles < 4
-            || !cycles.is_power_of_two()
-            || explicit_rows > cycles
-            || source_compact_storage_id == 0
-            || source_residual_storage_id == 0
-            || source_compact_storage_id == source_residual_storage_id
-            || source_compact_bytes == 0
-            || source_residual_bytes == 0
-            || instruction_source.rows() != cycles
-            || instruction_source.device_registry_id() != self.device_registry_id()
-            || instruction_source.row_allocation_identity() == 0
-            || instruction_source.claim_allocation_identity() == 0
-        {
-            return Err(invalid(
-                "RegistersVal request does not match its instruction source",
-            ));
-        }
-        Ok(RegistersValInstructionSourceRequest {
-            cycles,
-            device_registry_id: self.device_registry_id(),
-            explicit_rows,
-            source_storage_ids: [source_compact_storage_id, source_residual_storage_id],
-            source_storage_bytes: [source_compact_bytes, source_residual_bytes],
-            instruction_source,
-        })
     }
 }
 
@@ -170,14 +102,6 @@ fn validate_instruction_source_lease(
 
 fn invalid(reason: &'static str) -> MetalError {
     MetalError::InvalidRegistersValState(reason)
-}
-
-#[cfg(feature = "allocative")]
-impl allocative::Allocative for RegistersValInstructionSourceRequest {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.exit();
-    }
 }
 
 #[cfg(feature = "allocative")]
@@ -233,23 +157,11 @@ mod tests {
             })
             .unwrap();
         let instruction = instruction.seal().unwrap();
-        let request = context
-            .prepare_registers_val_instruction_source_request(
-                cycles,
-                4097,
-                11,
-                48 * cycles as u64,
-                12,
-                112 * cycles as u64,
-                instruction.receipt(),
-            )
-            .unwrap();
         let source = instruction
             .lease(cycles, context.device_registry_id())
             .unwrap();
-        let lease = request.publish(&context, source).unwrap();
+        let lease = RegistersValInstructionSourceLease::new(&context, source).unwrap();
         let receipt = lease.receipt();
-        assert_eq!(receipt.explicit_rows(), 4097);
         assert_eq!(receipt.cycles(), cycles);
         assert_eq!(
             receipt.instruction_rows_storage_id(),

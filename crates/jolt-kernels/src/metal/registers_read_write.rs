@@ -774,7 +774,6 @@ mod tests {
                     true,
                     false,
                     false,
-                    false,
                 )
                 .unwrap();
                 crate::metal::spartan_outer::publish_instruction_read_raf_stage1(

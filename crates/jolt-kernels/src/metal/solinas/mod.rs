@@ -125,12 +125,13 @@ pub use instruction_read_raf::InstructionReadRafStage1Owner;
 pub(crate) use instruction_read_raf::{
     instruction_read_raf_claim_and_count_rank, instruction_read_raf_stage1_claim_bytes,
     instruction_read_raf_stage1_device_bytes, instruction_read_raf_stage1_row_bytes,
-    InstructionReadRafCompatibilityScatterConfig, InstructionReadRafCountOrder,
-    InstructionReadRafDenseGroupedPlanes, InstructionReadRafDenseGroupedReceipt,
-    InstructionReadRafFusedBytecodeReceipt, InstructionReadRafStage1ChunkWriter,
-    InstructionReadRafStage1Lease, InstructionReadRafStage1Receipt,
-    InstructionReadRafStage1Storage, PendingInstructionReadRafSourcePrimer,
-    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, INSTRUCTION_READ_RAF_SEGMENTS,
+    instruction_read_raf_stage5_owner_overlap_bytes, InstructionReadRafCompatibilityScatterConfig,
+    InstructionReadRafCountOrder, InstructionReadRafDenseGroupedPlanes,
+    InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
+    InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Lease,
+    InstructionReadRafStage1Receipt, InstructionReadRafStage1Storage,
+    PendingInstructionReadRafSourcePrimer, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
+    INSTRUCTION_READ_RAF_SEGMENTS,
 };
 #[cfg(feature = "allocative")]
 pub(crate) use outer_remainder::OuterRegistersClaimCarrierSubmission;
@@ -190,12 +191,10 @@ pub(crate) use registers_read_write::{
     RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
 };
 pub(crate) use registers_val::PendingRegistersValFirstMessage;
+pub(crate) use registers_val::RegistersValInstructionSourceLease;
 pub use registers_val::{
     RegistersValDenseConfig, RegistersValFirstMessageConfig, RegistersValFirstMessageInvocation,
     RegistersValFirstTransitionInvocation, RegistersValSequence, RegistersValTransitionConfig,
-};
-pub(crate) use registers_val::{
-    RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest,
 };
 pub use spartan_outer_uniskip::{
     evaluate_spartan_outer_uniskip_cpu, SpartanOuterUniskipConfig, SpartanOuterUniskipInvocation,

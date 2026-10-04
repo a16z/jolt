@@ -246,13 +246,11 @@ impl MetalBackend {
         if config.registers_val_evaluation.source == RegistersValEvaluationSource::Stage1Resident
             && (config.instruction_read_raf.address_cutoff_elements
                 > config.registers_val_evaluation.trace_cutoff_elements
-                || !(1 << 26..=1 << 28)
-                    .contains(&config.registers_val_evaluation.trace_cutoff_elements)
                 || config.registers_val_evaluation.cutoff_elements
                     >= config.registers_val_evaluation.trace_cutoff_elements)
         {
             return Err(MetalError::InvalidRegistersValState(
-                "Stage-1 resident RegistersVal requires the grouped owner at logs 26 through 28 and a smaller tail cutoff",
+                "Stage-1 resident RegistersVal requires the grouped owner at its trace cutoff and a smaller tail cutoff",
             ));
         }
         if config.instruction_input.dense_storage_mode
