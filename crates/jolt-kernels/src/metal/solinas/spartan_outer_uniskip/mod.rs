@@ -986,16 +986,9 @@ impl SolinasMetal {
             .and_then(|bytes| bytes.checked_add(cold_bytes))
             .ok_or(MetalError::InputTooLong(rows))?;
         self.validate_additional_working_set(row_bytes)?;
-        let instruction_input_buffer = self.device.new_buffer(
-            instruction_input_bytes,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let successor_buffer = self
-            .device
-            .new_buffer(successor_bytes, MTLResourceOptions::StorageModeShared);
-        let cold_buffer = self
-            .device
-            .new_buffer(cold_bytes, MTLResourceOptions::StorageModeShared);
+        let instruction_input_buffer = self.new_resident_shared_buffer(instruction_input_bytes);
+        let successor_buffer = self.new_resident_shared_buffer(successor_bytes);
+        let cold_buffer = self.new_resident_shared_buffer(cold_bytes);
         // SAFETY: the shared buffers have exactly `rows` elements and no command
         // buffer can observe an allocation until `fill` returns.
         let instruction_input = unsafe {

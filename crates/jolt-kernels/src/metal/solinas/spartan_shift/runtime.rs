@@ -267,15 +267,9 @@ impl SolinasMetal {
             u64::try_from(resident_bytes).map_err(|_| MetalError::InputTooLong(resident_bytes))?,
         )?;
 
-        let unexpanded_pc = self
-            .device
-            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
-        let pc = self
-            .device
-            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
-        let flags = self
-            .device
-            .new_buffer(flag_bytes_u64, MTLResourceOptions::StorageModeShared);
+        let unexpanded_pc = self.new_resident_shared_buffer(value_bytes_u64);
+        let pc = self.new_resident_shared_buffer(value_bytes_u64);
+        let flags = self.new_resident_shared_buffer(flag_bytes_u64);
 
         // SAFETY: the shared buffers above have exactly the element counts used
         // below and are not submitted to Metal until after `fill` returns.

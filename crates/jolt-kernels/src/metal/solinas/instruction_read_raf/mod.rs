@@ -10,7 +10,7 @@ use metal::{
 };
 
 use super::{
-    completed_command_gpu_time, BooleanityRow, BooleanityRows, MetalError, SolinasMetal,
+    completed_command_gpu_time, residency, BooleanityRow, BooleanityRows, MetalError, SolinasMetal,
     BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS,
 };
 
@@ -175,6 +175,14 @@ impl SolinasMetal {
 }
 
 impl InstructionReadRafStage1Storage {
+    /// Requests GPU residency for the unpublished row and claim allocations;
+    /// see [`super::residency`]. Stage 0 calls it before the fill, so the
+    /// Stage-1 consumer does not wire them inside its first command buffer.
+    pub(crate) fn prefetch_residency(&self) {
+        residency::prefetch(&self.row_buffer);
+        residency::prefetch(&self.claim_buffer);
+    }
+
     pub(crate) fn with_chunk_writers<R>(
         &mut self,
         fill: impl FnOnce(&mut [InstructionReadRafStage1ChunkWriter<'_>]) -> Result<R, MetalError>,
