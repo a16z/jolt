@@ -33,7 +33,9 @@ use super::backend::MetalBackend;
 use super::ram_read_write::{
     RamReadWriteStage1Source, RAM_READ_WRITE_STAGE1_SOURCE_CUTOFF_ELEMENTS,
 };
-use super::solinas::instruction_claim_reduction::InstructionClaimSequence;
+use super::solinas::instruction_claim_reduction::{
+    InstructionClaimSequence, InstructionClaimStorage,
+};
 #[cfg(test)]
 use super::solinas::ProductRemainderRow;
 use super::solinas::{
@@ -650,7 +652,7 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                         rows.product.clone(),
                         gamma,
                         self.config.instruction_claim_reduction.dispatch,
-                        state_a,
+                        InstructionClaimStorage::Joint { state_a },
                     ) {
                     Ok(instruction) => Some((instruction, rows)),
                     Err(error) if error.is_capacity_error() => {

@@ -73,7 +73,6 @@ struct ProductInstructionInitialMessageCommand {
     product_output: Buffer,
     instruction_output: Buffer,
     released_product_alternate_bytes: u64,
-    released_instruction_alternate_bytes: u64,
     terminal_cache: bool,
     submitted_at: Instant,
 }
@@ -487,7 +486,6 @@ fn complete_initial_message(
         deferred,
         terminal_cache = command.terminal_cache,
         released_product_alternate_bytes = command.released_product_alternate_bytes,
-        released_instruction_alternate_bytes = command.released_instruction_alternate_bytes,
         terminal_cache_capacity_bytes = tracing::field::Empty,
         terminal_cache_dense_bytes = tracing::field::Empty,
         terminal_cache_exception_count = tracing::field::Empty,
@@ -567,7 +565,7 @@ impl SolinasMetal {
     pub(crate) fn submit_product_instruction_initial_message(
         &self,
         mut product: ProductRemainderSequence,
-        mut instruction: InstructionClaimSequence,
+        instruction: InstructionClaimSequence,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
         terminal_cache: bool,
@@ -595,7 +593,6 @@ impl SolinasMetal {
         } else {
             product.release_joint_alternate()?
         };
-        let released_instruction_alternate_bytes = instruction.release_joint_alternate()?;
         let pipeline_name = if terminal_cache {
             CACHED_PIPELINE
         } else {
@@ -684,7 +681,6 @@ impl SolinasMetal {
                     product_output,
                     instruction_output,
                     released_product_alternate_bytes,
-                    released_instruction_alternate_bytes,
                     terminal_cache,
                     submitted_at,
                 }),
@@ -731,21 +727,14 @@ mod tests {
 
     use super::super::super::spartan_outer_uniskip::test_rows::stage1_rows;
     use super::super::super::{
-        instruction_claim_reduction::InstructionClaimKernelConfig, ProductRemainderSequenceConfig,
-        SolinasMetal,
+        instruction_claim_reduction::{InstructionClaimKernelConfig, InstructionClaimStorage},
+        ProductRemainderSequenceConfig, SolinasMetal,
     };
 
     fn fill_buffer_bytes(buffer: &Buffer, value: u8) {
         let length = usize::try_from(buffer.length()).unwrap();
         // SAFETY: the test owns the shared buffer and no command is using it.
         unsafe { std::ptr::write_bytes(buffer.contents().cast::<u8>(), value, length) };
-    }
-
-    fn buffer_bytes_are(buffer: &Buffer, expected: u8) -> bool {
-        let length = usize::try_from(buffer.length()).unwrap();
-        // SAFETY: all commands touching this shared buffer have completed.
-        let bytes = unsafe { std::slice::from_raw_parts(buffer.contents().cast::<u8>(), length) };
-        bytes.iter().all(|&value| value == expected)
     }
 
     #[test]
@@ -794,14 +783,15 @@ mod tests {
                 resident.clone(),
                 gamma,
                 InstructionClaimKernelConfig::default(),
-                Some(product.share_state_b().unwrap()),
+                InstructionClaimStorage::Joint {
+                    state_a: Some(product.share_state_b().unwrap()),
+                },
             )
             .expect("joint instruction sequence should prepare");
         assert!(instruction
             .allocation_identities()
             .contains(&(product_state_b.as_ptr() as usize)));
-        let instruction_state_b = instruction.joint_state_b_buffer().clone();
-        fill_buffer_bytes(&instruction_state_b, 0xa5);
+        assert_eq!(instruction.joint_state_b_buffer().length(), 1);
         let mut product_control = context
             .prepare_product_remainder_sequence_with_rows(
                 resident.clone(),
@@ -816,7 +806,7 @@ mod tests {
                 resident.clone(),
                 gamma,
                 InstructionClaimKernelConfig::default(),
-                None,
+                InstructionClaimStorage::Standalone,
             )
             .expect("control instruction sequence should prepare");
 
@@ -842,7 +832,7 @@ mod tests {
                 resident,
                 gamma,
                 InstructionClaimKernelConfig::default(),
-                None,
+                InstructionClaimStorage::Joint { state_a: None },
             )
             .expect("deferred instruction sequence should prepare");
         let deferred = context
@@ -920,14 +910,9 @@ mod tests {
             command.released_product_alternate_bytes,
             product_state_b.length()
         );
-        assert_eq!(
-            command.released_instruction_alternate_bytes,
-            instruction_state_b.length()
-        );
         let (product, product_message, instruction, instruction_message) =
             pending.join().expect("joint materialization should join");
 
-        assert!(buffer_bytes_are(&instruction_state_b, 0xa5));
         assert_eq!(product.joint_state_b_buffer().length(), 1);
         assert_eq!(instruction.joint_state_b_buffer().length(), 1);
         assert_eq!(product_message, expected_product);
@@ -964,7 +949,6 @@ mod tests {
             let (instruction_next, instruction_stats) = service
                 .instruction_bind_and_message(round, challenge, instruction_e_in, instruction_e_out)
                 .expect("cached instruction transition should be consumed");
-            assert!(buffer_bytes_are(&instruction_state_b, 0xa5));
             assert_eq!(product_next, expected_product_next);
             assert_eq!(instruction_next, expected_instruction_next);
             assert_eq!(

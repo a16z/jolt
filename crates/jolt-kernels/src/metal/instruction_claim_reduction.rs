@@ -17,7 +17,7 @@ use super::backend::MetalBackend;
 use super::solinas::instruction_claim_reduction::{
     finalize_aliased_openings, nontrivial_gamma_powers, round_polynomial_from_q_endpoints,
     InstructionClaimAliasedOpenings, InstructionClaimKernelConfig, InstructionClaimSequence,
-    PendingInstructionClaimInitialMessage,
+    InstructionClaimStorage, PendingInstructionClaimInitialMessage,
 };
 use super::solinas::{MetalError, ProductInstructionRoundService, ProductInstructionRoundStats};
 use super::spartan_product::{MetalInstructionClaimAliasOutput, MetalInstructionClaimHandoff};
@@ -122,7 +122,7 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
                     handoff.rows.product,
                     inputs.challenges.gamma,
                     self.config.instruction_claim_reduction.dispatch,
-                    None,
+                    InstructionClaimStorage::Standalone,
                 );
             match prepared {
                 Ok(sequence) => (

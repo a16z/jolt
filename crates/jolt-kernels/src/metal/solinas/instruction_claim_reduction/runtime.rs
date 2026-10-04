@@ -189,6 +189,15 @@ impl InstructionClaimRows {
     }
 }
 
+/// Workspace of an instruction claim-reduction sequence. A standalone
+/// sequence binds out of place between its own state A and state B; a joint
+/// one binds in place beside Product, so it has no state B and may borrow
+/// Product's state B as its state A.
+pub enum InstructionClaimStorage {
+    Standalone,
+    Joint { state_a: Option<Buffer> },
+}
+
 struct InstructionClaimBuffers {
     rows: InstructionClaimRows,
     gamma_powers: Buffer,
@@ -273,18 +282,18 @@ impl SolinasMetal {
             gamma,
             config,
             true,
-            None,
+            InstructionClaimStorage::Standalone,
         )
     }
 
-    /// `state_a` borrows the joint Product sequence's state B (one field per
-    /// row), which Product leaves idle once it binds in place.
+    /// A joint `storage` state A borrows the Product sequence's state B (one
+    /// field per row), which Product leaves idle once it binds in place.
     pub fn prepare_instruction_claim_sequence_with_stage1_rows(
         &self,
         product: ProductRemainderRows,
         gamma: AkitaField,
         config: InstructionClaimKernelConfig,
-        state_a: Option<Buffer>,
+        storage: InstructionClaimStorage,
     ) -> Result<InstructionClaimSequence, MetalError> {
         if product.device_registry_id() != self.device_registry_id()
             || product.source_kind() != ProductRemainderSourceKind::SpartanStage1
@@ -300,7 +309,7 @@ impl SolinasMetal {
             gamma,
             config,
             false,
-            state_a,
+            storage,
         )
     }
 
@@ -311,7 +320,7 @@ impl SolinasMetal {
         gamma: AkitaField,
         config: InstructionClaimKernelConfig,
         charge_operand_rows: bool,
-        state_a: Option<Buffer>,
+        storage: InstructionClaimStorage,
     ) -> Result<InstructionClaimSequence, MetalError> {
         let config = config.validate()?;
         let geometry = InstructionClaimGeometry::new(row_count)?;
@@ -324,6 +333,11 @@ impl SolinasMetal {
         )?
         .validate_max_buffer_length(maximum_buffer)?;
         let state_a_bytes = layout.state_a_fields() * size_of::<Fp128>();
+        let state_b_bytes = layout.state_b_fields() * size_of::<Fp128>();
+        let (state_a, joint) = match storage {
+            InstructionClaimStorage::Standalone => (None, false),
+            InstructionClaimStorage::Joint { state_a } => (state_a, true),
+        };
         if state_a
             .as_ref()
             .is_some_and(|state_a| state_a.length() != state_a_bytes as u64)
@@ -336,7 +350,8 @@ impl SolinasMetal {
             layout.resident_bytes()
         } else {
             layout.workspace_bytes()
-        } - usize::from(state_a.is_some()) * state_a_bytes;
+        } - usize::from(state_a.is_some()) * state_a_bytes
+            - usize::from(joint) * state_b_bytes;
         let resident_bytes =
             u64::try_from(charged_bytes).map_err(|_| MetalError::InputTooLong(charged_bytes))?;
         self.validate_additional_working_set(resident_bytes)?;
@@ -457,7 +472,13 @@ impl SolinasMetal {
                 Some(state_a) => state_a,
                 None => self.new_instruction_claim_buffer(layout.state_a_fields())?,
             },
-            state_b: self.new_instruction_claim_buffer(layout.state_b_fields())?,
+            // A joint sequence binds in place and never reads state B.
+            state_b: if joint {
+                self.device
+                    .new_buffer(1, MTLResourceOptions::StorageModeShared)
+            } else {
+                self.new_instruction_claim_buffer(layout.state_b_fields())?
+            },
             e_in: self.new_instruction_claim_buffer(layout.e_in_fields())?,
             e_out: self.new_instruction_claim_buffer(layout.e_out_fields())?,
             partial_a: self.new_instruction_claim_buffer(layout.partial_fields())?,
@@ -750,36 +771,6 @@ impl InstructionClaimSequence {
     #[cfg(test)]
     pub(in crate::metal::solinas) const fn joint_state_b_buffer(&self) -> &Buffer {
         &self.buffers.state_b
-    }
-
-    pub(in crate::metal::solinas) fn release_joint_alternate(&mut self) -> Result<u64, MetalError> {
-        if self.phase != InstructionClaimPhase::Raw
-            || self.current_elements != self.geometry.rows()
-            || !self.source_in_a
-        {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint alternate release requires a raw sequence",
-            ));
-        }
-        let expected_bytes = self
-            .layout
-            .state_b_fields()
-            .checked_mul(size_of::<Fp128>())
-            .and_then(|bytes| u64::try_from(bytes).ok())
-            .ok_or(MetalError::InputTooLong(self.layout.state_b_fields()))?;
-        if self.buffers.state_b.length() != expected_bytes {
-            return Err(MetalError::InvalidInstructionClaimState(
-                "joint instruction alternate has already been released or has the wrong size",
-            ));
-        }
-        let tombstone = self
-            .context
-            .device
-            .new_buffer(1, MTLResourceOptions::StorageModeShared);
-        let alternate = mem::replace(&mut self.buffers.state_b, tombstone);
-        let released_bytes = alternate.length();
-        drop(alternate);
-        Ok(released_bytes)
     }
 
     copy_field_getters! { pub(crate), { joint_gamma => gamma: AkitaField }}
