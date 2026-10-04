@@ -1004,9 +1004,16 @@ fn prove_workload(
         .joint_opening_proof
         .unframed_payload_size()
         .expect("packed opening component lengths must fit usize");
-    let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-        .expect("serialize packed proof")
-        .len();
+    let proof_bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+        .expect("serialize packed proof");
+    let proof_size = proof_bytes.len();
+    // The setup seed, guest input, and transcript are fixed, so equal digests
+    // across builds prove byte-identical proofs.
+    let mut proof_digest = String::with_capacity(32);
+    for byte in &Blake2b512::digest(&proof_bytes)[..16] {
+        write!(&mut proof_digest, "{byte:02x}").expect("format proof digest");
+    }
+    println!("PROOF_DIGEST blake2b512_128={proof_digest}");
     tracing::info!(
         akita_proof_body_size,
         akita_opening_unframed_size,
