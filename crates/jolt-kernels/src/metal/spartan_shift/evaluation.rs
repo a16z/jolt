@@ -17,8 +17,8 @@ use rayon::prelude::*;
 
 use super::super::backend::{MetalBackend, MetalConfig};
 use super::super::solinas::spartan_shift::{SpartanShiftPlan, SpartanShiftResidentRows};
-use super::super::spartan_dense::SpartanDenseResidentOwner;
-use crate::optimized::spartan_outer::prepare_metal_spartan_outer_shift_witness_rows;
+use super::super::solinas::{InstructionInputRow, SpartanRawRow};
+use crate::optimized::spartan_outer::prepare_metal_spartan_outer_witness_rows;
 use crate::optimized::spartan_shift::OptimizedSpartanShift;
 use crate::{PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
@@ -79,9 +79,7 @@ pub struct SpartanShiftShapeSnapshot {
     pub cycles: usize,
     pub prefix_elements: usize,
     pub suffix_elements: usize,
-    pub resident_source_bytes: usize,
-    pub native_value_bytes: usize,
-    pub native_flag_bytes: usize,
+    pub native_row_bytes: usize,
     pub partial_bytes: usize,
     pub q_bytes: usize,
     pub dense_output_bytes: usize,
@@ -182,18 +180,34 @@ impl SpartanShiftCpuMetalEvalFixture {
                 .fold_threads_per_threadgroup = value;
         }
         let backend = MetalBackend::new(metal_config).map_err(kernel_error)?;
-        let (_, resident_rows) =
-            prepare_metal_spartan_outer_shift_witness_rows(&backend.context, witness, cycles)
+        let outer_rows =
+            prepare_metal_spartan_outer_witness_rows(&backend.context, witness, cycles)
                 .map_err(|error| kernel_error(format!("{error:?}")))?;
+        let resident_rows = outer_rows
+            .share_shift_rows(&backend.context)
+            .map_err(kernel_error)?;
         let census_started = Instant::now();
-        let [unexpanded_pc_buffer, pc_buffer, _] = resident_rows.source_buffers();
-        // SAFETY: each immutable shared buffer owns exactly `cycles` u64 values.
-        let unexpanded_pc =
-            unsafe { slice::from_raw_parts(unexpanded_pc_buffer.contents().cast::<u64>(), cycles) };
-        // SAFETY: same ownership and immutability argument as `unexpanded_pc`.
-        let pc = unsafe { slice::from_raw_parts(pc_buffer.contents().cast::<u64>(), cycles) };
-        let (unexpanded_pc_max, unexpanded_pc_above_u32) = native_width_stats(unexpanded_pc);
-        let (pc_max, pc_above_u32) = native_width_stats(pc);
+        // SAFETY: the immutable shared Stage-1 buffers own exactly `cycles` rows each.
+        let compact = unsafe {
+            slice::from_raw_parts(
+                outer_rows
+                    .instruction_input_buffer()
+                    .contents()
+                    .cast::<InstructionInputRow>(),
+                cycles,
+            )
+        };
+        // SAFETY: see `compact`.
+        let raw = unsafe {
+            slice::from_raw_parts(
+                outer_rows.raw_buffer().contents().cast::<SpartanRawRow>(),
+                cycles,
+            )
+        };
+        let unexpanded_pc = compact.iter().map(|row| row.words()[1]).collect::<Vec<_>>();
+        let pc = raw.iter().map(|row| row.pc()).collect::<Vec<_>>();
+        let (unexpanded_pc_max, unexpanded_pc_above_u32) = native_width_stats(&unexpanded_pc);
+        let (pc_max, pc_above_u32) = native_width_stats(&pc);
         let native_width_census_wall = census_started.elapsed();
         let plan = SpartanShiftPlan::new(cycles, metal_config.spartan_shift.dispatch)
             .map_err(kernel_error)?;
@@ -240,9 +254,7 @@ impl SpartanShiftCpuMetalEvalFixture {
             cycles,
             prefix_elements: plan.geometry.prefix_elements(),
             suffix_elements: plan.geometry.suffix_elements(),
-            resident_source_bytes: resident_rows.resident_bytes(),
-            native_value_bytes: plan.storage.native_value_bytes,
-            native_flag_bytes: plan.storage.native_flag_bytes,
+            native_row_bytes: plan.storage.native_row_bytes,
             partial_bytes: plan.storage.partial_bytes,
             q_bytes: plan.storage.q_bytes,
             dense_output_bytes: plan.storage.dense_output_bytes,
@@ -331,10 +343,8 @@ impl SpartanShiftCpuMetalEvalFixture {
     ) -> Result<SpartanShiftEvalSample, SpartanShiftEvalError> {
         let member_started = Instant::now();
         let prepare_started = Instant::now();
-        let owner = SpartanDenseResidentOwner::from_co_produced_shift(self.resident_rows.clone())
-            .map_err(kernel_error)?;
         let mut session = ProofSession::default();
-        session.park(owner);
+        session.park(self.resident_rows.clone());
         let route_before = self.backend.spartan_shift_sequences();
         let mut kernel = self
             .backend

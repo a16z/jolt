@@ -1,4 +1,4 @@
-use std::{mem::size_of, slice, time::Duration};
+use std::{slice, time::Duration};
 
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{
@@ -7,22 +7,23 @@ use metal::{
 };
 
 use super::super::{
-    buffer_from_slice, completed_command_gpu_time, residency, set_inline_bytes, Fp128, MetalError,
+    buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128, MetalError,
     PipelineLimits, SolinasMetal,
 };
 use super::{
     mixed_gamma_multipliers, mixed_high_weights, prefix_fold_weights,
-    ResidentSpartanShiftBufferMetadata, ResidentSpartanShiftMetadata, SpartanShiftFlagWord,
-    SpartanShiftGeometry, SpartanShiftKernelConfig, SpartanShiftOutputs, SpartanShiftPlan,
-    BUILD_MIXED_PIPELINE, FOLD_NATIVE_PIPELINE, REDUCE_PREFIX_PIPELINE,
-    SPARTAN_SHIFT_OUTPUT_COLUMNS, SPARTAN_SHIFT_PREFIX_PAIRS, SPARTAN_SHIFT_SIMD_WIDTH,
+    ResidentSpartanShiftBufferMetadata, ResidentSpartanShiftMetadata, SpartanShiftGeometry,
+    SpartanShiftKernelConfig, SpartanShiftOutputs, SpartanShiftPlan, BUILD_MIXED_PIPELINE,
+    FOLD_NATIVE_PIPELINE, REDUCE_PREFIX_PIPELINE, SPARTAN_SHIFT_OUTPUT_COLUMNS,
+    SPARTAN_SHIFT_PREFIX_PAIRS, SPARTAN_SHIFT_SIMD_WIDTH,
 };
 
+/// The Shift view of the resident Stage-1 rows: unexpanded PC and the
+/// virtual/first/no-op flags from the compact row, PC from the raw row.
 #[derive(Clone)]
 pub struct SpartanShiftResidentRows {
-    unexpanded_pc: Buffer,
-    pc: Buffer,
-    flags: Buffer,
+    compact: Buffer,
+    raw: Buffer,
     metadata: ResidentSpartanShiftMetadata,
 }
 
@@ -39,22 +40,8 @@ impl SpartanShiftResidentRows {
         self.metadata.device_registry_id
     }
 
-    pub const fn resident_bytes(&self) -> usize {
-        self.metadata.unexpanded_pc.byte_len
-            + self.metadata.pc.byte_len
-            + self.metadata.flags.byte_len
-    }
-
-    pub fn allocation_identities(&self) -> [usize; 3] {
-        [
-            self.unexpanded_pc.as_ptr() as usize,
-            self.pc.as_ptr() as usize,
-            self.flags.as_ptr() as usize,
-        ]
-    }
-
-    pub(crate) fn source_buffers(&self) -> [&Buffer; 3] {
-        [&self.unexpanded_pc, &self.pc, &self.flags]
+    pub fn allocation_identities(&self) -> [usize; 2] {
+        [self.compact.as_ptr() as usize, self.raw.as_ptr() as usize]
     }
 
     fn validate_for(
@@ -67,9 +54,8 @@ impl SpartanShiftResidentRows {
             .validate(plan.geometry, context.device_registry_id())?;
         if self.allocation_identities()
             != [
-                metadata.unexpanded_pc.allocation_identity,
-                metadata.pc.allocation_identity,
-                metadata.flags.allocation_identity,
+                metadata.compact.allocation_identity,
+                metadata.raw.allocation_identity,
             ]
         {
             return Err(MetalError::InvalidSpartanShiftState(
@@ -126,7 +112,7 @@ pub struct SpartanShiftFoldObservation {
 
 struct SpartanShiftSubmittedCommand {
     command_buffer: CommandBuffer,
-    source_allocation_identities: [usize; 3],
+    source_allocation_identities: [usize; 2],
     output_allocation_identity: usize,
 }
 
@@ -201,132 +187,15 @@ impl PendingSpartanShiftFold {
 }
 
 impl SolinasMetal {
-    pub fn prepare_spartan_shift_rows(
+    pub(crate) fn attach_spartan_shift_rows(
         &self,
-        unexpanded_pc: &[u64],
-        pc: &[u64],
-        flags: &[SpartanShiftFlagWord],
-        exact_current_flags: bool,
-    ) -> Result<SpartanShiftResidentRows, MetalError> {
-        let geometry = SpartanShiftGeometry::new(unexpanded_pc.len())?;
-        for (name, actual, expected) in [
-            ("unexpanded PC", unexpanded_pc.len(), geometry.rows()),
-            ("PC", pc.len(), geometry.rows()),
-            ("flag words", flags.len(), geometry.flag_words()),
-        ] {
-            if actual != expected {
-                return Err(super::SpartanShiftPlanError::WrongLength {
-                    name,
-                    expected,
-                    actual,
-                }
-                .into());
-            }
-        }
-
-        self.prepare_spartan_shift_rows_with_fill(
-            geometry.rows(),
-            exact_current_flags,
-            |destination_unexpanded_pc, destination_pc, destination_flags| {
-                destination_unexpanded_pc.copy_from_slice(unexpanded_pc);
-                destination_pc.copy_from_slice(pc);
-                destination_flags.copy_from_slice(flags);
-                Ok(())
-            },
-        )
-    }
-
-    pub(crate) fn prepare_spartan_shift_rows_with_fill(
-        &self,
+        compact: Buffer,
+        raw: Buffer,
         rows: usize,
-        exact_current_flags: bool,
-        fill: impl FnOnce(&mut [u64], &mut [u64], &mut [SpartanShiftFlagWord]) -> Result<(), MetalError>,
     ) -> Result<SpartanShiftResidentRows, MetalError> {
         let geometry = SpartanShiftGeometry::new(rows)?;
-
-        let value_bytes = geometry
-            .rows()
-            .checked_mul(size_of::<u64>())
-            .ok_or(MetalError::InputTooLong(geometry.rows()))?;
-        let flag_bytes = geometry
-            .flag_words()
-            .checked_mul(size_of::<SpartanShiftFlagWord>())
-            .ok_or(MetalError::InputTooLong(geometry.rows()))?;
-        let value_bytes_u64 =
-            u64::try_from(value_bytes).map_err(|_| MetalError::InputTooLong(value_bytes))?;
-        let flag_bytes_u64 =
-            u64::try_from(flag_bytes).map_err(|_| MetalError::InputTooLong(flag_bytes))?;
-        for bytes in [value_bytes_u64, flag_bytes_u64] {
-            self.validate_buffer_length(bytes)?;
-        }
-        let resident_bytes = value_bytes
-            .checked_mul(2)
-            .and_then(|bytes| bytes.checked_add(flag_bytes))
-            .ok_or(MetalError::InputTooLong(geometry.rows()))?;
-        self.validate_additional_working_set(
-            u64::try_from(resident_bytes).map_err(|_| MetalError::InputTooLong(resident_bytes))?,
-        )?;
-
-        let unexpanded_pc = self
-            .device
-            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
-        let pc = self
-            .device
-            .new_buffer(value_bytes_u64, MTLResourceOptions::StorageModeShared);
-        let flags = self
-            .device
-            .new_buffer(flag_bytes_u64, MTLResourceOptions::StorageModeShared);
-        let _residency =
-            residency::prefetch(vec![unexpanded_pc.clone(), pc.clone(), flags.clone()]);
-
-        // SAFETY: the shared buffers above have exactly the element counts used
-        // below and are not submitted to Metal until after `fill` returns.
-        let destination_unexpanded_pc = unsafe {
-            slice::from_raw_parts_mut(unexpanded_pc.contents().cast::<u64>(), geometry.rows())
-        };
-        // SAFETY: see the allocation and submission invariant above.
-        let destination_pc =
-            unsafe { slice::from_raw_parts_mut(pc.contents().cast::<u64>(), geometry.rows()) };
-        // SAFETY: see the allocation and submission invariant above.
-        let destination_flags = unsafe {
-            slice::from_raw_parts_mut(
-                flags.contents().cast::<SpartanShiftFlagWord>(),
-                geometry.flag_words(),
-            )
-        };
-        fill(destination_unexpanded_pc, destination_pc, destination_flags)?;
-
-        self.attach_spartan_shift_rows(
-            unexpanded_pc,
-            pc,
-            flags,
-            geometry.rows(),
-            exact_current_flags,
-        )
-    }
-
-    pub fn attach_spartan_shift_rows(
-        &self,
-        unexpanded_pc: Buffer,
-        pc: Buffer,
-        flags: Buffer,
-        rows: usize,
-        exact_current_flags: bool,
-    ) -> Result<SpartanShiftResidentRows, MetalError> {
-        let geometry = SpartanShiftGeometry::new(rows)?;
-        let value_bytes = rows
-            .checked_mul(size_of::<u64>())
-            .ok_or(MetalError::InputTooLong(rows))?;
-        let flag_bytes = geometry
-            .flag_words()
-            .checked_mul(size_of::<SpartanShiftFlagWord>())
-            .ok_or(MetalError::InputTooLong(rows))?;
         let expected_device = self.device_registry_id();
-        for (name, buffer, expected_bytes) in [
-            ("unexpanded PC", &unexpanded_pc, value_bytes),
-            ("PC", &pc, value_bytes),
-            ("flags", &flags, flag_bytes),
-        ] {
+        for (name, buffer) in [("compact rows", &compact), ("raw rows", &raw)] {
             let got_device = buffer.device().registry_id();
             if got_device != expected_device {
                 return Err(MetalError::SpartanShiftBufferDevice {
@@ -335,41 +204,25 @@ impl SolinasMetal {
                     got: got_device,
                 });
             }
-            self.validate_buffer_length(buffer.length())?;
-            let expected_length = u64::try_from(expected_bytes)
-                .map_err(|_| MetalError::InputTooLong(expected_bytes))?;
-            if buffer.length() != expected_length {
-                return Err(super::SpartanShiftPlanError::WrongLength {
-                    name,
-                    expected: expected_bytes,
-                    actual: usize::try_from(buffer.length()).unwrap_or(usize::MAX),
-                }
-                .into());
-            }
         }
         let metadata = ResidentSpartanShiftMetadata {
             rows: geometry.rows(),
-            unexpanded_pc: ResidentSpartanShiftBufferMetadata {
-                allocation_identity: unexpanded_pc.as_ptr() as usize,
-                byte_len: value_bytes,
+            compact: ResidentSpartanShiftBufferMetadata {
+                allocation_identity: compact.as_ptr() as usize,
+                byte_len: usize::try_from(compact.length())
+                    .map_err(|_| MetalError::InputTooLong(rows))?,
             },
-            pc: ResidentSpartanShiftBufferMetadata {
-                allocation_identity: pc.as_ptr() as usize,
-                byte_len: value_bytes,
+            raw: ResidentSpartanShiftBufferMetadata {
+                allocation_identity: raw.as_ptr() as usize,
+                byte_len: usize::try_from(raw.length())
+                    .map_err(|_| MetalError::InputTooLong(rows))?,
             },
-            flags: ResidentSpartanShiftBufferMetadata {
-                allocation_identity: flags.as_ptr() as usize,
-                byte_len: flag_bytes,
-            },
-            device_registry_id: self.device_registry_id(),
-            exact_current_flags,
+            device_registry_id: expected_device,
         }
-        .validate(geometry, self.device_registry_id())?;
-
+        .validate(geometry, expected_device)?;
         Ok(SpartanShiftResidentRows {
-            unexpanded_pc,
-            pc,
-            flags,
+            compact,
+            raw,
             metadata,
         })
     }
@@ -535,13 +388,12 @@ impl SpartanShiftPrefixInvocation {
         autoreleasepool(|| -> Result<(), MetalError> {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.build_pipeline);
-            encoder.set_buffer(0, Some(&self.rows.unexpanded_pc), 0);
-            encoder.set_buffer(1, Some(&self.rows.pc), 0);
-            encoder.set_buffer(2, Some(&self.rows.flags), 0);
-            encoder.set_buffer(3, Some(&self.buffers.gamma_powers), 0);
-            encoder.set_buffer(4, Some(&self.buffers.high_weights), 0);
-            encoder.set_buffer(5, Some(&self.buffers.partials), 0);
-            set_inline_bytes(encoder, 6, &self.plan.params);
+            encoder.set_buffer(0, Some(&self.rows.compact), 0);
+            encoder.set_buffer(1, Some(&self.rows.raw), 0);
+            encoder.set_buffer(2, Some(&self.buffers.gamma_powers), 0);
+            encoder.set_buffer(3, Some(&self.buffers.high_weights), 0);
+            encoder.set_buffer(4, Some(&self.buffers.partials), 0);
+            set_inline_bytes(encoder, 5, &self.plan.params);
             encoder.dispatch_thread_groups(
                 MTLSize {
                     width: self.plan.build_threadgroups() as u64,
@@ -613,7 +465,7 @@ impl SpartanShiftPrefixInvocation {
         0
     }
 
-    pub fn source_allocation_identities(&self) -> [usize; 3] {
+    pub fn source_allocation_identities(&self) -> [usize; 2] {
         self.rows.allocation_identities()
     }
 }
@@ -638,12 +490,11 @@ impl SpartanShiftFoldInvocation {
         autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipeline);
-            encoder.set_buffer(0, Some(&self.rows.unexpanded_pc), 0);
-            encoder.set_buffer(1, Some(&self.rows.pc), 0);
-            encoder.set_buffer(2, Some(&self.rows.flags), 0);
-            encoder.set_buffer(3, Some(&self.buffers.low_weights), 0);
-            encoder.set_buffer(4, Some(&self.buffers.dense_outputs), 0);
-            set_inline_bytes(encoder, 5, &self.plan.params);
+            encoder.set_buffer(0, Some(&self.rows.compact), 0);
+            encoder.set_buffer(1, Some(&self.rows.raw), 0);
+            encoder.set_buffer(2, Some(&self.buffers.low_weights), 0);
+            encoder.set_buffer(3, Some(&self.buffers.dense_outputs), 0);
+            set_inline_bytes(encoder, 4, &self.plan.params);
             encoder.set_threadgroup_memory_length(0, self.dynamic_threadgroup_bytes as u64);
             encoder.dispatch_thread_groups(
                 MTLSize {
@@ -708,7 +559,7 @@ impl SpartanShiftFoldInvocation {
         0
     }
 
-    pub fn source_allocation_identities(&self) -> [usize; 3] {
+    pub fn source_allocation_identities(&self) -> [usize; 2] {
         self.rows.allocation_identities()
     }
 }

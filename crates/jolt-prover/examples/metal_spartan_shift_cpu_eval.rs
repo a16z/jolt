@@ -204,7 +204,6 @@ fn main() -> EvalResult<()> {
         "rayon_threads": rayon::current_num_threads(),
         "fixture": {
             "wall_ns": duration_ns(evaluator.fixture_wall())?,
-            "resident_source_bytes": shape.resident_source_bytes,
             "calibration_prefix_gpu_active_ns": duration_ns(shape.calibration_prefix_gpu_active)?,
             "calibration_fold_gpu_active_ns": duration_ns(shape.calibration_fold_gpu_active)?,
             "native_width_census_wall_ns": duration_ns(shape.native_width_census_wall)?,
@@ -212,8 +211,7 @@ fn main() -> EvalResult<()> {
         "shape": {
             "prefix_elements": shape.prefix_elements,
             "suffix_elements": shape.suffix_elements,
-            "native_value_bytes": shape.native_value_bytes,
-            "native_flag_bytes": shape.native_flag_bytes,
+            "native_row_bytes": shape.native_row_bytes,
             "partial_bytes": shape.partial_bytes,
             "q_bytes": shape.q_bytes,
             "dense_output_bytes": shape.dense_output_bytes,

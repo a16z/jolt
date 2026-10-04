@@ -19,7 +19,7 @@ use metal::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::spartan_shift::{SpartanShiftFlagWord, SpartanShiftGeometry, SpartanShiftResidentRows};
+use super::spartan_shift::SpartanShiftResidentRows;
 use super::{
     buffer_from_slice, completed_command_gpu_time, residency, Fp128, InstructionInputRow,
     InstructionInputRows, MetalError, SolinasMetal,
@@ -70,7 +70,7 @@ const FLAG_JUMP: u32 = 5;
 const FLAG_SHOULD_BRANCH: u32 = 6;
 const FLAG_ASSERT: u32 = 7;
 const FLAG_SHOULD_JUMP: u32 = 8;
-const FLAG_VIRTUAL: u32 = 9;
+pub(crate) const FLAG_VIRTUAL: u32 = 9;
 const FLAG_IS_LAST: u32 = 10;
 const FLAG_NEXT_VIRTUAL: u32 = 11;
 const FLAG_NEXT_FIRST: u32 = 12;
@@ -88,7 +88,7 @@ const FLAG_RIGHT_OPERAND_IS_IMM: u32 = 23;
 pub(crate) const FLAG_IS_FIRST: u32 = 24;
 const FLAG_BRANCH: u32 = 25;
 const FLAG_NEXT_IS_NOOP: u32 = 26;
-const FLAG_IS_NOOP: u32 = 27;
+pub(crate) const FLAG_IS_NOOP: u32 = 27;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -107,6 +107,10 @@ pub(crate) struct SpartanRawRow {
 }
 
 impl SpartanRawRow {
+    pub(crate) const fn pc(self) -> u64 {
+        self.words[0]
+    }
+
     pub(crate) const fn stage1_ram_pre_value(self) -> u64 {
         self.words[2]
     }
@@ -192,6 +196,17 @@ impl SpartanOuterUniskipRows {
 
     pub(crate) fn restore_instruction_input_accounting(&mut self) {
         self.accounts_instruction_input_rows = true;
+    }
+
+    pub(crate) fn share_shift_rows(
+        &self,
+        context: &SolinasMetal,
+    ) -> Result<SpartanShiftResidentRows, MetalError> {
+        context.attach_spartan_shift_rows(
+            self.instruction_input_buffer().clone(),
+            self.raw_buffer.clone(),
+            self.len,
+        )
     }
 
     pub(crate) fn share_product_remainder_rows(
@@ -727,24 +742,16 @@ impl SolinasMetal {
     pub(crate) fn submit_spartan_stage1_source_primer(
         &self,
         outer: &SpartanOuterUniskipRows,
-        shift: &SpartanShiftResidentRows,
     ) -> Result<PendingSpartanStage1SourcePrimer, MetalError> {
-        if outer.len() != shift.len()
-            || outer.device_registry_id() != self.device_registry_id()
-            || shift.device_registry_id() != self.device_registry_id()
-        {
+        if outer.device_registry_id() != self.device_registry_id() {
             return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer received mismatched resident rows",
+                "Stage1 source primer received foreign resident rows",
             ));
         }
 
-        let [shift_unexpanded_pc, shift_pc, shift_flags] = shift.source_buffers();
         let sources = vec![
             outer.instruction_input_buffer().clone(),
             outer.raw_buffer().clone(),
-            shift_unexpanded_pc.clone(),
-            shift_pc.clone(),
-            shift_flags.clone(),
         ];
         let expected_device = self.device_registry_id();
         if sources
@@ -904,62 +911,6 @@ impl SolinasMetal {
             generation,
             accounts_instruction_input_rows: true,
         })
-    }
-
-    pub(crate) fn prepare_spartan_outer_uniskip_rows_with_shift_fill(
-        &self,
-        rows: usize,
-        fill: impl FnOnce(
-            &mut [InstructionInputRow],
-            &mut [SpartanRawRow],
-            &mut [u64],
-            &mut [u64],
-            &mut [SpartanShiftFlagWord],
-        ) -> Result<(), MetalError>,
-    ) -> Result<(SpartanOuterUniskipRows, SpartanShiftResidentRows), MetalError> {
-        self.validate_spartan_outer_uniskip_shift_rows_capacity(rows)?;
-        let mut outer_rows = None;
-        let shift_rows =
-            self.prepare_spartan_shift_rows_with_fill(rows, true, |unexpanded_pc, pc, flags| {
-                let prepared = self.prepare_spartan_outer_uniskip_rows_with_fill(
-                    rows,
-                    |instruction_input, raw| fill(instruction_input, raw, unexpanded_pc, pc, flags),
-                )?;
-                outer_rows = Some(prepared);
-                Ok(())
-            })?;
-        let outer_rows = outer_rows.ok_or(MetalError::InvalidSpartanShiftState(
-            "combined outer/shift fill did not produce outer rows",
-        ))?;
-        Ok((outer_rows, shift_rows))
-    }
-
-    pub(crate) fn validate_spartan_outer_uniskip_shift_rows_capacity(
-        &self,
-        rows: usize,
-    ) -> Result<(), MetalError> {
-        let geometry = SpartanShiftGeometry::new(rows)?;
-        let instruction_input_bytes = byte_length::<InstructionInputRow>(rows)?;
-        let raw_bytes = byte_length::<SpartanRawRow>(rows)?;
-        let shift_value_bytes = byte_length::<u64>(geometry.rows())?;
-        let shift_flag_bytes = byte_length::<SpartanShiftFlagWord>(geometry.flag_words())?;
-        for bytes in [
-            instruction_input_bytes,
-            raw_bytes,
-            shift_value_bytes,
-            shift_flag_bytes,
-        ] {
-            self.validate_buffer_length(bytes)?;
-        }
-        let shift_value_total_bytes = shift_value_bytes
-            .checked_mul(2)
-            .ok_or(MetalError::InputTooLong(rows))?;
-        let additional = instruction_input_bytes
-            .checked_add(raw_bytes)
-            .and_then(|bytes| bytes.checked_add(shift_value_total_bytes))
-            .and_then(|bytes| bytes.checked_add(shift_flag_bytes))
-            .ok_or(MetalError::InputTooLong(rows))?;
-        self.validate_additional_working_set(additional)
     }
 
     pub fn prepare_spartan_outer_uniskip_with_rows(
@@ -1472,22 +1423,12 @@ mod tests {
     }
 
     #[test]
-    fn stage1_source_primer_completes_over_resident_planes() {
+    fn stage1_source_primer_completes_over_resident_rows() {
         let context = SolinasMetal::for_akita().unwrap();
         let outer = context
             .prepare_spartan_outer_uniskip_rows(&vec![SpartanOuterUniskipRow::default(); 512])
             .unwrap();
-        let shift = context
-            .prepare_spartan_shift_rows(
-                &vec![3; 512],
-                &vec![5; 512],
-                &[SpartanShiftFlagWord::default(); 16],
-                true,
-            )
-            .unwrap();
-        let pending = context
-            .submit_spartan_stage1_source_primer(&outer, &shift)
-            .unwrap();
+        let pending = context.submit_spartan_stage1_source_primer(&outer).unwrap();
         pending.join().unwrap();
     }
 

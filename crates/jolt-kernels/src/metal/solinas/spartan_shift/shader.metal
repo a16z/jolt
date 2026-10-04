@@ -1,13 +1,11 @@
-// Concatenate after the offset-specialized fp128.metal and simd_reduce.metal.
+// Concatenate after fp128.metal, simd_reduce.metal and spartan_outer_common.metal.
 
 #define SPARTAN_SHIFT_PREFIX_PAIRS 4u
 #define SPARTAN_SHIFT_OUTPUT_COLUMNS 5u
-
-struct SpartanShiftFlagWord {
-    uint is_virtual;
-    uint is_first_in_sequence;
-    uint is_noop;
-};
+// Compact-row flag bits; FLAG_* in spartan_outer_uniskip/mod.rs (keep in sync).
+#define SPARTAN_SHIFT_FLAG_VIRTUAL 9u
+#define SPARTAN_SHIFT_FLAG_IS_FIRST 24u
+#define SPARTAN_SHIFT_FLAG_IS_NOOP 27u
 
 struct SpartanShiftParams {
     uint prefix_elements;
@@ -96,19 +94,17 @@ inline SolinasFp128 spartan_shift_mul_u64(SolinasFp128 lhs, ulong rhs) {
 }
 
 inline SpartanShiftNativeValue spartan_shift_native_value(
-    device const ulong* unexpanded_pc,
-    device const ulong* pc,
-    device const SpartanShiftFlagWord* flags,
+    device const InstructionInputRow* compact,
+    device const SpartanRawRow* raw,
     uint row)
 {
-    SpartanShiftFlagWord word = flags[row >> 5];
-    uint bit = 1u << (row & 31u);
+    ulong flags = instruction_input_row_word(compact[row], 5u);
     SpartanShiftNativeValue value;
-    value.unexpanded_pc = unexpanded_pc[row];
-    value.pc = pc[row];
-    value.is_virtual = (word.is_virtual & bit) != 0u;
-    value.is_first_in_sequence = (word.is_first_in_sequence & bit) != 0u;
-    value.is_noop = (word.is_noop & bit) != 0u;
+    value.unexpanded_pc = instruction_input_row_word(compact[row], 1u);
+    value.pc = spartan_raw_row_word(raw[row], 0u);
+    value.is_virtual = ((flags >> SPARTAN_SHIFT_FLAG_VIRTUAL) & 1ul) != 0ul;
+    value.is_first_in_sequence = ((flags >> SPARTAN_SHIFT_FLAG_IS_FIRST) & 1ul) != 0ul;
+    value.is_noop = ((flags >> SPARTAN_SHIFT_FLAG_IS_NOOP) & 1ul) != 0ul;
     return value;
 }
 
@@ -128,13 +124,12 @@ inline SolinasFp128 spartan_shift_outer_mixed(
 }
 
 kernel void solinas_spartan_shift_build_mixed_partials(
-    device const ulong* unexpanded_pc [[buffer(0)]],
-    device const ulong* pc [[buffer(1)]],
-    device const SpartanShiftFlagWord* flags [[buffer(2)]],
-    device const SolinasFp128* gamma_powers [[buffer(3)]],
-    device const SolinasFp128* high_weights [[buffer(4)]],
-    device SolinasFp128* partials [[buffer(5)]],
-    constant SpartanShiftParams& params [[buffer(6)]],
+    device const InstructionInputRow* compact [[buffer(0)]],
+    device const SpartanRawRow* raw [[buffer(1)]],
+    device const SolinasFp128* gamma_powers [[buffer(2)]],
+    device const SolinasFp128* high_weights [[buffer(3)]],
+    device SolinasFp128* partials [[buffer(4)]],
+    constant SpartanShiftParams& params [[buffer(5)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
@@ -152,8 +147,7 @@ kernel void solinas_spartan_shift_build_mixed_partials(
         high_start + params.high_tile_elements,
         params.suffix_elements);
     uint row = high_start * params.prefix_elements + x_lo;
-    SpartanShiftNativeValue current_native = spartan_shift_native_value(
-        unexpanded_pc, pc, flags, row);
+    SpartanShiftNativeValue current_native = spartan_shift_native_value(compact, raw, row);
     SolinasFp128 current = spartan_shift_outer_mixed(current_native, gamma_powers);
     bool current_noop = current_native.is_noop;
     SolinasFp128 outer_current = solinas_zero();
@@ -167,8 +161,8 @@ kernel void solinas_spartan_shift_build_mixed_partials(
         bool next_noop = true;
         if (has_next) {
             uint next_row = (high + 1u) * params.prefix_elements + x_lo;
-            SpartanShiftNativeValue next_native = spartan_shift_native_value(
-                unexpanded_pc, pc, flags, next_row);
+            SpartanShiftNativeValue next_native =
+                spartan_shift_native_value(compact, raw, next_row);
             next = spartan_shift_outer_mixed(next_native, gamma_powers);
             next_noop = next_native.is_noop;
         }
@@ -223,12 +217,11 @@ kernel void solinas_spartan_shift_reduce_prefix(
 }
 
 kernel void solinas_spartan_shift_fold_native(
-    device const ulong* unexpanded_pc [[buffer(0)]],
-    device const ulong* pc [[buffer(1)]],
-    device const SpartanShiftFlagWord* flags [[buffer(2)]],
-    device const SolinasFp128* low_weights [[buffer(3)]],
-    device SolinasFp128* dense_outputs [[buffer(4)]],
-    constant SpartanShiftParams& params [[buffer(5)]],
+    device const InstructionInputRow* compact [[buffer(0)]],
+    device const SpartanRawRow* raw [[buffer(1)]],
+    device const SolinasFp128* low_weights [[buffer(2)]],
+    device SolinasFp128* dense_outputs [[buffer(3)]],
+    constant SpartanShiftParams& params [[buffer(4)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_hi [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
@@ -248,8 +241,7 @@ kernel void solinas_spartan_shift_fold_native(
     for (uint x_lo = tid; x_lo < params.prefix_elements; x_lo += threads) {
         uint row = row_start + x_lo;
         SolinasFp128 weight = low_weights[x_lo];
-        SpartanShiftNativeValue native = spartan_shift_native_value(
-            unexpanded_pc, pc, flags, row);
+        SpartanShiftNativeValue native = spartan_shift_native_value(compact, raw, row);
         sums[0] = solinas_add(
             sums[0], spartan_shift_mul_u64(weight, native.unexpanded_pc));
         sums[1] = solinas_add(sums[1], spartan_shift_mul_u64(weight, native.pc));

@@ -19,7 +19,6 @@ use super::solinas::spartan_shift::{
     SpartanShiftResidentRows,
 };
 use super::solinas::SolinasMetal;
-use super::spartan_dense::SpartanDenseResidentOwner;
 use crate::optimized::spartan_shift::OptimizedSpartanShift;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -73,21 +72,7 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
         }
 
         let metal_config = self.config.spartan_shift;
-        let owner_lease = if let Some(mut owner) = session.take::<SpartanDenseResidentOwner>() {
-            let lease = owner.take_shift_lease();
-            session.park(owner);
-            lease
-        } else {
-            None
-        };
-        let (rows, resident_source) = if let Some(lease) = owner_lease {
-            (
-                lease
-                    .into_rows(cycles, self.context.device_registry_id())
-                    .map_err(metal_prepare_error)?,
-                "spartan_dense_owner",
-            )
-        } else {
+        let Some(rows) = session.take::<SpartanShiftResidentRows>() else {
             return OptimizedSpartanShift.prepare(session, witness, inputs);
         };
         if cycles < metal_config.trace_cutoff_elements
@@ -99,8 +84,7 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
         let _resident_span = tracing::info_span!(
             "MetalSpartanShift::resident_rows_consume",
             cycles,
-            source = resident_source,
-            resident_bytes = rows.resident_bytes(),
+            source = "stage1_rows",
         )
         .entered();
 
@@ -163,7 +147,6 @@ impl PrepareKernel<AkitaField, SpartanShift<AkitaField>> for MetalBackend {
             bound_challenges: Vec::with_capacity(rounds),
             cursor: RoundCursor::new(rounds, geometry.prefix_vars()),
             phase: MetalSpartanShiftPhase::PrefixPending { pending, p },
-            source_retained: true,
         }))
     }
 }
@@ -192,7 +175,6 @@ struct MetalSpartanShiftKernel {
     bound_challenges: Vec<AkitaField>,
     cursor: RoundCursor,
     phase: MetalSpartanShiftPhase,
-    source_retained: bool,
 }
 
 #[cfg(feature = "allocative")]
@@ -207,12 +189,6 @@ impl allocative::Allocative for MetalSpartanShiftKernel {
             ("bound_challenges", &self.bound_challenges),
         ] {
             visitor.visit_simple(allocative::Key::new(name), vec_heap_bytes(values));
-        }
-        if self.source_retained {
-            visitor.visit_simple(
-                allocative::Key::new("device_rows"),
-                self.plan.storage.native_value_bytes + self.plan.storage.native_flag_bytes,
-            );
         }
         let (host_phase, device_phase) = match &self.phase {
             MetalSpartanShiftPhase::PrefixPending { p, .. } => (
@@ -324,7 +300,6 @@ impl MetalSpartanShiftKernel {
                     &self.bound_challenges,
                 )
                 .map_err(metal_round_error)?;
-                self.source_retained = false;
                 self.phase = MetalSpartanShiftPhase::Dense(state);
                 Ok(())
             }

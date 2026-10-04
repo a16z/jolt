@@ -3,6 +3,8 @@
 use std::mem::{align_of, size_of};
 
 use jolt_field::{Accumulator, JoltField};
+
+use super::{InstructionInputRow, SpartanRawRow};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
 use thiserror::Error;
 
@@ -20,24 +22,12 @@ pub const SPARTAN_SHIFT_SIMD_WIDTH: usize = 32;
 pub const SPARTAN_SHIFT_MAX_THREADS_PER_THREADGROUP: usize = 1024;
 pub const SPARTAN_SHIFT_OUTPUT_COLUMNS: usize = 5;
 pub const SPARTAN_SHIFT_PREFIX_PAIRS: usize = 4;
-pub const SPARTAN_SHIFT_FLAG_ROWS_PER_WORD: usize = 32;
 pub const SPARTAN_SHIFT_TARGET_LOG_T: usize = 26;
 
 pub const BUILD_MIXED_PIPELINE: &str = "solinas_spartan_shift_build_mixed_partials";
+const NATIVE_ROW_BYTES: usize = size_of::<InstructionInputRow>() + size_of::<SpartanRawRow>();
 pub const REDUCE_PREFIX_PIPELINE: &str = "solinas_spartan_shift_reduce_prefix";
 pub const FOLD_NATIVE_PIPELINE: &str = "solinas_spartan_shift_fold_native";
-
-/// Three current-cycle flag bitplanes for one block of 32 consecutive cycles.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SpartanShiftFlagWord {
-    pub is_virtual: u32,
-    pub is_first_in_sequence: u32,
-    pub is_noop: u32,
-}
-
-const _: [(); 12] = [(); size_of::<SpartanShiftFlagWord>()];
-const _: [(); 4] = [(); align_of::<SpartanShiftFlagWord>()];
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -108,7 +98,6 @@ pub struct SpartanShiftGeometry {
     suffix_vars: usize,
     prefix_elements: usize,
     suffix_elements: usize,
-    flag_words: usize,
 }
 
 impl SpartanShiftGeometry {
@@ -122,7 +111,6 @@ impl SpartanShiftGeometry {
         let prefix_vars = log_t - suffix_vars;
         let prefix_elements = checked_power_of_two("prefix elements", prefix_vars)?;
         let suffix_elements = checked_power_of_two("suffix elements", suffix_vars)?;
-        let flag_words = rows.div_ceil(SPARTAN_SHIFT_FLAG_ROWS_PER_WORD);
         Ok(Self {
             rows,
             log_t,
@@ -130,7 +118,6 @@ impl SpartanShiftGeometry {
             suffix_vars,
             prefix_elements,
             suffix_elements,
-            flag_words,
         })
     }
 
@@ -142,7 +129,6 @@ impl SpartanShiftGeometry {
             suffix_vars: 13,
             prefix_elements: 1 << 13,
             suffix_elements: 1 << 13,
-            flag_words: 1 << 21,
         }
     }
 
@@ -153,7 +139,6 @@ impl SpartanShiftGeometry {
         suffix_vars: usize,
         prefix_elements: usize,
         suffix_elements: usize,
-        flag_words: usize,
     }}
 
     pub fn row_index(self, x_hi: usize, x_lo: usize) -> Result<usize, SpartanShiftPlanError> {
@@ -236,8 +221,9 @@ impl SpartanShiftPlan {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanShiftStorage {
-    pub native_value_bytes: usize,
-    pub native_flag_bytes: usize,
+    /// The resident Stage-1 compact and raw rows the kernels read (shared,
+    /// not allocated by the Shift).
+    pub native_row_bytes: usize,
     pub high_weight_bytes: usize,
     pub low_weight_bytes: usize,
     pub partial_bytes: usize,
@@ -251,7 +237,6 @@ pub struct SpartanShiftStorage {
 pub struct SpartanShiftCost {
     pub high_tiles: usize,
     pub halo_rows: usize,
-    pub halo_flag_words: usize,
     pub build_row_evaluations: usize,
     pub mixed_full_products: usize,
     pub mixed_half_products: usize,
@@ -259,8 +244,7 @@ pub struct SpartanShiftCost {
     pub prefix_host_products: usize,
     pub suffix_host_products: usize,
     pub build_unique_bytes: usize,
-    pub build_halo_value_bytes: usize,
-    pub build_halo_flag_bytes: usize,
+    pub build_halo_row_bytes: usize,
     pub build_coalesced_bytes_with_halo: usize,
     pub fold_unique_bytes: usize,
     pub readback_bytes: usize,
@@ -274,12 +258,7 @@ fn storage(
 ) -> Result<SpartanShiftStorage, SpartanShiftPlanError> {
     let high_tiles = geometry.suffix_elements / config.high_tile_elements;
     let partials = checked_product("prefix partials", geometry.prefix_elements, high_tiles)?;
-    let native_value_bytes = checked_bytes("native PC values", 2 * geometry.rows, 8)?;
-    let native_flag_bytes = checked_bytes(
-        "native flag words",
-        geometry.flag_words,
-        size_of::<SpartanShiftFlagWord>(),
-    )?;
+    let native_row_bytes = checked_bytes("native rows", geometry.rows, NATIVE_ROW_BYTES)?;
     let high_weight_bytes = checked_bytes("high weights", 2 * geometry.suffix_elements, 16)?;
     let low_weight_bytes = checked_bytes("low weights", geometry.prefix_elements, 16)?;
     let partial_bytes =
@@ -297,8 +276,7 @@ fn storage(
     let total_resident_bytes = checked_sum(
         "resident storage",
         &[
-            native_value_bytes,
-            native_flag_bytes,
+            native_row_bytes,
             high_weight_bytes,
             low_weight_bytes,
             partial_bytes,
@@ -308,8 +286,11 @@ fn storage(
         ],
     )?;
     let maximum_buffer_bytes = [
-        native_value_bytes / 2,
-        native_flag_bytes,
+        checked_bytes(
+            "compact rows",
+            geometry.rows,
+            size_of::<InstructionInputRow>(),
+        )?,
         high_weight_bytes,
         low_weight_bytes,
         partial_bytes,
@@ -320,8 +301,7 @@ fn storage(
     .max()
     .unwrap_or(0);
     Ok(SpartanShiftStorage {
-        native_value_bytes,
-        native_flag_bytes,
+        native_row_bytes,
         high_weight_bytes,
         low_weight_bytes,
         partial_bytes,
@@ -332,27 +312,6 @@ fn storage(
     })
 }
 
-fn coalesced_halo_flag_words(
-    geometry: SpartanShiftGeometry,
-    config: SpartanShiftKernelConfig,
-) -> Result<usize, SpartanShiftPlanError> {
-    let high_tiles = geometry.suffix_elements / config.high_tile_elements;
-    let mut words = 0usize;
-    for tile in 1..high_tiles {
-        let high = checked_product("halo high coordinate", tile, config.high_tile_elements)?;
-        let first_row = checked_product("halo first row", high, geometry.prefix_elements)?;
-        let last_row = first_row
-            .checked_add(geometry.prefix_elements - 1)
-            .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-        let first_word = first_row / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
-        let last_word = last_row / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
-        words = words
-            .checked_add(last_word - first_word + 1)
-            .ok_or(SpartanShiftPlanError::SizeOverflow)?;
-    }
-    Ok(words)
-}
-
 fn cost(
     geometry: SpartanShiftGeometry,
     config: SpartanShiftKernelConfig,
@@ -360,7 +319,6 @@ fn cost(
     let high_tiles = geometry.suffix_elements / config.high_tile_elements;
     let internal_halos = high_tiles - 1;
     let halo_rows = checked_product("build halo rows", geometry.prefix_elements, internal_halos)?;
-    let halo_flag_words = coalesced_halo_flag_words(geometry, config)?;
     let build_row_evaluations = geometry
         .rows
         .checked_add(halo_rows)
@@ -388,32 +346,21 @@ fn cost(
     let build_unique_bytes = checked_sum(
         "build unique traffic",
         &[
-            storage.native_value_bytes,
-            storage.native_flag_bytes,
+            storage.native_row_bytes,
             storage.high_weight_bytes,
             partial_read_write,
             storage.q_bytes,
         ],
     )?;
-    let build_halo_value_bytes = checked_bytes("halo value traffic", halo_rows, 16)?;
-    let build_halo_flag_bytes = checked_bytes(
-        "halo flag traffic",
-        halo_flag_words,
-        size_of::<SpartanShiftFlagWord>(),
-    )?;
+    let build_halo_row_bytes = checked_bytes("halo row traffic", halo_rows, NATIVE_ROW_BYTES)?;
     let build_coalesced_bytes_with_halo = checked_sum(
         "build coalesced traffic",
-        &[
-            build_unique_bytes,
-            build_halo_value_bytes,
-            build_halo_flag_bytes,
-        ],
+        &[build_unique_bytes, build_halo_row_bytes],
     )?;
     let fold_unique_bytes = checked_sum(
         "fold unique traffic",
         &[
-            storage.native_value_bytes,
-            storage.native_flag_bytes,
+            storage.native_row_bytes,
             storage.low_weight_bytes,
             storage.dense_output_bytes,
         ],
@@ -425,7 +372,6 @@ fn cost(
     Ok(SpartanShiftCost {
         high_tiles,
         halo_rows,
-        halo_flag_words,
         build_row_evaluations,
         mixed_full_products,
         mixed_half_products,
@@ -433,8 +379,7 @@ fn cost(
         prefix_host_products,
         suffix_host_products,
         build_unique_bytes,
-        build_halo_value_bytes,
-        build_halo_flag_bytes,
+        build_halo_row_bytes,
         build_coalesced_bytes_with_halo,
         fold_unique_bytes,
         readback_bytes,
@@ -453,22 +398,17 @@ pub struct ResidentSpartanShiftBufferMetadata {
     pub byte_len: usize,
 }
 
-/// Checked description of the three buffers borrowed by both Metal commands.
+/// Checked description of the two Stage-1 row buffers both Metal commands read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResidentSpartanShiftMetadata {
     pub rows: usize,
-    pub unexpanded_pc: ResidentSpartanShiftBufferMetadata,
-    pub pc: ResidentSpartanShiftBufferMetadata,
-    pub flags: ResidentSpartanShiftBufferMetadata,
+    pub compact: ResidentSpartanShiftBufferMetadata,
+    pub raw: ResidentSpartanShiftBufferMetadata,
     pub device_registry_id: u64,
-    pub exact_current_flags: bool,
 }
 
 impl ResidentSpartanShiftMetadata {
-    /// Checks metadata copied from the three resident buffers.
-    ///
-    /// The eventual Metal adapter must read the identities and lengths from its
-    /// actual buffers before calling this method. This type does not own buffers.
+    /// Checks metadata copied from the two resident buffers.
     pub fn validate(
         self,
         geometry: SpartanShiftGeometry,
@@ -490,31 +430,25 @@ impl ResidentSpartanShiftMetadata {
                 actual: self.device_registry_id,
             });
         }
-        let buffers = [self.unexpanded_pc, self.pc, self.flags];
-        if buffers.iter().any(|buffer| buffer.allocation_identity == 0) {
+        if self.compact.allocation_identity == 0 || self.raw.allocation_identity == 0 {
             return Err(SpartanShiftPlanError::MissingAllocationIdentity);
         }
-        if buffers[0].allocation_identity == buffers[1].allocation_identity
-            || buffers[0].allocation_identity == buffers[2].allocation_identity
-            || buffers[1].allocation_identity == buffers[2].allocation_identity
-        {
+        if self.compact.allocation_identity == self.raw.allocation_identity {
             return Err(SpartanShiftPlanError::DuplicateAllocationIdentity);
         }
-        let value_bytes = checked_bytes("resident PC bytes", geometry.rows, size_of::<u64>())?;
-        let flag_bytes = checked_bytes(
-            "resident flag bytes",
-            geometry.flag_words,
-            size_of::<SpartanShiftFlagWord>(),
-        )?;
-        for (name, buffer, expected) in [
+        for (name, buffer, row_bytes) in [
             (
-                "resident unexpanded PC bytes",
-                self.unexpanded_pc,
-                value_bytes,
+                "resident compact row bytes",
+                self.compact,
+                size_of::<InstructionInputRow>(),
             ),
-            ("resident PC bytes", self.pc, value_bytes),
-            ("resident flag bytes", self.flags, flag_bytes),
+            (
+                "resident raw row bytes",
+                self.raw,
+                size_of::<SpartanRawRow>(),
+            ),
         ] {
+            let expected = checked_bytes(name, geometry.rows, row_bytes)?;
             if buffer.byte_len != expected {
                 return Err(SpartanShiftPlanError::WrongLength {
                     name,
@@ -523,40 +457,7 @@ impl ResidentSpartanShiftMetadata {
                 });
             }
         }
-        if !self.exact_current_flags {
-            return Err(SpartanShiftPlanError::UncertifiedCurrentFlags);
-        }
         Ok(self)
-    }
-}
-
-/// Exact output and work counts for the disjoint 32-row producer partition.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SpartanShiftProducerPlan {
-    pub row_extractions: usize,
-    pub flag_chunks: usize,
-    pub value_bytes_written: usize,
-    pub flag_bytes_written: usize,
-    pub total_bytes_written: usize,
-}
-
-impl SpartanShiftProducerPlan {
-    pub fn new(geometry: SpartanShiftGeometry) -> Result<Self, SpartanShiftPlanError> {
-        let value_bytes_written = checked_bytes("producer PC bytes", 2 * geometry.rows, 8)?;
-        let flag_bytes_written = checked_bytes(
-            "producer flag bytes",
-            geometry.flag_words,
-            size_of::<SpartanShiftFlagWord>(),
-        )?;
-        Ok(Self {
-            row_extractions: geometry.rows,
-            flag_chunks: geometry.flag_words,
-            value_bytes_written,
-            flag_bytes_written,
-            total_bytes_written: value_bytes_written
-                .checked_add(flag_bytes_written)
-                .ok_or(SpartanShiftPlanError::SizeOverflow)?,
-        })
     }
 }
 
@@ -564,53 +465,27 @@ impl SpartanShiftProducerPlan {
 #[derive(Clone, Copy)]
 pub struct SpartanShiftNativePlanes<'a> {
     geometry: SpartanShiftGeometry,
-    unexpanded_pc: &'a [u64],
-    pc: &'a [u64],
-    flags: &'a [SpartanShiftFlagWord],
+    rows: &'a [SpartanShiftNativeRow],
 }
 
 #[cfg(test)]
 impl<'a> SpartanShiftNativePlanes<'a> {
     pub fn new(
         geometry: SpartanShiftGeometry,
-        unexpanded_pc: &'a [u64],
-        pc: &'a [u64],
-        flags: &'a [SpartanShiftFlagWord],
+        rows: &'a [SpartanShiftNativeRow],
     ) -> Result<Self, SpartanShiftPlanError> {
-        for (name, actual) in [("unexpanded PC", unexpanded_pc.len()), ("PC", pc.len())] {
-            if actual != geometry.rows {
-                return Err(SpartanShiftPlanError::WrongLength {
-                    name,
-                    expected: geometry.rows,
-                    actual,
-                });
-            }
-        }
-        if flags.len() != geometry.flag_words {
+        if rows.len() != geometry.rows {
             return Err(SpartanShiftPlanError::WrongLength {
-                name: "flag words",
-                expected: geometry.flag_words,
-                actual: flags.len(),
+                name: "native rows",
+                expected: geometry.rows,
+                actual: rows.len(),
             });
         }
-        Ok(Self {
-            geometry,
-            unexpanded_pc,
-            pc,
-            flags,
-        })
+        Ok(Self { geometry, rows })
     }
 
     fn row(self, index: usize) -> SpartanShiftNativeRow {
-        let word = self.flags[index / SPARTAN_SHIFT_FLAG_ROWS_PER_WORD];
-        let bit = 1u32 << (index % SPARTAN_SHIFT_FLAG_ROWS_PER_WORD);
-        SpartanShiftNativeRow {
-            unexpanded_pc: self.unexpanded_pc[index],
-            pc: self.pc[index],
-            is_virtual: word.is_virtual & bit != 0,
-            is_first_in_sequence: word.is_first_in_sequence & bit != 0,
-            is_noop: word.is_noop & bit != 0,
-        }
+        self.rows[index]
     }
 
     copy_field_getters! { pub, { geometry: SpartanShiftGeometry }}
@@ -624,71 +499,6 @@ pub struct SpartanShiftNativeRow {
     pub is_virtual: bool,
     pub is_first_in_sequence: bool,
     pub is_noop: bool,
-}
-
-#[cfg(test)]
-pub(crate) fn pack_flag_words(
-    geometry: SpartanShiftGeometry,
-    is_virtual: &[bool],
-    is_first_in_sequence: &[bool],
-    is_noop: &[bool],
-) -> Result<Vec<SpartanShiftFlagWord>, SpartanShiftPlanError> {
-    for (name, actual) in [
-        ("is_virtual", is_virtual.len()),
-        ("is_first_in_sequence", is_first_in_sequence.len()),
-        ("is_noop", is_noop.len()),
-    ] {
-        if actual != geometry.rows {
-            return Err(SpartanShiftPlanError::WrongLength {
-                name,
-                expected: geometry.rows,
-                actual,
-            });
-        }
-    }
-    (0..geometry.flag_words)
-        .map(|word| {
-            let start = word * SPARTAN_SHIFT_FLAG_ROWS_PER_WORD;
-            let end = (start + SPARTAN_SHIFT_FLAG_ROWS_PER_WORD).min(geometry.rows);
-            pack_flag_word(
-                &is_virtual[start..end],
-                &is_first_in_sequence[start..end],
-                &is_noop[start..end],
-            )
-        })
-        .collect()
-}
-
-/// Packs one independently owned chunk of at most 32 rows.
-///
-/// A parallel producer assigns each chunk to one worker, which avoids atomic
-/// updates to `SpartanShiftFlagWord` while the two value planes are filled.
-#[cfg(test)]
-fn pack_flag_word(
-    is_virtual: &[bool],
-    is_first_in_sequence: &[bool],
-    is_noop: &[bool],
-) -> Result<SpartanShiftFlagWord, SpartanShiftPlanError> {
-    let rows = is_virtual.len();
-    if rows == 0
-        || rows > SPARTAN_SHIFT_FLAG_ROWS_PER_WORD
-        || is_first_in_sequence.len() != rows
-        || is_noop.len() != rows
-    {
-        return Err(SpartanShiftPlanError::InvalidFlagChunkLength {
-            is_virtual: rows,
-            is_first_in_sequence: is_first_in_sequence.len(),
-            is_noop: is_noop.len(),
-        });
-    }
-    let mut word = SpartanShiftFlagWord::default();
-    for row in 0..rows {
-        let bit = 1u32 << row;
-        word.is_virtual |= u32::from(is_virtual[row]) * bit;
-        word.is_first_in_sequence |= u32::from(is_first_in_sequence[row]) * bit;
-        word.is_noop |= u32::from(is_noop[row]) * bit;
-    }
-    Ok(word)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1159,14 +969,6 @@ pub enum SpartanShiftPlanError {
         expected: usize,
         actual: usize,
     },
-    #[error(
-        "Spartan shift flag chunk lengths are invalid: virtual={is_virtual}, first={is_first_in_sequence}, noop={is_noop}"
-    )]
-    InvalidFlagChunkLength {
-        is_virtual: usize,
-        is_first_in_sequence: usize,
-        is_noop: usize,
-    },
     #[error("Spartan shift resident source has a missing device registry identity")]
     MissingDeviceRegistryIdentity,
     #[error("Spartan shift resident source is on device {actual}, expected {expected}")]
@@ -1175,8 +977,6 @@ pub enum SpartanShiftPlanError {
     MissingAllocationIdentity,
     #[error("Spartan shift resident source aliases two required allocations")]
     DuplicateAllocationIdentity,
-    #[error("Spartan shift resident source does not certify exact current flags")]
-    UncertifiedCurrentFlags,
     #[error("Spartan shift {name} exceeds the shader's 32-bit index space")]
     ShaderIndexOverflow { name: &'static str },
     #[error("Spartan shift size arithmetic overflowed")]
@@ -1250,11 +1050,13 @@ mod tests {
     use jolt_field::Prime128OffsetA7F7 as AkitaField;
     use jolt_field::Ring as _;
 
+    use super::super::spartan_outer_uniskip::{FLAG_IS_FIRST, FLAG_IS_NOOP, FLAG_VIRTUAL};
+    use super::super::{SolinasMetal, SpartanOuterUniskipRow};
     use super::*;
 
     #[test]
     fn metal_entry_points_compile() {
-        let Ok(context) = super::super::SolinasMetal::for_akita() else {
+        let Ok(context) = SolinasMetal::for_akita() else {
             return;
         };
         for name in [
@@ -1263,21 +1065,48 @@ mod tests {
             FOLD_NATIVE_PIPELINE,
         ] {
             let pipeline = context.compile_named_pipeline(name).unwrap();
-            let limits = super::super::SolinasMetal::limits(&pipeline);
+            let limits = SolinasMetal::limits(&pipeline);
             assert_eq!(limits.thread_execution_width, SPARTAN_SHIFT_SIMD_WIDTH);
             assert!(limits.max_total_threads_per_threadgroup >= 128);
         }
     }
 
+    fn resident_rows(
+        context: &SolinasMetal,
+        native: &[SpartanShiftNativeRow],
+    ) -> SpartanShiftResidentRows {
+        let rows = native
+            .iter()
+            .map(|row| {
+                let mut words = [0u64; 20];
+                words[5] = row.pc;
+                words[6] = row.unexpanded_pc;
+                words[19] = u64::from(row.is_virtual) << FLAG_VIRTUAL
+                    | u64::from(row.is_first_in_sequence) << FLAG_IS_FIRST
+                    | u64::from(row.is_noop) << FLAG_IS_NOOP;
+                SpartanOuterUniskipRow::from_words(words)
+            })
+            .collect::<Vec<_>>();
+        context
+            .prepare_spartan_outer_uniskip_rows(&rows)
+            .unwrap()
+            .share_shift_rows(context)
+            .unwrap()
+    }
+
     #[test]
     fn resident_upload_is_not_coupled_to_default_dispatch_geometry() {
-        let Ok(context) = super::super::SolinasMetal::for_akita() else {
+        let Ok(context) = SolinasMetal::for_akita() else {
             return;
         };
-        let rows = context
-            .prepare_spartan_shift_rows(&[3, 5], &[7, 11], &[SpartanShiftFlagWord::default()], true)
-            .unwrap();
-        assert_eq!(rows.len(), 2);
+        let native = SpartanShiftNativeRow {
+            unexpanded_pc: 3,
+            pc: 7,
+            is_virtual: false,
+            is_first_in_sequence: false,
+            is_noop: false,
+        };
+        assert_eq!(resident_rows(&context, &[native; 2]).len(), 2);
     }
 
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {
@@ -1295,42 +1124,29 @@ mod tests {
     fn resident_metadata(geometry: SpartanShiftGeometry) -> ResidentSpartanShiftMetadata {
         ResidentSpartanShiftMetadata {
             rows: geometry.rows,
-            unexpanded_pc: ResidentSpartanShiftBufferMetadata {
+            compact: ResidentSpartanShiftBufferMetadata {
                 allocation_identity: 11,
-                byte_len: geometry.rows * size_of::<u64>(),
+                byte_len: geometry.rows * size_of::<InstructionInputRow>(),
             },
-            pc: ResidentSpartanShiftBufferMetadata {
+            raw: ResidentSpartanShiftBufferMetadata {
                 allocation_identity: 13,
-                byte_len: geometry.rows * size_of::<u64>(),
-            },
-            flags: ResidentSpartanShiftBufferMetadata {
-                allocation_identity: 17,
-                byte_len: geometry.flag_words * size_of::<SpartanShiftFlagWord>(),
+                byte_len: geometry.rows * size_of::<SpartanRawRow>(),
             },
             device_registry_id: 19,
-            exact_current_flags: true,
         }
     }
 
     #[test]
-    fn target_plan_prices_packed_halos() {
+    fn target_plan_prices_row_halos() {
         let geometry = SpartanShiftGeometry::target();
         let config = SpartanShiftKernelConfig::default();
         let plan = SpartanShiftPlan::new(geometry.rows, config).unwrap();
 
+        assert_eq!(plan.storage.native_row_bytes, 5_368_709_120);
         assert_eq!(plan.cost.halo_rows, 516_096);
-        assert_eq!(plan.cost.halo_flag_words, 16_128);
-        assert_eq!(plan.cost.build_halo_value_bytes, 8_257_536);
-        assert_eq!(plan.cost.build_halo_flag_bytes, 193_536);
-        assert_eq!(plan.cost.build_unique_bytes, 1_166_802_944);
-        assert_eq!(plan.cost.build_coalesced_bytes_with_halo, 1_175_254_016);
-
-        let producer = SpartanShiftProducerPlan::new(geometry).unwrap();
-        assert_eq!(producer.row_extractions, 67_108_864);
-        assert_eq!(producer.flag_chunks, 2_097_152);
-        assert_eq!(producer.value_bytes_written, 1_073_741_824);
-        assert_eq!(producer.flag_bytes_written, 25_165_824);
-        assert_eq!(producer.total_bytes_written, 1_098_907_648);
+        assert_eq!(plan.cost.build_halo_row_bytes, 41_287_680);
+        assert_eq!(plan.cost.build_unique_bytes, 5_436_604_416);
+        assert_eq!(plan.cost.build_coalesced_bytes_with_halo, 5_477_892_096);
     }
 
     #[test]
@@ -1360,89 +1176,53 @@ mod tests {
         );
 
         let mut wrong_length = metadata;
-        wrong_length.flags.byte_len -= 1;
+        wrong_length.raw.byte_len -= 1;
         assert!(matches!(
             wrong_length.validate(geometry, 19),
             Err(SpartanShiftPlanError::WrongLength {
-                name: "resident flag bytes",
+                name: "resident raw row bytes",
                 ..
             })
         ));
 
         let mut aliased = metadata;
-        aliased.flags.allocation_identity = aliased.pc.allocation_identity;
+        aliased.raw.allocation_identity = aliased.compact.allocation_identity;
         assert_eq!(
             aliased.validate(geometry, 19),
             Err(SpartanShiftPlanError::DuplicateAllocationIdentity)
         );
 
         let mut missing_identity = metadata;
-        missing_identity.unexpanded_pc.allocation_identity = 0;
+        missing_identity.compact.allocation_identity = 0;
         assert_eq!(
             missing_identity.validate(geometry, 19),
             Err(SpartanShiftPlanError::MissingAllocationIdentity)
         );
-
-        let mut uncertified = metadata;
-        uncertified.exact_current_flags = false;
-        assert_eq!(
-            uncertified.validate(geometry, 19),
-            Err(SpartanShiftPlanError::UncertifiedCurrentFlags)
-        );
-    }
-
-    #[test]
-    fn flag_chunks_own_word_boundaries_and_clear_unused_bits() {
-        let geometry = SpartanShiftGeometry::new(1 << 6).unwrap();
-        let mut is_virtual = vec![false; geometry.rows];
-        let mut is_first = vec![false; geometry.rows];
-        let mut is_noop = vec![false; geometry.rows];
-        is_virtual[31] = true;
-        is_first[32] = true;
-        is_noop[63] = true;
-
-        let words = pack_flag_words(geometry, &is_virtual, &is_first, &is_noop).unwrap();
-        assert_eq!(words.len(), 2);
-        assert_eq!(words[0].is_virtual, 1u32 << 31);
-        assert_eq!(words[0].is_first_in_sequence, 0);
-        assert_eq!(words[1].is_first_in_sequence, 1);
-        assert_eq!(words[1].is_noop, 1u32 << 31);
-
-        let tail = pack_flag_word(&[true, false, true], &[false; 3], &[false; 3]).unwrap();
-        assert_eq!(tail.is_virtual, 0b101);
-        assert_eq!(tail.is_first_in_sequence, 0);
-        assert_eq!(tail.is_noop, 0);
     }
 
     #[test]
     fn metal_runtime_matches_prefix_and_fold_oracles() {
-        let Ok(context) = super::super::SolinasMetal::for_akita() else {
+        let Ok(context) = SolinasMetal::for_akita() else {
             return;
         };
         let geometry = SpartanShiftGeometry::new(1 << 16).unwrap();
-        let mut unexpanded_pc = vec![0u64; geometry.rows];
-        let mut pc = vec![0u64; geometry.rows];
-        let mut is_virtual = vec![false; geometry.rows];
-        let mut is_first = vec![false; geometry.rows];
-        let mut is_noop = vec![false; geometry.rows];
-        for row in 0..geometry.rows {
-            unexpanded_pc[row] = (row as u64)
-                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                .rotate_left((row & 63) as u32);
-            pc[row] = u64::MAX.wrapping_sub(
-                (row as u64)
-                    .wrapping_mul(0xD134_2543_DE82_EF95)
-                    .rotate_right((row & 31) as u32),
-            );
-            is_virtual[row] = row % 5 == 1;
-            is_first[row] = row % 17 == 3;
-            is_noop[row] = row % 7 == 0;
-        }
-        let flags = pack_flag_words(geometry, &is_virtual, &is_first, &is_noop).unwrap();
-        let planes = SpartanShiftNativePlanes::new(geometry, &unexpanded_pc, &pc, &flags).unwrap();
-        let rows = context
-            .prepare_spartan_shift_rows(&unexpanded_pc, &pc, &flags, true)
-            .unwrap();
+        let native = (0..geometry.rows)
+            .map(|row| SpartanShiftNativeRow {
+                unexpanded_pc: (row as u64)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .rotate_left((row & 63) as u32),
+                pc: u64::MAX.wrapping_sub(
+                    (row as u64)
+                        .wrapping_mul(0xD134_2543_DE82_EF95)
+                        .rotate_right((row & 31) as u32),
+                ),
+                is_virtual: row % 5 == 1,
+                is_first_in_sequence: row % 17 == 3,
+                is_noop: row % 7 == 0,
+            })
+            .collect::<Vec<_>>();
+        let planes = SpartanShiftNativePlanes::new(geometry, &native).unwrap();
+        let rows = resident_rows(&context, &native);
         let source_allocations = rows.allocation_identities();
         let r_outer = point(geometry.log_t, 0xA11C_E001);
         let r_product = point(geometry.log_t, 0xB22D_F002);
