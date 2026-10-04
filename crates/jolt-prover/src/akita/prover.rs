@@ -103,6 +103,8 @@ where
     });
     let stage0 = stage0?;
     witness_prepare?;
+    tracing::info_span!("release_retained_memory", stage = "stage0")
+        .in_scope(|| jolt_kernels::mem::purge_retained_memory(log_t));
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
 
