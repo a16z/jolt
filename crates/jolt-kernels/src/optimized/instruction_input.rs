@@ -77,12 +77,21 @@ impl PreparedInstructionInputRows {
     }
 }
 
+/// Collects the rows a non-random-access witness cannot serve later; a
+/// random-access witness serves the stage-3 kernel directly
+/// ([`BundleStore::resolve`]).
 #[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) fn prepare_instruction_input_rows<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
     trace_elements: usize,
 ) -> Result<(), KernelError<F>> {
+    if witness
+        .random_access()
+        .is_some_and(|rows| trace_elements <= rows.cycles())
+    {
+        return Ok(());
+    }
     let rows = collect_rows(witness, trace_elements)?;
     session.park(PreparedInstructionInputRows { rows });
     Ok(())
@@ -695,6 +704,26 @@ mod tests {
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn random_access_witness_skips_the_row_collection() {
+        use crate::optimized::testing::{with_ram_fixture_backend, FixtureShape, RamOp};
+        use crate::ProofSession;
+
+        let shape = FixtureShape {
+            log_t: 5,
+            ram_k: 16,
+        };
+        with_ram_fixture_backend(shape, vec![RamOp::Write { word: 3, post: 5 }], |witness| {
+            let mut session = ProofSession::default();
+            super::prepare_instruction_input_rows::<Fr>(&mut session, witness, 1 << shape.log_t)
+                .unwrap();
+            assert!(session
+                .state::<super::PreparedInstructionInputRows>()
+                .is_none());
+        });
     }
 
     fn assert_parity(log_t: usize, seed: u64) {
