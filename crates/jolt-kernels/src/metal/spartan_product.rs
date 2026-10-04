@@ -250,9 +250,7 @@ impl MetalBackend {
             });
         }
         if attach_state_b {
-            let state_b = sequence
-                .share_outer_state_b()
-                .map_err(metal_prepare_error)?;
+            let state_b = sequence.share_state_b().map_err(metal_prepare_error)?;
             let mut storage = session.take::<OuterRemainderSequenceStorage>().ok_or(
                 KernelError::InvariantViolation {
                     reason: "deferred Outer storage disappeared before Product state-B attachment",
@@ -646,12 +644,17 @@ impl PrepareKernel<AkitaField, ProductRemainder<AkitaField>> for MetalBackend {
                         reason: "joint Product/Instruction prefetch received mismatched rows",
                     });
                 }
+                let state_a = (!terminal_cache)
+                    .then(|| sequence.share_state_b())
+                    .transpose()
+                    .map_err(metal_prepare_error)?;
                 match self
                     .context
                     .prepare_instruction_claim_sequence_with_stage1_rows(
                         rows.product.clone(),
                         gamma,
                         self.config.instruction_claim_reduction.dispatch,
+                        state_a,
                     ) {
                     Ok(instruction) => Some((instruction, rows)),
                     Err(error) if error.is_capacity_error() => {

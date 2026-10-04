@@ -267,14 +267,24 @@ impl SolinasMetal {
                 planes.right_instruction_input(),
             ),
         };
-        self.prepare_instruction_claim_sequence_from_rows(rows, planes.len(), gamma, config, true)
+        self.prepare_instruction_claim_sequence_from_rows(
+            rows,
+            planes.len(),
+            gamma,
+            config,
+            true,
+            None,
+        )
     }
 
+    /// `state_a` borrows the joint Product sequence's state B (one field per
+    /// row), which Product leaves idle once it binds in place.
     pub fn prepare_instruction_claim_sequence_with_stage1_rows(
         &self,
         product: ProductRemainderRows,
         gamma: AkitaField,
         config: InstructionClaimKernelConfig,
+        state_a: Option<Buffer>,
     ) -> Result<InstructionClaimSequence, MetalError> {
         if product.device_registry_id() != self.device_registry_id()
             || product.source_kind() != ProductRemainderSourceKind::SpartanStage1
@@ -290,6 +300,7 @@ impl SolinasMetal {
             gamma,
             config,
             false,
+            state_a,
         )
     }
 
@@ -300,6 +311,7 @@ impl SolinasMetal {
         gamma: AkitaField,
         config: InstructionClaimKernelConfig,
         charge_operand_rows: bool,
+        state_a: Option<Buffer>,
     ) -> Result<InstructionClaimSequence, MetalError> {
         let config = config.validate()?;
         let geometry = InstructionClaimGeometry::new(row_count)?;
@@ -311,11 +323,20 @@ impl SolinasMetal {
             opening.e_out_length(),
         )?
         .validate_max_buffer_length(maximum_buffer)?;
+        let state_a_bytes = layout.state_a_fields() * size_of::<Fp128>();
+        if state_a
+            .as_ref()
+            .is_some_and(|state_a| state_a.length() != state_a_bytes as u64)
+        {
+            return Err(MetalError::InvalidInstructionClaimState(
+                "borrowed instruction state A has the wrong length",
+            ));
+        }
         let charged_bytes = if charge_operand_rows {
             layout.resident_bytes()
         } else {
             layout.workspace_bytes()
-        };
+        } - usize::from(state_a.is_some()) * state_a_bytes;
         let resident_bytes =
             u64::try_from(charged_bytes).map_err(|_| MetalError::InputTooLong(charged_bytes))?;
         self.validate_additional_working_set(resident_bytes)?;
@@ -432,7 +453,10 @@ impl SolinasMetal {
         let buffers = InstructionClaimBuffers {
             rows,
             gamma_powers: buffer_from_slice(&self.device, &gamma_powers),
-            state_a: self.new_instruction_claim_buffer(layout.state_a_fields())?,
+            state_a: match state_a {
+                Some(state_a) => state_a,
+                None => self.new_instruction_claim_buffer(layout.state_a_fields())?,
+            },
             state_b: self.new_instruction_claim_buffer(layout.state_b_fields())?,
             e_in: self.new_instruction_claim_buffer(layout.e_in_fields())?,
             e_out: self.new_instruction_claim_buffer(layout.e_out_fields())?,

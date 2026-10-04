@@ -737,6 +737,7 @@ fn stage1_sequence_matches_standalone_sequence() {
             stage1,
             gamma,
             InstructionClaimKernelConfig::default(),
+            None,
         )
         .expect("Stage-1 instruction sequence should prepare");
     let mut standalone = context

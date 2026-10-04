@@ -122,6 +122,7 @@ impl PrepareKernel<AkitaField, InstructionClaimReduction<AkitaField>> for MetalB
                     handoff.rows.product,
                     inputs.challenges.gamma,
                     self.config.instruction_claim_reduction.dispatch,
+                    None,
                 );
             match prepared {
                 Ok(sequence) => (

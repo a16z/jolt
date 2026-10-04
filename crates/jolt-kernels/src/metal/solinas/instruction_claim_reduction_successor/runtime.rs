@@ -726,6 +726,7 @@ mod tests {
     use jolt_field::Prime128OffsetA7F7 as AkitaField;
     use jolt_field::{Ring as _, Zero as _};
     use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial};
+    use metal::foreign_types::ForeignType;
     use metal::Buffer;
 
     use super::super::super::spartan_outer_uniskip::test_rows::stage1_rows;
@@ -793,8 +794,12 @@ mod tests {
                 resident.clone(),
                 gamma,
                 InstructionClaimKernelConfig::default(),
+                Some(product.share_state_b().unwrap()),
             )
             .expect("joint instruction sequence should prepare");
+        assert!(instruction
+            .allocation_identities()
+            .contains(&(product_state_b.as_ptr() as usize)));
         let instruction_state_b = instruction.joint_state_b_buffer().clone();
         fill_buffer_bytes(&instruction_state_b, 0xa5);
         let mut product_control = context
@@ -811,6 +816,7 @@ mod tests {
                 resident.clone(),
                 gamma,
                 InstructionClaimKernelConfig::default(),
+                None,
             )
             .expect("control instruction sequence should prepare");
 
@@ -836,6 +842,7 @@ mod tests {
                 resident,
                 gamma,
                 InstructionClaimKernelConfig::default(),
+                None,
             )
             .expect("deferred instruction sequence should prepare");
         let deferred = context
@@ -920,7 +927,6 @@ mod tests {
         let (product, product_message, instruction, instruction_message) =
             pending.join().expect("joint materialization should join");
 
-        assert!(buffer_bytes_are(&product_state_b, 0xa5));
         assert!(buffer_bytes_are(&instruction_state_b, 0xa5));
         assert_eq!(product.joint_state_b_buffer().length(), 1);
         assert_eq!(instruction.joint_state_b_buffer().length(), 1);
@@ -958,7 +964,6 @@ mod tests {
             let (instruction_next, instruction_stats) = service
                 .instruction_bind_and_message(round, challenge, instruction_e_in, instruction_e_out)
                 .expect("cached instruction transition should be consumed");
-            assert!(buffer_bytes_are(&product_state_b, 0xa5));
             assert!(buffer_bytes_are(&instruction_state_b, 0xa5));
             assert_eq!(product_next, expected_product_next);
             assert_eq!(instruction_next, expected_instruction_next);

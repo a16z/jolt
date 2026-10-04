@@ -1703,10 +1703,10 @@ impl ProductRemainderSequence {
         validate_completed_command(command_buffer)
     }
 
-    pub(crate) fn share_outer_state_b(&self) -> Result<Buffer, MetalError> {
+    pub(crate) fn share_state_b(&self) -> Result<Buffer, MetalError> {
         if !self.is_ready() {
             return Err(MetalError::InvalidProductRemainderState(
-                "Outer state-B sharing requires a ready sequence",
+                "state-B sharing requires a ready sequence",
             ));
         }
         Ok(self.buffers.state_b.clone())
