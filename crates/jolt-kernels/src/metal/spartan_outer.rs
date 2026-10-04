@@ -2154,9 +2154,6 @@ mod tests {
         SumcheckOutputClaims<AkitaField, OuterRemainder<AkitaField>>,
     );
 
-    /// Runs Stage 1 through `backend` on a session its witness preparation
-    /// filled, Outer in lockstep with the optimized CPU kernels, and returns
-    /// the resident leases left after the uni-skip prepare with the outputs.
     fn stage1_outputs(
         backend: &MetalBackend,
         session: &mut ProofSession,

@@ -456,9 +456,11 @@ impl InstructionClaimReductionPlan {
 
 /// Buffer capacities for the materialize and resident transition phases.
 ///
-/// State A holds the full combined table, state B the first half-size bound
-/// table, and later rounds alternate within those capacities. Each partial
-/// buffer reserves all five opening columns.
+/// State A holds the full combined table. A standalone sequence binds out of
+/// place: state B holds the first half-size bound table and later rounds
+/// alternate within those capacities. A joint sequence binds in place in
+/// state A and allocates no state B. Each partial buffer reserves all five
+/// opening columns.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionClaimStorageLayout {
     rows: usize,

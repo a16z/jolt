@@ -1228,6 +1228,8 @@ pub(crate) mod test_rows {
         pub(crate) instructions: Vec<JoltInstructionRow>,
         pub(crate) rows: Vec<TraceRow>,
         pub(crate) sources: usize,
+        /// The fixed edge rows closing `rows`.
+        pub(crate) edge_rows: usize,
     }
 
     pub(crate) fn splitmix(mut value: u64) -> u64 {
@@ -1370,10 +1372,99 @@ pub(crate) mod test_rows {
             })
             .collect::<Vec<_>>();
         rows[1..].sort_by_cached_key(|row| splitmix(row.instruction().address as u64));
+        // Fixed edges, appended after the shuffle so every shorter prefix keeps
+        // its rows: AUIPC and both alignment asserts with immediates negative
+        // in 64-bit two's complement, a taken branch with a sign-magnitude
+        // negative immediate, and multiplies of maximal operands.
+        let read = |register, value| Some(RegisterRead { register, value });
+        let write = |register, post_value| {
+            Some(RegisterWrite {
+                register,
+                pre_value: 0,
+                post_value,
+            })
+        };
+        let operands = |rd, rs1, rs2, imm| NormalizedOperands { rd, rs1, rs2, imm };
+        let auipc_pc = (base + 4 * (1 + instructions.len())) as u64;
+        let auipc_imm = -4096i64 as u64;
+        let edges = [
+            (
+                JoltInstructionKind::AUIPC,
+                operands(Some(9), None, None, i128::from(auipc_imm)),
+                RegisterState {
+                    rs1: None,
+                    rs2: None,
+                    rd: write(9, auipc_pc.wrapping_add(auipc_imm)),
+                },
+            ),
+            (
+                JoltInstructionKind::VirtualAssertHalfwordAlignment,
+                operands(None, Some(6), None, i128::from(-2i64 as u64)),
+                RegisterState {
+                    rs1: read(6, 0x1000),
+                    rs2: None,
+                    rd: None,
+                },
+            ),
+            (
+                JoltInstructionKind::VirtualAssertWordAlignment,
+                operands(None, Some(6), None, i128::from(-4i64 as u64)),
+                RegisterState {
+                    rs1: read(6, 0x1000),
+                    rs2: None,
+                    rd: None,
+                },
+            ),
+            (
+                JoltInstructionKind::BEQ,
+                operands(None, Some(6), Some(7), -8),
+                RegisterState {
+                    rs1: read(6, 5),
+                    rs2: read(7, 5),
+                    rd: None,
+                },
+            ),
+            (
+                JoltInstructionKind::MUL,
+                operands(Some(9), Some(6), Some(7), 0),
+                RegisterState {
+                    rs1: read(6, u64::MAX),
+                    rs2: read(7, u64::MAX),
+                    rd: write(9, 1),
+                },
+            ),
+            (
+                JoltInstructionKind::MULHU,
+                operands(Some(9), Some(6), Some(7), 0),
+                RegisterState {
+                    rs1: read(6, u64::MAX),
+                    rs2: read(7, u64::MAX),
+                    rd: write(9, u64::MAX - 1),
+                },
+            ),
+        ];
+        let edge_rows = edges.len();
+        for (instruction_kind, operands, registers) in edges {
+            let instruction = JoltInstructionRow {
+                instruction_kind,
+                address: base + 4 * (1 + instructions.len()),
+                operands,
+                ..Default::default()
+            };
+            let _bytecode = BytecodePreprocessing::preprocess(
+                vec![instruction],
+                instruction.address as u64,
+                RV64IMAC_JOLT,
+            )
+            .unwrap();
+            instructions.push(instruction);
+            rows.push(TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap());
+        }
         ExpandedTrace {
             instructions,
             rows,
             sources,
+            edge_rows,
         }
     }
 
@@ -1833,9 +1924,6 @@ mod tests {
         (weights(seed, inner), weights(!seed, pairs / inner))
     }
 
-    /// Drives the Outer remainder over the resident form of `packed` through
-    /// every round and checks its messages, CPU tail, 35 openings and product
-    /// endpoints against the field oracle over the witness-derived rows.
     fn assert_outer_sequence_matches_field_oracle(
         packed: &[SpartanOuterUniskipRow],
         explicit_rows: usize,
@@ -2006,39 +2094,37 @@ mod tests {
             witness[explicit_rows..].iter().all(|row| row.is_noop.0),
             "padding"
         );
+        let edge = explicit_rows - trace.edge_rows;
+        assert_eq!(
+            kinds[edge..],
+            [
+                JoltInstructionKind::AUIPC,
+                JoltInstructionKind::VirtualAssertHalfwordAlignment,
+                JoltInstructionKind::VirtualAssertWordAlignment,
+                JoltInstructionKind::BEQ,
+                JoltInstructionKind::MUL,
+                JoltInstructionKind::MULHU,
+            ]
+        );
+        let edge_words = |index: usize| rows[edge + index].words();
         // Upper immediates and expanded alignment offsets are 64-bit two's
-        // complement (positive with bit 63 set); decoded branch offsets are
-        // sign-magnitude.
-        let wrapped_negative = |words: [u64; ROW_WORDS]| {
-            flag(words[19], FLAG_IMM_POSITIVE) != 0 && words[7] >> 63 == 1
-        };
-        for kind in [
-            JoltInstructionKind::AUIPC,
-            JoltInstructionKind::VirtualAssertHalfwordAlignment,
-            JoltInstructionKind::VirtualAssertWordAlignment,
-        ] {
+        // complement: positive, with bit 63 set when negative.
+        for index in 0..3 {
+            let words = edge_words(index);
             assert!(
-                rows.iter()
-                    .zip(&kinds)
-                    .any(|(row, &row_kind)| row_kind == kind && wrapped_negative(row.words())),
+                flag(words[19], FLAG_IMM_POSITIVE) != 0 && words[7] >> 63 == 1,
                 "{} with a negative 64-bit immediate",
-                kind.name()
+                kinds[edge + index].name()
             );
         }
-        assert!(
-            rows.iter().any(|row| {
-                let words = row.words();
-                flag(words[19], FLAG_IMM_POSITIVE) == 0 && words[7] != 0
-            }),
-            "a sign-magnitude negative immediate"
-        );
-        assert!(
-            rows.iter().any(|row| {
-                let words = row.words();
-                flag(words[19], FLAG_MUL) != 0 && words[4] >= 1 << 62
-            }),
-            "multiply with a near-maximal product"
-        );
+        let branch = edge_words(3);
+        assert!(flag(branch[19], FLAG_BRANCH) != 0);
+        assert!(flag(branch[19], FLAG_IMM_POSITIVE) == 0 && branch[7] == 8);
+        for index in 4..6 {
+            let words = edge_words(index);
+            assert!(flag(words[19], FLAG_MUL) != 0);
+            assert_eq!([words[3], words[4]], [1, u64::MAX - 1], "maximal product");
+        }
 
         let point = (0..=log_t)
             .map(|index| AkitaField::from_u64(splitmix(index as u64) & ((1 << 48) - 1)))
