@@ -533,12 +533,19 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 }
             }
         }
-        if stage1_projection_owner_requested && !admitted_plan.is_some_and(|plan| plan.owner) {
+        let owner_admitted = admitted_plan.is_some_and(|plan| plan.owner);
+        if stage1_projection_owner_requested && !owner_admitted {
             tracing::info!(
                 target: "jolt::metal",
                 cycles,
                 "InstructionReadRAF Stage-1 owner deferred to Stage 5"
             );
+        }
+        // Without the owner pass the RAM columns come from their own witness
+        // scan; run it before the resident rows exist so its transient does
+        // not stack on them. The owner pass publishes the columns itself.
+        if !owner_admitted {
+            self.prepare_ram_raf_witness(session, log_t, witness)?;
         }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
@@ -582,7 +589,9 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 session.park(rows);
             }
         }
-        self.prepare_ram_raf_witness(session, log_t, witness)?;
+        if owner_admitted {
+            self.prepare_ram_raf_witness(session, log_t, witness)?;
+        }
         if self.config.spartan_product_remainder.reuse_outer_state_a {
             self.prepare_outer_remainder_storage(session, cycles)?;
             self.prepare_product_remainder_witness(session, log_t, witness)?;
