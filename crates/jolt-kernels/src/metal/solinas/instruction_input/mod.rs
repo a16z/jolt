@@ -430,6 +430,16 @@ struct InstructionInputStorageLayout {
     owned_bytes: u64,
 }
 
+impl InstructionInputStorageLayout {
+    const fn allocated_bytes(&self, borrowed_dense: bool) -> u64 {
+        if borrowed_dense {
+            self.owned_bytes - self.buffer_bytes[0] - self.buffer_bytes[1]
+        } else {
+            self.owned_bytes
+        }
+    }
+}
+
 fn instruction_input_storage_layout(
     rows: usize,
     e_in_capacity: usize,
@@ -488,9 +498,15 @@ fn instruction_input_storage_layout(
     })
 }
 
-pub(crate) fn instruction_input_sequence_storage_bytes(rows: usize) -> Result<u64, MetalError> {
+pub(crate) fn instruction_input_sequence_storage_bytes(
+    rows: usize,
+    borrowed_dense: bool,
+) -> Result<u64, MetalError> {
     let (e_in_capacity, e_out_capacity) = instruction_input_weight_capacities(rows)?;
-    Ok(instruction_input_storage_layout(rows, e_in_capacity, e_out_capacity)?.owned_bytes)
+    Ok(
+        instruction_input_storage_layout(rows, e_in_capacity, e_out_capacity)?
+            .allocated_bytes(borrowed_dense),
+    )
 }
 
 pub(crate) struct InstructionInputSequenceStorage {
@@ -684,11 +700,7 @@ impl SolinasMetal {
             dense_transition_limits,
         )?;
         let borrowed_dense = dense.is_some();
-        let owned_bytes = if borrowed_dense {
-            layout.owned_bytes - layout.buffer_bytes[0] - layout.buffer_bytes[1]
-        } else {
-            layout.owned_bytes
-        };
+        let owned_bytes = layout.allocated_bytes(borrowed_dense);
         let device = self.device_info();
         let _allocation_span = tracing::info_span!(
             "MetalInstructionInput::allocation_plan",
@@ -1402,8 +1414,12 @@ mod tests {
         );
         assert_eq!(layout.owned_bytes, 3_222_208_512);
         assert_eq!(
-            instruction_input_sequence_storage_bytes(rows).unwrap(),
+            instruction_input_sequence_storage_bytes(rows, false).unwrap(),
             layout.owned_bytes
+        );
+        assert_eq!(
+            instruction_input_sequence_storage_bytes(rows, true).unwrap(),
+            983_040
         );
     }
 

@@ -110,36 +110,42 @@ fn resident_row_consumers(cycles: usize, config: &MetalConfig) -> (bool, bool) {
 
 fn resident_row_working_set(
     cycles: usize,
-    stage1: bool,
-    instruction_input: bool,
-    instruction_read_raf_owner: bool,
-    metal_uniskip: bool,
-    metal_remainder: bool,
-    remainder_dispatch: OuterRemainderSequenceConfig,
+    plan: ResidentRowPlan,
+    config: &MetalConfig,
 ) -> Result<u64, MetalError> {
-    let row_bytes = if stage1 {
+    let metal_remainder =
+        plan.stage1 && cycles >= config.spartan_outer_remainder.trace_cutoff_elements;
+    let row_bytes = if plan.stage1 {
         spartan_outer_uniskip_row_bytes(cycles)?
-    } else if instruction_input {
+    } else if plan.instruction_input {
         instruction_input_row_bytes(cycles)?
     } else {
         0
     };
-    let instruction_input_bytes = if instruction_input {
-        instruction_input_sequence_storage_bytes(cycles)?
+    let instruction_input_bytes = if plan.instruction_input {
+        // The dense tables borrow Outer's state A and Product's state B, which
+        // the Outer storage below counts.
+        let borrowed_dense =
+            metal_remainder && cycles >= config.spartan_product_remainder.trace_cutoff_elements;
+        instruction_input_sequence_storage_bytes(cycles, borrowed_dense)?
     } else {
         0
     };
-    let uniskip_bytes = if metal_uniskip {
-        spartan_outer_uniskip_invocation_bytes(cycles)?
-    } else {
-        0
-    };
+    let uniskip_bytes =
+        if plan.stage1 && cycles >= config.spartan_outer_uniskip.trace_cutoff_elements {
+            spartan_outer_uniskip_invocation_bytes(cycles)?
+        } else {
+            0
+        };
     let remainder_bytes = if metal_remainder {
-        outer_remainder_sequence_storage_bytes_with_config(cycles, remainder_dispatch)?
+        outer_remainder_sequence_storage_bytes_with_config(
+            cycles,
+            config.spartan_outer_remainder.dispatch,
+        )?
     } else {
         0
     };
-    let instruction_read_raf_bytes = if instruction_read_raf_owner {
+    let instruction_read_raf_bytes = if plan.owner {
         instruction_read_raf_stage1_device_bytes(cycles)?
     } else {
         0
@@ -166,41 +172,36 @@ fn use_metal_stage1(cycles: usize, config: &MetalConfig, resident_rows: bool) ->
     cycles >= config.spartan_outer_uniskip.trace_cutoff_elements && resident_rows
 }
 
+/// `owner`: the Stage-1 rows pass also builds the InstructionReadRAF owner
+/// (and its registers read-write, bytecode and RAM co-products); without it
+/// Stage 5 builds the owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ResidentRowPlan {
     stage1: bool,
     instruction_input: bool,
+    owner: bool,
 }
 
 fn resident_row_admission_candidates(
     stage1_eligible: bool,
     instruction_input_eligible: bool,
+    owner_requested: bool,
 ) -> Vec<ResidentRowPlan> {
-    match (stage1_eligible, instruction_input_eligible) {
-        (true, true) => vec![
-            ResidentRowPlan {
-                stage1: true,
-                instruction_input: true,
-            },
-            ResidentRowPlan {
-                stage1: false,
-                instruction_input: true,
-            },
-            ResidentRowPlan {
-                stage1: true,
-                instruction_input: false,
-            },
-        ],
-        (true, false) => vec![ResidentRowPlan {
-            stage1: true,
-            instruction_input: false,
-        }],
-        (false, true) => vec![ResidentRowPlan {
-            stage1: false,
-            instruction_input: true,
-        }],
-        (false, false) => Vec::new(),
-    }
+    let plan = |stage1, instruction_input, owner| ResidentRowPlan {
+        stage1,
+        instruction_input,
+        owner,
+    };
+    [
+        (owner_requested && instruction_input_eligible).then(|| plan(true, true, true)),
+        (stage1_eligible && instruction_input_eligible).then(|| plan(true, true, false)),
+        instruction_input_eligible.then(|| plan(false, true, false)),
+        owner_requested.then(|| plan(true, false, true)),
+        stage1_eligible.then(|| plan(true, false, false)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn prepare_cpu_instruction_input_now(
@@ -375,7 +376,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         witness: &dyn JoltWitnessPlane<AkitaField>,
     ) -> Result<(), KernelError<AkitaField>> {
         let cycles = 1usize << log_t;
-        let (mut stage1_eligible, instruction_input_eligible) =
+        let (stage1_eligible, instruction_input_eligible) =
             resident_row_consumers(cycles, &self.config);
         let instruction_read_raf_owner_requested = cycles
             >= self.config.instruction_read_raf.address_cutoff_elements
@@ -423,19 +424,16 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         } else {
             None
         };
-        stage1_eligible |= stage1_projection_owner_requested;
         let mut admitted_plan = None;
-        let mut last_admission_error = None;
-        if stage1_eligible || instruction_input_eligible {
+        if stage1_eligible || instruction_input_eligible || stage1_projection_owner_requested {
             let instruction_input_bytes =
                 instruction_input_row_bytes(cycles).map_err(metal_prepare_error)?;
             let device = self.context.device_info();
-            for candidate in
-                resident_row_admission_candidates(stage1_eligible, instruction_input_eligible)
-            {
-                if (prepare_bytecode_carrier || prepare_registers_read_write) && !candidate.stage1 {
-                    continue;
-                }
+            for candidate in resident_row_admission_candidates(
+                stage1_eligible,
+                instruction_input_eligible,
+                stage1_projection_owner_requested,
+            ) {
                 let residual_bytes = if candidate.stage1 {
                     spartan_outer_uniskip_row_bytes(cycles)
                         .map_err(metal_prepare_error)?
@@ -452,7 +450,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             validate_resident_row_buffer(residual_bytes, device.max_buffer_length)
                         })
                         .and_then(|()| {
-                            if stage1_projection_owner_requested && candidate.stage1 {
+                            if candidate.owner {
                                 validate_resident_row_buffer(
                                     instruction_read_raf_stage1_row_bytes(cycles)?,
                                     device.max_buffer_length,
@@ -462,7 +460,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     device.max_buffer_length,
                                 )?;
                             }
-                            if prepare_bytecode_carrier && candidate.stage1 {
+                            if prepare_bytecode_carrier && candidate.owner {
                                 let physical_rows = bytecode_carrier_physical_rows.ok_or(
                                     MetalError::InvalidInstructionReadRafGrouped(
                                         "bytecode carrier physical rows are unavailable".to_owned(),
@@ -489,23 +487,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                                     device.max_buffer_length,
                                 )?;
                             }
-                            let bytes = resident_row_working_set(
-                                cycles,
-                                candidate.stage1,
-                                candidate.instruction_input,
-                                stage1_projection_owner_requested && candidate.stage1,
-                                candidate.stage1
-                                    && cycles
-                                        >= self.config.spartan_outer_uniskip.trace_cutoff_elements,
-                                candidate.stage1
-                                    && cycles
-                                        >= self
-                                            .config
-                                            .spartan_outer_remainder
-                                            .trace_cutoff_elements,
-                                self.config.spartan_outer_remainder.dispatch,
-                            )?;
-                            if prepare_bytecode_carrier && candidate.stage1 {
+                            let bytes = resident_row_working_set(cycles, candidate, &self.config)?;
+                            if prepare_bytecode_carrier && candidate.owner {
                                 let physical_rows = bytecode_carrier_physical_rows.ok_or(
                                     MetalError::InvalidInstructionReadRafGrouped(
                                         "bytecode carrier physical rows are unavailable".to_owned(),
@@ -521,7 +504,15 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             }
                         })
                         .and_then(|additional| {
-                            self.context.validate_additional_working_set(additional)
+                            self.context.validate_additional_working_set(additional)?;
+                            // Only owner plans also face the process footprint:
+                            // it still holds Stage-0 commit transients, which
+                            // would decline the rows alone at 2^29, while the
+                            // owner can be built at Stage 5 instead.
+                            if candidate.owner {
+                                self.context.validate_additional_footprint(additional)?;
+                            }
+                            Ok(())
                         });
                 match admission {
                     Ok(()) => {
@@ -534,25 +525,24 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             error = %error,
                             stage1 = candidate.stage1,
                             instruction_input = candidate.instruction_input,
+                            owner = candidate.owner,
                             "Metal resident-row plan was not admitted"
                         );
-                        last_admission_error = Some(error);
                     }
                     Err(error) => return Err(metal_prepare_error(error)),
                 }
             }
         }
-        if (prepare_bytecode_carrier || prepare_registers_read_write) && admitted_plan.is_none() {
-            return Err(last_admission_error.map_or(
-                KernelError::InvariantViolation {
-                    reason: "required Stage-1 owner plan was not admitted",
-                },
-                metal_prepare_error,
-            ));
+        if stage1_projection_owner_requested && !admitted_plan.is_some_and(|plan| plan.owner) {
+            tracing::info!(
+                target: "jolt::metal",
+                cycles,
+                "InstructionReadRAF Stage-1 owner deferred to Stage 5"
+            );
         }
         if let Some(plan) = admitted_plan {
             if plan.stage1 {
-                let (mut rows, instruction_read_raf_ready) = if stage1_projection_owner_requested {
+                let (mut rows, instruction_read_raf_ready) = if plan.owner {
                     prepare_metal_spartan_outer_stage1_owner_witness_rows(
                         &self.context,
                         witness,
@@ -1583,7 +1573,8 @@ mod tests {
         OUTER_DOMAIN, OUTER_VARIABLES,
     };
     use crate::metal::solinas::{
-        MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
+        validate_working_set, MetalError, OuterRemainderPhase, OuterRemainderSequence,
+        OuterRemainderSequenceConfig,
     };
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
     use crate::optimized::parity::run_lockstep;
@@ -1692,49 +1683,47 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_instruction_input_working_set_matches_production_geometry() {
-        let working_set =
-            |cycles, stage1, instruction_input, instruction_read_raf, uniskip, remainder| {
-                resident_row_working_set(
-                    cycles,
+    fn stage0_owner_is_deferred_at_log_29_and_co_produced_at_log_28() {
+        // recommendedMaxWorkingSetSize of the 128 GB benchmark host and the
+        // W2 Stage-0 measurements when the plan is admitted: 2^29 commit
+        // plateau and W1's A-prefix (the only Metal allocation then); 2^28
+        // Stage-0 peak less the rows and owner it held.
+        const MAXIMUM: u64 = 115_448_725_504;
+        const FOOTPRINT_29: u64 = 63_400_000_000;
+        const METAL_29: u64 = 6_440_000_000;
+        const FOOTPRINT_28: u64 = 45_800_000_000;
+        let config = MetalConfig::production();
+        let plan_bytes = |log_t: usize, stage1, owner| {
+            resident_row_working_set(
+                1 << log_t,
+                ResidentRowPlan {
                     stage1,
-                    instruction_input,
-                    instruction_read_raf,
-                    uniskip,
-                    remainder,
-                    Default::default(),
-                )
-                .unwrap()
-            };
-
+                    instruction_input: true,
+                    owner,
+                },
+                &config,
+            )
+            .unwrap()
+        };
         assert_eq!(
-            working_set(1 << 26, true, true, false, true, true),
-            11_818_832_208
+            [
+                plan_bytes(28, true, false),
+                plan_bytes(28, true, true),
+                plan_bytes(29, true, false),
+                plan_bytes(29, true, true),
+                plan_bytes(28, false, false),
+            ],
+            [
+                34_572_341_584,
+                43_430_711_632,
+                69_137_469_776,
+                86_854_209_872,
+                25_771_769_856,
+            ]
         );
-        assert_eq!(
-            working_set(1 << 28, true, true, false, true, true),
-            47_255_130_448
-        );
-        assert_eq!(
-            working_set(1 << 26, true, true, true, true, true),
-            14_033_424_720
-        );
-        assert_eq!(
-            working_set(1 << 27, true, true, true, true, true),
-            28_060_815_696
-        );
-        assert_eq!(
-            working_set(1 << 26, false, true, false, false, false),
-            6_443_433_984
-        );
-        assert_eq!(
-            working_set(1 << 28, false, true, false, false, false),
-            25_771_769_856
-        );
-        assert_eq!(
-            working_set(1 << 28, true, false, false, true, true),
-            34_368_262_480
-        );
+        assert!(validate_working_set(FOOTPRINT_28, plan_bytes(28, true, true), MAXIMUM).is_ok());
+        assert!(validate_working_set(FOOTPRINT_29, plan_bytes(29, true, true), MAXIMUM).is_err());
+        assert!(validate_working_set(METAL_29, plan_bytes(29, true, false), MAXIMUM).is_ok());
     }
 
     #[test]
@@ -1783,25 +1772,42 @@ mod tests {
     }
 
     #[test]
-    fn admission_retries_instruction_input_before_stage1() {
+    fn admission_drops_the_owner_before_the_stage1_rows() {
+        let plan = |stage1, instruction_input, owner| ResidentRowPlan {
+            stage1,
+            instruction_input,
+            owner,
+        };
         assert_eq!(
-            resident_row_admission_candidates(true, true),
+            resident_row_admission_candidates(true, true, true),
             vec![
-                ResidentRowPlan {
-                    stage1: true,
-                    instruction_input: true,
-                },
-                ResidentRowPlan {
-                    stage1: false,
-                    instruction_input: true,
-                },
-                ResidentRowPlan {
-                    stage1: true,
-                    instruction_input: false,
-                },
+                plan(true, true, true),
+                plan(true, true, false),
+                plan(false, true, false),
+                plan(true, false, true),
+                plan(true, false, false),
             ]
         );
-        assert_eq!(resident_row_admission_candidates(false, false), vec![]);
+        assert_eq!(
+            resident_row_admission_candidates(false, true, true),
+            vec![
+                plan(true, true, true),
+                plan(false, true, false),
+                plan(true, false, true),
+            ]
+        );
+        assert_eq!(
+            resident_row_admission_candidates(true, true, false),
+            vec![
+                plan(true, true, false),
+                plan(false, true, false),
+                plan(true, false, false),
+            ]
+        );
+        assert_eq!(
+            resident_row_admission_candidates(false, false, false),
+            vec![]
+        );
     }
 
     #[test]

@@ -107,6 +107,7 @@ pub(crate) struct SpartanRawRow {
 }
 
 impl SpartanRawRow {
+    #[cfg(feature = "test-utils")]
     pub(crate) const fn pc(self) -> u64 {
         self.words[0]
     }

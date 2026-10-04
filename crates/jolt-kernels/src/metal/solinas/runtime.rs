@@ -2,13 +2,14 @@ use std::{
     any::Any,
     collections::HashMap,
     ffi::c_void,
-    mem::size_of,
+    mem::{size_of, MaybeUninit},
     ops::Deref,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
+use libc::{rusage_info_t, rusage_info_v4, RUSAGE_INFO_V4};
 use metal::{
     objc::{runtime::Sel, Message},
     Buffer, CommandQueue, CompileOptions, ComputeCommandEncoderRef, ComputePipelineState, Device,
@@ -371,6 +372,16 @@ impl SolinasMetal {
         )
     }
 
+    /// [`Self::validate_additional_working_set`] against the process footprint
+    /// (host memory plus every Metal allocation) instead of Metal alone.
+    pub(crate) fn validate_additional_footprint(&self, additional: u64) -> Result<(), MetalError> {
+        super::validate_working_set(
+            process_footprint_bytes(),
+            additional,
+            self.device.recommended_max_working_set_size(),
+        )
+    }
+
     pub(super) fn compile_named_pipeline(
         &self,
         name: &'static str,
@@ -466,6 +477,26 @@ impl SolinasMetal {
 /// clients: the PIOP kernels and the commitment backend share the device).
 pub fn device_allocated_bytes() -> u64 {
     Device::system_default().map_or(0, |device| device.current_allocated_size())
+}
+
+/// This process's `phys_footprint` (what `footprint(1)` and `time -l` report);
+/// `u64::MAX`, which declines every footprint admission, if the call fails.
+fn process_footprint_bytes() -> u64 {
+    let mut info = MaybeUninit::<rusage_info_v4>::zeroed();
+    // SAFETY: flavor RUSAGE_INFO_V4 writes at most one rusage_info_v4 into
+    // `info`, a valid zeroed value either way.
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            libc::getpid(),
+            RUSAGE_INFO_V4,
+            info.as_mut_ptr().cast::<rusage_info_t>(),
+        )
+    };
+    if status != 0 {
+        return u64::MAX;
+    }
+    // SAFETY: see above; the zeroed storage is fully initialized.
+    unsafe { info.assume_init() }.ri_phys_footprint
 }
 
 pub(crate) fn validate_working_set(
