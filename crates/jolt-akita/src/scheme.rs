@@ -148,9 +148,9 @@ impl RequiredMetalTraceCommitment {
         Ok(value)
     }
 
-    /// Drops the CPU NTT slots of every prepared setup; the opening rebuilds
-    /// the slots it needs.
-    fn release_prepared_ntt_slots(&self) -> Result<(), OpeningsError> {
+    /// Drops the CPU NTT slots and the device matrix prefixes of every
+    /// prepared setup; the opening rebuilds what it needs.
+    fn release_post_commit_residency(&self) -> Result<(), OpeningsError> {
         let prepared = self
             .prepared
             .lock()
@@ -167,6 +167,10 @@ impl RequiredMetalTraceCommitment {
                 .cpu_prepared()
                 .drop_built_ntt_slots()
                 .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+            let matrix_bytes = setup
+                .release_matrices()
+                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+            tracing::info!(matrix_bytes, "released Metal matrix prefixes");
         }
         Ok(())
     }
@@ -761,7 +765,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         setup.release_post_commit_ntt_residency()?;
         #[cfg(all(feature = "metal", target_os = "macos"))]
         if let Some(metal) = backend.required_metal() {
-            metal.release_prepared_ntt_slots()?;
+            metal.release_post_commit_residency()?;
         }
         #[cfg(not(all(feature = "metal", target_os = "macos")))]
         let _ = backend;
