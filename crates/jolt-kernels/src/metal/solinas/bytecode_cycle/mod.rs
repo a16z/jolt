@@ -125,8 +125,22 @@ struct Pipelines {
 struct Buffers {
     tables_a: Vec<Buffer>,
     tables_b: Vec<Buffer>,
+    /// Becomes `tables_a` at the first transition, which drops the
+    /// initial-length side: every later write into it needs a quarter of
+    /// that length.
+    quarter_tables_a: Option<Vec<Buffer>>,
     partial_a: Buffer,
     partial_b: Buffer,
+}
+
+/// Per-table elements of the A, B and quarter-length A sides a sequence over
+/// `elements_per_table` allocates.
+pub(super) const fn bytecode_cycle_side_elements(elements_per_table: usize) -> [usize; 3] {
+    [
+        elements_per_table,
+        elements_per_table / 2,
+        elements_per_table / 4,
+    ]
 }
 
 pub struct BytecodeCycleSequence {
@@ -239,13 +253,16 @@ impl SolinasMetal {
         let partial_elements = BYTECODE_CYCLE_SAMPLES
             .checked_mul(partial_capacity)
             .ok_or(MetalError::InputTooLong(partial_capacity))?;
+        let [a_elements, b_elements, quarter_elements] =
+            bytecode_cycle_side_elements(elements_per_table);
         Ok(BytecodeCycleSequence {
             context: self.clone(),
             pipelines,
             reduction_limits,
             buffers: Buffers {
-                tables_a: self.new_bytecode_cycle_buffers(elements_per_table)?,
-                tables_b: self.new_bytecode_cycle_buffers(elements_per_table / 2)?,
+                tables_a: self.new_bytecode_cycle_buffers(a_elements)?,
+                tables_b: self.new_bytecode_cycle_buffers(b_elements)?,
+                quarter_tables_a: Some(self.new_bytecode_cycle_buffers(quarter_elements)?),
                 partial_a: self.new_bytecode_cycle_buffer(partial_elements)?,
                 partial_b: self.new_bytecode_cycle_buffer(partial_elements)?,
             },
@@ -274,7 +291,7 @@ impl SolinasMetal {
 }
 
 impl BytecodeCycleSequence {
-    pub fn reset(&mut self, tables: BytecodeCycleTables<'_>) -> Result<(), MetalError> {
+    fn reset(&mut self, tables: BytecodeCycleTables<'_>) -> Result<(), MetalError> {
         tables.validate(self.initial_elements)?;
         for (buffer, table) in self
             .buffers
@@ -298,18 +315,6 @@ impl BytecodeCycleSequence {
         challenge: AkitaField,
     ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
         self.execute_round(Some(challenge))
-    }
-
-    /// Restores the initial source after exactly one transition without copying it.
-    pub fn rewind_initial_state(&mut self) -> Result<(), MetalError> {
-        if self.source_in_a || self.current_elements != self.initial_elements / 2 {
-            return Err(MetalError::InvalidBytecodeCycleState(
-                "rewind requires exactly one transition from the initial state",
-            ));
-        }
-        self.current_elements = self.initial_elements;
-        self.source_in_a = true;
-        Ok(())
     }
 
     pub fn read_current_tables(
@@ -419,6 +424,9 @@ impl BytecodeCycleSequence {
         if challenge.is_some() {
             self.current_elements /= 2;
             self.source_in_a = !self.source_in_a;
+            if let Some(quarter) = self.buffers.quarter_tables_a.take() {
+                self.buffers.tables_a = quarter;
+            }
         }
         Ok(message)
     }
@@ -628,19 +636,6 @@ mod tests {
             sequence.message().unwrap(),
             cpu_message(&expected_tables, elements)
         );
-        let rewind_challenge = field(5);
-        let rewind_tables = bind_tables(&expected_tables, elements, rewind_challenge);
-        let rewind_message = cpu_message(&rewind_tables, elements / 2);
-        assert_eq!(
-            sequence.bind_and_message(rewind_challenge).unwrap(),
-            rewind_message
-        );
-        sequence.rewind_initial_state().unwrap();
-        assert_eq!(
-            sequence.bind_and_message(rewind_challenge).unwrap(),
-            rewind_message
-        );
-        sequence.rewind_initial_state().unwrap();
 
         let mut current_elements = elements;
         for challenge in [
@@ -659,6 +654,11 @@ mod tests {
                 cpu_message(&expected_tables, current_elements)
             );
             assert_eq!(sequence.current_elements(), current_elements);
+            assert!(sequence
+                .buffers
+                .tables_a
+                .iter()
+                .all(|buffer| buffer.length() == byte_length(elements / 4).unwrap()));
         }
 
         let mut restored = vec![AkitaField::zero(); expected_tables.len()];

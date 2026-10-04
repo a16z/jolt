@@ -5,6 +5,7 @@ use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_poly::EqPolynomial;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
+use super::bytecode_cycle::bytecode_cycle_side_elements;
 #[cfg(test)]
 use super::PipelineLimits;
 use super::{
@@ -452,11 +453,12 @@ fn row_device_allocation(
     let weighted_eq_hi_elements = BYTECODE_ROW_STAGES
         .checked_mul(hi_length)
         .ok_or(MetalError::InputTooLong(hi_length))?;
-    let dense_a_elements = BYTECODE_CYCLE_TABLES
-        .checked_mul(elements / 2)
-        .ok_or(MetalError::InputTooLong(elements))?;
-    let dense_b_elements = BYTECODE_CYCLE_TABLES
-        .checked_mul(elements / 4)
+    let dense_elements = bytecode_cycle_side_elements(elements / 2)
+        .into_iter()
+        .try_fold(0usize, |total, side| {
+            side.checked_mul(BYTECODE_CYCLE_TABLES)
+                .and_then(|side| total.checked_add(side))
+        })
         .ok_or(MetalError::InputTooLong(elements))?;
     let partial_elements = 2usize
         .checked_mul(BYTECODE_CYCLE_SAMPLES)
@@ -479,8 +481,7 @@ fn row_device_allocation(
         bound_eq_lo_elements,
         weighted_eq_hi_elements,
         ra_elements,
-        dense_a_elements,
-        dense_b_elements,
+        dense_elements,
         partial_elements,
     ]
     .into_iter()
@@ -630,7 +631,7 @@ mod tests {
             + BYTECODE_ROW_STAGES * (lo_length / 2)
             + BYTECODE_ROW_STAGES * hi_length
             + 2 * BYTECODE_ROW_RA_ENTRIES
-            + BYTECODE_CYCLE_TABLES * (elements / 2 + elements / 4)
+            + BYTECODE_CYCLE_TABLES * (elements / 2 + elements / 4 + elements / 8)
             + 2 * BYTECODE_CYCLE_SAMPLES * config.max_threadgroups;
         assert_eq!(
             allocation.total_bytes,
