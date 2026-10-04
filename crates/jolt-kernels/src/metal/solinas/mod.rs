@@ -105,8 +105,9 @@ pub(crate) use instruction_claim_reduction_successor::{
 pub(crate) use instruction_input::{
     instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
     instruction_input_weight_capacities, InstructionInputSequenceStorage,
-    PendingInstructionInputPrimer, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
-    INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
+    PendingInstructionInputPrimer, INSTRUCTION_INPUT_MIN_ROWS,
+    INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS, INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS,
+    INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
 };
 pub use instruction_input::{
     InstructionInputRow, InstructionInputRows, InstructionInputSequence,

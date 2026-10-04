@@ -206,11 +206,7 @@ impl MetalBackend {
                 return Ok(());
             };
             (
-                Some(
-                    storage
-                        .share_product_state_a()
-                        .map_err(metal_prepare_error)?,
-                ),
+                Some(storage.share_state_a().map_err(metal_prepare_error)?),
                 storage.awaits_product_state_b(),
             )
         } else {

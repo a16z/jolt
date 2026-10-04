@@ -701,14 +701,13 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         }
         self.prepare_ram_raf_witness(session, log_t, witness)?;
         if self.config.spartan_product_remainder.reuse_outer_state_a {
-            self.prepare_instruction_input_storage(session, cycles)?;
             self.prepare_outer_remainder_storage(session, cycles)?;
             self.prepare_product_remainder_witness(session, log_t, witness)?;
         } else {
             self.prepare_product_remainder_witness(session, log_t, witness)?;
-            self.prepare_instruction_input_storage(session, cycles)?;
             self.prepare_outer_remainder_storage(session, cycles)?;
         }
+        self.prepare_instruction_input_storage(session, cycles)?;
         if session.state::<PreparedInstructionInput>().is_none() {
             drop(session.take::<InstructionInputRows>());
             if let Some(mut rows) = session.take::<SpartanOuterUniskipRows>() {
@@ -1826,27 +1825,27 @@ mod tests {
 
         assert_eq!(
             working_set(1 << 26, true, true, false, true, true, true),
-            16_138_965_328
+            12_917_739_856
         );
         assert_eq!(
             working_set(1 << 28, true, true, false, true, true, true),
-            64_535_662_928
+            51_650_761_040
         );
         assert_eq!(
             working_set(1 << 26, true, true, true, true, true, true),
-            18_353_557_840
+            15_132_332_368
         );
         assert_eq!(
             working_set(1 << 27, true, true, true, true, true, true),
-            36_701_081_936
+            30_258_630_992
         );
         assert_eq!(
             working_set(1 << 26, false, true, false, false, false, false),
-            9_664_659_456
+            6_443_433_984
         );
         assert_eq!(
             working_set(1 << 28, false, true, false, false, false, false),
-            38_656_671_744
+            25_771_769_856
         );
         assert_eq!(
             working_set(1 << 28, true, false, false, true, true, true),

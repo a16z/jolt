@@ -21,7 +21,8 @@ use super::solinas::{
     instruction_input_weight_capacities, InstructionInputRows, InstructionInputSequence,
     InstructionInputSequenceConfig, InstructionInputSequenceStorage,
     InstructionInputStorageInitialization, MetalError, OuterRemainderSequence,
-    PendingInstructionInputPrimer, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
+    OuterRemainderSequenceStorage, PendingInstructionInputPrimer, ProductRemainderSequence,
+    INSTRUCTION_INPUT_MIN_ROWS, INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS,
     INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS, INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS,
     INSTRUCTION_INPUT_TABLES,
 };
@@ -99,13 +100,23 @@ impl MetalBackend {
         trace_elements: usize,
     ) -> Result<(), KernelError<AkitaField>> {
         let config = self.config.instruction_input;
-        if trace_elements < config.trace_cutoff_elements || trace_elements <= config.cutoff_elements
+        if trace_elements < config.trace_cutoff_elements
+            || trace_elements <= config.cutoff_elements
+            || trace_elements < INSTRUCTION_INPUT_MIN_ROWS
         {
             return Ok(());
         }
         let Some(resident_rows) = session.state::<InstructionInputRows>() else {
             return Ok(());
         };
+        // Outer's state A and Product's state B are idle from the end of Stage 2;
+        // the sequence first writes them in round 2 of Stage 3.
+        let dense = session
+            .state::<OuterRemainderSequenceStorage>()
+            .zip(session.state::<ProductRemainderSequence>())
+            .map(|(outer, product)| Ok([outer.share_state_a()?, product.share_state_b()?]))
+            .transpose()
+            .map_err(metal_prepare_error)?;
         let resident_rows_storage_id = resident_rows.allocation_identity();
         let resident_row_count = resident_rows.len();
         let resident_row_bytes = size_of::<super::solinas::InstructionInputRow>();
@@ -134,6 +145,7 @@ impl MetalBackend {
             e_in_capacity,
             e_out_capacity,
             config.dispatch,
+            dense,
         ) {
             Ok(storage) => {
                 tracing::info!(

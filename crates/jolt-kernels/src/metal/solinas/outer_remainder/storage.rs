@@ -569,14 +569,14 @@ impl OuterRemainderSequenceStorage {
         Ok(())
     }
 
-    pub(crate) fn share_product_state_a(&self) -> Result<Buffer, MetalError> {
+    pub(crate) fn share_state_a(&self) -> Result<Buffer, MetalError> {
         self.storage
             .buffers
             .dense
             .as_ref()
             .map(|dense| dense.state_a.clone())
             .ok_or(MetalError::InvalidOuterRemainderState {
-                expected: "allocated dense storage for sequential Product reuse",
+                expected: "allocated dense storage for sequential reuse",
                 got: "released dense storage",
             })
     }

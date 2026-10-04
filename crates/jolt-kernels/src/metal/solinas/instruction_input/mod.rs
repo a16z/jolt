@@ -186,9 +186,13 @@ impl allocative::Allocative for InstructionInputRows {
 
 const SIMD_WIDTH: usize = 32;
 const NATIVE_MESSAGE_PIPELINE: &str = "solinas_instruction_input_native_message";
+const NATIVE_BOUND_MESSAGE_PIPELINE: &str = "solinas_instruction_input_native_bound_message";
 const NATIVE_TRANSITION_PIPELINE: &str = "solinas_instruction_input_native_transition";
 const DENSE_TRANSITION_PIPELINE: &str = "solinas_instruction_input_dense_transition";
 const REDUCTION_PIPELINE: &str = "solinas_instruction_input_reduce";
+/// The native rows feed rounds 0-2, so the dense tables start at a quarter of
+/// the rows and need at least three rounds.
+pub(crate) const INSTRUCTION_INPUT_MIN_ROWS: usize = 8;
 pub(crate) const INSTRUCTION_INPUT_PRIMER_SOURCE_ELEMENTS: usize = 64;
 pub(crate) const INSTRUCTION_INPUT_PRIMER_E_IN_ELEMENTS: usize = 1;
 pub(crate) const INSTRUCTION_INPUT_PRIMER_E_OUT_ELEMENTS: usize =
@@ -326,6 +330,7 @@ struct InstructionInputParams {
 
 struct Pipelines {
     native_message: ComputePipelineState,
+    native_bound_message: ComputePipelineState,
     native_transition: ComputePipelineState,
     dense_transition: ComputePipelineState,
     reduction: ComputePipelineState,
@@ -430,7 +435,7 @@ fn instruction_input_storage_layout(
     e_in_capacity: usize,
     e_out_capacity: usize,
 ) -> Result<InstructionInputStorageLayout, MetalError> {
-    if rows < 4 || !rows.is_power_of_two() {
+    if rows < INSTRUCTION_INPUT_MIN_ROWS || !rows.is_power_of_two() {
         return Err(MetalError::InvalidInstructionInputRows(rows));
     }
     let covered = e_in_capacity
@@ -443,10 +448,10 @@ fn instruction_input_storage_layout(
         });
     }
     let dense_a_elements = INSTRUCTION_INPUT_TABLES
-        .checked_mul(rows / 2)
+        .checked_mul(rows / 4)
         .ok_or(MetalError::InputTooLong(rows))?;
     let dense_b_elements = INSTRUCTION_INPUT_TABLES
-        .checked_mul(rows / 4)
+        .checked_mul(rows / 8)
         .ok_or(MetalError::InputTooLong(rows))?;
     let partial_elements = INSTRUCTION_INPUT_COEFFICIENTS
         .checked_mul(e_out_capacity)
@@ -519,12 +524,15 @@ impl allocative::Allocative for InstructionInputSequenceStorage {
 enum SequencePhase {
     BeforeMessage,
     Native,
+    /// Round 0 is bound to the challenge but the tables still live in the rows.
+    Bound(AkitaField),
     Dense,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DispatchKind {
     NativeMessage,
+    NativeBoundMessage,
     NativeTransition,
     DenseTransition,
 }
@@ -600,31 +608,48 @@ impl SolinasMetal {
             e_in_capacity,
             e_out_capacity,
             config,
+            None,
         )?
         .attach(resident_rows)
     }
 
+    /// `dense` lends the two dense tables (2 and 1 fields per row); the
+    /// sequence first writes them in round 2, so the lender must be done with
+    /// them by then.
     pub(crate) fn prepare_instruction_input_sequence_storage(
         &self,
         rows: usize,
         e_in_capacity: usize,
         e_out_capacity: usize,
         config: InstructionInputSequenceConfig,
+        dense: Option<[Buffer; 2]>,
     ) -> Result<InstructionInputSequenceStorage, MetalError> {
         let layout = instruction_input_storage_layout(rows, e_in_capacity, e_out_capacity)?;
+        if dense.as_ref().is_some_and(|dense| {
+            dense[0].length() != layout.buffer_bytes[0]
+                || dense[1].length() != layout.buffer_bytes[1]
+                || dense[0].as_ptr() == dense[1].as_ptr()
+        }) {
+            return Err(MetalError::InvalidInstructionInputState(
+                "borrowed dense tables have the wrong shape",
+            ));
+        }
 
         let pipelines = Pipelines {
             native_message: self.compile_named_pipeline(NATIVE_MESSAGE_PIPELINE)?,
+            native_bound_message: self.compile_named_pipeline(NATIVE_BOUND_MESSAGE_PIPELINE)?,
             native_transition: self.compile_named_pipeline(NATIVE_TRANSITION_PIPELINE)?,
             dense_transition: self.compile_named_pipeline(DENSE_TRANSITION_PIPELINE)?,
             reduction: self.compile_named_pipeline(REDUCTION_PIPELINE)?,
         };
         let native_message_limits = Self::limits(&pipelines.native_message);
+        let native_bound_message_limits = Self::limits(&pipelines.native_bound_message);
         let native_transition_limits = Self::limits(&pipelines.native_transition);
         let dense_transition_limits = Self::limits(&pipelines.dense_transition);
         let reduction_limits = Self::limits(&pipelines.reduction);
         for (pipeline, limits) in [
             (NATIVE_MESSAGE_PIPELINE, native_message_limits),
+            (NATIVE_BOUND_MESSAGE_PIPELINE, native_bound_message_limits),
             (NATIVE_TRANSITION_PIPELINE, native_transition_limits),
             (DENSE_TRANSITION_PIPELINE, dense_transition_limits),
             (REDUCTION_PIPELINE, reduction_limits),
@@ -645,25 +670,48 @@ impl SolinasMetal {
             config.native_transition_threads_per_threadgroup,
             native_transition_limits,
         )?;
+        if Self::resolve_threadgroup_width(
+            Some(native_transition_threads),
+            native_bound_message_limits,
+        )? != native_transition_threads
+        {
+            return Err(MetalError::InvalidInstructionInputState(
+                "the bound native message cannot use the native transition width",
+            ));
+        }
         let dense_transition_threads = Self::resolve_threadgroup_width(
             config.dense_transition_threads_per_threadgroup,
             dense_transition_limits,
         )?;
-        let owned_bytes = layout.owned_bytes;
+        let borrowed_dense = dense.is_some();
+        let owned_bytes = if borrowed_dense {
+            layout.owned_bytes - layout.buffer_bytes[0] - layout.buffer_bytes[1]
+        } else {
+            layout.owned_bytes
+        };
         let device = self.device_info();
         let _allocation_span = tracing::info_span!(
             "MetalInstructionInput::allocation_plan",
             device_buffers = INSTRUCTION_INPUT_DEVICE_BUFFERS,
             planned_device_bytes = layout.owned_bytes,
+            owned_device_bytes = owned_bytes,
+            borrowed_dense,
             current_device_bytes = device.current_allocated_size,
             recommended_device_bytes = device.recommended_max_working_set_size,
         )
         .entered();
         self.validate_additional_working_set(owned_bytes)?;
 
+        let [dense_a, dense_b] = match dense {
+            Some(dense) => dense.map(BufferRegion::whole),
+            None => [
+                new_buffer(self, layout.dense_a_elements)?,
+                new_buffer(self, layout.dense_b_elements)?,
+            ],
+        };
         let buffers = Buffers {
-            dense_a: new_buffer(self, layout.dense_a_elements)?,
-            dense_b: new_buffer(self, layout.dense_b_elements)?,
+            dense_a,
+            dense_b,
             e_in: new_buffer(self, e_in_capacity)?,
             e_out: new_buffer(self, e_out_capacity)?,
             partial_a: new_buffer(self, layout.partial_elements)?,
@@ -675,7 +723,12 @@ impl SolinasMetal {
                 "allocated storage lengths disagree with the plan",
             ));
         }
-        initialize_storage(self, &buffers, config.storage_initialization)?;
+        initialize_storage(
+            self,
+            &buffers,
+            config.storage_initialization,
+            !borrowed_dense,
+        )?;
 
         Ok(InstructionInputSequenceStorage {
             context: self.clone(),
@@ -893,16 +946,17 @@ impl InstructionInputSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; INSTRUCTION_INPUT_COEFFICIENTS], MetalError> {
-        let kind = match self.phase {
+        let (kind, challenges) = match self.phase {
             SequencePhase::BeforeMessage => {
                 return Err(MetalError::InvalidInstructionInputState(
                     "the native message must precede the first bind",
                 ));
             }
-            SequencePhase::Native => DispatchKind::NativeTransition,
-            SequencePhase::Dense => DispatchKind::DenseTransition,
+            SequencePhase::Native => (DispatchKind::NativeBoundMessage, [challenge; 2]),
+            SequencePhase::Bound(first) => (DispatchKind::NativeTransition, [first, challenge]),
+            SequencePhase::Dense => (DispatchKind::DenseTransition, [challenge; 2]),
         };
-        self.execute(kind, Some(challenge), gamma, e_in, e_out)
+        self.execute(kind, Some(challenges), gamma, e_in, e_out)
     }
 
     pub fn read_current_tables(&self, output: &mut [AkitaField]) -> Result<(), MetalError> {
@@ -936,6 +990,7 @@ impl InstructionInputSequence {
     pub const fn current_elements(&self) -> usize {
         match self.phase {
             SequencePhase::BeforeMessage | SequencePhase::Native => self.storage.rows,
+            SequencePhase::Bound(_) => self.storage.rows / 2,
             SequencePhase::Dense => self.dense_elements,
         }
     }
@@ -956,21 +1011,26 @@ impl InstructionInputSequence {
         self.storage.buffers.identities()
     }
 
+    /// `challenges` holds the bind challenge in both slots, except for the
+    /// native transition, which binds rounds 0 and 1.
     fn execute(
         &mut self,
         kind: DispatchKind,
-        challenge: Option<AkitaField>,
+        challenges: Option<[AkitaField; 2]>,
         gamma: AkitaField,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
     ) -> Result<[AkitaField; INSTRUCTION_INPUT_COEFFICIENTS], MetalError> {
         let source_elements = match kind {
-            DispatchKind::NativeMessage | DispatchKind::NativeTransition => self.storage.rows,
+            DispatchKind::NativeMessage
+            | DispatchKind::NativeBoundMessage
+            | DispatchKind::NativeTransition => self.storage.rows,
             DispatchKind::DenseTransition => self.dense_elements,
         };
         let pair_divisor = match kind {
             DispatchKind::NativeMessage => 2,
-            DispatchKind::NativeTransition | DispatchKind::DenseTransition => 4,
+            DispatchKind::NativeBoundMessage | DispatchKind::DenseTransition => 4,
+            DispatchKind::NativeTransition => 8,
         };
         if source_elements < pair_divisor || !source_elements.is_power_of_two() {
             return Err(MetalError::InvalidInstructionInputRows(source_elements));
@@ -1005,11 +1065,16 @@ impl InstructionInputSequence {
             reserved: 0,
         };
         let gamma = Fp128::from_jolt_field(&gamma);
-        let challenge = challenge.map(|value| Fp128::from_jolt_field(&value));
+        let challenge_fields =
+            challenges.map(|values| values.map(|value| Fp128::from_jolt_field(&value)));
         let (pipeline, threads) = match kind {
             DispatchKind::NativeMessage => (
                 self.storage.pipelines.native_message.clone(),
                 self.storage.native_message_threads,
+            ),
+            DispatchKind::NativeBoundMessage => (
+                self.storage.pipelines.native_bound_message.clone(),
+                self.storage.native_transition_threads,
             ),
             DispatchKind::NativeTransition => (
                 self.storage.pipelines.native_transition.clone(),
@@ -1035,6 +1100,21 @@ impl InstructionInputSequence {
                     set_inline_bytes(encoder, 4, &gamma);
                     set_inline_bytes(encoder, 5, &params);
                 }
+                DispatchKind::NativeBoundMessage => {
+                    encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
+                    self.storage.buffers.e_in.bind(encoder, 1);
+                    self.storage.buffers.e_out.bind(encoder, 2);
+                    self.storage.buffers.partial_a.bind(encoder, 3);
+                    set_inline_bytes(
+                        encoder,
+                        4,
+                        &challenge_fields.ok_or(MetalError::InvalidInstructionInputState(
+                            "bound native message is missing its challenge",
+                        ))?[0],
+                    );
+                    set_inline_bytes(encoder, 5, &gamma);
+                    set_inline_bytes(encoder, 6, &params);
+                }
                 DispatchKind::NativeTransition => {
                     encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
                     self.storage.buffers.dense_a.bind(encoder, 1);
@@ -1044,11 +1124,9 @@ impl InstructionInputSequence {
                     set_inline_bytes(
                         encoder,
                         5,
-                        challenge
-                            .as_ref()
-                            .ok_or(MetalError::InvalidInstructionInputState(
-                                "native transition is missing its challenge",
-                            ))?,
+                        &challenge_fields.ok_or(MetalError::InvalidInstructionInputState(
+                            "native transition is missing its challenges",
+                        ))?,
                     );
                     set_inline_bytes(encoder, 6, &gamma);
                     set_inline_bytes(encoder, 7, &params);
@@ -1062,11 +1140,9 @@ impl InstructionInputSequence {
                     set_inline_bytes(
                         encoder,
                         5,
-                        challenge
-                            .as_ref()
-                            .ok_or(MetalError::InvalidInstructionInputState(
-                                "dense transition is missing its challenge",
-                            ))?,
+                        &challenge_fields.ok_or(MetalError::InvalidInstructionInputState(
+                            "dense transition is missing its challenge",
+                        ))?[0],
                     );
                     set_inline_bytes(encoder, 6, &gamma);
                     set_inline_bytes(encoder, 7, &params);
@@ -1125,9 +1201,16 @@ impl InstructionInputSequence {
 
         match kind {
             DispatchKind::NativeMessage => self.phase = SequencePhase::Native,
+            DispatchKind::NativeBoundMessage => {
+                self.phase = SequencePhase::Bound(
+                    challenges.ok_or(MetalError::InvalidInstructionInputState(
+                        "bound native message lost its challenge",
+                    ))?[0],
+                );
+            }
             DispatchKind::NativeTransition => {
                 self.phase = SequencePhase::Dense;
-                self.dense_elements = self.storage.rows / 2;
+                self.dense_elements = self.storage.rows / 4;
                 self.dense_in_a = true;
             }
             DispatchKind::DenseTransition => {
@@ -1159,9 +1242,13 @@ fn initialize_storage(
     context: &SolinasMetal,
     buffers: &Buffers,
     mode: InstructionInputStorageInitialization,
+    initialize_dense: bool,
 ) -> Result<(), MetalError> {
     let fill_lengths: [u64; INSTRUCTION_INPUT_DEVICE_BUFFERS] = std::array::from_fn(|index| {
         let buffer = buffers.all()[index];
+        if index < 2 && !initialize_dense {
+            return 0;
+        }
         match mode {
             InstructionInputStorageInitialization::Lazy => 0,
             InstructionInputStorageInitialization::Minimal => size_of::<Fp128>() as u64,
@@ -1263,6 +1350,7 @@ mod tests {
 
     use jolt_field::Prime128OffsetA7F7 as AkitaField;
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+    use metal::{foreign_types::ForeignType, MTLResourceOptions};
 
     use super::{
         initialize_storage, instruction_input_row_bytes, instruction_input_sequence_storage_bytes,
@@ -1272,7 +1360,7 @@ mod tests {
         INSTRUCTION_INPUT_TABLES, REGISTER_RD_INDEX_SHIFT, REGISTER_RS1_INDEX_SHIFT,
         REGISTER_RS2_INDEX_SHIFT,
     };
-    use crate::metal::solinas::{MetalError, SolinasMetal, SpartanOuterUniskipRow};
+    use crate::metal::solinas::{Fp128, MetalError, SolinasMetal, SpartanOuterUniskipRow};
 
     #[test]
     fn register_indices_use_only_non_protocol_metadata_bits() {
@@ -1304,15 +1392,15 @@ mod tests {
         assert_eq!(
             layout.buffer_bytes,
             [
-                4_294_967_296,
                 2_147_483_648,
+                1_073_741_824,
                 65_536,
                 131_072,
                 393_216,
                 393_216,
             ]
         );
-        assert_eq!(layout.owned_bytes, 6_443_433_984);
+        assert_eq!(layout.owned_bytes, 3_222_208_512);
         assert_eq!(
             instruction_input_sequence_storage_bytes(rows).unwrap(),
             layout.owned_bytes
@@ -1431,9 +1519,11 @@ mod tests {
         );
     }
 
+    /// Rounds 0-1 read the native rows, round 2 materializes a quarter of the
+    /// rows into the lent dense tables, round 3 runs dense.
     #[test]
     fn resident_sequence_matches_cpu_descriptors_and_tables() {
-        let rows = packed_rows(16);
+        let rows = packed_rows(32);
         let initial_tables: Vec<AkitaField> = (0..INSTRUCTION_INPUT_TABLES)
             .flat_map(|table| {
                 rows.iter()
@@ -1441,12 +1531,9 @@ mod tests {
             })
             .collect();
         let gamma = AkitaField::from_u64(0xC001_CAFE);
-        let r_product = [
-            AkitaField::from_u64(5),
-            AkitaField::from_u64(7),
-            AkitaField::from_u64(11),
-            AkitaField::from_u64(13),
-        ];
+        let r_product = (0..5)
+            .map(|index| AkitaField::from_u64(5 + 2 * index))
+            .collect::<Vec<_>>();
         let mut gruen = GruenSplitEqPolynomial::new(&r_product, BindingOrder::LowToHigh);
         let context = SolinasMetal::for_akita().expect("Akita Metal context should compile");
         let resident = context
@@ -1454,17 +1541,46 @@ mod tests {
             .expect("rows should upload");
         let (e_in_capacity, e_out_capacity) =
             instruction_input_weight_capacities(rows.len()).unwrap();
+        let config = InstructionInputSequenceConfig {
+            storage_initialization: InstructionInputStorageInitialization::Full,
+            ..InstructionInputSequenceConfig::default()
+        };
+        let lent = [
+            INSTRUCTION_INPUT_TABLES * rows.len() / 4,
+            INSTRUCTION_INPUT_TABLES * rows.len() / 8,
+        ]
+        .map(|fields| {
+            let buffer = context.device.new_buffer(
+                (fields * size_of::<Fp128>()) as u64,
+                MTLResourceOptions::StorageModeShared,
+            );
+            // SAFETY: the test owns the shared buffer and no command uses it.
+            unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<u8>(), fields * 16) }
+                .fill(0xA5);
+            buffer
+        });
+        assert!(context
+            .prepare_instruction_input_sequence_storage(
+                rows.len(),
+                e_in_capacity,
+                e_out_capacity,
+                config,
+                Some([lent[1].clone(), lent[0].clone()]),
+            )
+            .is_err());
         let storage = context
             .prepare_instruction_input_sequence_storage(
                 rows.len(),
                 e_in_capacity,
                 e_out_capacity,
-                InstructionInputSequenceConfig {
-                    storage_initialization: InstructionInputStorageInitialization::Full,
-                    ..InstructionInputSequenceConfig::default()
-                },
+                config,
+                Some(lent.clone()),
             )
             .expect("sequence storage should prepare");
+        assert_eq!(
+            storage.buffers.identities()[..2],
+            lent.each_ref().map(|buffer| buffer.as_ptr() as usize)
+        );
         let mut sequence = storage.attach(resident).expect("rows should attach");
 
         let expected = descriptors(
@@ -1479,51 +1595,38 @@ mod tests {
             .expect("native message should execute");
         assert_eq!(actual, expected);
 
-        let challenge_0 = AkitaField::from_u64(19);
-        gruen.bind(challenge_0);
-        let tables_1 = bind_tables(&initial_tables, rows.len(), challenge_0);
-        let expected = descriptors(
-            &tables_1,
-            rows.len() / 2,
-            gamma,
-            gruen.e_in_current(),
-            gruen.e_out_current(),
-        );
-        let actual = sequence
-            .bind_and_message(
-                challenge_0,
+        let mut tables = initial_tables;
+        let mut elements = rows.len();
+        for (round, challenge) in [19u64, 23, 29].into_iter().enumerate() {
+            let challenge = AkitaField::from_u64(challenge);
+            gruen.bind(challenge);
+            tables = bind_tables(&tables, elements, challenge);
+            elements /= 2;
+            let expected = descriptors(
+                &tables,
+                elements,
                 gamma,
                 gruen.e_in_current(),
                 gruen.e_out_current(),
-            )
-            .expect("native transition should execute");
-        assert_eq!(actual, expected);
-        let mut readback = vec![AkitaField::zero(); tables_1.len()];
-        sequence.read_current_tables(&mut readback).unwrap();
-        assert_eq!(readback, tables_1);
-
-        let challenge_1 = AkitaField::from_u64(23);
-        gruen.bind(challenge_1);
-        let tables_2 = bind_tables(&tables_1, rows.len() / 2, challenge_1);
-        let expected = descriptors(
-            &tables_2,
-            rows.len() / 4,
-            gamma,
-            gruen.e_in_current(),
-            gruen.e_out_current(),
-        );
-        let actual = sequence
-            .bind_and_message(
-                challenge_1,
-                gamma,
-                gruen.e_in_current(),
-                gruen.e_out_current(),
-            )
-            .expect("dense transition should execute");
-        assert_eq!(actual, expected);
-        let mut readback = vec![AkitaField::zero(); tables_2.len()];
-        sequence.read_current_tables(&mut readback).unwrap();
-        assert_eq!(readback, tables_2);
+            );
+            let actual = sequence
+                .bind_and_message(
+                    challenge,
+                    gamma,
+                    gruen.e_in_current(),
+                    gruen.e_out_current(),
+                )
+                .expect("transition should execute");
+            assert_eq!(actual, expected, "round {}", round + 1);
+            assert_eq!(sequence.current_elements(), elements);
+            let mut readback = vec![AkitaField::zero(); tables.len()];
+            if round == 0 {
+                assert!(sequence.read_current_tables(&mut readback).is_err());
+            } else {
+                sequence.read_current_tables(&mut readback).unwrap();
+                assert_eq!(readback, tables, "round {}", round + 1);
+            }
+        }
     }
 
     #[test]
@@ -1590,6 +1693,7 @@ mod tests {
                 e_in_capacity,
                 e_out_capacity,
                 InstructionInputSequenceConfig::default(),
+                None,
             )
             .expect("sequence storage should prepare");
         let identities = storage.buffers.identities();
@@ -1604,6 +1708,7 @@ mod tests {
             &context,
             &storage.buffers,
             InstructionInputStorageInitialization::Full,
+            true,
         )
         .expect("full initialization should complete");
 
