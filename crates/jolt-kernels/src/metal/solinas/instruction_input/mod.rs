@@ -1,4 +1,4 @@
-use std::{ffi::c_void, mem::size_of, ops::Deref, slice};
+use std::{mem::size_of, slice};
 
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_field::Zero as _;
@@ -10,7 +10,7 @@ use metal::{
 
 use super::{
     completed_command_gpu_time, encode_column_reductions, set_inline_bytes,
-    validate_completed_command, Fp128, MetalError, PipelineLimits, ReductionBuffer, SolinasMetal,
+    validate_completed_command, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 
 pub const INSTRUCTION_INPUT_TABLES: usize = 8;
@@ -336,76 +336,17 @@ struct Pipelines {
     reduction: ComputePipelineState,
 }
 
-struct BufferRegion {
-    buffer: Buffer,
-    offset_bytes: u64,
-    length_bytes: u64,
-}
-
-impl BufferRegion {
-    fn whole(buffer: Buffer) -> Self {
-        let length_bytes = buffer.length();
-        Self {
-            buffer,
-            offset_bytes: 0,
-            length_bytes,
-        }
-    }
-
-    const fn buffer(&self) -> &Buffer {
-        &self.buffer
-    }
-
-    const fn offset_bytes(&self) -> u64 {
-        self.offset_bytes
-    }
-
-    const fn length(&self) -> u64 {
-        self.length_bytes
-    }
-
-    fn contents(&self) -> *mut c_void {
-        self.buffer
-            .contents()
-            .cast::<u8>()
-            .wrapping_add(self.offset_bytes as usize)
-            .cast()
-    }
-
-    fn allocation_identity(&self) -> usize {
-        self.buffer.as_ptr() as usize
-    }
-
-    fn bind(&self, encoder: &metal::ComputeCommandEncoderRef, index: u64) {
-        encoder.set_buffer(index, Some(&self.buffer), self.offset_bytes);
-    }
-}
-
-impl ReductionBuffer for BufferRegion {
-    fn bind_reduction(&self, encoder: &metal::ComputeCommandEncoderRef, index: u64) {
-        self.bind(encoder, index);
-    }
-}
-
-impl Deref for BufferRegion {
-    type Target = Buffer;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buffer
-    }
-}
-
 struct Buffers {
-    dense_a: BufferRegion,
-    dense_b: BufferRegion,
-    e_in: BufferRegion,
-    e_out: BufferRegion,
-    partial_a: BufferRegion,
-    partial_b: BufferRegion,
+    dense_a: Buffer,
+    dense_b: Buffer,
+    e_in: Buffer,
+    e_out: Buffer,
+    partial_a: Buffer,
+    partial_b: Buffer,
 }
 
 impl Buffers {
-    fn all(&self) -> [&BufferRegion; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
+    fn all(&self) -> [&Buffer; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
         [
             &self.dense_a,
             &self.dense_b,
@@ -417,7 +358,7 @@ impl Buffers {
     }
 
     fn identities(&self) -> [usize; INSTRUCTION_INPUT_DEVICE_BUFFERS] {
-        self.all().map(BufferRegion::allocation_identity)
+        self.all().map(|buffer| buffer.as_ptr() as usize)
     }
 }
 
@@ -715,7 +656,7 @@ impl SolinasMetal {
         self.validate_additional_working_set(owned_bytes)?;
 
         let [dense_a, dense_b] = match dense {
-            Some(dense) => dense.map(BufferRegion::whole),
+            Some(dense) => dense,
             None => [
                 new_buffer(self, layout.dense_a_elements)?,
                 new_buffer(self, layout.dense_b_elements)?,
@@ -809,9 +750,9 @@ impl InstructionInputSequenceStorage {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&self.pipelines.native_message);
             encoder.set_buffer(0, Some(resident_rows.buffer()), 0);
-            self.buffers.e_in.bind(encoder, 1);
-            self.buffers.e_out.bind(encoder, 2);
-            self.buffers.partial_a.bind(encoder, 3);
+            encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
+            encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
+            encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
             set_inline_bytes(encoder, 4, &gamma);
             set_inline_bytes(encoder, 5, &params);
             encoder.set_threadgroup_memory_length(
@@ -1106,17 +1047,17 @@ impl InstructionInputSequence {
             match kind {
                 DispatchKind::NativeMessage => {
                     encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-                    self.storage.buffers.e_in.bind(encoder, 1);
-                    self.storage.buffers.e_out.bind(encoder, 2);
-                    self.storage.buffers.partial_a.bind(encoder, 3);
+                    encoder.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
+                    encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
+                    encoder.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
                     set_inline_bytes(encoder, 4, &gamma);
                     set_inline_bytes(encoder, 5, &params);
                 }
                 DispatchKind::NativeBoundMessage => {
                     encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-                    self.storage.buffers.e_in.bind(encoder, 1);
-                    self.storage.buffers.e_out.bind(encoder, 2);
-                    self.storage.buffers.partial_a.bind(encoder, 3);
+                    encoder.set_buffer(1, Some(&self.storage.buffers.e_in), 0);
+                    encoder.set_buffer(2, Some(&self.storage.buffers.e_out), 0);
+                    encoder.set_buffer(3, Some(&self.storage.buffers.partial_a), 0);
                     set_inline_bytes(
                         encoder,
                         4,
@@ -1129,10 +1070,10 @@ impl InstructionInputSequence {
                 }
                 DispatchKind::NativeTransition => {
                     encoder.set_buffer(0, Some(self.resident_rows.buffer()), 0);
-                    self.storage.buffers.dense_a.bind(encoder, 1);
-                    self.storage.buffers.e_in.bind(encoder, 2);
-                    self.storage.buffers.e_out.bind(encoder, 3);
-                    self.storage.buffers.partial_a.bind(encoder, 4);
+                    encoder.set_buffer(1, Some(&self.storage.buffers.dense_a), 0);
+                    encoder.set_buffer(2, Some(&self.storage.buffers.e_in), 0);
+                    encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
+                    encoder.set_buffer(4, Some(&self.storage.buffers.partial_a), 0);
                     set_inline_bytes(
                         encoder,
                         5,
@@ -1144,11 +1085,11 @@ impl InstructionInputSequence {
                     set_inline_bytes(encoder, 7, &params);
                 }
                 DispatchKind::DenseTransition => {
-                    self.dense_source_buffer().bind(encoder, 0);
-                    self.dense_destination_buffer().bind(encoder, 1);
-                    self.storage.buffers.e_in.bind(encoder, 2);
-                    self.storage.buffers.e_out.bind(encoder, 3);
-                    self.storage.buffers.partial_a.bind(encoder, 4);
+                    encoder.set_buffer(0, Some(self.dense_source_buffer()), 0);
+                    encoder.set_buffer(1, Some(self.dense_destination_buffer()), 0);
+                    encoder.set_buffer(2, Some(&self.storage.buffers.e_in), 0);
+                    encoder.set_buffer(3, Some(&self.storage.buffers.e_out), 0);
+                    encoder.set_buffer(4, Some(&self.storage.buffers.partial_a), 0);
                     set_inline_bytes(
                         encoder,
                         5,
@@ -1233,7 +1174,7 @@ impl InstructionInputSequence {
         Ok(message)
     }
 
-    fn dense_source_buffer(&self) -> &BufferRegion {
+    fn dense_source_buffer(&self) -> &Buffer {
         if self.dense_in_a {
             &self.storage.buffers.dense_a
         } else {
@@ -1241,7 +1182,7 @@ impl InstructionInputSequence {
         }
     }
 
-    fn dense_destination_buffer(&self) -> &BufferRegion {
+    fn dense_destination_buffer(&self) -> &Buffer {
         if self.dense_in_a {
             &self.storage.buffers.dense_b
         } else {
@@ -1290,11 +1231,7 @@ fn initialize_storage(
                 if length == 0 {
                     continue;
                 }
-                encoder.fill_buffer(
-                    buffer.buffer(),
-                    NSRange::new(buffer.offset_bytes(), length),
-                    0,
-                );
+                encoder.fill_buffer(buffer, NSRange::new(0, length), 0);
             }
             encoder.end_encoding();
             command_buffer.commit();
@@ -1305,11 +1242,7 @@ fn initialize_storage(
     Ok(())
 }
 
-fn write_fields(
-    buffer: &BufferRegion,
-    capacity: usize,
-    values: &[AkitaField],
-) -> Result<(), MetalError> {
+fn write_fields(buffer: &Buffer, capacity: usize, values: &[AkitaField]) -> Result<(), MetalError> {
     if values.len() > capacity {
         return Err(MetalError::InstructionInputStorageLength {
             expected: capacity,
@@ -1325,14 +1258,12 @@ fn write_fields(
     Ok(())
 }
 
-fn new_buffer(context: &SolinasMetal, elements: usize) -> Result<BufferRegion, MetalError> {
+fn new_buffer(context: &SolinasMetal, elements: usize) -> Result<Buffer, MetalError> {
     let bytes = byte_length::<Fp128>(elements)?;
     context.validate_buffer_length(bytes)?;
-    Ok(BufferRegion::whole(
-        context
-            .device
-            .new_buffer(bytes, MTLResourceOptions::StorageModeShared),
-    ))
+    Ok(context
+        .device
+        .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
 }
 
 fn validate_u32_element_count(elements: usize) -> Result<(), MetalError> {

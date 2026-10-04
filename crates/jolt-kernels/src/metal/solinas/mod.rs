@@ -78,7 +78,7 @@ pub mod spartan_shift;
 
 use runtime::{
     buffer_from_slice, completed_command_gpu_time, encode_column_reductions,
-    validate_completed_command, ReductionBuffer,
+    validate_completed_command,
 };
 pub use runtime::{device_allocated_bytes, DeviceInfo, PipelineLimits, SolinasMetal};
 pub(crate) use runtime::{process_footprint_bytes, set_inline_bytes, validate_working_set};

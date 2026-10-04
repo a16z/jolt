@@ -102,21 +102,11 @@ struct ColumnReductionParams {
 
 const _: [(); 16] = [(); size_of::<ColumnReductionParams>()];
 
-pub(crate) trait ReductionBuffer {
-    fn bind_reduction(&self, encoder: &ComputeCommandEncoderRef, index: u64);
-}
-
-impl ReductionBuffer for Buffer {
-    fn bind_reduction(&self, encoder: &ComputeCommandEncoderRef, index: u64) {
-        encoder.set_buffer(index, Some(self), 0);
-    }
-}
-
-pub(crate) fn encode_column_reductions<B: ReductionBuffer>(
+pub(crate) fn encode_column_reductions(
     encoder: &ComputeCommandEncoderRef,
     pipeline: &ComputePipelineState,
-    partial_a: &B,
-    partial_b: &B,
+    partial_a: &Buffer,
+    partial_b: &Buffer,
     mut input_count: usize,
     columns: usize,
     width: usize,
@@ -139,8 +129,8 @@ pub(crate) fn encode_column_reductions<B: ReductionBuffer>(
         } else {
             (partial_b, partial_a)
         };
-        input.bind_reduction(encoder, 0);
-        output.bind_reduction(encoder, 1);
+        encoder.set_buffer(0, Some(input), 0);
+        encoder.set_buffer(1, Some(output), 0);
         set_inline_bytes(encoder, 2, &params);
         encoder.dispatch_thread_groups(
             MTLSize {
