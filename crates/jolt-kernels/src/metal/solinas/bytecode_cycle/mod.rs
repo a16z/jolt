@@ -151,7 +151,6 @@ pub struct BytecodeCycleSequence {
     message_threads_per_threadgroup: usize,
     transition_threads_per_threadgroup: usize,
     max_threadgroups: usize,
-    initial_elements: usize,
     current_elements: usize,
     source_in_a: bool,
 }
@@ -164,9 +163,15 @@ impl SolinasMetal {
     ) -> Result<BytecodeCycleSequence, MetalError> {
         let elements_per_table = tables.combined.len();
         tables.validate(elements_per_table)?;
-        let mut sequence =
-            self.prepare_empty_bytecode_cycle_sequence(elements_per_table, config)?;
-        sequence.reset(tables)?;
+        let sequence = self.prepare_empty_bytecode_cycle_sequence(elements_per_table, config)?;
+        for (buffer, table) in sequence
+            .buffers
+            .tables_a
+            .iter()
+            .zip(tables.planes().map(|(_, values)| values))
+        {
+            write_fields(buffer, elements_per_table, table);
+        }
         Ok(sequence)
     }
 
@@ -269,7 +274,6 @@ impl SolinasMetal {
             message_threads_per_threadgroup,
             transition_threads_per_threadgroup,
             max_threadgroups: config.max_threadgroups,
-            initial_elements: elements_per_table,
             current_elements: elements_per_table,
             source_in_a: true,
         })
@@ -291,21 +295,6 @@ impl SolinasMetal {
 }
 
 impl BytecodeCycleSequence {
-    fn reset(&mut self, tables: BytecodeCycleTables<'_>) -> Result<(), MetalError> {
-        tables.validate(self.initial_elements)?;
-        for (buffer, table) in self
-            .buffers
-            .tables_a
-            .iter()
-            .zip(tables.planes().map(|(_, values)| values))
-        {
-            write_fields(buffer, self.initial_elements, table);
-        }
-        self.current_elements = self.initial_elements;
-        self.source_in_a = true;
-        Ok(())
-    }
-
     pub fn message(&mut self) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
         self.execute_round(None)
     }
@@ -495,8 +484,8 @@ impl BytecodeCycleSequence {
 }
 
 fn write_fields(buffer: &Buffer, elements: usize, values: &[AkitaField]) {
-    // SAFETY: the buffer has exactly the checked capacity and no command uses
-    // it while the sequence is reset.
+    // SAFETY: the buffer was just allocated with exactly `elements` fields and
+    // no command has been encoded against it yet.
     let output = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), elements) };
     for (output, value) in output.iter_mut().zip(values) {
         *output = Fp128::from_jolt_field(value);
