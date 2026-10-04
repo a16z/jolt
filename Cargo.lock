@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-error",
  "akita-transcript",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -145,7 +145,7 @@ dependencies = [
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -153,7 +153,7 @@ dependencies = [
 [[package]]
 name = "akita-metal"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -191,7 +191,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -225,7 +225,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -237,7 +237,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "jolt-field",
  "thiserror 2.0.18",
@@ -246,7 +246,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -261,7 +261,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -275,7 +275,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-serialization",
  "blake2 0.10.6",
@@ -286,7 +286,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -307,7 +307,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/0xAndoroid/akita?rev=e158c14a1ee00c7a464c5406932c28ea3eb132f8#e158c14a1ee00c7a464c5406932c28ea3eb132f8"
+source = "git+https://github.com/0xAndoroid/akita?rev=6caaf668f03657af79ea67e038aeef3a2d4eb029#6caaf668f03657af79ea67e038aeef3a2d4eb029"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
