@@ -11,6 +11,7 @@ use akita_pcs::custom_source::{
     PolynomialRepresentation, PolynomialTypeSelection, PreparedExternalInnerCommitment,
     RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients,
 };
+use jolt_claims::protocols::jolt::lattice::strategy::MAX_ONE_HOT_TRACE_COLUMNS;
 
 use super::kernels::{trace_commitment_capability, TraceOneHotColumnCommitOperation};
 use super::NO_SELECTED_ROW;
@@ -96,9 +97,9 @@ impl TraceOneHotColumn {
             )));
         }
         let num_columns = rows.num_columns();
-        if num_columns > u64::BITS as usize {
+        if num_columns > MAX_ONE_HOT_TRACE_COLUMNS {
             return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot has {num_columns} semantic columns, above the 64-column mask limit"
+                "trace one-hot has {num_columns} semantic columns, above the {MAX_ONE_HOT_TRACE_COLUMNS}-column mask limit"
             )));
         }
         if num_columns == 0 {

@@ -108,13 +108,13 @@ impl OneHotTraceRows {
     ) -> Result<(), ProverError<F>> {
         if !matches!(log_k_chunk, 4 | 8) {
             return Err(ProverError::Unsupported {
-                reason: "packed one-hot trace chunk width must be 4 or 8 bits",
+                reason: "native one-hot trace chunk width must be 4 or 8 bits",
             });
         }
         let logical_num_vars = log_t
             .checked_add(log_k_chunk)
             .ok_or(ProverError::Unsupported {
-                reason: "packed one-hot trace dimensions overflow",
+                reason: "native one-hot trace dimensions overflow",
             })?;
         if plan.num_vars() != logical_num_vars {
             return Err(ProverError::InvariantViolation {

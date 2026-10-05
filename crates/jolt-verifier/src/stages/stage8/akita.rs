@@ -14,6 +14,7 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
     OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
+use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
@@ -233,7 +234,7 @@ where
     PCS: CommitmentScheme,
     PCS::Output: Clone + AppendToTranscript + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
-    VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
+    VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
@@ -371,7 +372,7 @@ where
 /// Assembles the native `OneHotTrace` group claim: every canonical
 /// column's leaf claim, its point mapped to the committed row-major order,
 /// all required to share one canonical opening point. Shared verbatim by the
-/// packed prover's stage 8, so both sides derive the same native statement.
+/// Akita prover's stage 8, so both sides derive the same native statement.
 pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
     plan: &OneHotTraceLayoutPlan,
     chunk_width: usize,
@@ -414,7 +415,7 @@ pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
 }
 
 /// One precommitted object's leaf claims: each of the plan's canonical columns
-/// paired with its resolved leaf claim. Shared verbatim by the packed
+/// paired with its resolved leaf claim. Shared verbatim by the Akita
 /// prover's stage 8, so both sides fail on the same missing leaf.
 pub fn object_leaf_claims<F: JoltField>(
     plan: &PrefixPackedObjectPlan,
@@ -437,10 +438,10 @@ pub fn object_leaf_claims<F: JoltField>(
         .collect()
 }
 
-/// Every packed column's single leaf claim, resolved from stage 4, the
+/// Every committed column's single leaf claim, resolved from stage 4, the
 /// precommitted reductions, and stage 7, keyed by committed polynomial. The
 /// canonical object plans check coverage, point arity, and suffix compatibility.
-/// Shared verbatim by the packed prover's stage 8.
+/// Shared verbatim by the Akita prover's stage 8.
 pub fn leaf_claims<F: JoltField>(
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<F>,
@@ -459,7 +460,7 @@ pub fn leaf_claims<F: JoltField>(
     ) -> Result<(), VerifierError> {
         if leaves.insert(polynomial, claim).is_some() {
             return Err(batch_failed(format!(
-                "duplicate packed final claim for {polynomial:?}"
+                "duplicate Akita final claim for {polynomial:?}"
             )));
         }
         Ok(())

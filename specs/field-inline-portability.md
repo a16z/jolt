@@ -79,7 +79,7 @@ In stage 8, the stage-6b claim `(v, r)` becomes a single dense opening at the
 padded point with value `v`. The PCS binds it directly to the field-increment
 commitment. There is no limb recomposition identity, selector challenge, or
 additional reconstruction sumcheck. Prover and verifier share this claim
-construction in `jolt-verifier/src/stages/stage8/packed.rs`.
+construction in `jolt-verifier/src/stages/stage8/akita.rs`.
 
 The commitment is required on every Akita proof with field-inline enabled,
 including traces that execute no field instructions. An all-zero polynomial

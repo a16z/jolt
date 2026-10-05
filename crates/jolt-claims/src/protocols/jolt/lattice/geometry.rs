@@ -40,6 +40,8 @@ pub enum LatticeGeometryError {
         actual: usize,
         expected: usize,
     },
+    #[error("OneHotTrace has {actual} columns, above the {capacity}-column row mask limit")]
+    TooManyOneHotTraceColumns { actual: usize, capacity: usize },
 }
 
 impl From<BalancedChunkingError> for LatticeGeometryError {

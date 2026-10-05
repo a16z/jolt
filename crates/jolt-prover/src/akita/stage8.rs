@@ -18,8 +18,8 @@ use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::stage8::packed::field_inc_claim;
-use jolt_verifier::stages::stage8::packed::{leaf_claims, object_leaf_claims, one_hot_trace_claim};
+use jolt_verifier::stages::stage8::akita::field_inc_claim;
+use jolt_verifier::stages::stage8::akita::{leaf_claims, object_leaf_claims, one_hot_trace_claim};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
 #[cfg(feature = "field-inline")]

@@ -1,5 +1,5 @@
 //! Lattice-mode booleanity: the base booleanity sumcheck (same
-//! `JoltRelationId::Booleanity`) extended so the packed one-hot inc
+//! `JoltRelationId::Booleanity`) extended so the one-hot increment
 //! polynomials are covered by the same boolean check as the `Ra` families. Precedent for
 //! sharing a relation id across mode variants: the full/committed bytecode
 //! read-raf pair.

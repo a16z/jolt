@@ -301,7 +301,7 @@ separate auxiliary proof path remains.
 | layout and point mapping (`address‖cycle` → `cycle‖address`) | `crates/jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
 | fixed-capacity prefix selector reduction (`PrefixPackedLayout`) | `crates/jolt-openings/src/prefix.rs` |
 | owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `crates/jolt-akita/src/{scheme,adapters}.rs` |
-| verifier mirror | `crates/jolt-verifier/src/stages/stage8/packed.rs` |
+| verifier mirror | `crates/jolt-verifier/src/stages/stage8/akita.rs` |
 | flavor/measurement bench (`flavor_bench`, `BENCH_*` env knobs) | `crates/jolt-akita/src/scheme.rs` |
 | packed config (`K=16` or `K=256`, selected like Dory) | `crates/jolt-prover/src/config.rs`, `crates/jolt-prover/src/akita/` |
 

@@ -25,6 +25,8 @@ akita-planner.workspace = true
 akita-schedules.workspace = true
 akita-types.workspace = true
 akita-params.workspace = true
+# Canonical trace geometry without selecting the Akita PIOP feature.
+jolt-claims.workspace = true
 jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
   "parallel",
 ] }
@@ -45,8 +47,4 @@ bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }
-# Schedule tests use the canonical field-increment and trace layouts. No
-# features: an akita edge here would leak into workspace-wide unification and
-# flip jolt-claims' packed-mode geometry for every `--all` lane.
-jolt-claims = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
