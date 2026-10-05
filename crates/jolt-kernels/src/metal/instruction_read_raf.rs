@@ -7,7 +7,7 @@ use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimen
 use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_field::Zero as _;
-use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::{JoltWitnessPlane, PolynomialEncoding};
@@ -1026,6 +1026,17 @@ impl MetalInstructionReadRafKernel {
 impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
     fn num_rounds(&self) -> usize {
         self.cpu.num_rounds()
+    }
+
+    /// The bound cycle message and the handoff run beside RegistersVal's
+    /// native and first dense transitions; the device passes touch disjoint
+    /// buffers.
+    fn execution_domain(&self) -> RoundExecutionDomain {
+        if self.address_sequence.is_some() && !self.cpu.metal_address_active() {
+            RoundExecutionDomain::Accelerator
+        } else {
+            RoundExecutionDomain::Host
+        }
     }
 
     fn prove_round(

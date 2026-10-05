@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use jolt_field::Zero as _;
-use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -523,6 +523,16 @@ impl MetalRegistersValEvaluationKernel {
 impl ProveRounds<AkitaField> for MetalRegistersValEvaluationKernel {
     fn num_rounds(&self) -> usize {
         self.cpu.num_rounds()
+    }
+
+    /// The native transition shares its round with InstructionReadRAF's
+    /// bound cycle message; the two device passes touch disjoint buffers.
+    fn execution_domain(&self) -> RoundExecutionDomain {
+        if matches!(self.state, RegistersValState::FirstJoined(_)) {
+            RoundExecutionDomain::Accelerator
+        } else {
+            RoundExecutionDomain::Host
+        }
     }
 
     fn prove_round(
