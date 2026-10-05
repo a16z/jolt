@@ -216,13 +216,7 @@ where
                         PCS::prewarm_trace_commitment(trace_backend, pcs_setup, trace_num_vars)
                     })
                 });
-                let rows = assemble_one_hot_trace_rows(
-                    witness,
-                    &plan,
-                    formula_dimensions.ra_layout,
-                    log_k_chunk,
-                    log_t,
-                );
+                let rows = assemble_one_hot_trace_rows(witness, &plan, log_k_chunk, log_t);
                 match prewarm.join() {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {

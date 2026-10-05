@@ -55,6 +55,23 @@ impl RaChunkSelector {
     }
 }
 
+/// Writes every chunk of the `chunks.len()`-chunk decomposition of `value`,
+/// one per byte, most significant first: `chunks[index]` is
+/// `RaChunkSelector::new(index, chunks.len(), chunk_bits)?.chunk_u128(value)`.
+/// `chunk_bits` is at most 8 so each chunk fits its byte.
+pub fn write_ra_chunks(value: u128, chunk_bits: usize, chunks: &mut [u8]) {
+    debug_assert!((1..=8).contains(&chunk_bits));
+    if chunk_bits == 8 {
+        let bytes = value.to_be_bytes();
+        chunks.copy_from_slice(&bytes[bytes.len() - chunks.len()..]);
+        return;
+    }
+    let mask = (1u128 << chunk_bits) - 1;
+    for (remaining, chunk) in chunks.iter_mut().rev().enumerate() {
+        *chunk = ((value >> (remaining * chunk_bits)) & mask) as u8;
+    }
+}
+
 /// Hot address of one committed `InstructionRa` chunk: the selected chunk of
 /// the instruction's lookup index. Every cycle is hot — no-op rows look up
 /// index 0 — so there is no cold case.
@@ -128,5 +145,35 @@ impl ExtractIndexed<RaChunkSelector> for RamRaChunk {
                 .0
                 .map(|address| selector.chunk_usize(address as usize)),
         ))
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bulk_chunks_match_each_selector() {
+        let values = [
+            0u128,
+            1,
+            0x0123_4567_89ab_cdef,
+            u128::MAX,
+            1 << 127,
+            0xfeed << 40,
+        ];
+        for (chunk_bits, chunk_counts) in [(8, [1, 3, 16]), (4, [1, 7, 32])] {
+            for chunks in chunk_counts {
+                for value in values {
+                    let mut bulk = vec![0u8; chunks];
+                    write_ra_chunks(value, chunk_bits, &mut bulk);
+                    for (index, &chunk) in bulk.iter().enumerate() {
+                        let selector = RaChunkSelector::new(index, chunks, chunk_bits).unwrap();
+                        assert_eq!(usize::from(chunk), selector.chunk_u128(value));
+                    }
+                }
+            }
+        }
     }
 }

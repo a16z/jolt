@@ -85,13 +85,7 @@ where
             log_k_chunk: chunk_width,
         })
         .map_err(batch_failed::<F>)?;
-    let rows = assemble_one_hot_trace_rows(
-        witness,
-        &plan,
-        formula_dimensions.ra_layout,
-        chunk_width,
-        log_t,
-    )?;
+    let rows = assemble_one_hot_trace_rows(witness, &plan, chunk_width, log_t)?;
     PCS::restore_trace_rows(&mut one_hot_trace_hint, rows).map_err(batch_failed::<F>)?;
 
     let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;

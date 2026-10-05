@@ -5,7 +5,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use jolt_akita::TraceOneHotRows;
-use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, committed_program_packing_plan, PrefixPackedObjectPlan,
 };
@@ -16,7 +15,7 @@ use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_poly::Polynomial;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::witnesses::{
-    BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RaChunkSelector, RemappedRamAddress,
+    write_ra_chunks, BytecodePc, FusedInc, LookupIndex, RemappedRamAddress,
 };
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
 
@@ -36,12 +35,67 @@ struct OneHotTraceSourceRow {
     fused_inc: FusedInc,
 }
 
+/// Column counts of one row in the plan's canonical order: instruction
+/// chunks, balanced-increment digits then their carry, bytecode chunks, and
+/// the remaining RAM chunks.
 #[derive(Clone, Copy)]
-enum OneHotTraceColumn {
-    Instruction(RaChunkSelector),
-    Bytecode(RaChunkSelector),
-    Ram(RaChunkSelector),
-    Increment(BalancedIncColumn),
+struct OneHotTraceRowLayout {
+    chunk_bits: usize,
+    instruction: usize,
+    increment: usize,
+    bytecode: usize,
+}
+
+impl OneHotTraceRowLayout {
+    fn new<F: JoltField>(
+        plan: &OneHotTraceLayoutPlan,
+        chunk_bits: usize,
+    ) -> Result<Self, ProverError<F>> {
+        let ranges = plan.ranges();
+        let canonical = ranges.instruction.start == 0
+            && ranges.balanced_inc.start == ranges.instruction.end
+            && ranges.balanced_inc_carry == ranges.balanced_inc.end
+            && ranges.bytecode.start == ranges.balanced_inc_carry + 1
+            && ranges.ram.start == ranges.bytecode.end
+            && ranges.ram.end == plan.packing().ids().len();
+        if !canonical {
+            return Err(ProverError::InvariantViolation {
+                reason: "OneHotTrace plan columns are not in canonical order",
+            });
+        }
+        Ok(Self {
+            chunk_bits,
+            instruction: ranges.instruction.len(),
+            increment: ranges.balanced_inc.len() + 1,
+            bytecode: ranges.bytecode.len(),
+        })
+    }
+
+    /// Fills one row's selected-row bytes; returns whether the cycle makes a
+    /// remappable RAM access (the only per-row fact the caller still needs —
+    /// the bytecode column is total, so no cycle can be missing its slot).
+    fn fill_row(self, row: OneHotTraceSourceRow, selected_rows: &mut [u8]) -> bool {
+        let (instruction, rest) = selected_rows.split_at_mut(self.instruction);
+        let (increment, rest) = rest.split_at_mut(self.increment);
+        let (bytecode, ram) = rest.split_at_mut(self.bytecode);
+        write_ra_chunks(row.lookup_index.0, self.chunk_bits, instruction);
+        row.fused_inc
+            .write_selected_rows(self.chunk_bits, increment);
+        write_ra_chunks(row.bytecode_pc.0 as u128, self.chunk_bits, bytecode);
+        match row.ram_address.0 {
+            Some(address) => write_ra_chunks(u128::from(address), self.chunk_bits, ram),
+            None => ram.fill(0),
+        }
+        row.ram_address.0.is_some()
+    }
+
+    /// A filled row's committed entries: its nonzero selected rows, plus every
+    /// RAM chunk of an active access, which commits row zero.
+    fn committed_entries(self, selected_rows: &[u8], ram_active: bool) -> usize {
+        let nonzero = |rows: &[u8]| rows.iter().filter(|&&row| row != 0).count();
+        let (rows, ram) = selected_rows.split_at(self.instruction + self.increment + self.bytecode);
+        nonzero(rows) + if ram_active { ram.len() } else { nonzero(ram) }
+    }
 }
 
 struct PackedTraceRows {
@@ -123,52 +177,12 @@ impl TraceOneHotRows for PackedTraceRows {
     }
 }
 
-/// Fills one row's selected-row bytes; returns whether the cycle makes a
-/// remappable RAM access (the only per-row fact the caller still needs — the
-/// bytecode column is total, so no cycle can be missing its slot).
-fn fill_trace_row(
-    row: OneHotTraceSourceRow,
-    columns: &[OneHotTraceColumn],
-    selected_rows: &mut [u8],
-) -> bool {
-    debug_assert_eq!(columns.len(), selected_rows.len());
-    for (column, selected_row) in columns.iter().zip(selected_rows) {
-        let row_index = match column {
-            OneHotTraceColumn::Instruction(selector) => selector.chunk_u128(row.lookup_index.0),
-            OneHotTraceColumn::Bytecode(selector) => selector.chunk_usize(row.bytecode_pc.0),
-            OneHotTraceColumn::Ram(selector) => row
-                .ram_address
-                .0
-                .map_or(0, |address| selector.chunk_usize(address as usize)),
-            OneHotTraceColumn::Increment(column) => row.fused_inc.selected_row(*column),
-        };
-        debug_assert!(row_index <= u8::MAX as usize);
-        *selected_row = row_index as u8;
-    }
-    row.ram_address.0.is_some()
-}
-
-fn committed_entry_count(
-    selected_rows: &[u8],
-    ram_active: bool,
-    ram_digit_zero_mask: u64,
-) -> usize {
-    selected_rows
-        .iter()
-        .enumerate()
-        .filter(|&(column, selected_row)| {
-            *selected_row != 0 || (ram_active && ram_digit_zero_mask & (1u64 << column) != 0)
-        })
-        .count()
-}
-
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
 /// plan's canonical semantic-column order.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
 pub fn assemble_one_hot_trace_rows<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
     plan: &OneHotTraceLayoutPlan,
-    ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
     log_t: usize,
 ) -> Result<Arc<dyn TraceOneHotRows>, ProverError<F>> {
@@ -180,39 +194,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         .ram
         .clone()
         .fold(0u64, |mask, column| mask | (1u64 << column));
-    let mut columns = Vec::with_capacity(num_columns);
-    for polynomial in plan.packing().ids() {
-        match polynomial {
-            JoltCommittedPolynomial::InstructionRa(index) => {
-                let selector = RaChunkSelector::new(*index, ra_layout.instruction(), log_k_chunk)?;
-                columns.push(OneHotTraceColumn::Instruction(selector));
-            }
-            JoltCommittedPolynomial::BytecodeRa(index) => {
-                let selector = RaChunkSelector::new(*index, ra_layout.bytecode(), log_k_chunk)?;
-                columns.push(OneHotTraceColumn::Bytecode(selector));
-            }
-            JoltCommittedPolynomial::RamRa(index) => {
-                let selector = RaChunkSelector::new(*index, ra_layout.ram(), log_k_chunk)?;
-                columns.push(OneHotTraceColumn::Ram(selector));
-            }
-            JoltCommittedPolynomial::BalancedIncDigit(index) => {
-                columns.push(OneHotTraceColumn::Increment(BalancedIncColumn::Digit {
-                    width: log_k_chunk,
-                    index: *index,
-                }));
-            }
-            JoltCommittedPolynomial::BalancedIncCarry => {
-                columns.push(OneHotTraceColumn::Increment(BalancedIncColumn::Carry {
-                    width: log_k_chunk,
-                }));
-            }
-            _ => {
-                return Err(ProverError::InvariantViolation {
-                    reason: "OneHotTrace plan contains only canonical columns",
-                })
-            }
-        }
-    }
+    let layout = OneHotTraceRowLayout::new::<F>(plan, log_k_chunk)?;
 
     let random_access = witness.random_access();
     let zero_suffix_start = if let Some(access) = random_access.as_ref() {
@@ -220,9 +202,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         if physical_rows < num_rows {
             let padding = access.window::<OneHotTraceSourceRow>(physical_rows)?;
             let mut selected = vec![0u8; num_columns];
-            if fill_trace_row(padding, &columns, &mut selected)
-                || selected.iter().any(|&row| row != 0)
-            {
+            if layout.fill_row(padding, &mut selected) || selected.iter().any(|&row| row != 0) {
                 num_rows
             } else {
                 physical_rows
@@ -259,15 +239,11 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                         let row_index = word_index * u64::BITS as usize + row_offset;
                         match access.window::<OneHotTraceSourceRow>(row_index) {
                             Ok(row) => {
-                                let ram_active = fill_trace_row(row, &columns, selected_rows);
+                                let ram_active = layout.fill_row(row, selected_rows);
                                 if ram_active {
                                     *ram_active_word |= 1u64 << row_offset;
                                 }
-                                hot_entries += committed_entry_count(
-                                    selected_rows,
-                                    ram_active,
-                                    ram_digit_zero_mask,
-                                );
+                                hot_entries += layout.committed_entries(selected_rows, ram_active);
                             }
                             Err(error) => {
                                 if let Ok(mut guard) = extraction_error.try_lock() {
@@ -302,12 +278,12 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         .zip(selected_rows.chunks_exact_mut(num_columns))
         .enumerate()
     {
-        let ram_active = fill_trace_row(row, &columns, selected_rows);
+        let ram_active = layout.fill_row(row, selected_rows);
         if ram_active {
             ram_active_rows[row_index / u64::BITS as usize] |=
                 1u64 << (row_index % u64::BITS as usize);
         }
-        hot_entries += committed_entry_count(selected_rows, ram_active, ram_digit_zero_mask);
+        hot_entries += layout.committed_entries(selected_rows, ram_active);
     }
     Ok(Arc::new(PackedTraceRows {
         num_rows,

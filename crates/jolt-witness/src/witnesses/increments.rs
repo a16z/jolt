@@ -109,6 +109,27 @@ impl FusedInc {
             }
         }
     }
+
+    /// Every digit row of `width`-bit columns, least significant first, then
+    /// the carry row: `rows[index]` is `selected_row(Digit { width, index })`
+    /// and the last byte is `selected_row(Carry { width })`. `width` is at
+    /// most 8 so each row fits its byte.
+    pub fn write_selected_rows(self, width: usize, rows: &mut [u8]) {
+        debug_assert_eq!(rows.len(), FUSED_INC_BITS / width + 1);
+        let Some((carry, digits)) = rows.split_last_mut() else {
+            return;
+        };
+        if width == 8 {
+            // Adding radix/2 to a byte digit flips its top bit.
+            let centered = self.biased_for_balanced_digits(width) as u64 ^ 0x8080_8080_8080_8080;
+            digits.copy_from_slice(&centered.to_le_bytes());
+        } else {
+            for (index, digit) in digits.iter_mut().enumerate() {
+                *digit = self.selected_row(BalancedIncColumn::Digit { width, index }) as u8;
+            }
+        }
+        *carry = self.selected_row(BalancedIncColumn::Carry { width }) as u8;
+    }
 }
 
 impl ToField for FusedInc {
@@ -222,6 +243,23 @@ mod tests {
             let carry = inc.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK });
             reconstructed += centered(carry, radix) << FUSED_INC_BITS;
             assert_eq!(reconstructed, inc.0, "cycle {cycle}");
+        }
+    }
+
+    #[test]
+    fn bulk_rows_match_each_selected_row() {
+        for width in [4, 8] {
+            let digits = FUSED_INC_BITS / width;
+            for inc in fused_trace() {
+                let mut rows = vec![0u8; digits + 1];
+                inc.write_selected_rows(width, &mut rows);
+                for (index, &row) in rows[..digits].iter().enumerate() {
+                    let column = BalancedIncColumn::Digit { width, index };
+                    assert_eq!(usize::from(row), inc.selected_row(column), "{inc:?}");
+                }
+                let carry = inc.selected_row(BalancedIncColumn::Carry { width });
+                assert_eq!(usize::from(rows[digits]), carry, "{inc:?}");
+            }
         }
     }
 

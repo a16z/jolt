@@ -41,7 +41,9 @@ pub use flags::{
 };
 pub use increments::{BalancedIncColumn, BalancedIncRow, FusedInc, RamInc, RdInc};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};
-pub use one_hot::{BytecodeRaChunk, InstructionRaChunk, RaChunkSelector, RamRaChunk};
+pub use one_hot::{
+    write_ra_chunks, BytecodeRaChunk, InstructionRaChunk, RaChunkSelector, RamRaChunk,
+};
 pub use operands::{
     Imm, LeftInstructionInput, LeftLookupOperand, Product, RightInstructionInput,
     RightLookupOperand,
