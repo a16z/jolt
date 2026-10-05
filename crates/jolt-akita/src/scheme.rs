@@ -19,14 +19,16 @@ use std::{
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, commit_failed, dense_polynomials, invalid_batch,
     invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    transparent_zk_error, validate_one_hot_k, with_backend_pool, with_one_hot_scheme, AkitaBackend,
+    transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackend,
     AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
     AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
     AkitaScheduleArtifacts, AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts,
     AkitaVerifierSetup, BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
 };
+use crate::configs::AkitaOneHotChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+use crate::one_hot_family::with_one_hot_family;
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +52,7 @@ fn commit_one_hot_source(
         .verifier
         .one_hot_scheme()
         .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-    with_one_hot_scheme!(scheme, |scheme| backend.commit(
+    with_one_hot_family!(scheme scheme, |scheme| backend.commit(
         scheme.schedules(),
         source,
         context
@@ -466,15 +468,28 @@ impl CommitmentScheme for AkitaScheme {
                 .map_err(invalid_setup)?;
             catalog.to_artifact_bytes().map_err(invalid_setup)
         };
-        let schedule_artifacts = match params.flavor {
-            AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
+        let schedule_artifacts = match (params.flavor, params.one_hot_chunk_profile) {
+            (AkitaSetupFlavor::Both, AkitaOneHotChunkProfile::Single) => {
+                AkitaVerifierScheduleArtifacts::Both {
+                    dense: dense_schedule_artifact()?,
+                    one_hot: one_hot_schedule_artifact()?,
+                }
+            }
+            (AkitaSetupFlavor::Both, profile) => AkitaVerifierScheduleArtifacts::BothChunked {
+                profile,
                 dense: dense_schedule_artifact()?,
                 one_hot: one_hot_schedule_artifact()?,
             },
-            AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
+            (AkitaSetupFlavor::OneHot, AkitaOneHotChunkProfile::Single) => {
+                AkitaVerifierScheduleArtifacts::OneHot {
+                    one_hot: one_hot_schedule_artifact()?,
+                }
+            }
+            (AkitaSetupFlavor::OneHot, profile) => AkitaVerifierScheduleArtifacts::OneHotChunked {
+                profile,
                 one_hot: one_hot_schedule_artifact()?,
             },
-            AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
+            (AkitaSetupFlavor::Dense, _) => AkitaVerifierScheduleArtifacts::Dense {
                 dense: dense_schedule_artifact()?,
             },
         };
@@ -486,7 +501,6 @@ impl CommitmentScheme for AkitaScheme {
             max_total_batch_polys: params.max_total_batch_polys,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
-            one_hot_chunk_profile: params.one_hot_chunk_profile,
             schedule_artifacts,
             backend_cache: BackendVerifierCache::default(),
         };
@@ -872,12 +886,13 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "tests unwrap successful PCS operations")]
     #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
     #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
+    #![expect(clippy::panic, reason = "tests reject impossible fixture variants")]
 
     use super::*;
     use crate::adapters::{
         append_verifier_setup, AkitaBackendFlavor, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
     };
-    use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded};
+    use crate::configs::JoltDenseBounded;
     use akita_config::{policy_of, CommitmentConfig};
     use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
@@ -912,7 +927,6 @@ mod tests {
             max_total_batch_polys: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
                 dense: artifacts
                     .dense_catalog()
@@ -1117,6 +1131,23 @@ mod tests {
 
     #[test]
     fn legacy_single_setup_keeps_its_transcript() {
+        #[derive(Serialize)]
+        enum LegacyAkitaVerifierScheduleArtifacts<'a> {
+            Dense { dense: &'a [u8] },
+            OneHot { one_hot: &'a [u8] },
+            Both { dense: &'a [u8], one_hot: &'a [u8] },
+        }
+
+        #[derive(Serialize)]
+        struct LegacyAkitaVerifierSetup<'a> {
+            max_num_vars: usize,
+            max_num_polys_per_commitment_group: usize,
+            max_total_batch_polys: usize,
+            default_layout_digest: AkitaLayoutDigest,
+            one_hot_k: usize,
+            schedule_artifacts: LegacyAkitaVerifierScheduleArtifacts<'a>,
+        }
+
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let (_, setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
             16,
@@ -1126,13 +1157,53 @@ mod tests {
             artifacts,
         ))
         .unwrap();
-        let mut legacy_json = serde_json::to_value(&setup).unwrap();
-        assert!(legacy_json
-            .as_object_mut()
+        let encode_legacy = |schedule_artifacts| {
+            bincode::serde::encode_to_vec(
+                LegacyAkitaVerifierSetup {
+                    max_num_vars: setup.max_num_vars,
+                    max_num_polys_per_commitment_group: setup.max_num_polys_per_commitment_group,
+                    max_total_batch_polys: setup.max_total_batch_polys,
+                    default_layout_digest: setup.default_layout_digest,
+                    one_hot_k: setup.one_hot_k,
+                    schedule_artifacts,
+                },
+                bincode::config::standard(),
+            )
             .unwrap()
-            .remove("one_hot_chunk_profile")
-            .is_some());
-        let legacy: AkitaVerifierSetup = serde_json::from_value(legacy_json).unwrap();
+        };
+        for schedule_artifacts in [
+            LegacyAkitaVerifierScheduleArtifacts::Dense { dense: &[] },
+            LegacyAkitaVerifierScheduleArtifacts::Both {
+                dense: &[],
+                one_hot: &[],
+            },
+        ] {
+            let bytes = encode_legacy(schedule_artifacts);
+            let (decoded, consumed): (AkitaVerifierSetup, usize) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(consumed, bytes.len());
+            assert_eq!(
+                decoded.one_hot_chunk_profile(),
+                AkitaOneHotChunkProfile::Single
+            );
+        }
+        let one_hot = match &setup.schedule_artifacts {
+            AkitaVerifierScheduleArtifacts::OneHot { one_hot } => one_hot,
+            AkitaVerifierScheduleArtifacts::Dense { .. }
+            | AkitaVerifierScheduleArtifacts::Both { .. }
+            | AkitaVerifierScheduleArtifacts::OneHotChunked { .. }
+            | AkitaVerifierScheduleArtifacts::BothChunked { .. } => {
+                panic!("single-profile one-hot setup must use the legacy artifact variant")
+            }
+        };
+        let legacy_bytes = encode_legacy(LegacyAkitaVerifierScheduleArtifacts::OneHot { one_hot });
+        let (legacy, consumed): (AkitaVerifierSetup, usize) =
+            bincode::serde::decode_from_slice(&legacy_bytes, bincode::config::standard()).unwrap();
+        assert_eq!(consumed, legacy_bytes.len());
+        assert_eq!(
+            bincode::serde::encode_to_vec(&setup, bincode::config::standard()).unwrap(),
+            legacy_bytes
+        );
         assert_eq!(
             legacy.one_hot_chunk_profile(),
             AkitaOneHotChunkProfile::Single
@@ -1176,7 +1247,7 @@ mod tests {
             AkitaScheduleArtifacts::shared_from_default_directory(),
         ))
         .unwrap();
-        let selection = with_one_hot_scheme!(verifier_setup.one_hot_scheme().unwrap(), |scheme| {
+        let selection = with_one_hot_family!(scheme verifier_setup.one_hot_scheme().unwrap(), |scheme| {
             scheme
                 .schedules()
                 .rows()
@@ -1187,7 +1258,7 @@ mod tests {
         let json = serde_json::to_string(&verifier_setup).unwrap();
 
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
-        let resolved = with_one_hot_scheme!(transported.one_hot_scheme().unwrap(), |scheme| {
+        let resolved = with_one_hot_family!(scheme transported.one_hot_scheme().unwrap(), |scheme| {
             scheme
                 .schedules()
                 .resolve_selection(selection)

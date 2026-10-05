@@ -64,7 +64,7 @@ Fiat-Shamir inventory and setup round-trip tests.
 
 - [x] K=16 and K=256 each round-trip under the `Single`, `Two`, `Four`, and `Eight` profiles.
 - [x] Six companion `.aks` artifacts cover one- and two-polynomial shapes from physical arity
-  16 through 34 for K=16 and through 43 for K=256.
+  16 through 40 for K=16 and through 43 for K=256.
 - [x] Every companion artifact applies its selected chunk geometry to the root and first
   recursive fold and uses single-chunk geometry thereafter.
 - [x] Streamed multi-chunk decomposition matches Akita's materialized one-hot decomposition

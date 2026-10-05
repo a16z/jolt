@@ -31,11 +31,11 @@ use tracing::info_span;
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, bridged_akita_session,
     invalid_batch, prove_failed, reverse_point, serialize_akita, validate_one_hot_k,
-    with_backend_pool, with_one_hot_scheme, with_one_hot_verifier, AkitaBackendCommitment,
-    AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint, AkitaBatchProof, AkitaCommitment,
-    AkitaConfig, AkitaField, AkitaHintSource, AkitaProverHint, AkitaProverSetup,
-    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    with_backend_pool, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
+    AkitaBackendHint, AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource,
+    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
+use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
@@ -212,7 +212,7 @@ fn prove_one_hot_opening(
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let scheme = setup.verifier.one_hot_scheme()?;
     with_backend_pool(|| {
-        let proof = with_one_hot_scheme!(scheme, |scheme| scheme.batched_prove(
+        let proof = with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove(
             backend_prover_setup,
             opening,
             backend,
@@ -235,7 +235,7 @@ fn verify_one_hot_statement(
 ) -> Result<(), OpeningsError> {
     let verifier = setup.one_hot_verifier()?;
     let verified = with_backend_pool(|| {
-        with_one_hot_verifier!(verifier, |verifier| verifier.batched_verify(
+        with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
             &proof.backend_proof,
             session,
             statement,
@@ -329,7 +329,7 @@ impl AkitaNativeBatching {
         .map_err(prove_failed)?;
         handles.push(main_backend_hint);
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
-        let opening = with_one_hot_scheme!(setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
+        let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
             SelectedProverOpeningData::from_committed_claims::<Cfg>(
                 claims,
                 handles,
@@ -365,15 +365,14 @@ impl AkitaNativeBatching {
             .iter()
             .map(|entry| &entry.claim.commitment)
             .collect::<Vec<_>>();
-        let (auxiliary_backend, main_backend) =
-            with_one_hot_scheme!(setup.one_hot_scheme()?, |scheme| {
-                crate::shape_guard::deserialize_checked_grouped_backend_payload(
-                    scheme.schedules(),
-                    &auxiliary_commitments,
-                    &main.commitment,
-                    proof.selection(),
-                )
-            })?;
+        let (auxiliary_backend, main_backend) = with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| {
+            crate::shape_guard::deserialize_checked_grouped_backend_payload(
+                scheme.schedules(),
+                &auxiliary_commitments,
+                &main.commitment,
+                proof.selection(),
+            )
+        })?;
         let selection = proof.selection();
         let session = bind_grouped_statement_transcripts(
             transcript,
@@ -579,7 +578,7 @@ fn prove_one_hot(
     session: &[u8],
 ) -> Result<(OpeningScheduleSelection, Vec<u8>), OpeningsError> {
     let backend_point = reverse_point(point);
-    let opening = with_one_hot_scheme!(setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
+    let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
         single_group_batch::<Cfg>(
             scheme.schedules(),
             &backend_point,
@@ -713,15 +712,17 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 statement.len(),
                 &backend_point,
             ),
-            AkitaBackendFlavor::OneHot => with_one_hot_scheme!(setup.one_hot_scheme()?, |scheme| {
-                crate::shape_guard::deserialize_checked_backend_payload(
-                    scheme.schedules(),
-                    commitment,
-                    proof.selection(),
-                    statement.len(),
-                    &backend_point,
-                )
-            }),
+            AkitaBackendFlavor::OneHot => {
+                with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| {
+                    crate::shape_guard::deserialize_checked_backend_payload(
+                        scheme.schedules(),
+                        commitment,
+                        proof.selection(),
+                        statement.len(),
+                        &backend_point,
+                    )
+                })
+            }
         }?;
 
         let session = bind_statement_transcripts(transcript, setup, statement, commitment, point)?;
@@ -769,7 +770,6 @@ mod tests {
     use jolt_transcript::Blake2bTranscript;
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
-    use crate::configs::AkitaOneHotChunkProfile;
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,
@@ -804,7 +804,6 @@ mod tests {
             max_total_batch_polys: 1,
             default_layout_digest: [9; 32],
             one_hot_k: AKITA_ONE_HOT_K16,
-            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
                 one_hot: Vec::new(),
             },
@@ -841,7 +840,6 @@ mod tests {
             max_total_batch_polys: 260,
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
                 dense: Vec::new(),
                 one_hot: Vec::new(),

@@ -80,6 +80,6 @@ Regenerate all base catalogs from the planner with:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Pass `k16`, `k256`, `w2r2`, `w4r2`, `multi-chunk`, `dense-bounded`, `dense-full`, or `dense` as a final
+Pass `k16`, `k256`, `w2r2`, `w4r2`, `w8r2`, `dense-bounded`, `dense-full`, or `dense` as a final
 argument to narrow regeneration to matching families. `k16-single` and
 `k256-single` select only the corresponding standard single-chunk catalog.

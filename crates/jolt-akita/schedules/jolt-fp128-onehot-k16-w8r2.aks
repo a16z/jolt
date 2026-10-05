@@ -45,7 +45,7 @@
     232,
     203
   ],
-  "family_name": "jolt-fp128-onehot-k16-multi-chunk",
+  "family_name": "jolt-fp128-onehot-k16-w8r2",
   "rows": [
     {
       "schedule": {

@@ -210,35 +210,35 @@ chunked_one_hot_config!(
 );
 
 delegate_preset!(
-    /// Multi-chunk companion for K=16 trace openings.
-    JoltOneHotK16MultiChunkDirect,
+    /// W8R2 companion for K=16 trace openings.
+    JoltOneHotK16W8R2Direct,
     OneHot,
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
     ChunkedWitnessCfg::d64_production(),
-    "jolt-fp128-onehot-k16-multi-chunk-direct-planner"
+    "jolt-fp128-onehot-k16-w8r2-direct-planner"
 );
 
 delegate_preset!(
-    /// Multi-chunk companion for K=256 trace openings.
-    JoltOneHotK256MultiChunkDirect,
+    /// W8R2 companion for K=256 trace openings.
+    JoltOneHotK256W8R2Direct,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
     ChunkedWitnessCfg::d64_production(),
-    "jolt-fp128-onehot-k256-multi-chunk-direct-planner"
+    "jolt-fp128-onehot-k256-w8r2-direct-planner"
 );
 
-impl RecursiveScheduleConfig for JoltOneHotK16MultiChunkDirect {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k16-multi-chunk";
+impl RecursiveScheduleConfig for JoltOneHotK16W8R2Direct {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k16-w8r2";
 }
 
-impl RecursiveScheduleConfig for JoltOneHotK256MultiChunkDirect {
-    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k256-multi-chunk";
+impl RecursiveScheduleConfig for JoltOneHotK256W8R2Direct {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k256-w8r2";
 }
 
-pub type JoltOneHotK16MultiChunk = RecursiveCommitmentConfig<JoltOneHotK16MultiChunkDirect>;
-pub type JoltOneHotK256MultiChunk = RecursiveCommitmentConfig<JoltOneHotK256MultiChunkDirect>;
+pub type JoltOneHotK16W8R2 = RecursiveCommitmentConfig<JoltOneHotK16W8R2Direct>;
+pub type JoltOneHotK256W8R2 = RecursiveCommitmentConfig<JoltOneHotK256W8R2Direct>;
 
 delegate_preset!(
     /// Dense config for `u64`-bounded advice and committed-program objects.
@@ -285,11 +285,11 @@ mod tests {
         assert!(JoltOneHotK16::recursive_setup_planning());
         assert!(JoltOneHotK256::recursive_setup_planning());
         assert_eq!(
-            JoltOneHotK16MultiChunk::chunked_witness_cfg(),
+            JoltOneHotK16W8R2::chunked_witness_cfg(),
             ChunkedWitnessCfg::d64_production()
         );
         assert_eq!(
-            JoltOneHotK256MultiChunk::chunked_witness_cfg(),
+            JoltOneHotK256W8R2::chunked_witness_cfg(),
             ChunkedWitnessCfg::d64_production()
         );
         for actual in [

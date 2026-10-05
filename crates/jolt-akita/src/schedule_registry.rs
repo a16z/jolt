@@ -21,11 +21,8 @@ use akita_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::configs::{
-    AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull, JoltOneHotK16,
-    JoltOneHotK16MultiChunk, JoltOneHotK16W2R2, JoltOneHotK16W4R2, JoltOneHotK256,
-    JoltOneHotK256MultiChunk, JoltOneHotK256W2R2, JoltOneHotK256W4R2,
-};
+use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull};
+use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -111,47 +108,17 @@ impl GroupedScheduleParams {
         one_hot_k: usize,
         profile: AkitaOneHotChunkProfile,
     ) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        macro_rules! extend_for {
-            ($cfg:ty) => {{
-                let rows = provision_groups_for_config::<$cfg>(
-                    dense_catalog,
-                    full_dense_catalog,
-                    one_hot_catalog,
-                    self,
-                    one_hot_k,
-                )?;
-                extend_catalog::<$cfg>(one_hot_catalog, &rows)
-            }};
-        }
-        match (one_hot_k, profile) {
-            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single) => {
-                extend_for!(JoltOneHotK16)
-            }
-            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Two) => {
-                extend_for!(JoltOneHotK16W2R2)
-            }
-            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Four) => {
-                extend_for!(JoltOneHotK16W4R2)
-            }
-            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Eight) => {
-                extend_for!(JoltOneHotK16MultiChunk)
-            }
-            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single) => {
-                extend_for!(JoltOneHotK256)
-            }
-            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Two) => {
-                extend_for!(JoltOneHotK256W2R2)
-            }
-            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Four) => {
-                extend_for!(JoltOneHotK256W4R2)
-            }
-            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Eight) => {
-                extend_for!(JoltOneHotK256MultiChunk)
-            }
-            other => Err(AkitaError::InvalidSetup(format!(
-                "unsupported one-hot schedule profile {other:?} for grouped schedule catalog"
-            ))),
-        }
+        let family = OneHotFamily::from_parts(one_hot_k, profile)?;
+        with_one_hot_family!(family, |Cfg| {
+            let rows = provision_groups_for_config::<Cfg>(
+                dense_catalog,
+                full_dense_catalog,
+                one_hot_catalog,
+                self,
+                family.k(),
+            )?;
+            extend_catalog::<Cfg>(one_hot_catalog, &rows)
+        })
     }
 }
 
@@ -423,23 +390,14 @@ pub fn provision_groups_for_k(
     params: &GroupedScheduleParams,
     one_hot_k: usize,
 ) -> Result<RegisteredRows, AkitaError> {
-    match one_hot_k {
-        AKITA_ONE_HOT_K16 => provision_groups_for_config::<JoltOneHotK16>(
+    let family = OneHotFamily::from_parts(one_hot_k, AkitaOneHotChunkProfile::Single)?;
+    with_one_hot_family!(family, |Cfg| {
+        provision_groups_for_config::<Cfg>(
             dense_catalog,
             full_dense_catalog,
             one_hot_catalog,
             params,
-            one_hot_k,
-        ),
-        AKITA_ONE_HOT_K256 => provision_groups_for_config::<JoltOneHotK256>(
-            dense_catalog,
-            full_dense_catalog,
-            one_hot_catalog,
-            params,
-            one_hot_k,
-        ),
-        other => Err(AkitaError::InvalidSetup(format!(
-            "unsupported one-hot K {other} for grouped schedule provisioning"
-        ))),
-    }
+            family.k(),
+        )
+    })
 }
