@@ -1130,16 +1130,35 @@ mod product_grid_tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    use super::{accumulate_product_grid, product_grid_scratch_len};
+    use super::{accumulate_product_grid, product_grid_scratch_len, MAX_GRID_FACTORS};
 
+    /// Accumulates several rows into shared lanes and compares every lane to
+    /// the factors multiplied one by one at that lane's point. The scratch is
+    /// refilled with random elements before each row, and the first two rows
+    /// have all-zero slopes and all-zero values.
     fn assert_product_grid<F: JoltField>(factors: usize) {
         let mut rng = ChaCha20Rng::seed_from_u64(431);
         let mut lanes = vec![F::Accumulator::default(); factors];
         let mut expected = vec![F::zero(); factors];
         let mut scratch = vec![F::zero(); product_grid_scratch_len(factors)];
-        for _ in 0..32 {
-            let values: Vec<F> = (0..factors).map(|_| F::random(&mut rng)).collect();
-            let steps: Vec<F> = (0..factors).map(|_| F::random(&mut rng)).collect();
+        let mut random = |zero: bool| -> Vec<F> {
+            (0..factors)
+                .map(|_| {
+                    let value = F::random(&mut rng);
+                    if zero {
+                        F::zero()
+                    } else {
+                        value
+                    }
+                })
+                .collect()
+        };
+        for row in 0..32 {
+            let values = random(row == 1);
+            let steps = random(row == 0);
+            for (slot, value) in scratch.iter_mut().zip(random(false).iter().cycle()) {
+                *slot = *value;
+            }
             accumulate_product_grid(&values, &steps, &mut lanes, &mut scratch);
             for (index, expected) in expected.iter_mut().enumerate() {
                 *expected += if index == factors - 1 {
@@ -1154,8 +1173,8 @@ mod product_grid_tests {
                 };
             }
         }
-        for (lane, expected) in lanes.iter().zip(expected) {
-            assert_eq!(lane.reduce(), expected);
+        for (index, (lane, expected)) in lanes.iter().zip(expected).enumerate() {
+            assert_eq!(lane.reduce(), expected, "{factors} factors, lane {index}");
         }
     }
 
@@ -1165,10 +1184,28 @@ mod product_grid_tests {
         assert_product_grid::<Fr>(8);
     }
 
+    /// Covers the direct walk (2, 3), the unrolled forms (4, 8), and the
+    /// balanced tree at every other length up to the largest supported one,
+    /// odd splits included.
+    #[test]
+    fn products_match_direct_evaluations_at_every_supported_length() {
+        for factors in 2..=MAX_GRID_FACTORS {
+            assert_product_grid::<Fr>(factors);
+        }
+    }
+
     #[cfg(feature = "akita")]
     #[test]
     fn specialized_products_match_direct_evaluations_fp128() {
         assert_product_grid::<Prime128OffsetA7F7>(4);
         assert_product_grid::<Prime128OffsetA7F7>(8);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn products_match_direct_evaluations_at_every_supported_length_fp128() {
+        for factors in 2..=MAX_GRID_FACTORS {
+            assert_product_grid::<Prime128OffsetA7F7>(factors);
+        }
     }
 }

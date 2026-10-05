@@ -1907,3 +1907,67 @@ mod akita_tests {
         address_parity(3, 8, true);
     }
 }
+
+/// The cycle phase steps every factor of a group by its slope from one
+/// sample point to the next; these tests recompute each sample from scratch.
+#[cfg(test)]
+mod cycle_group_tests {
+    use jolt_field::{Field, Fr, Ring, Zero};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::*;
+
+    const GROUPS: usize = 4;
+
+    fn random_poly(rng: &mut ChaCha20Rng) -> Polynomial<Fr> {
+        Polynomial::new((0..2 * GROUPS).map(|_| Fr::random(rng)).collect())
+    }
+
+    fn at(poly: &Polynomial<Fr>, y: usize, t: Fr) -> Fr {
+        let (lo, hi) = pair(poly, y);
+        lo + t * (hi - lo)
+    }
+
+    #[test]
+    fn stepped_group_samples_match_recomputed_samples() {
+        let mut rng = ChaCha20Rng::seed_from_u64(1966);
+        for num_ra in 1..=8 {
+            let ra: Vec<Polynomial<Fr>> = (0..num_ra).map(|_| random_poly(&mut rng)).collect();
+            let combined = random_poly(&mut rng);
+            #[cfg(feature = "akita")]
+            let (fused_inc, fused_combined) = (random_poly(&mut rng), random_poly(&mut rng));
+            // One sample per degree: the RA product times the coefficient,
+            // which is quadratic once the fused term is present.
+            let degree = num_ra + if cfg!(feature = "akita") { 2 } else { 1 };
+            let kernel = CycleKernel {
+                progress: RoundProgress::new(GROUPS.ilog2() as usize + 1),
+                degree,
+                ra: LazyFoldedRa::Dense(ra.clone()),
+                combined: combined.clone(),
+                #[cfg(feature = "akita")]
+                fused_inc: LazyFusedInc::Dense(fused_inc.clone()),
+                #[cfg(feature = "akita")]
+                fused_combined: fused_combined.clone(),
+                output_openings: Vec::new(),
+            };
+            let mut pairs = vec![(Fr::zero(), Fr::zero()); num_ra];
+            for y in 0..GROUPS {
+                let start: Vec<Fr> = (0..degree).map(|_| Fr::random(&mut rng)).collect();
+                let mut acc = start.clone();
+                kernel.accumulate_group(y, &mut acc, &mut pairs);
+                for (slot, (acc, start)) in acc.iter().zip(&start).enumerate() {
+                    let t = Fr::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
+                    let coefficient = at(&combined, y, t);
+                    #[cfg(feature = "akita")]
+                    let coefficient =
+                        coefficient + at(&fused_inc, y, t) * at(&fused_combined, y, t);
+                    let expected = ra
+                        .iter()
+                        .fold(coefficient, |product, poly| product * at(poly, y, t));
+                    assert_eq!(*acc - *start, expected, "{num_ra} factors, slot {slot}");
+                }
+            }
+        }
+    }
+}
