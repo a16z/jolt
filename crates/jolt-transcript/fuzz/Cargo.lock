@@ -432,6 +432,7 @@ dependencies = [
  "num-traits",
  "rand_core 0.6.4",
  "serde",
+ "spongefish",
  "thiserror 2.0.20",
 ]
 
@@ -443,6 +444,7 @@ dependencies = [
  "ark-ff",
  "jolt-field",
  "light-poseidon",
+ "rand 0.8.7",
  "rand_core 0.6.4",
  "spongefish",
  "thiserror 2.0.20",
@@ -1053,17 +1055,3 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
-
-
-
-
-
-
-
-
-
-
-
-
-
-

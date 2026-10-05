@@ -117,6 +117,7 @@ dependencies = [
  "num-traits",
  "rand_core 0.6.4",
  "serde",
+ "spongefish",
  "thiserror",
 ]
 
@@ -155,6 +156,7 @@ dependencies = [
  "jolt-transcript",
  "num-traits",
  "rand_core 0.6.4",
+ "spongefish",
 ]
 
 [[package]]
@@ -162,6 +164,7 @@ name = "jolt-transcript"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "rand 0.8.8",
  "rand_core 0.6.4",
  "spongefish",
  "thiserror",
@@ -668,17 +671,3 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
-
-
-
-
-
-
-
-
-
-
-
-
-
-

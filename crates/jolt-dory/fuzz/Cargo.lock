@@ -555,6 +555,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish",
 ]
 
 [[package]]
@@ -573,6 +574,7 @@ dependencies = [
  "jolt-transcript",
  "rayon",
  "serde",
+ "spongefish",
  "tracing",
 ]
 
@@ -604,6 +606,7 @@ dependencies = [
  "num-traits",
  "rand_core 0.6.4",
  "serde",
+ "spongefish",
  "thiserror 2.0.19",
 ]
 
@@ -660,6 +663,7 @@ dependencies = [
  "ark-ff",
  "jolt-field",
  "light-poseidon",
+ "rand 0.8.7",
  "rand_core 0.6.4",
  "spongefish",
  "thiserror 2.0.19",
@@ -1345,17 +1349,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
