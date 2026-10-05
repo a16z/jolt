@@ -221,6 +221,34 @@ impl SolinasMetal {
         e_out_capacity: usize,
         config: Product5SequenceConfig,
     ) -> Result<Product5Sequence, MetalError> {
+        let initial_tables = self.new_product5_initial_tables(elements_per_table)?;
+        self.prepare_product5_sequence_over(
+            initial_tables,
+            elements_per_table,
+            e_in_capacity,
+            e_out_capacity,
+            config,
+        )
+    }
+
+    pub(super) fn new_product5_initial_tables(
+        &self,
+        elements_per_table: usize,
+    ) -> Result<Buffer, MetalError> {
+        let (tables_a_elements, _) = product5_table_elements(elements_per_table)?;
+        self.new_product5_buffer(tables_a_elements)
+    }
+
+    /// A sequence whose initial tables are `tables_a`, allocated by
+    /// [`Self::new_product5_initial_tables`] for the same `elements_per_table`.
+    pub(super) fn prepare_product5_sequence_over(
+        &self,
+        tables_a: Buffer,
+        elements_per_table: usize,
+        e_in_capacity: usize,
+        e_out_capacity: usize,
+        config: Product5SequenceConfig,
+    ) -> Result<Product5Sequence, MetalError> {
         if elements_per_table < 2 || !elements_per_table.is_power_of_two() {
             return Err(MetalError::InvalidProduct5TableLength {
                 minimum: 2,
@@ -266,7 +294,12 @@ impl SolinasMetal {
         )?;
 
         let (tables_a_elements, tables_b_elements) = product5_table_elements(elements_per_table)?;
-        let tables_a = self.new_product5_buffer(tables_a_elements)?;
+        if tables_a.length() != buffer_bytes(tables_a_elements)? {
+            return Err(MetalError::Product5StorageLength {
+                expected: tables_a_elements,
+                got: tables_a.length() as usize / size_of::<Fp128>(),
+            });
+        }
         let tables_b = self.new_product5_buffer(tables_b_elements)?;
         let e_in_buffer = self.new_product5_buffer(e_in_capacity)?;
         let e_out_buffer = self.new_product5_buffer(e_out_capacity)?;

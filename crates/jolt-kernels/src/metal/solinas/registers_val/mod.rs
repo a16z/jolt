@@ -14,6 +14,7 @@ use metal::{
     ComputePipelineState, MTLPurgeableState, MTLResourceOptions, MTLSize,
 };
 
+use super::residency::{self, ResidencyPrefetch};
 use super::{
     buffer_from_slice, completed_command_gpu_time, set_inline_bytes, Fp128,
     InstructionReadRafStage1Lease, MetalError, PipelineLimits, SolinasMetal,
@@ -169,6 +170,10 @@ pub struct RegistersValFirstMessageInvocation {
     final_in_a: bool,
     resident_source: Option<RegistersValInstructionSourceReceipt>,
     instruction_source: Option<InstructionReadRafStage1Lease>,
+    /// The dense tables are first written by the native and first dense
+    /// transitions; their residency is warmed while the first message and
+    /// the rounds before it run.
+    _dense_residency: ResidencyPrefetch,
     completed: Cell<bool>,
 }
 
@@ -498,6 +503,7 @@ impl SolinasMetal {
         let (dense_a_elements, dense_b_elements) = registers_val_dense_elements(cycles);
         let dense_a = self.new_registers_val_buffer(dense_a_elements)?;
         let dense_b = self.new_registers_val_buffer(dense_b_elements)?;
+        let dense_residency = residency::prefetch(vec![dense_a.clone(), dense_b.clone()]);
 
         let mut reduction_steps = Vec::new();
         let mut input_count = partial_count;
@@ -562,6 +568,7 @@ impl SolinasMetal {
             final_in_a: input_a,
             resident_source,
             instruction_source,
+            _dense_residency: dense_residency,
             completed: Cell::new(false),
         })
     }
