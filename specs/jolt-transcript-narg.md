@@ -264,16 +264,16 @@ second transcript.
 
 ### Stage-level wire decisions
 
-- **Output claims are received by shape.** Each batch member receives its wire
-  openings in canonical order. Aliased openings are not sent; they are filled
-  from their canonical source, so an alias cannot disagree with its source.
-  Stage 6b's booleanity bytecode-RA dedup is decided at runtime by opening-point
-  equality and goes through the same helpers. Its ZK commitment count depends
-  on the verified rounds (`verify_zk_with`).
+- **Output claims are received by shape.** Each stage receives its claims in
+  the shape of its derived output points, on its typed claim routes
+  (`specs/jolt-verifier-typed-messages.md`). Aliased openings are not sent;
+  they are filled from their canonical source. Stage 6b's booleanity
+  bytecode-RA alias is decided by opening-point equality over the derived
+  points, so its ZK commitment count follows the verified rounds.
 - **Stage 4 staged openings.** The RAM value-check input claim consumes the
   advice and program-image openings, so a clear proof sends them after the
   stage's gamma draws and before the batch. A ZK proof commits them in its
-  output-claim rows in the claims aggregate's canonical order.
+  output-claim rows in the claims struct's declaration order.
 - **Uni-skip** output claims are sent right after the round's challenge, before
   any later draw.
 - **Stage 8** runs `HomomorphicBatch`'s sequence on both sides: absorb the

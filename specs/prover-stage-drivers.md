@@ -144,12 +144,9 @@ Key abstractions introduced or modified:
   `Proved<F, S, C>` is one generic carrier in jolt-prover
   `{ recorded, output_claims: S::OutputClaims, output_points: S::OutputPoints, final_claim }`
   (replaces v1's per-stage generated `ProvedStageN`).
-  Output curation (stage-6b's dedup'd absorb order) is a per-impl
-  `curate_opening_values(&self, claims: &mut Self::OutputClaims, points:
-  &Self::OutputPoints) -> Result<Vec<F>, _>` hook: the macro emits the default body
-  (`self.opening_values(claims)`, the derive-generated canonical order) and accepts an
-  override block at the invocation site for the curated stages (6b passes the promoted
-  `stage6b_opening_values`).
+  The recorded claim values are the derive-generated `committed_claim_values` (committed
+  recorders) or `wire_claim_values` (clear recorders) on the batch's generated
+  `claim_routes`; no stage curates its own order (`specs/jolt-verifier-typed-messages.md`).
 - **Member-list callback macros** (emitted by `#[derive(SumcheckBatch)]`): for each batch
   struct, an inert `#[macro_export] macro_rules! <snake_case_struct>_members` that forwards
   a structured token list to a caller-chosen macro:
@@ -357,7 +354,7 @@ macro_rules! stage3_sumchecks_members { ($cb:path) => { $cb! {
     ]
 } } }
 
-// jolt-prover (hand-written, one line per stage; override block only for curated stages):
+// jolt-prover (hand-written, one line per stage):
 stage3_sumchecks_members!(impl_stage_prover);
 ```
 
@@ -369,8 +366,8 @@ stage3_sumchecks_members!(impl_stage_prover);
 id) → `prove_batch` → `derive_opening_points` → per-member `validate_derived_tables` → typed
 `output_claims()` into the aggregate → per-member `park_residue` (cross-batch residues into
 the session; the call consumes the kernel, so it follows the borrowing extraction) →
-`curate_opening_values` (default: generated canonical order) → `validate_output_claims` →
-`expected_final_claim` hard check → `recorder.finish`.
+`validate_output_shape` against the derived points → `expected_final_claim` hard check →
+`recorder.finish` over the generated claim values on the batch's routes.
 
 **Edge classes and their mechanisms** (the exhaustive list; v1's `external` row replaced):
 
@@ -379,7 +376,7 @@ the session; the call consumes the kernel, so it follows the borrowing extractio
 | Mid-head hand draws (stage 2/6b fronts; stage 6a's booleanity reference draws since moved into its member's `draw_challenges` override) | Stay in `prove_stageX`, between `draw_challenges` and `prove` — same seam `verify` uses today. The derive's existing draw-suppression opt-outs are unchanged. |
 | Uni-skip pre-phases (stages 1–2) | The front runs the uni-skip round (`SpartanOuterInstance` etc.) and parks the bound instance in `ProofSession`; the remainder member is a regular batch member whose `PrepareKernel<F, OuterRemainder>::prepare` reclaims the instance and calls `into_remainder(&relation)`. |
 | Cross-batch 6b→7 precommitted carry | The 6b cycle kernel's `park_residue` override — the default-no-op `SumcheckKernel` hook the driver invokes uniformly on every member after extraction — moves its post-cycle bound state (tables, running scale, schedule) into `ProofSession` as a plain owned carry keyed by the address-phase relation; stage 7's `PrepareKernel` reclaims it by move and mounts a fresh address-phase kernel. No live object spans the batches. Intermediate-vs-final wire claims (`has_address_phase()`) resolve inside the kernel's `output_claims()` — the layout lives on the relation. |
-| Output curation (6b opening-value dedup) | `curate_opening_values` override at the macro invocation site, calling the promoted `stage6b_opening_values`. The derive's `no_opening_values` opt-out continues to suppress the verify-side generated absorb for the same stages. |
+| Runtime claim routing (6b bytecode-RA point alias, stage-4 staged openings) | `#[sumcheck_batch(routes)]`: the output-points struct's `claim_routes` declares the overrides; the generated receive, send, committed layout, and the prover driver all read them. |
 | Non-oracle witness channels (read-RAF rows, stage-6 bytecode indices, prover-retained program data) | Typed rows: fetched inside `prepare` via the witness plane's typed accessors. Program data: `ProofSession` residency established at proof start. Never a driver concern. |
 
 ### Alternatives Considered
