@@ -150,6 +150,8 @@ fn decode_op_32(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 
 fn decode_amo(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), (word >> 27) & 0x1f) {
+        // LR has no rs2 operand; its encoding requires rs2 = 0.
+        (0b010 | 0b011, 0b00010) if rs2(word) != 0 => invalid("invalid LR rs2"),
         (0b010, 0b00010) => Ok(SourceInstructionKind::LRW),
         (0b011, 0b00010) => Ok(SourceInstructionKind::LRD),
         (0b010, 0b00011) => Ok(SourceInstructionKind::SCW),
@@ -971,6 +973,14 @@ mod tests {
             (
                 (0b00101 << 27) | (0b010 << 12) | 0x2f,
                 "invalid atomic memory operation",
+            ),
+            (
+                (0b00010 << 27) | (1 << 20) | (0b010 << 12) | 0x2f,
+                "invalid LR rs2",
+            ),
+            (
+                (0b00010 << 27) | (0b11 << 25) | (31 << 20) | (0b011 << 12) | 0x2f,
+                "invalid LR rs2",
             ),
             ((0x3f << 25) | 0x5b, "invalid custom instruction"),
             (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),

@@ -270,38 +270,28 @@ impl<F: Field> UnivariatePoly<F> {
     /// Interpolates from evaluations at `[0, 1, ..., degree-1, ∞]`.
     ///
     /// The last entry is interpreted as the evaluation at infinity, i.e., the leading
-    /// coefficient of the polynomial. Uses Gaussian elimination on the augmented
-    /// Vandermonde-plus-infinity system.
+    /// coefficient of the polynomial. Subtracts the leading monomial and
+    /// interpolates the remainder with Newton forward differences.
     ///
     /// # Panics
     /// Panics if `evals` is empty.
     pub fn from_evals_toom(evals: &[F]) -> Self {
         let n = evals.len();
         assert!(n > 0, "cannot interpolate zero evaluations");
-        let mut matrix: Vec<Vec<F>> = Vec::with_capacity(n);
-
-        // Rows for finite x values: x = 0, 1, ..., n-2
-        for (i, &eval) in evals[..n - 1].iter().enumerate() {
-            let mut row = Vec::with_capacity(n + 1);
-            let x = F::from_u64(i as u64);
-            let mut power = F::one();
-            for _ in 0..n {
-                row.push(power);
-                power *= x;
-            }
-            row.push(eval);
-            matrix.push(row);
-        }
-
-        // Row for x = ∞: only the leading coefficient survives
-        let mut row = vec![F::zero(); n];
-        row[n - 1] = F::one();
-        row.push(evals[n - 1]);
-        matrix.push(row);
-
-        Self {
-            coefficients: gaussian_elimination_augmented(&mut matrix),
-        }
+        let degree = n - 1;
+        let leading = evals[degree];
+        let finite: Vec<F> = evals[..degree]
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let point = F::from_u64(index as u64);
+                let high_power = (0..degree).fold(F::one(), |power, _| power * point);
+                *value - leading * high_power
+            })
+            .collect();
+        let mut coefficients = Self::from_evals(&finite).into_coefficients();
+        coefficients.push(leading);
+        Self { coefficients }
     }
 
     /// Computes the cubic polynomial `s(X) = l(X) * q(X)`, where `l(X)` is linear
@@ -516,70 +506,6 @@ impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
             *c *= rhs;
         }
     }
-}
-
-/// Gaussian elimination with partial pivoting on an augmented matrix `[A | b]`
-/// where `A` is `n × n`.
-///
-/// Returns the solution vector `x` such that `A x = b`.
-///
-/// # Panics
-///
-/// Panics if the matrix is singular (no nonzero pivot in some column).
-#[expect(clippy::expect_used)]
-fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
-    let size = matrix.len();
-    debug_assert_eq!(size, matrix[0].len() - 1);
-
-    // Forward elimination with partial pivoting
-    for i in 0..size.saturating_sub(1) {
-        // Find a row with a nonzero pivot in column i
-        let pivot_row = (i..size)
-            .find(|&r| matrix[r][i] != F::zero())
-            .expect("singular matrix in gaussian_elimination_augmented");
-        if pivot_row != i {
-            matrix.swap(i, pivot_row);
-        }
-
-        for j in (i + 1)..size {
-            let pivot_inv = matrix[i][i]
-                .inverse()
-                .expect("nonzero pivot has an inverse");
-            let factor = matrix[j][i] * pivot_inv;
-            #[expect(clippy::needless_range_loop)]
-            for k in i..=size {
-                let tmp = matrix[i][k];
-                matrix[j][k] -= factor * tmp;
-            }
-        }
-    }
-
-    // Back substitution
-    for i in (1..size).rev() {
-        assert!(
-            matrix[i][i] != F::zero(),
-            "singular matrix in gaussian_elimination_augmented"
-        );
-        for j in (0..i).rev() {
-            let pivot_inv = matrix[i][i]
-                .inverse()
-                .expect("nonzero pivot has an inverse");
-            let factor = matrix[j][i] * pivot_inv;
-            for k in (0..=size).rev() {
-                let tmp = matrix[i][k];
-                matrix[j][k] -= factor * tmp;
-            }
-        }
-    }
-
-    let mut result = vec![F::zero(); size];
-    for i in 0..size {
-        let pivot_inv = matrix[i][i]
-            .inverse()
-            .expect("nonzero pivot has an inverse");
-        result[i] = matrix[i][size] * pivot_inv;
-    }
-    result
 }
 
 #[cfg(test)]
@@ -966,6 +892,24 @@ mod tests {
 
         let poly = UnivariatePoly::from_evals_toom(&toom_evals);
         assert_eq!(gt_poly, poly);
+    }
+
+    #[test]
+    fn toom_recovers_coefficients_and_preserves_zero_leading_terms() {
+        for degree in [0, 1, 4, 8, 32] {
+            for leading in [Fr::zero(), Fr::from_u64(19)] {
+                let mut coefficients: Vec<Fr> = (0..=degree)
+                    .map(|index| Fr::from_u64(index as u64 + 3))
+                    .collect();
+                coefficients[degree] = leading;
+                let expected = UnivariatePoly::new(coefficients);
+                let mut samples: Vec<Fr> = (0..degree)
+                    .map(|index| expected.evaluate(Fr::from_u64(index as u64)))
+                    .collect();
+                samples.push(leading);
+                assert_eq!(UnivariatePoly::from_evals_toom(&samples), expected);
+            }
+        }
     }
 
     #[test]

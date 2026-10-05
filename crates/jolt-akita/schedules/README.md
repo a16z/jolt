@@ -26,8 +26,10 @@ source-tree files.
 
 The one-hot artifacts are hybrid catalogs. A logical trace shorter than
 `2^21` uses a direct schedule. A trace of `2^21` cycles or longer uses a
-setup-offloaded schedule, including every production K=256 trace (K=256 starts
-at `2^25`). This is an offline catalog policy: proving and verification simply
+setup-offloaded schedule. Akita uses K=16 committed chunks at every trace
+length, with catalog coverage through `2^30`. Virtual lookup chunks are 16 bits
+below `2^25` and 32 bits at or above it. The K=256 catalog remains available
+for explicitly configured layouts. This is an offline catalog policy: proving and verification simply
 resolve the exact admitted row and never choose a mode dynamically.
 
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core

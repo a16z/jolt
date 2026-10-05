@@ -15,8 +15,8 @@
 //!   address column to the optimized RAM kernels.
 //! - **Gruen split-eq factoring**: `eq(r_cycle, ·)` is never materialized or
 //!   bound; each round emits `s(t) = ℓ(t) · Σ_y E(y) · Π_i ra_i(t, y)` at
-//!   the naive prover's `t = 0..=degree` sample points through the same
-//!   `from_evals` constructor, so round polynomials and output claims are
+//!   a minimal product grid, recovering the missing value from the running
+//!   claim. Round polynomials and output claims are
 //!   byte-identical (field arithmetic is exact under any regrouping).
 
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
@@ -360,6 +360,7 @@ mod tests {
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::VerifierError;
 
+    use super::super::parity::ExceptionalEq;
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
     };
@@ -371,9 +372,15 @@ mod tests {
     const CHUNK_BITS: usize = 4;
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
-        run_parity_with(shape, ops, seed, |reference, optimized, claim, inputs| {
-            assert_parity(reference, optimized, claim, inputs, seed);
-        });
+        run_parity_with(
+            shape,
+            ops,
+            seed,
+            None,
+            |reference, optimized, claim, inputs| {
+                assert_parity(reference, optimized, claim, inputs, seed);
+            },
+        );
     }
 
     type KernelBox = Box<dyn SumcheckKernel<Fr, Relation = RamRaVirtualization<Fr>>>;
@@ -382,13 +389,17 @@ mod tests {
         shape: FixtureShape,
         ops: Vec<RamOp>,
         seed: u64,
+        exceptional: Option<ExceptionalEq>,
         finish: impl FnOnce(KernelBox, KernelBox, Fr, &ProverInputs<'_, Fr, RamRaVirtualization<Fr>>),
     ) {
         with_ram_fixture(shape, ops, |witness| {
             let log_k = shape.log_k();
             let num_committed = log_k.div_ceil(CHUNK_BITS);
             let ram_reduced_address = random_scalars(log_k, seed ^ 0xA0DE);
-            let ram_reduced_cycle = random_scalars(shape.log_t, seed ^ 0xC1C1);
+            let ram_reduced_cycle = exceptional.map_or_else(
+                || random_scalars(shape.log_t, seed ^ 0xC1C1),
+                |case| case.point(shape.log_t, random_scalars(1, seed)[0]),
+            );
             let relation = RamRaVirtualization::<Fr>::new(
                 RamRaVirtualizationDimensions::new(shape.log_t, num_committed),
                 ram_reduced_address.clone(),
@@ -414,7 +425,9 @@ mod tests {
                         .fold(eq_cycle[j], |product, table| product * table[j])
                 })
                 .sum();
-            assert_ne!(input_claim, Fr::from_u64(0), "degenerate fixture");
+            if exceptional.is_none() {
+                assert_ne!(input_claim, Fr::from_u64(0), "degenerate fixture");
+            }
 
             let claims = RamRaVirtualizationInputClaims {
                 ram_ra_reduced: input_claim,
@@ -508,6 +521,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parity_four_committed_chunks_past_lazy_materialization() {
+        run_parity(
+            FixtureShape {
+                log_t: 6,
+                ram_k: 1 << 16,
+            },
+            vec![
+                RamOp::Write { word: 3, post: 5 },
+                RamOp::Write {
+                    word: 0xabcd,
+                    post: 7,
+                },
+                RamOp::Read { word: 0xabcd },
+                RamOp::None,
+                RamOp::Read { word: 3 },
+                RamOp::Write {
+                    word: 0x1234,
+                    post: 2,
+                },
+            ],
+            439,
+        );
+    }
+
+    #[test]
+    fn parity_exceptional_eq_in_lazy_and_dense_virtualization() {
+        for ram_k in [256, 1 << 16] {
+            for case in ExceptionalEq::ALL {
+                run_parity_with(
+                    FixtureShape { log_t: 6, ram_k },
+                    mixed_ops(),
+                    449,
+                    Some(case),
+                    |reference, optimized, claim, inputs| {
+                        assert_parity(reference, optimized, claim, inputs, 449);
+                    },
+                );
+            }
+        }
+    }
+
     /// Covers the empty committed-RA product when `ram_k = 1`.
     #[test]
     fn zero_committed_chunks_prove_in_parity_and_fail_closed() {
@@ -516,6 +571,7 @@ mod tests {
             FixtureShape { log_t: 3, ram_k: 1 },
             vec![RamOp::None; 3],
             seed,
+            None,
             |mut reference, mut optimized, input_claim, inputs| {
                 let challenges = super::super::testing::drive_parity_rounds(
                     reference.as_mut(),
