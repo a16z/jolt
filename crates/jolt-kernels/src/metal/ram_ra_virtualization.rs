@@ -415,9 +415,7 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
         let predicted = estimated_ram_ra_virtualization_products(&owner, chunk_bits)
             .map_err(|error| prepare_error(error.to_string()))?;
         if predicted > MAX_SPARSE_PRODUCTS {
-            let fallback = OptimizedBackend.prepare(session, witness, inputs)?;
-            terminal_take_ram_cycle_family(session, &owner, "optimized_cpu", "product_cap", false)?;
-            return Ok(fallback);
+            return prepare_cpu_fallback(session, witness, inputs, owner);
         }
         let route = tracing::info_span!(
             "MetalRamRaVirtualization::route",
@@ -441,7 +439,7 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
         let sequence =
             HostSparseRamRaVirtualization::new(Arc::clone(&owner), r_address, chunk_bits, r_cycle)
                 .map_err(|error| prepare_error(error.to_string()))?;
-        terminal_take_ram_cycle_family(session, &owner, "host_sparse_v1", "none", true)?;
+        terminal_take_ram_cycle_family(session, &owner, "host_sparse_v1", "none")?;
         #[cfg(any(test, feature = "test-utils"))]
         let _ = self
             .test_counters
@@ -459,12 +457,25 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
     }
 }
 
+fn prepare_cpu_fallback(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    inputs: ProverInputs<'_, AkitaField, RamRaVirtualization<AkitaField>>,
+    owner: Arc<RamCycleFamilyOwner>,
+) -> Result<
+    Box<dyn SumcheckKernel<AkitaField, Relation = RamRaVirtualization<AkitaField>>>,
+    KernelError<AkitaField>,
+> {
+    let fallback = OptimizedBackend.prepare(session, witness, inputs)?;
+    terminal_take_ram_cycle_family(session, &owner, "optimized_cpu", "product_cap")?;
+    Ok(fallback)
+}
+
 fn terminal_take_ram_cycle_family(
     session: &mut ProofSession,
     expected_owner: &Arc<RamCycleFamilyOwner>,
     selected: &'static str,
     fallback_reason: &'static str,
-    take_columns: bool,
 ) -> Result<(), KernelError<AkitaField>> {
     let parked_owner =
         session
@@ -477,14 +488,12 @@ fn terminal_take_ram_cycle_family(
             reason: "RAM cycle-family owner changed before its terminal consumer",
         });
     }
-    let columns_removed = if take_columns {
-        session.take::<Arc<RamAccessColumns>>().is_some()
-    } else {
-        session.state::<Arc<RamAccessColumns>>().is_none()
-    };
+    // Both terminal routes release the Metal columns here. The optimized
+    // kernel consumes SharedRamAddresses, not RamAccessColumns.
+    let columns_removed = session.take::<Arc<RamAccessColumns>>().is_some();
     if !columns_removed {
         return Err(KernelError::InvariantViolation {
-            reason: "RAM access columns survived their terminal consumer",
+            reason: "RAM access columns disappeared before their terminal consumer",
         });
     }
     let _span = tracing::info_span!(
@@ -551,6 +560,7 @@ mod tests {
     use crate::optimized::parity::run_lockstep;
     use crate::optimized::testing::{with_ram_fixture_backend, FixtureShape, RamOp};
     use crate::reference::views::address_fold;
+    use crate::ReferenceBackend;
 
     fn point(seed: u64, len: usize) -> Vec<AkitaField> {
         (0..len as u64)
@@ -559,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn topology_sparse_sequence_matches_optimized_cpu() {
+    fn topology_sparse_sequence_matches_reference() {
         let shape = FixtureShape {
             log_t: 5,
             ram_k: 64,
@@ -571,6 +581,24 @@ mod tests {
             RamOp::None,
             RamOp::Read { word: 57 },
         ];
+        check_terminal_sequence(shape, ops, true);
+    }
+
+    #[test]
+    fn product_cap_fallback_releases_metal_sources() {
+        let shape = FixtureShape {
+            log_t: 15,
+            ram_k: 4096,
+        };
+        let ops = (0..(1usize << shape.log_t) - 1)
+            .map(|cycle| RamOp::Read {
+                word: 2 + (cycle as u64 * 37 % (shape.ram_k as u64 - 2)),
+            })
+            .collect();
+        check_terminal_sequence(shape, ops, false);
+    }
+
+    fn check_terminal_sequence(shape: FixtureShape, ops: Vec<RamOp>, sparse: bool) {
         with_ram_fixture_backend(shape, ops, |witness| {
             let chunk_bits = 4;
             let r_address = point(11, shape.log_k());
@@ -610,17 +638,19 @@ mod tests {
                 challenges: &challenges,
             };
 
-            let mut expected = OptimizedBackend
+            let mut expected = ReferenceBackend
                 .prepare(&mut ProofSession::default(), witness, inputs())
                 .unwrap();
-            let mut config = MetalConfig::default();
-            config.ram_ra_virtualization.trace_cutoff_elements = 1 << shape.log_t;
-            let metal = MetalBackend::new(config).unwrap();
             let mut session = ProofSession::default();
             let owner =
                 shared_ram_cycle_family_owner(&mut session, witness, shape.log_t, shape.log_k())
                     .unwrap()
                     .unwrap();
+            assert_eq!(
+                estimated_ram_ra_virtualization_products(&owner, chunk_bits).unwrap()
+                    <= MAX_SPARSE_PRODUCTS,
+                sparse,
+            );
             let owner_weak = Arc::downgrade(&owner);
             let columns_weak = Arc::downgrade(
                 session
@@ -628,12 +658,21 @@ mod tests {
                     .expect("RAM access columns prepared with the owner"),
             );
             drop(owner);
-            let mut actual =
-                PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
-            assert_eq!(metal.ram_ra_virtualization_sparse_sequences(), 1);
+            let mut actual = if sparse {
+                let mut config = MetalConfig::default();
+                config.ram_ra_virtualization.trace_cutoff_elements = 1 << shape.log_t;
+                let metal = MetalBackend::new(config).unwrap();
+                let actual =
+                    PrepareKernel::prepare(&metal, &mut session, witness, inputs()).unwrap();
+                assert_eq!(metal.ram_ra_virtualization_sparse_sequences(), 1);
+                actual
+            } else {
+                let owner = Arc::clone(session.state::<Arc<RamCycleFamilyOwner>>().unwrap());
+                prepare_cpu_fallback(&mut session, witness, inputs(), owner).unwrap()
+            };
             assert!(session.state::<Arc<RamCycleFamilyOwner>>().is_none());
             assert!(session.state::<Arc<RamAccessColumns>>().is_none());
-            assert!(owner_weak.upgrade().is_some());
+            assert_eq!(owner_weak.upgrade().is_some(), sparse);
             assert!(columns_weak.upgrade().is_none());
 
             let round_challenges = point(211, shape.log_t);
