@@ -2,6 +2,8 @@
 //! from the witness plane's typed rows, the advice word objects, the
 //! direct bounded-dense committed-program objects.
 
+#[cfg(feature = "parallel")]
+use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
 use jolt_akita::TraceOneHotRows;
@@ -17,7 +19,7 @@ use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::witnesses::{
     write_ra_chunks, BytecodePc, FusedInc, LookupIndex, RemappedRamAddress,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{collect_bundles, JoltWitnessPlane, RandomAccessRows, WitnessBundle};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -35,9 +37,9 @@ struct OneHotTraceSourceRow {
     fused_inc: FusedInc,
 }
 
-/// Column counts of one row in the plan's canonical order: instruction
-/// chunks, balanced-increment digits then their carry, bytecode chunks, and
-/// the remaining RAM chunks.
+/// Column counts of one row in the plan's canonical order, which
+/// `OneHotTraceLayout::plan` fixes: instruction chunks, balanced-increment
+/// digits then their carry, bytecode chunks, and the remaining RAM chunks.
 #[derive(Clone, Copy)]
 struct OneHotTraceRowLayout {
     chunk_bits: usize,
@@ -47,28 +49,14 @@ struct OneHotTraceRowLayout {
 }
 
 impl OneHotTraceRowLayout {
-    fn new<F: JoltField>(
-        plan: &OneHotTraceLayoutPlan,
-        chunk_bits: usize,
-    ) -> Result<Self, ProverError<F>> {
+    fn new(plan: &OneHotTraceLayoutPlan, chunk_bits: usize) -> Self {
         let ranges = plan.ranges();
-        let canonical = ranges.instruction.start == 0
-            && ranges.balanced_inc.start == ranges.instruction.end
-            && ranges.balanced_inc_carry == ranges.balanced_inc.end
-            && ranges.bytecode.start == ranges.balanced_inc_carry + 1
-            && ranges.ram.start == ranges.bytecode.end
-            && ranges.ram.end == plan.packing().ids().len();
-        if !canonical {
-            return Err(ProverError::InvariantViolation {
-                reason: "OneHotTrace plan columns are not in canonical order",
-            });
-        }
-        Ok(Self {
+        Self {
             chunk_bits,
             instruction: ranges.instruction.len(),
             increment: ranges.balanced_inc.len() + 1,
             bytecode: ranges.bytecode.len(),
-        })
+        }
     }
 
     /// Fills one row's selected-row bytes; returns whether the cycle makes a
@@ -177,6 +165,27 @@ impl TraceOneHotRows for PackedTraceRows {
     }
 }
 
+/// The random access the rows fill straight from: a parallel build whose
+/// witness covers every row. Otherwise the assembly first collects every
+/// cycle's source row, a second trace-sized allocation.
+fn direct_row_access<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    num_rows: usize,
+) -> Option<RandomAccessRows> {
+    witness
+        .random_access()
+        .filter(|access| cfg!(feature = "parallel") && num_rows <= access.cycles())
+}
+
+/// Whether [`assemble_one_hot_trace_rows`] fills the `2^log_t` rows straight
+/// from the witness, so that the rows are its only trace-sized allocation.
+pub fn fills_one_hot_trace_rows_directly<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> bool {
+    direct_row_access(witness, 1usize << log_t).is_some()
+}
+
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
 /// plan's canonical semantic-column order.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
@@ -194,7 +203,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         .ram
         .clone()
         .fold(0u64, |mask, column| mask | (1u64 << column));
-    let layout = OneHotTraceRowLayout::new::<F>(plan, log_k_chunk)?;
+    let layout = OneHotTraceRowLayout::new(plan, log_k_chunk);
 
     let random_access = witness.random_access();
     let zero_suffix_start = if let Some(access) = random_access.as_ref() {
@@ -222,53 +231,51 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         "one-hot trace rows"
     );
     #[cfg(feature = "parallel")]
-    if let Some(access) = random_access {
-        if num_rows <= access.cycles() {
-            let extraction_error = std::sync::Mutex::new(None);
-            let active_lane_count = zero_suffix_start * num_columns;
-            let active_word_count = zero_suffix_start.div_ceil(u64::BITS as usize);
-            let hot_entries = selected_rows[..active_lane_count]
-                .par_chunks_mut(num_columns * u64::BITS as usize)
-                .zip(ram_active_rows[..active_word_count].par_iter_mut())
-                .enumerate()
-                .map(|(word_index, (word_rows, ram_active_word))| {
-                    let mut hot_entries = 0usize;
-                    for (row_offset, selected_rows) in
-                        word_rows.chunks_exact_mut(num_columns).enumerate()
-                    {
-                        let row_index = word_index * u64::BITS as usize + row_offset;
-                        match access.window::<OneHotTraceSourceRow>(row_index) {
-                            Ok(row) => {
-                                let ram_active = layout.fill_row(row, selected_rows);
-                                if ram_active {
-                                    *ram_active_word |= 1u64 << row_offset;
-                                }
-                                hot_entries += layout.committed_entries(selected_rows, ram_active);
+    if let Some(access) = direct_row_access(witness, num_rows) {
+        let extraction_error = Mutex::new(None);
+        let active_lane_count = zero_suffix_start * num_columns;
+        let active_word_count = zero_suffix_start.div_ceil(u64::BITS as usize);
+        let hot_entries = selected_rows[..active_lane_count]
+            .par_chunks_mut(num_columns * u64::BITS as usize)
+            .zip(ram_active_rows[..active_word_count].par_iter_mut())
+            .enumerate()
+            .map(|(word_index, (word_rows, ram_active_word))| {
+                let mut hot_entries = 0usize;
+                for (row_offset, selected_rows) in
+                    word_rows.chunks_exact_mut(num_columns).enumerate()
+                {
+                    let row_index = word_index * u64::BITS as usize + row_offset;
+                    match access.window::<OneHotTraceSourceRow>(row_index) {
+                        Ok(row) => {
+                            let ram_active = layout.fill_row(row, selected_rows);
+                            if ram_active {
+                                *ram_active_word |= 1u64 << row_offset;
                             }
-                            Err(error) => {
-                                if let Ok(mut guard) = extraction_error.try_lock() {
-                                    let _ = guard.get_or_insert(error);
-                                }
+                            hot_entries += layout.committed_entries(selected_rows, ram_active);
+                        }
+                        Err(error) => {
+                            if let Ok(mut guard) = extraction_error.try_lock() {
+                                let _ = guard.get_or_insert(error);
                             }
                         }
                     }
-                    hot_entries
-                })
-                .sum();
-            #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-            if let Some(error) = extraction_error.into_inner().unwrap() {
-                return Err(error.into());
-            }
-            return Ok(Arc::new(PackedTraceRows {
-                num_rows,
-                num_columns,
-                selected_rows,
-                ram_active_rows,
-                ram_digit_zero_mask,
-                hot_entries,
-                zero_suffix_start,
-            }));
+                }
+                hot_entries
+            })
+            .sum();
+        #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
+        if let Some(error) = extraction_error.into_inner().unwrap() {
+            return Err(error.into());
         }
+        return Ok(Arc::new(PackedTraceRows {
+            num_rows,
+            num_columns,
+            selected_rows,
+            ram_active_rows,
+            ram_digit_zero_mask,
+            hot_entries,
+            zero_suffix_start,
+        }));
     }
 
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;

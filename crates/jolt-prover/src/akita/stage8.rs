@@ -20,8 +20,9 @@ use jolt_verifier::stages::stage8::packed::{
     leaf_claims, object_leaf_claims, one_hot_trace_packed_claims,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
+use jolt_witness::JoltWitnessPlane;
 
-use super::witness::{AdviceObject, DirectProgramObjects};
+use super::witness::{assemble_one_hot_trace_rows, AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
@@ -46,6 +47,8 @@ where
         .map_err(batch_failed::<F>)
 }
 
+/// `assembled_rows` are the `OneHotTrace` rows already assembled from
+/// `witness`; without them the opening assembles its own.
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
@@ -53,7 +56,8 @@ pub fn prove_stage8<F, PCS, VC, T>(
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     plan: &OneHotTraceLayoutPlan,
-    one_hot_trace_rows: Arc<dyn TraceOneHotRows>,
+    assembled_rows: Option<Arc<dyn TraceOneHotRows>>,
+    witness: &dyn JoltWitnessPlane<F>,
     one_hot_trace_commitment: &PCS::Output,
     mut one_hot_trace_hint: PCS::OpeningHint,
     untrusted_advice: Option<&AdviceObject<PCS>>,
@@ -72,8 +76,13 @@ where
     T: Transcript<Challenge = F>,
 {
     let chunk_width = config.one_hot_config.committed_chunk_bits();
-    PCS::restore_trace_rows(&mut one_hot_trace_hint, one_hot_trace_rows)
-        .map_err(batch_failed::<F>)?;
+    let rows = if let Some(rows) = assembled_rows {
+        rows
+    } else {
+        let log_t = checked.trace_length.ilog2() as usize;
+        assemble_one_hot_trace_rows(witness, plan, chunk_width, log_t)?
+    };
+    PCS::restore_trace_rows(&mut one_hot_trace_hint, rows).map_err(batch_failed::<F>)?;
 
     let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
 

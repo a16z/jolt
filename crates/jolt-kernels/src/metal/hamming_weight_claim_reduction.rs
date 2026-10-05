@@ -48,6 +48,46 @@ impl HammingWeightMetalConfig {
     }
 }
 
+impl MetalBackend {
+    /// Whether stage 7's Hamming-weight reduction runs on the device over the
+    /// rows resident in `session`, leaving the host cores idle while it runs.
+    /// A capacity failure while planning the dispatch still falls back to the
+    /// CPU kernel.
+    pub fn runs_hamming_weight_on_device(
+        &self,
+        session: &ProofSession,
+        log_t: usize,
+        log_k_chunk: usize,
+    ) -> bool {
+        self.resident_hamming_weight_rows(session, log_t, log_k_chunk)
+            .is_some()
+    }
+
+    /// The rows stage 6b left resident for the device route: present when the
+    /// config admits the shape and they cover the trace on this device.
+    fn resident_hamming_weight_rows(
+        &self,
+        session: &ProofSession,
+        log_t: usize,
+        log_k_chunk: usize,
+    ) -> Option<BooleanityRows> {
+        let trace_elements = 1usize << log_t;
+        if !self
+            .config
+            .hamming_weight_claim_reduction
+            .admits(trace_elements, log_t, log_k_chunk)
+        {
+            return None;
+        }
+        session
+            .state::<BooleanityRows>()
+            .filter(|rows| {
+                rows.len() == trace_elements && self.context.validate_booleanity_rows(rows).is_ok()
+            })
+            .cloned()
+    }
+}
+
 impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for MetalBackend {
     fn prepare(
         &self,
@@ -72,9 +112,11 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
         let log_t = inputs.relation.r_cycle().len();
         let trace_elements = 1usize << log_t;
         let config = self.config.hamming_weight_claim_reduction;
-        if !config.admits(trace_elements, log_t, dimensions.log_k_chunk) {
+        let Some(resident_rows) =
+            self.resident_hamming_weight_rows(session, log_t, dimensions.log_k_chunk)
+        else {
             return cpu(session);
-        }
+        };
 
         let plan = match HammingWeightPreparePlan::new(inputs.relation, inputs.challenges) {
             Ok(plan) => plan,
@@ -84,15 +126,6 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
             }
         };
         let selectors = plan.metal_selectors();
-        let resident_rows = match session.state::<BooleanityRows>().cloned() {
-            Some(rows)
-                if rows.len() == trace_elements
-                    && self.context.validate_booleanity_rows(&rows).is_ok() =>
-            {
-                rows
-            }
-            _ => return cpu(session),
-        };
         let resident_row_identity = resident_rows.allocation_identity();
         let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
         let e_in_elements = 1usize << config.dispatch.inner_log2;
@@ -380,6 +413,7 @@ mod tests {
                 .unwrap();
             let mut session = ProofSession::default();
             session.park(resident);
+            assert!(metal.runs_hamming_weight_on_device(&session, log_t, 8));
 
             let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
             assert!(session.state::<BooleanityRows>().is_none());
@@ -480,6 +514,7 @@ mod tests {
                         .unwrap();
                     session.park(resident);
                 }
+                assert!(!metal.runs_hamming_weight_on_device(&session, log_t, 8));
                 let mut expected = OptimizedHammingWeightClaimReduction
                     .prepare(&mut ProofSession::default(), witness, inputs())
                     .unwrap();

@@ -5,6 +5,8 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_kernels::metal::MetalBackend;
 use jolt_kernels::{JoltBackend, KernelSlots, ProofSession, ReferenceBackend};
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use jolt_openings::OpeningsError;
@@ -47,6 +49,10 @@ where
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
     trace_commitment: jolt_akita::TraceCommitmentBackend,
+    /// The Metal backend [`Self::with_metal_compute`] installed in `base`;
+    /// its Hamming-weight slot decides whether stage 7 runs on the device.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    piop_metal: Option<MetalBackend>,
 }
 
 /// The packed path's stand-in for the streaming witness-commit slot: stage 0
@@ -100,6 +106,8 @@ where
     pub fn reference() -> Self {
         Self {
             trace_commitment: jolt_akita::TraceCommitmentBackend::cpu(),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            piop_metal: None,
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),
@@ -187,17 +195,15 @@ impl<PCS> JoltAkitaBackend<jolt_akita::AkitaField, PCS>
 where
     PCS: CommitmentScheme<Field = jolt_akita::AkitaField>,
 {
-    pub fn with_metal_compute(
-        mut self,
-        metal: &jolt_kernels::metal::MetalBackend,
-    ) -> Result<Self, OpeningsError> {
+    pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Result<Self, OpeningsError> {
         self.base = self.base.with_metal_compute(metal);
+        self.piop_metal = Some(metal.clone());
         self.trace_commitment = jolt_akita::TraceCommitmentBackend::metal_required()?;
         Ok(self)
     }
 
     pub fn metal() -> Result<Self, JoltAkitaMetalError> {
-        let metal = jolt_kernels::metal::MetalBackend::production()?;
+        let metal = MetalBackend::production()?;
         Ok(Self::optimized().with_metal_compute(&metal)?)
     }
 

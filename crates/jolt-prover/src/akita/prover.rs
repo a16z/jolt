@@ -21,7 +21,9 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
-use super::witness::{assemble_one_hot_trace_rows, AdviceObject};
+use super::witness::{
+    assemble_one_hot_trace_rows, fills_one_hot_trace_rows_directly, AdviceObject,
+};
 use super::JoltAkitaBackend;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -198,14 +200,27 @@ where
     )?;
     let plan = &stage0.one_hot_trace_plan;
     let chunk_width = config.one_hot_config.committed_chunk_bits();
-    // The opening's rows depend only on the witness. Stage 7 leaves the CPU
-    // idle and is the only stage between the commit and the opening with
-    // footprint headroom for them, so they are assembled under it; a separate
+    // The opening's rows depend only on the witness. They are assembled under
+    // stage 7 only when it runs on the device and they fill straight from the
+    // witness: the host cores are idle then, and on the measured Metal route
+    // stage 7 is the only stage between the commit and the opening with
+    // footprint headroom for them. A host-bound stage 7 would share its cores
+    // and its peak with them, so stage 8 assembles them otherwise. A separate
     // pool keeps stage 7's rayon jobs from queueing behind the assembly's.
-    let (stage7, one_hot_trace_rows) = std::thread::scope(|scope| {
-        let rows = scope.spawn(move || {
-            on_one_hot_trace_rows_pool(|| {
-                assemble_one_hot_trace_rows(witness, plan, chunk_width, log_t)
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    let stage7_on_device = backend
+        .piop_metal
+        .as_ref()
+        .is_some_and(|metal| metal.runs_hamming_weight_on_device(&session, log_t, chunk_width));
+    #[cfg(not(all(feature = "metal", target_os = "macos")))]
+    let stage7_on_device = false;
+    let overlap = stage7_on_device && fills_one_hot_trace_rows_directly(witness, log_t);
+    let (stage7, assembled_rows) = std::thread::scope(|scope| {
+        let rows = overlap.then(|| {
+            scope.spawn(move || {
+                on_one_hot_trace_rows_pool(|| {
+                    assemble_one_hot_trace_rows(witness, plan, chunk_width, log_t)
+                })
             })
         });
         let stage7 = prove_stage7::<F, PCS, VC, T>(
@@ -220,15 +235,17 @@ where
             witness,
             &mut transcript,
         );
-        let completed_before_join = rows.is_finished();
-        let _span =
-            tracing::info_span!("jolt_prover::one_hot_trace_rows", completed_before_join).entered();
-        let rows = rows
-            .join()
-            .map_err(|_| ProverError::InvariantViolation {
-                reason: "asynchronous one-hot trace assembly panicked",
-            })
-            .and_then(|result| result);
+        let rows = rows.map(|rows| {
+            let completed_before_join = rows.is_finished();
+            let _span =
+                tracing::info_span!("jolt_prover::one_hot_trace_rows", completed_before_join)
+                    .entered();
+            rows.join()
+                .map_err(|_| ProverError::InvariantViolation {
+                    reason: "asynchronous one-hot trace assembly panicked",
+                })
+                .and_then(|result| result)
+        });
         (stage7, rows)
     });
     let stage7 = stage7?;
@@ -237,7 +254,8 @@ where
         config,
         preprocessing,
         plan,
-        one_hot_trace_rows?,
+        assembled_rows.transpose()?,
+        witness,
         &stage0.commitment,
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
