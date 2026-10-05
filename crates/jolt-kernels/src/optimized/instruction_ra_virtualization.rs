@@ -837,11 +837,14 @@ mod tests {
                 Arc::new(pack(&fixture_rows(log_t, 47))),
                 fr(7),
             );
-            assert_eq!(
-                !matches!(kernel, Err(KernelError::Unsupported { .. })),
-                supported,
-                "{per_virtual} committed chunks per virtual polynomial"
-            );
+            if supported {
+                assert!(
+                    kernel.is_ok(),
+                    "{per_virtual} committed chunks per virtual polynomial"
+                );
+            } else {
+                assert!(matches!(kernel, Err(KernelError::Unsupported { .. })));
+            }
         }
     }
 

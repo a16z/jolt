@@ -1179,12 +1179,6 @@ mod product_grid_tests {
         }
     }
 
-    #[test]
-    fn specialized_products_match_direct_evaluations() {
-        assert_product_grid::<Fr>(4);
-        assert_product_grid::<Fr>(8);
-    }
-
     /// Covers the direct walk (2, 3), the unrolled forms (4, 8), and the
     /// balanced tree at every other length up to the largest supported one,
     /// odd splits included.
@@ -1193,13 +1187,6 @@ mod product_grid_tests {
         for factors in 2..=MAX_GRID_FACTORS {
             assert_product_grid::<Fr>(factors);
         }
-    }
-
-    #[cfg(feature = "akita")]
-    #[test]
-    fn specialized_products_match_direct_evaluations_fp128() {
-        assert_product_grid::<Prime128OffsetA7F7>(4);
-        assert_product_grid::<Prime128OffsetA7F7>(8);
     }
 
     #[cfg(feature = "akita")]
