@@ -12,8 +12,9 @@ Move trace-polynomial batching from Jolt's selector packing into Akita's native
 batch protocol. `OneHotTrace` becomes one commitment group containing the actual
 trace columns. Akita can assign the same cycle range of every column to one
 chunk and account for the witness norms at the batch level. This removes the
-old packing's interleaving of cycle owners; recursive witness boundary alignment
-is follow-up work.
+old packing's interleaving of cycle owners and establishes first-fold cycle
+locality. Later folds still cross chunk owners; recursive witness boundary
+alignment is tracked by [Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
 
 ## Motivation
 
@@ -71,9 +72,11 @@ interleaving of first-fold `e_i` and `t_i` in the packed representation.
 
 Native batching makes the block range **within each polynomial** the ownership
 key, so a chunk receives the same cycle range from every column. The recursive
-witness is still treated as a flat witness and halved. A later PR will fix the
-remaining boundary issue, including a next-fold block crossing `t_hat | z_hat`;
-this PR does not resolve it.
+witness is still treated as a flat witness and halved, so the boundary block
+and tail can cross owners from the second fold onward.
+[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175) addresses that
+boundary issue by aligning witness bodies to successor source blocks and
+inheriting producer ownership. That change is outside this PR's pinned revision.
 
 The example uses the [pre-PR catalog](https://github.com/LayerZero-Research/jolt/blob/bed9c67e79821bd966a0bc4c0f3e301c7e1d765b/crates/jolt-akita/schedules/jolt-fp128-onehot-k16-w2r2.aks),
 Akita's [canonical witness layout](https://github.com/LayerZero-Labs/akita/blob/e2c49ed450f1999a743e7fd4a648f230ce45472f/crates/akita-params/src/witness.rs),
@@ -146,10 +149,19 @@ dyadic ranges, and the adapter validates them against the per-column block count
 Existing chunk profiles retain their activation depths.
 
 Schedules are regenerated for native arity and polynomial count using the pinned
-Akita revision `83574331`. K=16 catalogs cover production shapes through `2^30`
-cycles; K=256 catalogs contain explicit fixture shapes. Setup requires the exact
-shape to be admitted. The streaming witness's `u64` digit-zero mask limits the
-trace to 64 columns.
+Akita revision `83574331`. This PR intentionally owns the upgrade from
+`e2c49ed`: its immediate successor `83574331` merges
+[Akita #169](https://github.com/LayerZero-Labs/akita/pull/169), providing batched
+opening preparation and source evaluation, including batch-only source kernels.
+The fused trace opening uses that batch dispatch. This pin does not include
+Akita #175's recursive ownership alignment.
+
+K=16 catalogs cover production shapes through `2^30` cycles. The shipped K=256
+catalogs support only the explicit adapter, benchmark, cutover, advice, and
+forced-guest fixtures listed in the [schedule policy](../crates/jolt-akita/schedules/README.md).
+Arbitrary K=256 trace shapes require a deployment-owned catalog containing the
+exact shape; grouped provisioning rejects missing shapes during setup. The
+streaming witness's `u64` digit-zero mask limits the trace to 64 columns.
 
 ## Invariants and compatibility
 
@@ -176,8 +188,9 @@ field-inline proofs, including advice and committed programs. Catalog freshness
 is checked separately with `gen_jolt_schedules --check`.
 
 The performance requirements are to retain fused streaming and avoid selector
-overhead. Full chunk locality across recursive folds also needs the follow-up
-boundary fix described above.
+overhead. Full chunk locality across recursive folds also needs
+[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175) and regeneration of
+the affected Jolt multi-chunk catalogs after upgrading the pin.
 
 ## References
 
