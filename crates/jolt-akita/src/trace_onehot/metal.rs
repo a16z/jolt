@@ -2,6 +2,7 @@
 //! 2026-09-01 port line; compiles only against the fork's Metal-enabled Akita).
 
 use akita_error::AkitaError;
+use akita_metal::PackedOneHotCommitView;
 use akita_prover::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use akita_prover::compute::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
@@ -20,9 +21,8 @@ use super::source::{TracePackedOneHot, TracePackedOneHotBatchView, TracePackedOn
 use crate::AkitaField;
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
-fn packed_metal_view(
-    source: &TracePackedOneHot,
-) -> Result<akita_metal::PackedOneHotCommitView<'_>, AkitaError> {
+#[tracing::instrument(skip_all, name = "TracePackedOneHot::validate_metal_view")]
+fn packed_metal_view(source: &TracePackedOneHot) -> Result<PackedOneHotCommitView<'_>, AkitaError> {
     let selectors = source.rows.packed_selectors().ok_or_else(|| {
         AkitaError::InvalidInput("Metal trace opening requires resident packed selectors".into())
     })?;
@@ -31,8 +31,9 @@ fn packed_metal_view(
         selectors.hot_entries(),
         selectors.zero_suffix_start(),
     ) {
-        (256, Some(hot_entries), Some(zero_suffix_start)) => {
-            akita_metal::PackedOneHotCommitView::new_k256_with_precomputed_metrics(
+        (onehot_k, Some(hot_entries), Some(zero_suffix_start)) => {
+            PackedOneHotCommitView::new_with_precomputed_metrics(
+                onehot_k,
                 source.column_capacity,
                 source.num_columns,
                 selectors.row_major(),
@@ -43,7 +44,7 @@ fn packed_metal_view(
             )
         }
         (256, Some(hot_entries), None) => {
-            akita_metal::PackedOneHotCommitView::new_k256_with_precomputed_hot_entries(
+            PackedOneHotCommitView::new_k256_with_precomputed_hot_entries(
                 source.column_capacity,
                 source.num_columns,
                 selectors.row_major(),
@@ -52,7 +53,7 @@ fn packed_metal_view(
                 hot_entries,
             )
         }
-        _ => akita_metal::PackedOneHotCommitView::new_with_active_zero_rows(
+        _ => PackedOneHotCommitView::new_with_active_zero_rows(
             source.one_hot_k,
             source.column_capacity,
             source.num_columns,

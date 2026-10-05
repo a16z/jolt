@@ -161,3 +161,19 @@ samples, each following a fresh-process warmup; configuration order rotated
 across rounds. All 30 proofs verified and all 15 altered-output checks rejected.
 These are non-ZK measurements without tracing or threshold overrides, not a
 claim about other guests or larger-trace throughput.
+
+Packed selector validation now reuses the witness producer's exact entry count
+and certified zero suffix for K16 as well as K256. The Akita view still checks
+all selector bounds; the zero suffix also lets commitment skip padded blocks.
+A separate validation span distinguishes this CPU work from GPU coefficient
+packing. This requires the companion Akita revision pinned in `Cargo.toml`.
+
+A subsequent five-round matched comparison against `62b7d04` measured medians
+of 3.331 s for the previous Metal version, 2.922 s with selector metric reuse,
+and 6.030 s CPU (12.3% less time than the previous Metal version). The machine
+had substantial unrelated background activity, so these absolute times are not
+comparable to the quieter measurements above. Four of five matched rounds
+improved; all 30 proofs verified and 15 altered-output checks rejected.
+Separate profiles reduced each selector-validation call from about 100 ms to
+5–7 ms and Metal coefficient packing from 129 ms to 35 ms. Parameters, workload,
+and benchmark procedure were unchanged.
