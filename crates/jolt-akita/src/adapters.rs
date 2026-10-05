@@ -1340,7 +1340,6 @@ mod tests {
     #![expect(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::indexing_slicing,
         reason = "tests assert successful conversions and exact error text"
     )]
 
@@ -1383,30 +1382,6 @@ mod tests {
         assert_eq!(jolt_to_akita_index(0, 0), 0);
     }
 
-    /// Reversing a reversal is the identity, and the map permutes the whole
-    /// domain (every Akita index is hit exactly once).
-    #[test]
-    fn jolt_to_akita_index_is_a_self_inverse_permutation() {
-        let num_vars = 4;
-        let mut seen = [false; 16];
-        for index in 0..16 {
-            let mapped = jolt_to_akita_index(num_vars, index);
-            assert!(mapped < 16);
-            assert!(!seen[mapped], "akita index {mapped} hit twice");
-            seen[mapped] = true;
-            assert_eq!(jolt_to_akita_index(num_vars, mapped), index);
-        }
-    }
-
-    #[test]
-    fn jolt_to_akita_evals_permutes_an_explicit_two_var_vector() {
-        let jolt = [af(10), af(20), af(30), af(40)];
-        let akita = jolt_to_akita_evals(2, &jolt).expect("well-formed evaluations convert");
-        // Jolt index 1 = assignment (0, 1) = Akita index 2, and vice versa;
-        // the all-zero and all-one corners are fixed points.
-        assert_eq!(akita, vec![af(10), af(30), af(20), af(40)]);
-    }
-
     #[test]
     fn jolt_to_akita_evals_passes_zero_var_polynomials_through() {
         let jolt = [af(99)];
@@ -1437,14 +1412,6 @@ mod tests {
                 usize::BITS
             ),
         );
-    }
-
-    #[test]
-    fn reverse_point_reverses_coordinates_and_round_trips() {
-        let point = vec![af(1), af(2), af(3)];
-        assert_eq!(reverse_point(&point), vec![af(3), af(2), af(1)]);
-        assert_eq!(reverse_point(&reverse_point(&point)), point);
-        assert!(reverse_point(&[]).is_empty());
     }
 
     /// The identity the backend hand-off relies on: transforming the

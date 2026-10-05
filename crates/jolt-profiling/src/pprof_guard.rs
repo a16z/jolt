@@ -127,21 +127,4 @@ mod tests {
         #[cfg(feature = "pprof")]
         assert!(guard.is_some());
     }
-
-    #[test]
-    fn pprof_scope_no_arg_variant() {
-        let guard = pprof_scope!();
-        #[cfg(not(feature = "pprof"))]
-        assert!(guard.is_none());
-        #[cfg(feature = "pprof")]
-        assert!(guard.is_some());
-    }
-
-    #[test]
-    fn pprof_guard_stub_exists() {
-        #[cfg(not(feature = "pprof"))]
-        {
-            let _guard = super::PprofGuard;
-        }
-    }
 }

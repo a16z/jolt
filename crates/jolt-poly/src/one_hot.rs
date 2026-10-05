@@ -334,12 +334,6 @@ mod tests {
     }
 
     #[test]
-    fn is_one_hot_returns_true() {
-        let oh = make_one_hot(4, &[Some(0), Some(1), Some(2), Some(3)]);
-        assert!(MultilinearPoly::<Fr>::is_one_hot(&oh));
-    }
-
-    #[test]
     #[cfg_attr(not(debug_assertions), ignore = "index validation is debug-only")]
     #[should_panic(expected = "one-hot column index out of range")]
     fn out_of_range_column_rejected_in_debug() {

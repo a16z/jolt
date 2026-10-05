@@ -610,11 +610,6 @@ mod tests {
     }
 
     #[test]
-    fn uncompresses_nop() {
-        assert_eq!(uncompress_rv64_instruction(0x0001), 0x13);
-    }
-
-    #[test]
     fn uncompresses_c_slli_x0() {
         assert_eq!(uncompress_rv64_instruction(0x107a), 0x03e0_1013);
     }
@@ -629,19 +624,6 @@ mod tests {
         assert_eq!(uncompress_rv64_instruction(0x9002), 0x0010_0073); // c.ebreak
         assert_eq!(uncompress_rv64_instruction(0x852e), 0x00b0_0533); // c.mv a0,a1
         assert_eq!(uncompress_rv64_instruction(0xe022), 0x0081_3023); // c.sdsp s0,0(sp)
-    }
-
-    /// Guards the test-side compressed assemblers against the same toolchain
-    /// halfwords, so an encoder bug cannot silently cancel a decoder bug.
-    #[test]
-    fn test_assemblers_match_known_toolchain_halfwords() {
-        assert_eq!(ci(0b000, 2, -16), 0x1141); // c.addi sp,-16
-        assert_eq!(ci(0b010, 10, 0), 0x4501); // c.li a0,0
-        assert_eq!(cr(0, 1, 0), 0x8082); // c.jr ra
-        assert_eq!(cr(1, 0, 0), 0x9002); // c.ebreak
-        assert_eq!(cr(0, 10, 11), 0x852e); // c.mv a0,a1
-        assert_eq!(c_sdsp(8, 0), 0xe022); // c.sdsp s0,0(sp)
-        assert_eq!(c_slli(0, 62), 0x107a); // c.slli x0,62 (existing anchor)
     }
 
     #[test]

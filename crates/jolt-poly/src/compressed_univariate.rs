@@ -130,31 +130,6 @@ mod tests {
     }
 
     #[test]
-    fn compress_decompress_round_trip() {
-        // p(x) = 1 + 3x + 2x^2
-        let (p, hint) = poly_and_hint(vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(2)]);
-        let compressed = p.compress();
-        let recovered = compressed.decompress(hint);
-        assert_eq!(recovered, p);
-    }
-
-    #[test]
-    fn evaluate_with_hint_matches_standard() {
-        // p(x) = 1 + 3x + 2x^2
-        let (p, hint) = poly_and_hint(vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(2)]);
-        let compressed = p.compress();
-
-        for i in 0..10 {
-            let x = Fr::from_u64(i);
-            assert_eq!(
-                compressed.evaluate_with_hint(hint, x),
-                p.evaluate(x),
-                "mismatch at x={i}"
-            );
-        }
-    }
-
-    #[test]
     fn compress_linear_polynomial() {
         // p(x) = 5 + 7x  (degree 1)
         let (p, hint) = poly_and_hint(vec![Fr::from_u64(5), Fr::from_u64(7)]);

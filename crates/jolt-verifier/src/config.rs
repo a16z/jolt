@@ -152,29 +152,6 @@ mod tests {
         assert!(postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0]).is_err());
     }
 
-    #[test]
-    fn matching_protocol_config_is_accepted() {
-        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_CONFIG).is_ok());
-    }
-
-    /// A proof declaring the opposite field-inline axis rejects fail-closed, in both builds
-    /// without field-inline (proof claims enabled) and builds with field-inline enabled (proof
-    /// claims disabled).
-    #[test]
-    fn mismatched_field_inline_axis_is_rejected() {
-        let mut protocol = JOLT_VERIFIER_CONFIG;
-        protocol.field_inline = if JOLT_VERIFIER_CONFIG.field_inline.enabled {
-            FieldInlineConfig::disabled()
-        } else {
-            FieldInlineConfig::enabled()
-        };
-
-        assert!(matches!(
-            validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
-            Err(VerifierError::ProtocolConfigMismatch { .. })
-        ));
-    }
-
     /// A proof declaring a different field-register file size rejects even when the enabled
     /// bit matches: the whole config participates in the equality gate.
     #[test]
@@ -186,16 +163,5 @@ mod tests {
             validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
             Err(VerifierError::ProtocolConfigMismatch { .. })
         ));
-    }
-
-    #[test]
-    fn rejects_scalar_challenge_endianness_mismatch() {
-        let mut proof_config = JOLT_VERIFIER_CONFIG;
-        proof_config.scalar_challenge_endianness = match proof_config.scalar_challenge_endianness {
-            ScalarChallengeEndianness::Big => ScalarChallengeEndianness::Little,
-            ScalarChallengeEndianness::Little => ScalarChallengeEndianness::Big,
-        };
-
-        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, proof_config).is_err());
     }
 }

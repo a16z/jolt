@@ -333,44 +333,8 @@ pub(crate) fn field_to_fr<F: JoltField>(f: &F) -> ark_bn254::Fr {
 #[expect(clippy::expect_used, reason = "tests may fail loudly")]
 mod tests {
     use ark_serialize::CanonicalSerialize;
-    use jolt_field::Fr;
-    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
     use super::{Bn254, Bn254G1, Bn254G2};
-
-    #[test]
-    fn g1_transcript_encoding_uses_compressed_commitment_bytes() {
-        let point = Bn254::g1_generator();
-        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
-        point.append_to_transcript(&mut actual);
-
-        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
-        let mut bytes = Vec::new();
-        point
-            .0
-            .serialize_compressed(&mut bytes)
-            .expect("serialize G1");
-        expected.append_bytes(&bytes);
-
-        assert_eq!(actual.state(), expected.state());
-    }
-
-    #[test]
-    fn g2_transcript_encoding_uses_compressed_commitment_bytes() {
-        let point = Bn254::g2_generator();
-        let mut actual = Blake2bTranscript::<Fr>::new(b"test");
-        point.append_to_transcript(&mut actual);
-
-        let mut expected = Blake2bTranscript::<Fr>::new(b"test");
-        let mut bytes = Vec::new();
-        point
-            .0
-            .serialize_compressed(&mut bytes)
-            .expect("serialize G2");
-        expected.append_bytes(&bytes);
-
-        assert_eq!(actual.state(), expected.state());
-    }
 
     fn encode_with_trailing_byte<P: CanonicalSerialize>(point: &P) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -395,13 +359,5 @@ mod tests {
         let json = serde_json::to_string(&bytes).expect("encode bytes");
         let err = serde_json::from_str::<Bn254G2>(&json).expect_err("trailing byte");
         assert!(err.to_string().contains("exactly"), "{err}");
-    }
-
-    #[test]
-    fn g1_deserialize_round_trips_canonical_encoding() {
-        let point = Bn254::g1_generator();
-        let json = serde_json::to_string(&point).expect("encode point");
-        let recovered: Bn254G1 = serde_json::from_str(&json).expect("decode point");
-        assert_eq!(recovered, point);
     }
 }

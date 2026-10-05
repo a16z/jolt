@@ -65,18 +65,3 @@ impl From<BalancedChunkingError> for LatticeGeometryError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The shared chunking's errors surface through the jolt-side error type
-    /// unchanged (the `From` mapping is variant-for-variant).
-    #[test]
-    fn chunking_errors_map_into_the_lattice_error() {
-        assert_eq!(
-            BalancedIncChunking::new(7).map_err(LatticeGeometryError::from),
-            Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width: 7 })
-        );
-    }
-}

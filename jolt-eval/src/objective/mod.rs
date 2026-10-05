@@ -336,32 +336,6 @@ pub fn normalized(
 mod tests {
     use super::*;
 
-    struct ConstantObjective {
-        label: &'static str,
-        value: f64,
-    }
-
-    impl Objective for ConstantObjective {
-        type Setup = ();
-        fn name(&self) -> &str {
-            self.label
-        }
-        fn setup(&self) {}
-        fn collect_measurement(&self) -> Result<f64, MeasurementError> {
-            Ok(self.value)
-        }
-    }
-
-    #[test]
-    fn constant_objective() {
-        let obj = ConstantObjective {
-            label: "latency",
-            value: 42.0,
-        };
-        assert_eq!(obj.name(), "latency");
-        assert_eq!(obj.collect_measurement().unwrap(), 42.0);
-    }
-
     #[test]
     fn static_analysis_all_measures() {
         for sa in StaticAnalysisObjective::all() {

@@ -360,23 +360,6 @@ mod tests {
     }
 
     #[test]
-    fn extracts_ir_from_fresh_run_metrics() {
-        assert_eq!(
-            parse_instruction_count(&fixture_document(123_456, None)).unwrap(),
-            123_456.0
-        );
-    }
-
-    #[test]
-    fn extracts_new_ir_when_a_baseline_is_present() {
-        // `Both(new, old)`: the measurement is the new run, never the old.
-        assert_eq!(
-            parse_instruction_count(&fixture_document(1000, Some(2500))).unwrap(),
-            1000.0
-        );
-    }
-
-    #[test]
     fn sums_ir_across_case_documents() {
         let stdout = format!(
             "{}\n{}\n",

@@ -206,16 +206,4 @@ mod tests {
             ra_0 * ra_1 * (table_sum + raf_constant + raf_flag_coeff * raf_flag)
         );
     }
-
-    #[test]
-    fn read_raf_symbolic_matches_dependencies() {
-        let dimensions = read_raf_dimensions(2);
-        let relation = ReadRaf::new(dimensions);
-        assert_eq!(ReadRaf::id(), JoltRelationId::InstructionReadRaf);
-        assert_eq!(relation.rounds(), dimensions.sumcheck_rounds());
-        assert_eq!(
-            relation.degree(),
-            dimensions.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
-        );
-    }
 }

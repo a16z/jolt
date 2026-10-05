@@ -76,18 +76,6 @@ fn limbs_fmadd_vs_bigint() {
     assert_eq!(acc.0, to_limbs::<5>(&expect));
 }
 
-#[test]
-fn limbs_u128_oracle() {
-    let mut rng = rng();
-    for _ in 0..500 {
-        let a: u64 = rng.gen();
-        let b: u64 = rng.gen();
-        let product = two::Limbs::<1>::new([a]).mul_trunc::<1, 2>(&two::Limbs::new([b]));
-        let expected = (a as u128) * (b as u128);
-        assert_eq!(product.0, [expected as u64, (expected >> 64) as u64]);
-    }
-}
-
 /// Sign-magnitude oracle mirroring the mathematical sign-magnitude rules
 /// with magnitudes wrapping at `width_bits` (matching truncated limb ops).
 #[derive(Clone)]

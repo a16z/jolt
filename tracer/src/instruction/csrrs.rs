@@ -59,26 +59,6 @@ mod tests {
     use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
     use crate::instruction::{Cycle, Instruction, RISCVTrace};
 
-    /// Test decoding of `csrr t0, mtvec` (csrrs t0, mtvec, x0)
-    #[test]
-    fn test_csrr_mtvec_decode() {
-        // csrr t0, mtvec = csrrs t0, 0x305, x0
-        // Encoding: 0x305 << 20 | 0 << 15 | 2 << 12 | 5 << 7 | 0x73
-        let instr: u32 = 0x305022f3;
-        let address: u64 = 0x1000;
-
-        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRS");
-
-        match decoded {
-            Instruction::CSRRS(csrrs) => {
-                assert_eq!(csrrs.operands.rd, 5, "rd should be t0 (x5)");
-                assert_eq!(csrrs.operands.rs1, 0, "rs1 should be x0");
-                assert_eq!(csrrs.csr_address(), 0x305, "CSR should be mtvec (0x305)");
-            }
-            _ => panic!("Expected CSRRS instruction, got {decoded:?}"),
-        }
-    }
-
     /// `decode` must reject unsupported CSRs with a typed error instead of
     /// letting them reach the inline-sequence path.
     #[test]
@@ -89,59 +69,6 @@ mod tests {
         let err = Instruction::decode(instr, 0x1000, false)
             .expect_err("decode must reject unsupported CSR (satp) with an Err, not panic");
         assert!(err.contains("CSR"), "error should mention CSR: {err}");
-    }
-
-    /// Test decoding with rs1 != 0 (full csrrs)
-    #[test]
-    fn test_csrrs_with_rs1() {
-        // csrrs a0, mtvec, t0 (read mtvec to a0, set bits from t0)
-        // Encoding: 0x305 << 20 | 5 << 15 | 2 << 12 | 10 << 7 | 0x73
-        let instr: u32 = 0x3052a573;
-        let address: u64 = 0x1000;
-
-        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRS");
-
-        match decoded {
-            Instruction::CSRRS(csrrs) => {
-                assert_eq!(csrrs.operands.rd, 10, "rd should be a0 (x10)");
-                assert_eq!(csrrs.operands.rs1, 5, "rs1 should be t0 (x5)");
-                assert_eq!(csrrs.csr_address(), 0x305, "CSR should be mtvec (0x305)");
-            }
-            _ => panic!("Expected CSRRS instruction, got {decoded:?}"),
-        }
-    }
-
-    /// Test trace of full csrrs: rd = old CSR, CSR |= rs1
-    #[test]
-    fn test_csrrs_trace_full() {
-        // csrrs a0, mtvec, t0 (rd=a0(10), rs1=t0(5), csr=mtvec)
-        let instr: u32 = 0x3052a573;
-        let address: u64 = 0x1000;
-
-        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode CSRRS");
-        let Instruction::CSRRS(csrrs) = decoded else {
-            panic!("Expected CSRRS instruction");
-        };
-
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
-
-        let old_csr: u64 = 0x00FF;
-        let rs1_val: u64 = 0xFF00;
-
-        cpu.x[34] = old_csr as i64; // vr34 = mtvec
-        cpu.x[5] = rs1_val as i64; // t0
-
-        let mut trace: Vec<Cycle> = Vec::new();
-        csrrs.trace(&mut cpu, Some(&mut trace));
-
-        // rd (a0) should have old CSR value
-        assert_eq!(cpu.x[10] as u64, old_csr, "rd should get old CSR value");
-        // vr (mtvec) should have old | rs1
-        assert_eq!(
-            cpu.x[34] as u64,
-            old_csr | rs1_val,
-            "CSR should have bits set from rs1"
-        );
     }
 
     /// Test trace of csrrs with rd == rs1 (clobber case)

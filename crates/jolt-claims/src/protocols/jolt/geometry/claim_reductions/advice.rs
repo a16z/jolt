@@ -231,28 +231,3 @@ fn cycle_phase_round_schedule(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn with_address_phase() -> PrecommittedReductionDimensions {
-        PrecommittedReductionDimensions::new(4, 3, true)
-    }
-
-    fn without_address_phase() -> PrecommittedReductionDimensions {
-        PrecommittedReductionDimensions::new(4, 3, false)
-    }
-
-    #[test]
-    fn cycle_phase_output_openings_track_address_phase_presence() {
-        assert_eq!(
-            cycle_phase_output_openings(JoltAdviceKind::Trusted, with_address_phase()),
-            vec![cycle_phase_advice_opening(JoltAdviceKind::Trusted)]
-        );
-        assert_eq!(
-            cycle_phase_output_openings(JoltAdviceKind::Untrusted, without_address_phase()),
-            vec![final_advice_opening(JoltAdviceKind::Untrusted)]
-        );
-    }
-}

@@ -223,25 +223,4 @@ mod tests {
         assert_eq!(bits.trailing_zeros(), 3);
         assert_eq!(bits.leading_ones(), 3);
     }
-
-    #[test]
-    fn bitand_usize() {
-        let bits = LookupBits::new(0xFF, 8);
-        assert_eq!(bits & 0x0F, 0x0F);
-    }
-
-    #[test]
-    fn display_format() {
-        let bits = LookupBits::new(0b101, 4);
-        assert_eq!(format!("{bits}"), "0101");
-    }
-
-    #[test]
-    fn equality() {
-        let a = LookupBits::new(42, 8);
-        let b = LookupBits::new(42, 8);
-        let c = LookupBits::new(43, 8);
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-    }
 }

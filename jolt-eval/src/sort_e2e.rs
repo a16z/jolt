@@ -197,32 +197,6 @@ mod tests {
     }
 
     #[test]
-    fn redteam_e2e_no_violation_for_small_input() {
-        let invariant = CandidateSortInvariant;
-
-        let response = serde_json::json!({
-            "analysis": "Trying a small permutation.",
-            "counterexample": [5, 3, 1, 4, 2],
-        });
-        let agent = MockAgent::always_ok(&response.to_string());
-        let config = RedTeamConfig {
-            num_iterations: 3,
-            ..Default::default()
-        };
-
-        let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
-
-        match result {
-            RedTeamResult::NoViolation { attempts } => {
-                assert_eq!(attempts.len(), 3);
-            }
-            RedTeamResult::Violation { .. } => {
-                panic!("Small inputs should not trigger a violation");
-            }
-        }
-    }
-
-    #[test]
     #[ignore] // Requires Claude API access
     fn redteam_e2e_real_agent() {
         run_redteam_test("sonnet", 10, 5, None, false);

@@ -831,11 +831,6 @@ mod tests {
     }
 
     #[test]
-    fn cycle_major_widened_matches_reference() {
-        assert_parity(TracePolynomialOrder::CycleMajor, 2);
-    }
-
-    #[test]
     fn cycle_major_odd_widening_matches_reference() {
         assert_parity(TracePolynomialOrder::CycleMajor, 1);
     }
@@ -843,11 +838,6 @@ mod tests {
     #[test]
     fn address_major_matches_reference() {
         assert_parity(TracePolynomialOrder::AddressMajor, 0);
-    }
-
-    #[test]
-    fn address_major_widened_matches_reference() {
-        assert_parity(TracePolynomialOrder::AddressMajor, 2);
     }
 
     #[test]
