@@ -33,6 +33,10 @@ rayon = { workspace = true }
 name = "fp128"
 harness = false
 
+[[bench]]
+name = "limits"
+harness = false
+
 # Metal is linked only on macOS. On every other target this crate has no
 # Objective-C dependency and `Device::system_default` reports `Unavailable`.
 [target.'cfg(target_os = "macos")'.dependencies]
