@@ -13,8 +13,8 @@ use jolt_field::Zero as _;
 use jolt_field::{Accumulator as _, Prime128OffsetA7F7 as AkitaField, WithAccumulator};
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
+    MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -31,12 +31,6 @@ const RAW_ROW_WORDS: usize = 4;
 const SIMD_WIDTH: usize = 32;
 const BLOCKS_PIPELINE: &str = "solinas_spartan_outer_uniskip_blocks";
 const REDUCE_PIPELINE: &str = "solinas_spartan_outer_uniskip_reduce";
-const SOURCE_PRIMER_PIPELINE: &str = "solinas_spartan_stage1_source_primer";
-const SOURCE_PRIMER_PAGE_BYTES: usize = 16 * 1024;
-const SOURCE_PRIMER_THREADS_PER_THREADGROUP: usize = 256;
-const SOURCE_PRIMER_THREADGROUPS: usize = 256;
-const SOURCE_PRIMER_THREADS: usize =
-    SOURCE_PRIMER_THREADS_PER_THREADGROUP * SOURCE_PRIMER_THREADGROUPS;
 static NEXT_STAGE1_ROWS_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 const EXTENSION_COEFFICIENTS: [[i64; 10]; SPARTAN_OUTER_EXTENDED_NODES] = [
@@ -170,6 +164,13 @@ impl SpartanOuterUniskipRows {
 
     pub fn allocation_identity(&self) -> usize {
         self.raw_buffer.as_ptr() as usize
+    }
+
+    /// Requests residency for both row allocations, one helper each, and
+    /// returns once both requests have completed. See [`super::residency`].
+    pub(crate) fn request_residency(&self) {
+        let _compact = residency::prefetch(vec![self.instruction_input_buffer().clone()]);
+        let _raw = residency::prefetch(vec![self.raw_buffer.clone()]);
     }
 
     pub fn instruction_input_allocation_identity(&self) -> usize {
@@ -660,65 +661,6 @@ struct Params {
     reserved: u32,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct SourcePrimerParams {
-    word_count: u64,
-    page_words: u32,
-    total_threads: u32,
-}
-
-const _: [(); 16] = [(); size_of::<SourcePrimerParams>()];
-
-#[must_use = "the Stage1 source primer must be joined before its source is consumed"]
-pub(crate) struct PendingSpartanStage1SourcePrimer {
-    command: Option<CommandBuffer>,
-    sources: Vec<Buffer>,
-    checksums: Buffer,
-    source_identities: Vec<usize>,
-}
-
-#[cfg(feature = "allocative")]
-impl Allocative for PendingSpartanStage1SourcePrimer {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        visitor.enter_self_sized::<Self>().exit();
-    }
-}
-
-impl Drop for PendingSpartanStage1SourcePrimer {
-    fn drop(&mut self) {
-        if let Some(command) = &self.command {
-            command.wait_until_completed();
-        }
-    }
-}
-
-impl PendingSpartanStage1SourcePrimer {
-    pub(crate) fn join(mut self) -> Result<(), MetalError> {
-        let source_identities = self
-            .sources
-            .iter()
-            .map(|source| source.as_ptr() as usize)
-            .collect::<Vec<_>>();
-        if source_identities != self.source_identities
-            || self.checksums.length() != byte_length::<u32>(SOURCE_PRIMER_THREADS)?
-        {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer resources changed before completion",
-            ));
-        }
-        let command = self
-            .command
-            .take()
-            .ok_or(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer command was already joined",
-            ))?;
-        command.wait_until_completed();
-        let _gpu_active = completed_command_gpu_time(&command)?;
-        Ok(())
-    }
-}
-
 struct Buffers {
     instruction_input_rows: Buffer,
     raw_rows: Buffer,
@@ -740,94 +682,6 @@ pub struct SpartanOuterUniskipInvocation<'a> {
 }
 
 impl SolinasMetal {
-    pub(crate) fn submit_spartan_stage1_source_primer(
-        &self,
-        outer: &SpartanOuterUniskipRows,
-    ) -> Result<PendingSpartanStage1SourcePrimer, MetalError> {
-        if outer.device_registry_id() != self.device_registry_id() {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer received foreign resident rows",
-            ));
-        }
-
-        let sources = vec![
-            outer.instruction_input_buffer().clone(),
-            outer.raw_buffer().clone(),
-        ];
-        let expected_device = self.device_registry_id();
-        if sources
-            .iter()
-            .any(|buffer| buffer.device().registry_id() != expected_device)
-        {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer received a foreign buffer",
-            ));
-        }
-        let source_identities = sources
-            .iter()
-            .map(|source| source.as_ptr() as usize)
-            .collect::<Vec<_>>();
-        let page_words = u32::try_from(SOURCE_PRIMER_PAGE_BYTES / size_of::<u32>())
-            .map_err(|_| MetalError::InputTooLong(SOURCE_PRIMER_PAGE_BYTES))?;
-        let total_threads = u32::try_from(SOURCE_PRIMER_THREADS)
-            .map_err(|_| MetalError::InputTooLong(SOURCE_PRIMER_THREADS))?;
-
-        let pipeline = self.compile_named_pipeline(SOURCE_PRIMER_PIPELINE)?;
-        let limits = Self::limits(&pipeline);
-        if limits.thread_execution_width != SIMD_WIDTH
-            || limits.max_total_threads_per_threadgroup < SOURCE_PRIMER_THREADS_PER_THREADGROUP
-        {
-            return Err(MetalError::InvalidSpartanShiftState(
-                "Stage1 source primer pipeline has unsupported limits",
-            ));
-        }
-        let checksum_bytes = byte_length::<u32>(SOURCE_PRIMER_THREADS)?;
-        self.validate_additional_working_set(checksum_bytes)?;
-        let checksums = self
-            .device
-            .new_buffer(checksum_bytes, MTLResourceOptions::StorageModePrivate);
-
-        let command = self.queue.new_command_buffer().to_owned();
-        autoreleasepool(|| {
-            let encoder = command.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&pipeline);
-            encoder.set_buffer(1, Some(&checksums), 0);
-            for source in &sources {
-                let params = SourcePrimerParams {
-                    word_count: source.length() / size_of::<u32>() as u64,
-                    page_words,
-                    total_threads,
-                };
-                encoder.set_buffer(0, Some(source), 0);
-                encoder.set_bytes(
-                    2,
-                    size_of::<SourcePrimerParams>() as u64,
-                    std::ptr::from_ref(&params).cast::<std::ffi::c_void>(),
-                );
-                encoder.dispatch_thread_groups(
-                    MTLSize {
-                        width: SOURCE_PRIMER_THREADGROUPS as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                    MTLSize {
-                        width: SOURCE_PRIMER_THREADS_PER_THREADGROUP as u64,
-                        height: 1,
-                        depth: 1,
-                    },
-                );
-            }
-            encoder.end_encoding();
-            command.commit();
-        });
-        Ok(PendingSpartanStage1SourcePrimer {
-            command: Some(command),
-            sources,
-            checksums,
-            source_identities,
-        })
-    }
-
     pub fn prepare_spartan_outer_uniskip(
         &self,
         rows: &[SpartanOuterUniskipRow],
@@ -1514,16 +1368,6 @@ mod tests {
             spartan_outer_uniskip_row_bytes(1 << 26).unwrap(),
             5_368_709_120
         );
-    }
-
-    #[test]
-    fn stage1_source_primer_completes_over_resident_rows() {
-        let context = SolinasMetal::for_akita().unwrap();
-        let outer = context
-            .prepare_spartan_outer_uniskip_rows(&vec![SpartanOuterUniskipRow::default(); 512])
-            .unwrap();
-        let pending = context.submit_spartan_stage1_source_primer(&outer).unwrap();
-        pending.join().unwrap();
     }
 
     #[test]

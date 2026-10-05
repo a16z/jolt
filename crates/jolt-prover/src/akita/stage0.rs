@@ -1,5 +1,7 @@
 //! Packed stage 0: input validation, commitments, and transcript setup.
 
+use std::sync::mpsc::Sender;
+
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::{
@@ -38,6 +40,9 @@ where
 }
 
 /// Validate inputs, commit the packed objects, and seed the transcript.
+///
+/// `witness_prepare_signal` receives one message once the one-hot rows are
+/// assembled and another once the trace commit has returned.
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
     backend: &JoltAkitaBackend<F, PCS>,
@@ -46,7 +51,7 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
-    witness_prepare_start: Option<&std::sync::mpsc::Sender<()>>,
+    witness_prepare_signal: Option<&Sender<()>>,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: JoltField,
@@ -231,8 +236,8 @@ where
                 }
                 rows
             })?;
-            if let Some(start) = witness_prepare_start {
-                let _ = start.send(());
+            if let Some(signal) = witness_prepare_signal {
+                let _ = signal.send(());
             }
             let precommitted_hints = precommitted
                 .iter()
@@ -250,6 +255,9 @@ where
                 committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                     reason: error.to_string(),
                 })?;
+            if let Some(signal) = witness_prepare_signal {
+                let _ = signal.send(());
+            }
             PCS::release_post_commit_residency(&backend.trace_commitment, &preprocessing.pcs_setup)
                 .and_then(|()| PCS::release_trace_rows(&mut hint))
                 .map_err(|error| VerifierError::FinalOpeningVerificationFailed {

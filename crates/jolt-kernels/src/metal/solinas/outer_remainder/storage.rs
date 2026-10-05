@@ -6,7 +6,11 @@ use metal::{
     MTLResourceOptions, NSRange,
 };
 
-use super::super::{completed_command_gpu_time, Fp128, MetalError, PipelineLimits, SolinasMetal};
+use super::super::{
+    completed_command_gpu_time,
+    residency::{self, ResidencyPrefetch},
+    Fp128, MetalError, PipelineLimits, SolinasMetal,
+};
 #[cfg(feature = "test-utils")]
 use super::plan::opening_threadgroup_memory_lengths;
 use super::{
@@ -561,6 +565,12 @@ impl OuterRemainderSequenceStorage {
         }
         dense.state_b = Some(state_b);
         Ok(())
+    }
+
+    /// Starts a best-effort residency warm-up for the lazily backed state A;
+    /// dropping the guard joins it. See [`super::super::residency`].
+    pub(crate) fn prefetch_state_a_residency(&self) -> Result<ResidencyPrefetch, MetalError> {
+        Ok(residency::prefetch(vec![self.share_state_a()?]))
     }
 
     pub(crate) fn share_state_a(&self) -> Result<Buffer, MetalError> {

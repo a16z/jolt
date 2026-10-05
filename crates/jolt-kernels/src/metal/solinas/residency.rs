@@ -1,13 +1,15 @@
-//! GPU residency requested off the submit path for freshly allocated rows.
+//! GPU residency requested off the submit path.
 //!
 //! The driver otherwise wires a Shared allocation inside the first command
 //! buffer that binds it, with CPU and GPU idle. Requesting residency while the
-//! producer fills the rows moves that work onto a helper thread.
+//! producer fills the rows, or under other work before that command buffer,
+//! moves that work onto a helper thread.
 //!
 //! Residency is requested through a transient set: removing a committed
 //! allocation makes it eligible for nonresidency again, so a later command
 //! buffer may still pay the wiring. Measured runs kept the warm-up after
-//! removal; no API guarantees it.
+//! removal except across Stage 0's trace commit, which evicts the Stage-1
+//! rows; no API guarantees it.
 
 use std::{
     ptr,

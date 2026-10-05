@@ -12,31 +12,6 @@ struct SpartanOuterUniskipParams {
     uint reserved;
 };
 
-struct SpartanStage1SourcePrimerParams {
-    ulong word_count;
-    uint page_words;
-    uint total_threads;
-};
-
-// `checksums` keeps the page-touch loads live.
-kernel void solinas_spartan_stage1_source_primer(
-    device const uint* source [[buffer(0)]],
-    device uint* checksums [[buffer(1)]],
-    constant SpartanStage1SourcePrimerParams& params [[buffer(2)]],
-    uint gid [[thread_position_in_grid]])
-{
-    if (gid >= params.total_threads) {
-        return;
-    }
-    ulong pages = (params.word_count + params.page_words - 1u) / params.page_words;
-    uint checksum = 0x9e3779b9u ^ gid;
-    for (ulong page = gid; page < pages; page += params.total_threads) {
-        checksum ^= source[page * params.page_words] ^ (uint)page;
-        checksum = ((checksum << 5u) | (checksum >> 27u)) * 0x85ebca6bu;
-    }
-    checksums[gid] ^= checksum;
-}
-
 struct SpartanFieldSum192 {
     uint limb[6];
 };

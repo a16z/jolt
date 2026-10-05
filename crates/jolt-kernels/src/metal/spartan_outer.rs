@@ -43,9 +43,9 @@ use super::solinas::{
     outer_remainder_sequence_storage_bytes_with_config, spartan_outer_uniskip_invocation_bytes,
     spartan_outer_uniskip_row_bytes, InstructionInputRows, MetalError, OuterRemainderPhase,
     OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
-    PendingRegistersReadWriteStage1Pipelines, PendingSpartanStage1SourcePrimer,
-    ProductRemainderSequence, RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source,
-    SolinasMetal, SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
+    PendingRegistersReadWriteStage1Pipelines, ProductRemainderSequence,
+    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source, SolinasMetal,
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
 use super::spartan_product::{
     MetalInstructionClaimResidentRows, MetalProductUniskipEndpointCarrier,
@@ -75,7 +75,6 @@ pub use evaluation::{
 
 const OUTER_DOMAIN: usize = OUTER_UNISKIP_DOMAIN_SIZE;
 const OUTER_VARIABLES: usize = 35;
-const STAGE1_SOURCE_PRIMER_CUTOFF_ELEMENTS: usize = 1 << 28;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpartanOuterUniskipMetalConfig {
@@ -285,7 +284,6 @@ impl MetalBackend {
             error = %error,
             "Stage-1 resident storage was not admitted against the process footprint; releasing the resident rows and using optimized CPU"
         );
-        drop(session.take::<PendingSpartanStage1SourcePrimer>());
         drop(session.take::<PreparedInstructionInput>());
         drop(session.take::<MetalInstructionClaimResidentRows>());
         drop(session.take::<ProductRemainderSequence>());
@@ -716,17 +714,15 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 OuterRemainder<AkitaField>,
             >>::prepare_witness(&OptimizedOuterUniskip, session, log_t, witness)?;
         }
-        if cycles >= STAGE1_SOURCE_PRIMER_CUTOFF_ELEMENTS {
-            let pending = session
-                .state::<SpartanOuterUniskipRows>()
-                .map(|outer| self.context.submit_spartan_stage1_source_primer(outer))
-                .transpose()
-                .map_err(metal_prepare_error)?;
-            if let Some(pending) = pending {
-                session.park(pending);
-            }
-        }
         Ok(())
+    }
+
+    /// The resident rows lose their GPU residency during the commit, and the
+    /// uni-skip submit would otherwise rewire them with CPU and GPU idle.
+    fn after_trace_commit(&self, session: &ProofSession) {
+        if let Some(rows) = session.state::<SpartanOuterUniskipRows>() {
+            rows.request_residency();
+        }
     }
 
     fn prepare(
@@ -740,7 +736,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         self.admit_stage1_resident_storage(session, cycles)?;
         let resident_rows = session.state::<SpartanOuterUniskipRows>().is_some();
         if !use_metal_stage1(cycles, &self.config, resident_rows) {
-            drop(session.take::<PendingSpartanStage1SourcePrimer>());
             let retain_for_remainder = use_metal_remainder(cycles, &self.config, resident_rows);
             if !retain_for_remainder {
                 drop(session.take::<SpartanOuterUniskipRows>());
@@ -761,10 +756,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             >>::prepare(&OptimizedOuterUniskip, session, log_t, tau, witness)?;
             return Ok(());
         }
-        if let Some(primer) = session.take::<PendingSpartanStage1SourcePrimer>() {
-            let _span = tracing::info_span!("MetalSpartanStage1::source_primer_join").entered();
-            primer.join().map_err(metal_prepare_error)?;
-        }
         self.start_ram_read_write_sequence_prefetch(session, log_t)?;
         let stage1_compact_rows_storage_id = session
             .state::<SpartanOuterUniskipRows>()
@@ -780,6 +771,14 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                 reason: "Metal stage 1 and InstructionInput disagree on the compact allocation",
             });
         }
+        // State A stays lazily backed until the remainder's first message
+        // writes it; wiring it under the uni-skip dispatch keeps that off the
+        // first message's submit. Its footprint was admitted above.
+        let _state_a_residency = session
+            .state::<OuterRemainderSequenceStorage>()
+            .map(OuterRemainderSequenceStorage::prefetch_state_a_residency)
+            .transpose()
+            .map_err(metal_prepare_error)?;
         prepare_metal_spartan_outer_uniskip(
             &self.context,
             self.config.spartan_outer_uniskip.dispatch,
