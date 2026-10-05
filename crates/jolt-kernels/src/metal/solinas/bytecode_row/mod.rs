@@ -61,6 +61,11 @@ struct RowBuffers {
     weighted_eq_hi: Buffer,
     ra0: Buffer,
     ra1: Buffer,
+    /// The first bind and the first dense transition write the initial and
+    /// half-length tables; their residency is warmed while the row rounds run.
+    /// Joined with the row phase: the helper retains both tables, and the first
+    /// dense transition releases the initial ones.
+    _dense_residency: ResidencyPrefetch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,9 +84,6 @@ pub(crate) struct BytecodeCycleRowSequence {
     first_bind_limits: PipelineLimits,
     row_buffers: Option<RowBuffers>,
     dense: BytecodeCycleSequence,
-    /// The first bind and the first dense transition write the initial and
-    /// half-length tables; their residency is warmed while the row rounds run.
-    _dense_residency: ResidencyPrefetch,
     params: Params,
     root_bind_params: RootBindParams,
     root_bind_elements: usize,
@@ -243,9 +245,9 @@ impl SolinasMetal {
                 weighted_eq_hi: buffer_from_slice(&self.device, &weighted_eq_hi),
                 ra0: buffer_from_slice(&self.device, &ra0),
                 ra1: buffer_from_slice(&self.device, &ra1),
+                _dense_residency: dense_residency,
             }),
             dense,
-            _dense_residency: dense_residency,
             params: Params {
                 rows: row_count,
                 lo_length: lo_length_u32,
