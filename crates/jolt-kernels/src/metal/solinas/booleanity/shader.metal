@@ -72,11 +72,11 @@ inline void booleanity_lazy_wide_add(thread BooleanityLazyWideSum& sum, SolinasW
 }
 
 // A lazy sum is exactly low + overflow * 2^bits. overflow counts carries, at
-// most one per add: below the materialization width (<= 32, checked by
-// prepare_booleanity_sequence_with_rows) for h sums and below the u32-checked
-// polynomial count for per-pair sums. With SOLINAS_OFFSET < 2^32 the correction
-// overflow * SOLINAS_OFFSET^(bits / 128) is below 2^96, which solinas_add folds
-// canonically next to any 128-bit left operand.
+// most one per add: below the materialization width (<= 32 here and <= 512 for
+// instruction RA, checked by the sequence preparers) for h sums and below the
+// u32-checked polynomial count for per-pair sums. With SOLINAS_OFFSET < 2^32 the
+// correction overflow * SOLINAS_OFFSET^(bits / 128) is below 2^96, which
+// solinas_add folds canonically next to any 128-bit left operand.
 inline SolinasFp128 booleanity_lazy_reduce(BooleanityLazySum sum)
 {
     ulong residue = (ulong)sum.overflow * (ulong)SOLINAS_OFFSET;

@@ -32,30 +32,6 @@ struct InstructionRaQuadratic {
     SolinasFp128 at_infinity;
 };
 
-inline uint instruction_ra_lookup_byte(InstructionRaLookup lookup, uint factor) {
-    uint shift = (INSTRUCTION_RA_FACTORS - 1u - factor) * 8u;
-    return shift < 64u
-        ? (uint)(lookup.limbs[0] >> shift) & 0xffu
-        : (uint)(lookup.limbs[1] >> (shift - 64u)) & 0xffu;
-}
-
-inline InstructionRaLinear instruction_ra_linear(
-    uint factor,
-    InstructionRaLookup lo_lookup,
-    InstructionRaLookup hi_lookup,
-    device const SolinasFp128* chunk_tables)
-{
-    uint table = factor * INSTRUCTION_RA_BINS;
-    SolinasFp128 lo = chunk_tables[
-        table + instruction_ra_lookup_byte(lo_lookup, factor)];
-    SolinasFp128 hi = chunk_tables[
-        table + instruction_ra_lookup_byte(hi_lookup, factor)];
-    InstructionRaLinear result;
-    result.at_one = hi;
-    result.at_infinity = solinas_sub(hi, lo);
-    return result;
-}
-
 inline InstructionRaQuadratic instruction_ra_quadratic(
     InstructionRaLinear lhs,
     InstructionRaLinear rhs)
@@ -79,54 +55,6 @@ inline SolinasFp128 instruction_ra_quadratic_at_three(
         value.at_infinity,
         value.at_infinity);
     return solinas_add(solinas_sub(twice_at_two, value.at_one), twice_leading);
-}
-
-inline void instruction_ra_accumulate_group(
-    uint group,
-    InstructionRaLookup lo_lookup,
-    InstructionRaLookup hi_lookup,
-    device const SolinasFp128* chunk_tables,
-    thread SolinasFp128* q)
-{
-    uint first = group * INSTRUCTION_RA_FACTORS_PER_GROUP;
-    InstructionRaLinear f0 = instruction_ra_linear(
-        first,
-        lo_lookup,
-        hi_lookup,
-        chunk_tables);
-    InstructionRaLinear f1 = instruction_ra_linear(
-        first + 1u,
-        lo_lookup,
-        hi_lookup,
-        chunk_tables);
-    InstructionRaQuadratic lhs = instruction_ra_quadratic(f0, f1);
-
-    InstructionRaLinear f2 = instruction_ra_linear(
-        first + 2u,
-        lo_lookup,
-        hi_lookup,
-        chunk_tables);
-    InstructionRaLinear f3 = instruction_ra_linear(
-        first + 3u,
-        lo_lookup,
-        hi_lookup,
-        chunk_tables);
-    InstructionRaQuadratic rhs = instruction_ra_quadratic(f2, f3);
-
-    q[0] = solinas_add(
-        q[0],
-        solinas_mul_wide(lhs.at_one, rhs.at_one));
-    q[1] = solinas_add(
-        q[1],
-        solinas_mul_wide(lhs.at_two, rhs.at_two));
-    q[2] = solinas_add(
-        q[2],
-        solinas_mul_wide(
-            instruction_ra_quadratic_at_three(lhs),
-            instruction_ra_quadratic_at_three(rhs)));
-    q[3] = solinas_add(
-        q[3],
-        solinas_mul_wide(lhs.at_infinity, rhs.at_infinity));
 }
 
 inline void instruction_ra_finish_block(
