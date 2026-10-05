@@ -3,11 +3,12 @@
 //! BytecodeChunk(0..C), ProgramImageInit, OneHotTrace]`.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use jolt_akita::TraceOneHotCommitment;
-use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
-use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
+use jolt_akita::{TraceOneHotCommitment, TraceOneHotRows};
+use jolt_claims::protocols::jolt::lattice::packing::PrefixPackedObjectPlan;
+use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
@@ -19,9 +20,8 @@ use jolt_verifier::stages::stage8::packed::{
     leaf_claims, object_leaf_claims, one_hot_trace_packed_claims,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::JoltWitnessPlane;
 
-use super::witness::{assemble_one_hot_trace_rows, AdviceObject, DirectProgramObjects};
+use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
@@ -52,7 +52,8 @@ pub fn prove_stage8<F, PCS, VC, T>(
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
-    witness: &dyn JoltWitnessPlane<F>,
+    plan: &OneHotTraceLayoutPlan,
+    one_hot_trace_rows: Arc<dyn TraceOneHotRows>,
     one_hot_trace_commitment: &PCS::Output,
     mut one_hot_trace_hint: PCS::OpeningHint,
     untrusted_advice: Option<&AdviceObject<PCS>>,
@@ -70,28 +71,14 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    let log_t = checked.trace_length.ilog2() as usize;
     let chunk_width = config.one_hot_config.committed_chunk_bits();
-    let formula_dimensions = crate::stages::formula_dimensions(
-        checked,
-        config,
-        preprocessing.verifier.program.bytecode_len(),
-        JoltRelationId::HammingWeightClaimReduction,
-    )?;
-    let plan = ONE_HOT_TRACE_LAYOUT
-        .plan(&OneHotTraceShape {
-            ra_layout: formula_dimensions.ra_layout,
-            log_t,
-            log_k_chunk: chunk_width,
-        })
+    PCS::restore_trace_rows(&mut one_hot_trace_hint, one_hot_trace_rows)
         .map_err(batch_failed::<F>)?;
-    let rows = assemble_one_hot_trace_rows(witness, &plan, chunk_width, log_t)?;
-    PCS::restore_trace_rows(&mut one_hot_trace_hint, rows).map_err(batch_failed::<F>)?;
 
     let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
 
     let packed_claims =
-        one_hot_trace_packed_claims(&plan, chunk_width, &leaves).map_err(ProverError::Verifier)?;
+        one_hot_trace_packed_claims(plan, chunk_width, &leaves).map_err(ProverError::Verifier)?;
     let packed_claim = plan
         .packing()
         .reduce_claims(&packed_claims, transcript)

@@ -2,7 +2,9 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
-use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
+use jolt_claims::protocols::jolt::lattice::{
+    OneHotTraceLayoutPlan, OneHotTraceShape, ONE_HOT_TRACE_LAYOUT,
+};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -28,9 +30,10 @@ where
     pub checked: CheckedInputs,
     pub transcript: T,
     pub commitment: PCS::Output,
-    /// Holds no trace rows: they are released after the commit, and stage 8
-    /// regenerates them from the witness for the opening.
+    /// Holds no trace rows: they are released after the commit and
+    /// regenerated from the witness for the opening.
     pub hint: PCS::OpeningHint,
+    pub one_hot_trace_plan: OneHotTraceLayoutPlan,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
 }
 
@@ -272,6 +275,7 @@ where
         transcript,
         commitment,
         hint,
+        one_hot_trace_plan: plan,
         untrusted_advice,
     })
 }

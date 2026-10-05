@@ -2,6 +2,9 @@
 //! one transcript and one backend session, and their wire outputs assemble
 //! into the packed-envelope [`JoltProof`].
 
+#[cfg(feature = "parallel")]
+use std::sync::OnceLock;
+
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
@@ -13,10 +16,12 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_witness::JoltWitnessPlane;
+#[cfg(feature = "parallel")]
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
-use super::witness::AdviceObject;
+use super::witness::{assemble_one_hot_trace_rows, AdviceObject};
 use super::JoltAkitaBackend;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -191,23 +196,48 @@ where
         witness,
         &mut transcript,
     )?;
-    let stage7 = prove_stage7::<F, PCS, VC, T>(
-        &backend.base,
-        &mut session,
-        &mode,
-        &checked,
-        config,
-        preprocessing,
-        &stage4.clear_output,
-        &stage6b.clear_output,
-        witness,
-        &mut transcript,
-    )?;
+    let plan = &stage0.one_hot_trace_plan;
+    let chunk_width = config.one_hot_config.committed_chunk_bits();
+    // The opening's rows depend only on the witness. Stage 7 leaves the CPU
+    // idle and is the only stage between the commit and the opening with
+    // footprint headroom for them, so they are assembled under it; a separate
+    // pool keeps stage 7's rayon jobs from queueing behind the assembly's.
+    let (stage7, one_hot_trace_rows) = std::thread::scope(|scope| {
+        let rows = scope.spawn(move || {
+            on_one_hot_trace_rows_pool(|| {
+                assemble_one_hot_trace_rows(witness, plan, chunk_width, log_t)
+            })
+        });
+        let stage7 = prove_stage7::<F, PCS, VC, T>(
+            &backend.base,
+            &mut session,
+            &mode,
+            &checked,
+            config,
+            preprocessing,
+            &stage4.clear_output,
+            &stage6b.clear_output,
+            witness,
+            &mut transcript,
+        );
+        let completed_before_join = rows.is_finished();
+        let _span =
+            tracing::info_span!("jolt_prover::one_hot_trace_rows", completed_before_join).entered();
+        let rows = rows
+            .join()
+            .map_err(|_| ProverError::InvariantViolation {
+                reason: "asynchronous one-hot trace assembly panicked",
+            })
+            .and_then(|result| result);
+        (stage7, rows)
+    });
+    let stage7 = stage7?;
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
         preprocessing,
-        witness,
+        plan,
+        one_hot_trace_rows?,
         &stage0.commitment,
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
@@ -257,4 +287,25 @@ where
         one_hot_config: config.one_hot_config,
         trace_polynomial_order: config.trace_polynomial_order,
     })
+}
+
+#[cfg(feature = "parallel")]
+#[expect(
+    clippy::expect_used,
+    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
+)]
+fn on_one_hot_trace_rows_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        ThreadPoolBuilder::new()
+            .thread_name(|index| format!("jolt-one-hot-rows-{index}"))
+            .build()
+            .expect("the one-hot trace row pool must build")
+    })
+    .install(f)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn on_one_hot_trace_rows_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    f()
 }
