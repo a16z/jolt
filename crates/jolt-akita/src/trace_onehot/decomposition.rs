@@ -579,7 +579,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
             blocks_per_column,
             position_tasks,
             position_chunk,
-            position_working_set_bytes = position_chunk * std::mem::size_of::<[i32; D]>(),
+            position_working_set_bytes = position_chunk * bytes_per_position,
             dense_rotations = rotations.is_dense(),
             local_dense_rotations = use_local_dense_rotations,
             local_rotation_bytes,

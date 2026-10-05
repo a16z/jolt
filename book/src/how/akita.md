@@ -45,7 +45,7 @@ Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks
 `ProverConfig::derive` selects the original single-chunk one-hot profile. To use
 two, four, or eight chunks, set `config.one_hot_chunk_profile` before Akita
 preprocessing and use that config for proving. The selected profile is carried
-by the verifier setup. Existing three-file schedule directories remain valid
+by the verifier setup. Existing four-file schedule directories remain valid
 for the default profile; a nondefault profile needs its matching companion
 catalog for the selected one-hot domain size.
 
