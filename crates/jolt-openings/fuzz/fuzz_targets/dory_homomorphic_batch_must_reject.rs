@@ -176,8 +176,8 @@ fuzz_target!(|data: &[u8]| {
             )
             .unwrap_or_else(|error| panic!("honest clear batch verification failed: {error}"));
             assert_eq!(
-                prover_transcript.preview().squeeze::<32>(),
-                verifier_transcript.preview().squeeze::<32>()
+                prover_transcript.challenge_bytes::<32>(),
+                verifier_transcript.challenge_bytes::<32>()
             );
             verifier_transcript
                 .finish()
@@ -313,8 +313,8 @@ fuzz_target!(|data: &[u8]| {
             .unwrap_or_else(|error| panic!("honest ZK batch verification failed: {error}"));
             assert_eq!(opening.hiding_commitment, verifier_hiding);
             assert_eq!(
-                prover_transcript.preview().squeeze::<32>(),
-                verifier_transcript.preview().squeeze::<32>()
+                prover_transcript.challenge_bytes::<32>(),
+                verifier_transcript.challenge_bytes::<32>()
             );
             verifier_transcript
                 .finish()

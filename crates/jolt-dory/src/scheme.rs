@@ -295,7 +295,7 @@ impl CommitmentScheme for DoryScheme {
         setup: &Self::VerifierSetup,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), OpeningsError> {
-        let proof = read_proof(transcript.clone(), point.len(), false)?;
+        let proof = read_proof(transcript.unread(), point.len(), false)?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
@@ -427,7 +427,7 @@ impl ZkOpeningScheme for DoryScheme {
         setup: &Self::VerifierSetup,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
-        let proof = read_proof(transcript.clone(), point.len(), true)?;
+        let proof = read_proof(transcript.unread(), point.len(), true)?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
         // so the caller-side eval is unused here.

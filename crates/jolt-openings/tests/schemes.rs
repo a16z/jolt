@@ -59,8 +59,8 @@ fn homomorphic_batch_opening_roundtrip_clear() {
     .expect("batch proof should verify");
 
     assert_eq!(
-        fingerprint(&prover_transcript),
-        fingerprint(&verifier_transcript)
+        fingerprint(&mut prover_transcript),
+        fingerprint(&mut verifier_transcript)
     );
     verifier_transcript.finish().expect("proof fully consumed");
 }
@@ -186,8 +186,8 @@ fn homomorphic_batch_opening_roundtrip_zk() {
 
     assert_eq!(verifier_hiding, opening.hiding_commitment);
     assert_eq!(
-        fingerprint(&prover_transcript),
-        fingerprint(&verifier_transcript)
+        fingerprint(&mut prover_transcript),
+        fingerprint(&mut verifier_transcript)
     );
     verifier_transcript.finish().expect("proof fully consumed");
 }

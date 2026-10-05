@@ -309,7 +309,7 @@ mod field_inline_round_trip {
             Through::Stage4,
             &checked,
             &preprocessing,
-            &prover_transcript,
+            &mut prover_transcript,
         );
     }
 
@@ -522,6 +522,6 @@ mod field_inline_zk {
             .sum();
         assert_eq!(value_count, 12);
 
-        verify_through(Through::Stage4, &checked, &preprocessing, &transcript);
+        verify_through(Through::Stage4, &checked, &preprocessing, &mut transcript);
     }
 }

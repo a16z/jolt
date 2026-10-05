@@ -136,10 +136,13 @@ fn verifier_transcript<'a>(name: &str, narg: &'a [u8]) -> VerifierTranscript<'a,
 
 /// The verifier consumed the whole argument string and reached the prover's
 /// sponge state.
-fn assert_twins<H: Sponge>(prover: &ProverTranscript<H>, verifier: VerifierTranscript<'_, H>) {
+fn assert_twins<H: Sponge>(
+    prover: &mut ProverTranscript<H>,
+    mut verifier: VerifierTranscript<'_, H>,
+) {
     assert_eq!(
-        verifier.preview().squeeze::<32>(),
-        prover.preview().squeeze::<32>()
+        verifier.challenge_bytes::<32>(),
+        prover.challenge_bytes::<32>()
     );
     verifier.finish().unwrap();
 }
@@ -205,7 +208,8 @@ fn clear_engine_twin_matches_generated_verify_clear() {
 
     // Verifier: draw → begin_batch → compressed rounds → output claims (the
     // low-level clear path the composed `verify_clear` wraps).
-    let mut verifier_transcript = verifier_transcript("engine-twin", prover_transcript.narg());
+    let narg = prover_transcript.narg().to_vec();
+    let mut verifier_transcript = verifier_transcript("engine-twin", &narg);
     let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
     let mut verifier_recorder = ClearSumcheckRecorder::<Fr>::new();
     let (verifier_batch, verifier_coefficients) = sumchecks
@@ -231,7 +235,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
     assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
     assert_eq!(received_values, output_values);
     assert_eq!(verifier_coefficients, prover_coefficients);
-    assert_twins(&prover_transcript, verifier_transcript);
+    assert_twins(&mut prover_transcript, verifier_transcript);
 }
 
 #[test]
@@ -308,7 +312,8 @@ fn committed_engine_twin_matches_generated_verify_zk() {
 
     // Verifier: draw → generated verify_zk (coefficient draws, committed
     // rounds, derived points, output-claim row commitments).
-    let mut verifier_transcript = verifier_transcript("engine-zk-twin", prover_transcript.narg());
+    let narg = prover_transcript.narg().to_vec();
+    let mut verifier_transcript = verifier_transcript("engine-zk-twin", &narg);
     let _verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
     let verified = sumchecks
         .verify_zk::<Bn254G1, _>(ROW_LEN, &input_points, &mut verifier_transcript)
@@ -331,7 +336,7 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         output_commitments.commitments.len(),
         witness.output_claim_rows.len()
     );
-    assert_twins(&prover_transcript, verifier_transcript);
+    assert_twins(&mut prover_transcript, verifier_transcript);
 }
 
 /// Twin-transcript lock for the shared uni-skip verification core: a clear
@@ -369,11 +374,11 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
     )
     .unwrap();
 
-    let mut verifier_transcript =
-        verifier_transcript("uniskip-stage-twin", prover_transcript.narg());
+    let narg = prover_transcript.narg().to_vec();
+    let mut verifier_transcript = verifier_transcript("uniskip-stage-twin", &narg);
     let verified = uniskip::verify_clear(&params, input_claim, &mut verifier_transcript).unwrap();
 
     assert_eq!(verified.challenge, proved.challenge);
     assert_eq!(verified.output_claim, proved.output_claim);
-    assert_twins(&prover_transcript, verifier_transcript);
+    assert_twins(&mut prover_transcript, verifier_transcript);
 }

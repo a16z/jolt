@@ -53,12 +53,12 @@ jolt-dory::scheme.rs::DoryScheme::open::dory::prove::<ArkFr,InnerBN254,JoltG1Rou
 jolt-dory::scheme.rs::DoryScheme::open_zk::.send_sigma1_responses#2
 jolt-dory::scheme.rs::DoryScheme::open_zk::DoryProverChannel::new#0
 jolt-dory::scheme.rs::DoryScheme::open_zk::dory::prove::<ArkFr,InnerBN254,JoltG1Routines,JoltG2Routines,_,_,ZK>#1
-jolt-dory::scheme.rs::DoryScheme::verify::.clone#0
 jolt-dory::scheme.rs::DoryScheme::verify::.finish#3
+jolt-dory::scheme.rs::DoryScheme::verify::.unread#0
 jolt-dory::scheme.rs::DoryScheme::verify::DoryVerifierChannel::new#1
 jolt-dory::scheme.rs::DoryScheme::verify::dory::verify::<ArkFr,InnerBN254,JoltG1Routines,JoltG2Routines,_>#2
-jolt-dory::scheme.rs::DoryScheme::verify_zk::.clone#0
 jolt-dory::scheme.rs::DoryScheme::verify_zk::.finish#3
+jolt-dory::scheme.rs::DoryScheme::verify_zk::.unread#0
 jolt-dory::scheme.rs::DoryScheme::verify_zk::DoryVerifierChannel::new#1
 jolt-dory::scheme.rs::DoryScheme::verify_zk::dory::verify::<ArkFr,InnerBN254,JoltG1Routines,JoltG2Routines,_>#2
 jolt-openings::schemes.rs::CommitmentGroupRole::new_indexed::Some#0
@@ -93,7 +93,6 @@ jolt-prover::akita/stage8.rs::prove_stage8::reduce_precommitted#2
 jolt-prover::akita/stage8.rs::prove_stage8::reduce_precommitted#3
 jolt-prover::akita/stage8.rs::reduce_precommitted::.reduce_claims#0
 jolt-prover::blindfold.rs::prove_blindfold::.narg#0
-jolt-prover::blindfold.rs::prove_blindfold::.preview#1
 jolt-prover::blindfold.rs::prove_blindfold::jolt_blindfold::prove::<F,VC,H,_>#2
 jolt-prover::dory/prover.rs::prove::.finish#10
 jolt-prover::dory/prover.rs::prove::blindfold::prove_blindfold::<F,PCS,VC,H>#9
@@ -145,6 +144,9 @@ jolt-sumcheck::recorder.rs::CommittedSumcheckRecorder<'_,F,VC,R>::finish::.finis
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::receive_full_round#0
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::receive_compressed_round#0
 jolt-verifier::proof.rs::JoltProof::header::ProofHeader::receive#0
+jolt-verifier::proof.rs::ProofHeader::receive::receive_u64#0
+jolt-verifier::proof.rs::ProofHeader::receive::receive_u64#1
+jolt-verifier::proof.rs::ProofHeader::receive::receive_u64#3
 jolt-verifier::stages/stage1/verify.rs::verify::.draw_challenges#2
 jolt-verifier::stages/stage1/verify.rs::verify::.verify_clear#3
 jolt-verifier::stages/stage1/verify.rs::verify::.verify_zk#5

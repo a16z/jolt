@@ -106,7 +106,7 @@ fn proof_is_invariant_under_a_reordering_traversal() {
         recorder
             .finish(&proved.member_claims, &mut transcript)
             .unwrap();
-        let state = fingerprint(&transcript);
+        let state = fingerprint(&mut transcript);
         (proved, transcript.finish(), state)
     };
 

@@ -18,7 +18,7 @@ fn run<H: Sponge>() -> (Vec<u8>, Vec<u8>) {
     prover.public_bytes(b"public input");
     prover.public(&Fr::from(5u64));
     prover.send(&Fr::from(7u64));
-    prover.send_all(&[11u64, 13]);
+    prover.send_all(&[11u32, 13]);
     prover.send_bounded_bytes(b"variable", 16).unwrap();
     challenges.extend(prover.challenge::<Fr>().to_bytes_le_vec());
     challenges.extend(prover.challenge_small::<Fr>().to_bytes_le_vec());
@@ -31,7 +31,7 @@ fn run<H: Sponge>() -> (Vec<u8>, Vec<u8>) {
     verifier.public_bytes(b"public input");
     verifier.public(&Fr::from(5u64));
     assert_eq!(verifier.receive::<Fr>().unwrap(), Fr::from(7u64));
-    assert_eq!(verifier.receive_n::<u64>(2).unwrap(), vec![11, 13]);
+    assert_eq!(verifier.receive_n::<u32>(2).unwrap(), vec![11, 13]);
     assert_eq!(verifier.receive_bounded_bytes(16).unwrap(), b"variable");
     replayed.extend(verifier.challenge::<Fr>().to_bytes_le_vec());
     replayed.extend(verifier.challenge_small::<Fr>().to_bytes_le_vec());
@@ -56,8 +56,8 @@ fn assert_vectors(name: &str, (narg, challenges): (Vec<u8>, Vec<u8>), expected: 
     assert_eq!(hex(&challenges), expected.1, "{name} challenges");
 }
 
-/// The argument string differs across sponges only in its grinding nonce.
-const NARG_PREFIX: &str = "07000000000000000000000000000000000000000000000000000000000000000b000000000000000d00000000000000080000007661726961626c65";
+/// The argument string differs across sponges only in its `u32` grinding nonce.
+const NARG_PREFIX: &str = "07000000000000000000000000000000000000000000000000000000000000000b0000000d000000080000007661726961626c65";
 
 #[test]
 fn blake2b_known_answers() {
@@ -65,8 +65,8 @@ fn blake2b_known_answers() {
         "blake2b",
         run::<Blake2b512>(),
         (
-            &format!("{NARG_PREFIX}ad01"),
-            "3d4e089306afb69df886095eee15fbf14517c4ff924ec6bfd09265fc6a8a60054bb2626cc97cccb74e359d255207da9e39f4eee144c71404fe870f184ac4e31b422aaeb6c1a4720024b98c7f60fe220acf9f414231a6d2fd4dea709ae2c4eb14",
+            &format!("{NARG_PREFIX}78"),
+            "f14acf6a0e8500083aff06c75c0e690988c707180bdd447ee79c61ae1a7af622b4b8f1266fc13197f631ede2d2c8407a823d4388e79fba572325bdbd113cdf140edab4fa7e6bf134a286a792d365eea0671007657c372b32315757aca6c9990f",
         ),
     );
 }
@@ -77,8 +77,8 @@ fn keccak_known_answers() {
         "keccak",
         run::<Keccak>(),
         (
-            &format!("{NARG_PREFIX}8101"),
-            "87b238e77e1881d46c35f627091e902ad1936d867b6c2fa7765547f44db00a230329d92cd97029872e99afbf8b9bdd57c59c13e503303e0c10e5a79fc642e11224bf861e6ff0b9bfa0c72d5ebcfe46562d97d675ea1b3814a87f1ebcaf118eb3",
+            &format!("{NARG_PREFIX}1f"),
+            "d8255bbe1b4ab7de6af9a08d7f52525044f0faa2d1f77159e6f5dbca1a897210b54afa2edf054d0a9e9d21f565d947dba3c96d3a662cbc5dc8f371998554c30845ffeaf9f80a897b327911715039879241ea7de1a6b98b5546c5f7fe87110275",
         ),
     );
 }
@@ -89,8 +89,8 @@ fn poseidon_known_answers() {
         "poseidon",
         run::<PoseidonSponge>(),
         (
-            &format!("{NARG_PREFIX}49"),
-            "0be942b2a23ad3aa6fd8abf1580f85e78b2df6d4bf46d6564202c4f16cf2f022ce5db4a5e3f7288c0b37e0912b8214568272d5160be2592b4c87e9a74c374304fc9b0b01515cf511c4480ab9d67d3b1b88dba661536bf44d7b380cf04dd32604",
+            &format!("{NARG_PREFIX}0d"),
+            "6186b569421edf0a7490f9020cf5124637e90bcd2ff7c905ec433482548d541557d1d4a63d6ea9a8847ad61506d5ebba81550033c00c4991a4a586a3db288810bfbea94f9af0dd473dff8a154a7cc1f5e6f1f6dad5bfdbcf1025b3510cd8ab2a",
         ),
     );
 }

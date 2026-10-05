@@ -1,24 +1,34 @@
-//! The prover's end: absorb every message exactly as it is written.
+//! The prover's end: spongefish's prover state, written through typed atoms.
 
 use std::num::NonZeroU8;
 
 use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
+use rand::rngs::StdRng;
+use spongefish::ProverState;
 
-use crate::duplex::Duplex;
-use crate::grinding::{encode_nonce, nonce_bits, search_nonce, GRINDING_PREDICATE_LEN};
+use crate::grinding::{grind_nonce, nonce_bits, GRINDING_SEED_LEN};
+use crate::site::{Log, TranscriptOp};
+use crate::state::{domain, Framed, Squeeze, BYTE_BLOCK};
 #[cfg(feature = "logging")]
 use crate::TranscriptEvent;
-use crate::{Channel, Preview, ProtocolId, SiteId, Sponge, TranscriptError};
+use crate::{Channel, Nonce, ProtocolId, SiteId, Sponge, TranscriptError};
 
-/// Prover transcript: a sponge plus the argument string it writes.
+/// Prover transcript: spongefish's [`ProverState`], which appends every prover
+/// message to the argument string and absorbs exactly its encoding.
 ///
-/// Every prover message is appended to the argument string and the appended
-/// bytes are absorbed, so the bytes the verifier reads are exactly the bytes
-/// that bound the following challenges.
-#[derive(Clone, Debug)]
-pub struct ProverTranscript<H> {
-    duplex: Duplex<H>,
-    narg: Vec<u8>,
+/// Not `Clone`: copying a prover state lets a caller rewind the sponge and
+/// re-draw challenges.
+pub struct ProverTranscript<H: Sponge> {
+    state: ProverState<H, StdRng>,
+    log: Log,
+}
+
+impl<H: Sponge> core::fmt::Debug for ProverTranscript<H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProverTranscript")
+            .field("narg_len", &self.state.narg_string().len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<H: Sponge> ProverTranscript<H> {
@@ -26,39 +36,36 @@ impl<H: Sponge> ProverTranscript<H> {
     #[must_use]
     pub fn new(protocol: &ProtocolId, session: &[u8]) -> Self {
         Self {
-            duplex: Duplex::new(protocol, session),
-            narg: Vec::new(),
+            state: domain(protocol, session).to_prover(H::default()),
+            log: Log::default(),
         }
     }
 
     /// Sends one atom.
     pub fn send<A: CanonicalBytes>(&mut self, value: &A) {
-        let start = self.narg.len();
-        self.narg.resize(start + A::NUM_BYTES, 0);
-        value.to_bytes_le(self.narg.split_at_mut(start).1);
-        self.absorb_written(start);
+        let start = self.narg_len();
+        self.state.prover_message(value);
+        self.record_message(start);
     }
 
     /// Sends atoms in order.
     pub fn send_all<A: CanonicalBytes>(&mut self, values: &[A]) {
-        let start = self.narg.len();
-        self.narg.resize(start + A::NUM_BYTES * values.len(), 0);
-        for (value, out) in values.iter().zip(
-            self.narg
-                .split_at_mut(start)
-                .1
-                .chunks_exact_mut(A::NUM_BYTES),
-        ) {
-            value.to_bytes_le(out);
-        }
-        self.absorb_written(start);
+        let start = self.narg_len();
+        self.state.prover_messages(values);
+        self.record_message(start);
     }
 
     /// Sends bytes whose length the verifier already knows.
     pub fn send_bytes(&mut self, bytes: &[u8]) {
-        let start = self.narg.len();
-        self.narg.extend_from_slice(bytes);
-        self.absorb_written(start);
+        let start = self.narg_len();
+        let (blocks, rest) = bytes.as_chunks::<BYTE_BLOCK>();
+        for block in blocks {
+            self.state.prover_message(block);
+        }
+        for byte in rest {
+            self.state.prover_message(&[*byte]);
+        }
+        self.record_message(start);
     }
 
     /// Sends a byte string of at most `max_len` bytes, prefixed by its `u32`
@@ -81,13 +88,19 @@ impl<H: Sponge> ProverTranscript<H> {
         Ok(())
     }
 
-    /// Sends a nonce in its canonical variable-length encoding.
+    /// Sends a search counter as a [`Nonce`] message.
     pub fn send_nonce(&mut self, nonce: u32) {
-        self.send_bytes(encode_nonce(nonce).as_slice());
+        let start = self.narg_len();
+        self.state.prover_message(&Nonce(nonce));
+        self.record_message(start);
     }
 
-    /// Grinds `bits` bits of proof of work and returns the committed nonce.
-    /// A zero difficulty sends nothing.
+    /// Grinds `bits` bits of proof of work and returns the sent nonce. A zero
+    /// difficulty draws and sends nothing.
+    ///
+    /// Squeezes a seed, searches nonces on [`Fork`](crate::Fork)s, then sends
+    /// the first accepted nonce as a [`Nonce`]; the protected challenge is
+    /// drawn after.
     ///
     /// # Errors
     ///
@@ -99,39 +112,40 @@ impl<H: Sponge> ProverTranscript<H> {
             return Ok(0);
         };
         let nonce_bits = nonce_bits(bits).ok_or(TranscriptError::UnsupportedGrinding)?;
-        let nonce = search_nonce(bits, nonce_bits, |nonce| {
-            let mut preview = self.preview();
-            preview.absorb_nonce(nonce);
-            preview.squeeze::<GRINDING_PREDICATE_LEN>()
-        })
-        .ok_or(TranscriptError::GrindingExhausted)?;
+        let seed: [u8; GRINDING_SEED_LEN] = self.challenge_bytes();
+        let nonce =
+            grind_nonce::<H>(&seed, bits, nonce_bits).ok_or(TranscriptError::GrindingExhausted)?;
         self.send_nonce(nonce);
-        let _predicate: [u8; GRINDING_PREDICATE_LEN] = self.challenge_bytes();
         Ok(nonce)
     }
 
     /// The argument string written so far.
     #[must_use]
     pub fn narg(&self) -> &[u8] {
-        &self.narg
+        self.state.narg_string()
     }
 
     /// Recorded operations, in order.
     #[cfg(feature = "logging")]
     #[must_use]
     pub fn events(&self) -> &[TranscriptEvent] {
-        self.duplex.events()
+        self.log.events()
     }
 
     /// Ends the transcript, returning the proof.
     #[must_use]
     pub fn finish(self) -> Vec<u8> {
-        self.narg
+        self.state.narg_string().to_vec()
     }
 
-    fn absorb_written(&mut self, start: usize) {
-        let written = self.narg.split_at(start).1;
-        self.duplex.absorb_message(written, start);
+    fn narg_len(&self) -> usize {
+        self.state.narg_string().len()
+    }
+
+    fn record_message(&mut self, start: usize) {
+        let end = self.narg_len();
+        self.log
+            .record(TranscriptOp::Message, end - start, Some(start..end));
     }
 }
 
@@ -139,19 +153,23 @@ impl<H: Sponge> Channel for ProverTranscript<H> {
     type Sponge = H;
 
     fn site(&mut self, site: SiteId) {
-        self.duplex.set_site(site);
+        self.log.set_site(site);
     }
 
     fn public<A: CanonicalBytes>(&mut self, value: &A) {
-        self.duplex.absorb_public_atoms(std::slice::from_ref(value));
+        self.state.public_message(value);
+        self.log.record(TranscriptOp::Public, A::NUM_BYTES, None);
     }
 
     fn public_all<A: CanonicalBytes>(&mut self, values: &[A]) {
-        self.duplex.absorb_public_atoms(values);
+        self.state.public_messages(values);
+        self.log
+            .record(TranscriptOp::Public, A::NUM_BYTES * values.len(), None);
     }
 
     fn public_bytes(&mut self, bytes: &[u8]) {
-        self.duplex.absorb_public_framed(bytes);
+        self.state.public_message(&Framed(bytes));
+        self.log.record(TranscriptOp::Public, 8 + bytes.len(), None);
     }
 
     fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError> {
@@ -168,18 +186,21 @@ impl<H: Sponge> Channel for ProverTranscript<H> {
     }
 
     fn challenge<F: Field>(&mut self) -> F {
-        self.duplex.challenge()
+        let (value, squeezed) = self.state.exact_challenge();
+        self.log.record(TranscriptOp::Challenge, squeezed, None);
+        value
     }
 
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
-        self.duplex.challenge_small()
+        let value = self.state.small_challenge();
+        self.log
+            .record(TranscriptOp::Challenge, crate::SMALL_CHALLENGE_BYTES, None);
+        value
     }
 
     fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
-        self.duplex.squeeze_array()
-    }
-
-    fn preview(&self) -> Preview<H> {
-        self.duplex.preview()
+        let value = self.state.squeeze_array();
+        self.log.record(TranscriptOp::Challenge, N, None);
+        value
     }
 }

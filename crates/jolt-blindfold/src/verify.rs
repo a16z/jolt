@@ -702,8 +702,8 @@ mod tests {
 
         assert_eq!(folded, expected);
         assert_eq!(
-            transcript.preview().squeeze::<32>(),
-            prover.preview().squeeze::<32>()
+            transcript.challenge_bytes::<32>(),
+            prover.challenge_bytes::<32>()
         );
     }
 

@@ -45,8 +45,8 @@ fn verifier<'a>(session: &[u8], narg: &'a [u8]) -> VerifierTranscript<'a, H> {
 }
 
 /// The sponge state both roles must agree on after the same message sequence.
-pub(crate) fn fingerprint<C: Channel>(channel: &C) -> [u8; 32] {
-    channel.preview().squeeze()
+pub(crate) fn fingerprint<C: Channel>(channel: &mut C) -> [u8; 32] {
+    channel.challenge_bytes::<32>()
 }
 
 fn poly(coefficients: &[u64]) -> UnivariatePoly<F> {
@@ -92,7 +92,7 @@ fn round_messages_travel_at_the_degree_bound_width() {
 fn senders_reject_rounds_above_the_degree_bound_before_writing() {
     let cubic = poly(&[1, 2, 3, 4]);
     let mut transcript = prover(b"over-degree");
-    let before = fingerprint(&transcript);
+    let mut untouched = prover(b"over-degree");
 
     assert!(matches!(
         send_full_round(&cubic, 2, &mut transcript),
@@ -102,8 +102,8 @@ fn senders_reject_rounds_above_the_degree_bound_before_writing() {
         send_compressed_round(&cubic, 2, &mut transcript),
         Err(SumcheckError::DegreeBoundExceeded { got: 3, max: 2 })
     ));
-    assert_eq!(fingerprint(&transcript), before);
-    assert!(transcript.finish().is_empty());
+    assert!(transcript.narg().is_empty());
+    assert_eq!(fingerprint(&mut transcript), fingerprint(&mut untouched));
 }
 
 fn verify_single_round(
@@ -423,7 +423,7 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
     recorder
         .finish(&[final_eval], &mut prover_transcript)
         .unwrap();
-    let prover_state = fingerprint(&prover_transcript);
+    let prover_state = fingerprint(&mut prover_transcript);
     let narg = prover_transcript.finish();
 
     let mut verifier_transcript = verifier(b"recorder", &narg);
@@ -437,7 +437,7 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
 
     assert_eq!(reduction.value, final_eval);
     assert_eq!(output_claim, final_eval);
-    assert_eq!(fingerprint(&verifier_transcript), prover_state);
+    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
     verifier_transcript.finish().unwrap();
 }
 
@@ -606,7 +606,7 @@ fn fused_bind_eval_member_byte_matches_separate_passes() {
         recorder
             .finish(&proved.member_claims, &mut transcript)
             .unwrap();
-        let state = fingerprint(&transcript);
+        let state = fingerprint(&mut transcript);
         (proved, transcript.finish(), state)
     };
 
@@ -698,7 +698,7 @@ fn clear_batch_twin(
     recorder
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
-    let prover_state = fingerprint(&prover_transcript);
+    let prover_state = fingerprint(&mut prover_transcript);
     let narg = prover_transcript.finish();
 
     let mut verifier_transcript = verifier(session, &narg);
@@ -723,7 +723,7 @@ fn clear_batch_twin(
     assert_eq!(member_claims, proved.member_claims);
     assert_eq!(reduction.value, proved.final_claim);
     assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
-    assert_eq!(fingerprint(&verifier_transcript), prover_state);
+    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
     verifier_transcript.finish().unwrap();
     proved
 }
@@ -800,7 +800,7 @@ fn prove_batch_committed_twin_matches_committed_consistency() {
     let witness = recorder
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
-    let prover_state = fingerprint(&prover_transcript);
+    let prover_state = fingerprint(&mut prover_transcript);
     let narg = prover_transcript.finish();
 
     let mut verifier_transcript = verifier(b"prove-batch-zk-twin", &narg);
@@ -814,7 +814,7 @@ fn prove_batch_committed_twin_matches_committed_consistency() {
     .unwrap();
 
     assert_eq!(consistency.challenges(), proved.challenges);
-    assert_eq!(fingerprint(&verifier_transcript), prover_state);
+    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
     verifier_transcript.finish().unwrap();
 
     assert_eq!(witness.round_coefficients.len(), 3);
@@ -864,7 +864,7 @@ fn prove_uniskip_clear_twin_matches_uniskip_verify() {
         &mut prover_transcript,
     )
     .unwrap();
-    let prover_state = fingerprint(&prover_transcript);
+    let prover_state = fingerprint(&mut prover_transcript);
     let narg = prover_transcript.finish();
 
     let mut verifier_transcript = verifier(b"uniskip-twin", &narg);
@@ -880,7 +880,7 @@ fn prove_uniskip_clear_twin_matches_uniskip_verify() {
     assert_eq!(reduction.value, round_poly.evaluate(proved.challenge));
     assert_eq!(output_claim, reduction.value);
     assert_eq!(proved.output_claim, reduction.value);
-    assert_eq!(fingerprint(&verifier_transcript), prover_state);
+    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
     verifier_transcript.finish().unwrap();
 }
 
@@ -920,7 +920,7 @@ fn prove_uniskip_committed_twin_matches_committed_consistency() {
         &mut prover_transcript,
     )
     .unwrap();
-    let prover_state = fingerprint(&prover_transcript);
+    let prover_state = fingerprint(&mut prover_transcript);
     let narg = prover_transcript.finish();
 
     let mut verifier_transcript = verifier(b"uniskip-zk-twin", &narg);
@@ -932,7 +932,7 @@ fn prove_uniskip_committed_twin_matches_committed_consistency() {
     .unwrap();
 
     assert_eq!(consistency.challenges(), vec![proved.challenge]);
-    assert_eq!(fingerprint(&verifier_transcript), prover_state);
+    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
     verifier_transcript.finish().unwrap();
 
     let witness = &proved.witness;

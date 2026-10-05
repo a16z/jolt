@@ -760,13 +760,16 @@ pub enum Stage2Input {
     ProductOfStage1Openings,
 }
 
-/// Two committed stages already written into `transcript`, one final opening
-/// bound to the first stage-1 output-claim value, and the protocol the prover
-/// builds from them.
+/// Two committed stages, one final opening bound to the first stage-1
+/// output-claim value, and the protocol the prover builds from them. The
+/// stages are proved from `stage_seed`, so [`transcript`](Self::transcript)
+/// rebuilds the prover transcript at the BlindFold boundary on demand: a
+/// prover transcript cannot be copied.
 #[derive(Clone)]
 pub struct TwoStageFixture {
     pub setup: PedersenSetup<Bn254G1>,
-    pub transcript: ProverTranscript<H>,
+    stage_seed: [u8; 32],
+    stage2_input: Stage2Input,
     pub stages: Vec<GeneratedStage>,
     pub template: ProtocolTemplate,
     pub statement: BlindFoldStatement<F, usize, Bn254G1>,
@@ -776,6 +779,11 @@ pub struct TwoStageFixture {
 }
 
 impl TwoStageFixture {
+    /// The prover transcript after both committed stages.
+    pub fn transcript(&self) -> ProverTranscript<H> {
+        prove_stages(&self.setup, self.stage_seed, self.stage2_input).0
+    }
+
     pub fn stage_witnesses(&self) -> Vec<&CommittedSumcheckWitness<F>> {
         self.stages.iter().map(|stage| &stage.witness).collect()
     }
@@ -788,7 +796,7 @@ impl TwoStageFixture {
         blindings: &[F],
         rng: &mut impl RngCore,
     ) -> Result<Vec<u8>, ProverError<F>> {
-        let mut transcript = self.transcript.clone();
+        let mut transcript = self.transcript();
         prove::<F, VC, H, _>(
             &self.setup,
             &self.protocol,
@@ -809,9 +817,47 @@ impl TwoStageFixture {
     }
 
     pub fn messages(&self, narg: &[u8]) -> ProofMessages {
-        ProofMessages::parse(&self.protocol, self.transcript.narg().len(), narg)
+        ProofMessages::parse(&self.protocol, self.transcript().narg().len(), narg)
             .expect("proof parses in transcript order")
     }
+}
+
+/// Proves the two committed stages from `seed` on a fresh transcript.
+fn prove_stages(
+    setup: &PedersenSetup<Bn254G1>,
+    seed: [u8; 32],
+    stage2_input: Stage2Input,
+) -> (
+    ProverTranscript<H>,
+    GeneratedStage,
+    GeneratedStage,
+    Expr<F, usize>,
+) {
+    let mut rng = ChaCha20Rng::from_seed(seed);
+    let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, SESSION);
+    let mut prover = SumcheckTestProver::new(&mut rng);
+    let stage1 = prover.prove_stage_with_output_claims(
+        setup,
+        &mut transcript,
+        SumcheckStatement::new(3, 3),
+        f(37),
+        2,
+    );
+    let (input2, input2_claim) = match stage2_input {
+        Stage2Input::Constant => (f(89), constant(f(89))),
+        Stage2Input::ProductOfStage1Openings => {
+            let row = &stage1.witness.output_claim_rows[0];
+            (row[0] * row[1], opening(0usize) * opening(1usize))
+        }
+    };
+    let stage2 = prover.prove_stage_with_output_claims(
+        setup,
+        &mut transcript,
+        SumcheckStatement::new(2, 3),
+        input2,
+        1,
+    );
+    (transcript, stage1, stage2, input2_claim)
 }
 
 pub fn two_stage_fixture<R: RngCore>(rng: &mut R, stage2_input: Stage2Input) -> TwoStageFixture {
@@ -826,26 +872,12 @@ pub fn two_stage_fixture_with_bindings<R: RngCore>(
     binding_count: usize,
 ) -> TwoStageFixture {
     let setup = pedersen_setup(4);
-    let statement1 = SumcheckStatement::new(3, 3);
-    let statement2 = SumcheckStatement::new(2, 3);
+    let mut stage_seed = [0u8; 32];
+    rng.fill_bytes(&mut stage_seed);
+    let (_, stage1, stage2, input2_claim) = prove_stages(&setup, stage_seed, stage2_input);
+    let statement1 = stage1.statement;
+    let statement2 = stage2.statement;
     let input1 = f(37);
-    let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, SESSION);
-
-    let (stage1, stage2, input2_claim) = {
-        let mut prover = SumcheckTestProver::new(&mut *rng);
-        let stage1 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
-        let (input2, input2_claim) = match stage2_input {
-            Stage2Input::Constant => (f(89), constant(f(89))),
-            Stage2Input::ProductOfStage1Openings => {
-                let row = &stage1.witness.output_claim_rows[0];
-                (row[0] * row[1], opening(0usize) * opening(1usize))
-            }
-        };
-        let stage2 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement2, input2, 1);
-        (stage1, stage2, input2_claim)
-    };
     let mut eval_outputs = vec![stage1.witness.output_claim_rows[0][0]];
     if binding_count == 2 {
         eval_outputs.push(stage2.witness.output_claim_rows[0][0]);
@@ -895,7 +927,8 @@ pub fn two_stage_fixture_with_bindings<R: RngCore>(
         blindfold_protocol_from_statement(&statement).expect("protocol builds from stages");
     TwoStageFixture {
         setup,
-        transcript,
+        stage_seed,
+        stage2_input,
         stages: vec![stage1, stage2],
         template,
         statement,
@@ -957,7 +990,7 @@ pub struct BlindFoldTestProof {
 pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTestProof {
     let instance = build_protocol_backed_instance(rng);
     let fixture = &instance.fixture;
-    let mut transcript = fixture.transcript.clone();
+    let mut transcript = fixture.transcript();
     let witness = ProtocolWitness {
         rows: &instance.rows,
         blindings: &instance.blindings,

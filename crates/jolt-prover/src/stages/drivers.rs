@@ -776,11 +776,9 @@ mod twin_tests {
         // Verifier twin: generated draw + composed verify_clear (which runs the
         // derive-opening-points and expected-final-claim checks internally and
         // receives the output claims).
-        let mut verifier_transcript = VerifierTranscript::<Blake2b512>::new(
-            &protocol("prove-driver-twin"),
-            b"",
-            prover_transcript.narg(),
-        );
+        let narg = prover_transcript.narg().to_vec();
+        let mut verifier_transcript =
+            VerifierTranscript::<Blake2b512>::new(&protocol("prove-driver-twin"), b"", &narg);
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let (_, received_claims) = sumchecks
             .verify_clear(
@@ -793,8 +791,8 @@ mod twin_tests {
             .unwrap();
         assert_eq!(received_claims, proved.output_claims);
         assert_eq!(
-            verifier_transcript.preview().squeeze::<32>(),
-            prover_transcript.preview().squeeze::<32>()
+            verifier_transcript.challenge_bytes::<32>(),
+            prover_transcript.challenge_bytes::<32>()
         );
         verifier_transcript.finish().unwrap();
 
@@ -884,11 +882,9 @@ mod twin_tests {
             )
             .unwrap();
 
-        let mut verifier_transcript = VerifierTranscript::<Blake2b512>::new(
-            &protocol("prove-driver-head-twin"),
-            b"",
-            prover_transcript.narg(),
-        );
+        let narg = prover_transcript.narg().to_vec();
+        let mut verifier_transcript =
+            VerifierTranscript::<Blake2b512>::new(&protocol("prove-driver-head-twin"), b"", &narg);
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let (verified_points, received_claims) = sumchecks
             .verify_clear(
@@ -901,8 +897,8 @@ mod twin_tests {
             .unwrap();
         assert_eq!(received_claims, proved.output_claims);
         assert_eq!(
-            verifier_transcript.preview().squeeze::<32>(),
-            prover_transcript.preview().squeeze::<32>()
+            verifier_transcript.challenge_bytes::<32>(),
+            prover_transcript.challenge_bytes::<32>()
         );
         verifier_transcript.finish().unwrap();
         assert_eq!(verified_points, proved.output_points);

@@ -22,9 +22,7 @@ use jolt_openings::{
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::Channel;
-use support::{
-    assert_transcripts_agree, f, layout, new_prover_transcript, new_verifier_transcript, polynomial,
-};
+use support::{f, layout, new_prover_transcript, new_verifier_transcript, polynomial};
 
 const FINAL_NUM_VARS: usize = 16;
 /// Six variables above this one-column trace group. The canonical Jolt trace
@@ -118,6 +116,8 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     )
     .expect("grouped opening should prove");
     let proof = prover_transcript.narg().to_vec();
+    // The prover's sponge state, as one final squeeze both roles draw.
+    let prover_checkpoint = prover_transcript.challenge_bytes::<32>();
 
     let transported: AkitaVerifierSetup = serde_json::from_str(
         &serde_json::to_string(&verifier_setup).expect("verifier setup should serialize"),
@@ -132,7 +132,13 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
             &mut verifier_transcript,
         )
         .expect("grouped opening should verify");
-        assert_transcripts_agree(prover_transcript.clone(), verifier_transcript);
+        assert_eq!(
+            verifier_transcript.challenge_bytes::<32>(),
+            prover_checkpoint
+        );
+        verifier_transcript
+            .finish()
+            .expect("the verifier consumes the whole proof");
     }
 
     let mut other_context = new_verifier_transcript(b"akita-grouped-capacity", &proof);

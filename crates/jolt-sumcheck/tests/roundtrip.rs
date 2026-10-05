@@ -77,7 +77,7 @@ fn prove_product(
         }
     }
 
-    let fingerprint = transcript.preview().squeeze();
+    let fingerprint = transcript.challenge_bytes::<32>();
     (
         transcript.finish(),
         SumcheckClaim::new(num_vars, degree, claimed_sum),
@@ -96,7 +96,7 @@ fn assert_product_roundtrip(polys: &[Vec<F>], num_vars: usize, wire: Wire) {
         Wire::Compressed => SumcheckVerifier::verify_compressed(&claim, &mut transcript),
     }
     .unwrap();
-    assert_eq!(transcript.preview().squeeze::<32>(), prover_state);
+    assert_eq!(transcript.challenge_bytes::<32>(), prover_state);
     transcript.finish().unwrap();
 
     assert_eq!(point.len(), num_vars);

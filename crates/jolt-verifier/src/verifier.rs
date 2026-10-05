@@ -75,7 +75,10 @@ where
         &mut transcript,
     )? {
         VerifiedStages::Clear => {}
-        VerifiedStages::Zk(blindfold) => {
+        VerifiedStages::Zk {
+            protocol: blindfold,
+            checkpoint: _,
+        } => {
             transcript.site(BLINDFOLD);
             let vc_setup = preprocessing
                 .vc_setup
@@ -97,7 +100,14 @@ where
 #[cfg(not(feature = "akita"))]
 pub enum VerifiedStages<F: JoltField, C> {
     Clear,
-    Zk(Box<BlindFoldProtocol<F, C>>),
+    Zk {
+        protocol: Box<BlindFoldProtocol<F, C>>,
+        /// The 32 bytes squeezed after the stage spine, before BlindFold.
+        /// Every ZK transcript draws it; the prover compares it against its
+        /// replay of this function, which checks the replay reached the
+        /// prover's sponge state without reading that state.
+        checkpoint: [u8; 32],
+    },
 }
 
 /// Runs the stage spine on `transcript`: the seeding messages, stages 1–8,
@@ -180,21 +190,24 @@ where
         };
         return Ok(VerifiedStages::Clear);
     }
-    Ok(VerifiedStages::Zk(Box::new(blindfold::build(
-        BlindFoldInputs {
-            checked: &checked,
-            preprocessing,
-            stage1: stage1.zk()?,
-            stage2: stage2.zk()?,
-            stage3: stage3.zk()?,
-            stage4: stage4.zk()?,
-            stage5: stage5.zk()?,
-            stage6a: stage6a.zk()?,
-            stage6b: stage6b.zk()?,
-            stage7: stage7.zk()?,
-            stage8: stage8.zk()?,
-        },
-    )?)))
+    let protocol = Box::new(blindfold::build(BlindFoldInputs {
+        checked: &checked,
+        preprocessing,
+        stage1: stage1.zk()?,
+        stage2: stage2.zk()?,
+        stage3: stage3.zk()?,
+        stage4: stage4.zk()?,
+        stage5: stage5.zk()?,
+        stage6a: stage6a.zk()?,
+        stage6b: stage6b.zk()?,
+        stage7: stage7.zk()?,
+        stage8: stage8.zk()?,
+    })?);
+    let checkpoint = transcript.challenge_bytes();
+    Ok(VerifiedStages::Zk {
+        protocol,
+        checkpoint,
+    })
 }
 
 /// The Akita verification path: the same stage spine, with a random-selector

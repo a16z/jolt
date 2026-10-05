@@ -345,7 +345,7 @@ mod dory {
         )
         .and_then(|stages| match stages {
             VerifiedStages::Clear => Ok(()),
-            VerifiedStages::Zk(protocol) => {
+            VerifiedStages::Zk { protocol, .. } => {
                 transcript.site(BLINDFOLD);
                 let vc_setup = preprocessing
                     .vc_setup

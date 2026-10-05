@@ -55,7 +55,7 @@ fn prove(setup: &PedersenSetup<Bn254G1>) -> Proved {
         .collect();
     let outputs: Vec<F> = [23, 29, 31, 37].map(F::from_u64).to_vec();
     let witness = builder.finish(&outputs, &mut transcript).unwrap();
-    let fingerprint = transcript.preview().squeeze();
+    let fingerprint = transcript.challenge_bytes::<32>();
     Proved {
         narg: transcript.finish(),
         challenges,
@@ -77,7 +77,7 @@ fn verify(
     let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, SESSION, narg);
     let verified =
         SumcheckVerifier::verify_committed(statement, num_output_commitments, &mut transcript)?;
-    let fingerprint = transcript.preview().squeeze();
+    let fingerprint = transcript.challenge_bytes::<32>();
     transcript.finish()?;
     Ok((verified, fingerprint))
 }

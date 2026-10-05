@@ -20,6 +20,7 @@ jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch::challenge_powers#
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch_zk::challenge_powers#0
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_powers#0
+jolt-prover::blindfold.rs::prove_blindfold::challenge_bytes#1
 jolt-sumcheck::committed.rs::CommittedSumcheckBuilder<'a,F,VC,R>::commit_round::challenge_small#1
 jolt-sumcheck::prover.rs::prove_uniskip_clear::challenge_small#1
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_round::challenge_small#1
@@ -46,3 +47,4 @@ jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#0
 jolt-verifier::stages/stage8/verify.rs::verify::challenge_powers#4
 jolt-verifier::stages/uniskip.rs::draw_spartan_outer_tau::challenges_small#0
 jolt-verifier::stages/uniskip.rs::draw_spartan_product_tau_high::challenge_small#0
+jolt-verifier::verifier.rs::verify_stages::challenge_bytes#10

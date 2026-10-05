@@ -196,7 +196,7 @@ mod field_inline_round_trip {
             Through::Stage5,
             &checked,
             &preprocessing,
-            &prover_transcript,
+            &mut prover_transcript,
         );
     }
 

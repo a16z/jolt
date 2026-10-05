@@ -45,8 +45,8 @@ fn dory_homomorphic_batch_roundtrip_clear_many_polynomials() {
     .expect("Dory homomorphic batch proof should verify");
 
     assert_eq!(
-        fingerprint(&prover_transcript),
-        fingerprint(&verifier_transcript)
+        fingerprint(&mut prover_transcript),
+        fingerprint(&mut verifier_transcript)
     );
     verifier_transcript.finish().expect("proof fully consumed");
 }
@@ -179,8 +179,8 @@ fn dory_homomorphic_zk_batch_roundtrip() {
 
     assert_eq!(opening.hiding_commitment, verifier_hiding);
     assert_eq!(
-        fingerprint(&prover_transcript),
-        fingerprint(&verifier_transcript)
+        fingerprint(&mut prover_transcript),
+        fingerprint(&mut verifier_transcript)
     );
     verifier_transcript.finish().expect("proof fully consumed");
 }

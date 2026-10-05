@@ -78,7 +78,7 @@ fn blindfold_protocol(case: &ZkVerifierFixtureCase) -> BlindFoldProtocol<Fr, Bn2
         &mut transcript,
     )
     .expect("stage spine accepts the honest ZK fixture");
-    let VerifiedStages::Zk(protocol) = stages else {
+    let VerifiedStages::Zk { protocol, .. } = stages else {
         panic!("ZK verifier fixture must lower to a BlindFold protocol");
     };
     *protocol

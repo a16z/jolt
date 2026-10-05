@@ -488,12 +488,13 @@ pub(crate) fn verify_through(
     last: Through,
     checked: &CheckedInputs,
     preprocessing: &FixturePreprocessing,
-    prover: &ProverTranscript<JoltSponge>,
+    prover: &mut ProverTranscript<JoltSponge>,
 ) {
+    let narg = prover.narg().to_vec();
     let mut transcript = VerifierTranscript::<JoltSponge>::new(
         &jolt_protocol_id::<JoltSponge>(),
         JOLT_SESSION,
-        prover.narg(),
+        &narg,
     );
     let verifier = &preprocessing.verifier;
     let formula_dimensions =
@@ -549,8 +550,8 @@ pub(crate) fn verify_through(
     }
     assert_eq!(transcript.remaining(), 0, "unconsumed argument bytes");
     assert_eq!(
-        transcript.preview().squeeze::<32>(),
-        prover.preview().squeeze::<32>(),
+        transcript.challenge_bytes::<32>(),
+        prover.challenge_bytes::<32>(),
         "verifier and prover sponge states diverge"
     );
     transcript.finish().unwrap();

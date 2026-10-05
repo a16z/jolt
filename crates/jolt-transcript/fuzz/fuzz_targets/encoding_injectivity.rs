@@ -37,7 +37,7 @@ fn framed_state<H: Sponge>(chunks: &[Vec<u8>]) -> [u8; 32] {
     for chunk in chunks {
         transcript.public_bytes(chunk);
     }
-    transcript.preview().squeeze()
+    transcript.challenge_bytes::<32>()
 }
 
 fuzz_target!(|data: &[u8]| {

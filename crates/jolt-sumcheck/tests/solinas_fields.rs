@@ -137,7 +137,7 @@ fn run_batched_roundtrip<F: Field + CanonicalEncoding>(
     recorder
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
-    let prover_state: [u8; 32] = prover_transcript.preview().squeeze();
+    let prover_state: [u8; 32] = prover_transcript.challenge_bytes::<32>();
     let narg = prover_transcript.finish();
     assert_eq!(narg.len(), (2 * 2 + 1) * F::NUM_BYTES);
 
@@ -159,7 +159,7 @@ fn run_batched_roundtrip<F: Field + CanonicalEncoding>(
     assert_eq!(proved.member_claims, vec![expected]);
     assert_eq!(reduced.value, coefficient * expected);
     assert_eq!(proved.final_claim, reduced.value);
-    assert_eq!(verifier_transcript.preview().squeeze::<32>(), prover_state);
+    assert_eq!(verifier_transcript.challenge_bytes::<32>(), prover_state);
     verifier_transcript.finish().unwrap();
 }
 
@@ -178,7 +178,7 @@ fn run_uniskip_roundtrip<F: Field + CanonicalEncoding>(coefficients: [F; 3]) {
         &mut prover_transcript,
     )
     .unwrap();
-    let prover_state: [u8; 32] = prover_transcript.preview().squeeze();
+    let prover_state: [u8; 32] = prover_transcript.challenge_bytes::<32>();
     let narg = prover_transcript.finish();
 
     let mut verifier_transcript =
@@ -195,7 +195,7 @@ fn run_uniskip_roundtrip<F: Field + CanonicalEncoding>(coefficients: [F; 3]) {
     assert_eq!(reduced.value, polynomial.evaluate(proved.challenge));
     assert_eq!(output_claim, proved.output_claim);
     assert_eq!(reduced.value, proved.output_claim);
-    assert_eq!(verifier_transcript.preview().squeeze::<32>(), prover_state);
+    assert_eq!(verifier_transcript.challenge_bytes::<32>(), prover_state);
     verifier_transcript.finish().unwrap();
 }
 

@@ -1,29 +1,40 @@
-//! The verifier's end: read every message from the argument string, absorb
-//! exactly the bytes read.
+//! The verifier's end: spongefish's verifier state, read through typed atoms.
 
 use std::num::NonZeroU8;
 
 use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
+use spongefish::VerifierState;
 
-use crate::duplex::Duplex;
-use crate::grinding::{
-    decode_nonce, grinding_predicate_accepts, nonce_bits, GRINDING_PREDICATE_LEN,
-};
+use crate::grinding::{grinding_accepts, nonce_bits, GRINDING_SEED_LEN};
+use crate::site::{Log, TranscriptOp};
+use crate::state::{domain, Framed, Squeeze, BYTE_BLOCK};
 #[cfg(feature = "logging")]
 use crate::TranscriptEvent;
-use crate::{Channel, Preview, ProtocolId, SiteId, Sponge, TranscriptError};
+use crate::{Channel, Nonce, ProtocolId, SiteId, Sponge, TranscriptError};
 
-/// Verifier transcript: a sponge plus a cursor over the proof bytes.
+/// Verifier transcript: spongefish's [`VerifierState`] over the proof bytes.
 ///
-/// The only way to obtain proof data is a `receive*` call, which absorbs the
-/// bytes it consumed. After any failed receive the transcript is poisoned:
-/// later receives fail and [`finish`](Self::finish) fails.
-#[derive(Clone, Debug)]
-pub struct VerifierTranscript<'a, H> {
-    duplex: Duplex<H>,
+/// The only way to obtain proof data is a `receive*` call, which reads and
+/// absorbs through spongefish. This wrapper tracks the read offset itself so
+/// it can bound a read before allocating and report typed errors. After any
+/// failed receive the transcript is poisoned: later receives fail and
+/// [`finish`](Self::finish) fails.
+pub struct VerifierTranscript<'a, H: Sponge> {
+    state: VerifierState<'a, H>,
     narg: &'a [u8],
     consumed: usize,
     poisoned: bool,
+    log: Log,
+}
+
+impl<H: Sponge> core::fmt::Debug for VerifierTranscript<'_, H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VerifierTranscript")
+            .field("consumed", &self.consumed)
+            .field("remaining", &self.remaining())
+            .field("poisoned", &self.poisoned)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a, H: Sponge> VerifierTranscript<'a, H> {
@@ -31,10 +42,11 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
     #[must_use]
     pub fn new(protocol: &ProtocolId, session: &[u8], narg: &'a [u8]) -> Self {
         Self {
-            duplex: Duplex::new(protocol, session),
+            state: domain(protocol, session).to_verifier(H::default(), narg),
             narg,
             consumed: 0,
             poisoned: false,
+            log: Log::default(),
         }
     }
 
@@ -44,9 +56,9 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
     ///
     /// [`TranscriptError::Truncated`] or [`TranscriptError::NonCanonical`].
     pub fn receive<A: CanonicalDecode>(&mut self) -> Result<A, TranscriptError> {
-        let bytes = self.peek(A::NUM_BYTES)?;
-        let value = A::from_bytes_le_checked(bytes).ok_or(TranscriptError::NonCanonical);
-        let value = self.check(value)?;
+        self.bound(A::NUM_BYTES)?;
+        let value = self.state.prover_message::<A>();
+        let value = self.check(value.map_err(|_| TranscriptError::NonCanonical))?;
         self.advance(A::NUM_BYTES);
         Ok(value)
     }
@@ -64,12 +76,9 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
             .checked_mul(count)
             .ok_or(TranscriptError::Truncated);
         let len = self.check(len)?;
-        let bytes = self.peek(len)?;
-        let values = bytes
-            .chunks_exact(A::NUM_BYTES)
-            .map(|chunk| A::from_bytes_le_checked(chunk).ok_or(TranscriptError::NonCanonical))
-            .collect::<Result<Vec<_>, _>>();
-        let values = self.check(values)?;
+        self.bound(len)?;
+        let values = self.state.prover_messages_vec::<A>(count);
+        let values = self.check(values.map_err(|_| TranscriptError::NonCanonical))?;
         self.advance(len);
         Ok(values)
     }
@@ -80,7 +89,22 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
     ///
     /// [`TranscriptError::Truncated`].
     pub fn receive_bytes(&mut self, len: usize) -> Result<&'a [u8], TranscriptError> {
-        let bytes = self.peek(len)?;
+        self.bound(len)?;
+        let narg = self.narg;
+        let bytes = narg
+            .get(self.consumed..)
+            .and_then(|rest| rest.get(..len))
+            .ok_or(TranscriptError::Truncated);
+        let bytes = self.check(bytes)?;
+        // The same block split the prover sends in, so both sides make the
+        // same absorb calls whatever the sponge's block handling.
+        let read = (0..len / BYTE_BLOCK)
+            .try_for_each(|_| self.state.prover_message::<[u8; BYTE_BLOCK]>().map(|_| ()))
+            .and_then(|()| {
+                (0..len % BYTE_BLOCK)
+                    .try_for_each(|_| self.state.prover_message::<[u8; 1]>().map(|_| ()))
+            });
+        self.check(read.map_err(|_| TranscriptError::Truncated))?;
         self.advance(len);
         Ok(bytes)
     }
@@ -102,44 +126,61 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
         self.receive_bytes(len)
     }
 
-    /// Receives a canonically encoded nonce below `2^nonce_bits`.
+    /// Receives a [`Nonce`] below `2^nonce_bits`.
     ///
     /// # Errors
     ///
-    /// [`TranscriptError::NonCanonical`] for a malformed, non-minimal, or
-    /// out-of-range encoding.
+    /// [`TranscriptError::NonCanonical`] for a malformed or non-minimal
+    /// encoding, [`TranscriptError::OutOfBounds`] for a value at or above
+    /// `2^nonce_bits`.
     pub fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError> {
         self.check(Ok(()))?;
-        let rest = self.narg.split_at(self.consumed).1;
-        let decoded = decode_nonce(rest, nonce_bits).ok_or(TranscriptError::NonCanonical);
-        let (nonce, len) = self.check(decoded)?;
-        self.advance(len);
-        Ok(nonce)
+        let nonce = self.state.prover_message::<Nonce>();
+        let Nonce(nonce) = self.check(nonce.map_err(|_| TranscriptError::NonCanonical))?;
+        self.advance(Nonce(nonce).encoded_len());
+        let in_range = if u64::from(nonce) >> nonce_bits == 0 {
+            Ok(nonce)
+        } else {
+            Err(TranscriptError::OutOfBounds)
+        };
+        self.check(in_range)
     }
 
     /// Checks `bits` bits of proof of work and returns the received nonce. A
-    /// zero difficulty reads nothing.
+    /// zero difficulty draws and reads nothing.
     ///
     /// # Errors
     ///
     /// [`TranscriptError::UnsupportedGrinding`] above
     /// [`MAX_GRINDING_BITS`](crate::MAX_GRINDING_BITS),
+    /// [`TranscriptError::OutOfBounds`] for a nonce outside the search range,
     /// [`TranscriptError::GrindingRejected`] if the predicate fails, else as
-    /// [`receive_nonce`](Self::receive_nonce).
+    /// [`receive`](Self::receive).
     pub fn check_grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
         let Some(bits) = NonZeroU8::new(bits) else {
             return Ok(0);
         };
         let nonce_bits = nonce_bits(bits).ok_or(TranscriptError::UnsupportedGrinding);
         let nonce_bits = self.check(nonce_bits)?;
+        let seed: [u8; GRINDING_SEED_LEN] = self.challenge_bytes();
         let nonce = self.receive_nonce(nonce_bits)?;
-        let predicate: [u8; GRINDING_PREDICATE_LEN] = self.challenge_bytes();
-        let accepted = if grinding_predicate_accepts(&predicate, bits) {
+        let accepted = if grinding_accepts::<H>(&seed, nonce, bits) {
             Ok(nonce)
         } else {
             Err(TranscriptError::GrindingRejected)
         };
         self.check(accepted)
+    }
+
+    /// The proof bytes not yet received, without receiving or absorbing them.
+    ///
+    /// Only for parse-ahead by a component that needs a whole proof struct
+    /// before it runs (dory-pcs). Every byte it parses must still be received
+    /// through `receive*`, which is what binds it; parsed-ahead values carry
+    /// no weight until then.
+    #[must_use]
+    pub fn unread(&self) -> &'a [u8] {
+        self.narg.split_at(self.consumed).1
     }
 
     /// Bytes of the proof not yet received.
@@ -152,7 +193,7 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
     #[cfg(feature = "logging")]
     #[must_use]
     pub fn events(&self) -> &[TranscriptEvent] {
-        self.duplex.events()
+        self.log.events()
     }
 
     /// Ends the transcript. Call once, at the outermost verifier boundary,
@@ -166,31 +207,29 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
     pub fn finish(self) -> Result<(), TranscriptError> {
         if self.poisoned {
             Err(TranscriptError::Poisoned)
-        } else if self.remaining() != 0 {
-            Err(TranscriptError::TrailingBytes)
         } else {
-            Ok(())
+            self.state
+                .check_eof()
+                .map_err(|_| TranscriptError::TrailingBytes)
         }
     }
 
-    /// The next `len` unread bytes, without consuming them.
-    fn peek(&mut self, len: usize) -> Result<&'a [u8], TranscriptError> {
-        self.check(Ok(()))?;
-        let narg = self.narg;
-        let bytes = narg
-            .get(self.consumed..)
-            .and_then(|rest| rest.get(..len))
-            .ok_or(TranscriptError::Truncated);
-        self.check(bytes)
+    /// Fails unless `len` more bytes remain.
+    fn bound(&mut self, len: usize) -> Result<(), TranscriptError> {
+        let fits = if len <= self.remaining() {
+            Ok(())
+        } else {
+            Err(TranscriptError::Truncated)
+        };
+        self.check(fits)
     }
 
-    /// Consumes and absorbs the next `len` bytes, which `peek` already bounded.
+    /// Records a read of `len` bytes that spongefish already absorbed.
     fn advance(&mut self, len: usize) {
-        let narg = self.narg;
-        let (_, rest) = narg.split_at(self.consumed);
-        let (bytes, _) = rest.split_at(len);
-        self.duplex.absorb_message(bytes, self.consumed);
+        let start = self.consumed;
         self.consumed += len;
+        self.log
+            .record(TranscriptOp::Message, len, Some(start..self.consumed));
     }
 
     /// Poisons the transcript on failure; fails immediately once poisoned.
@@ -206,19 +245,23 @@ impl<H: Sponge> Channel for VerifierTranscript<'_, H> {
     type Sponge = H;
 
     fn site(&mut self, site: SiteId) {
-        self.duplex.set_site(site);
+        self.log.set_site(site);
     }
 
     fn public<A: CanonicalBytes>(&mut self, value: &A) {
-        self.duplex.absorb_public_atoms(std::slice::from_ref(value));
+        self.state.public_message(value);
+        self.log.record(TranscriptOp::Public, A::NUM_BYTES, None);
     }
 
     fn public_all<A: CanonicalBytes>(&mut self, values: &[A]) {
-        self.duplex.absorb_public_atoms(values);
+        self.state.public_messages(values);
+        self.log
+            .record(TranscriptOp::Public, A::NUM_BYTES * values.len(), None);
     }
 
     fn public_bytes(&mut self, bytes: &[u8]) {
-        self.duplex.absorb_public_framed(bytes);
+        self.state.public_message(&Framed(bytes));
+        self.log.record(TranscriptOp::Public, 8 + bytes.len(), None);
     }
 
     fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError> {
@@ -238,18 +281,21 @@ impl<H: Sponge> Channel for VerifierTranscript<'_, H> {
     }
 
     fn challenge<F: Field>(&mut self) -> F {
-        self.duplex.challenge()
+        let (value, squeezed) = self.state.exact_challenge();
+        self.log.record(TranscriptOp::Challenge, squeezed, None);
+        value
     }
 
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
-        self.duplex.challenge_small()
+        let value = self.state.small_challenge();
+        self.log
+            .record(TranscriptOp::Challenge, crate::SMALL_CHALLENGE_BYTES, None);
+        value
     }
 
     fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
-        self.duplex.squeeze_array()
-    }
-
-    fn preview(&self) -> Preview<H> {
-        self.duplex.preview()
+        let value = self.state.squeeze_array();
+        self.log.record(TranscriptOp::Challenge, N, None);
+        value
     }
 }

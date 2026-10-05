@@ -1,15 +1,17 @@
-//! Fiat-Shamir transcripts for Jolt in the NARG model.
+//! Fiat-Shamir transcripts for Jolt in the NARG model, on spongefish.
 //!
-//! A proof is its argument string. [`ProverTranscript`] appends every prover
-//! message and absorbs exactly the appended bytes; [`VerifierTranscript`]
-//! reads messages back and absorbs exactly the bytes it read. Code that both
+//! A proof is its argument string. [`ProverTranscript`] and
+//! [`VerifierTranscript`] are typed layers over spongefish's `ProverState` and
+//! `VerifierState`: the prover appends every message and absorbs its
+//! encoding, the verifier reads it back and absorbs the same encoding. No
+//! code reads or copies spongefish's sponge state. Code that both
 //! roles run identically is written against [`Channel`]. Protocols compose by
 //! sharing one transcript: a sub-protocol takes the caller's transcript rather
 //! than starting its own.
 //!
 //! Message atoms are the [`CanonicalBytes`](jolt_field::CanonicalBytes) /
 //! [`CanonicalDecode`](jolt_field::CanonicalDecode) codecs owned by each
-//! type's crate. Challenges are exactly uniform ([`Channel::challenge`]) or
+//! type's crate, whose spongefish `Encoding` / `NargDeserialize` they are. Challenges are exactly uniform ([`Channel::challenge`]) or
 //! drawn from a field's small challenge set ([`Channel::challenge_small`]).
 //! The sponge is a type parameter ([`Sponge`]) bound into the [`ProtocolId`].
 
@@ -31,26 +33,27 @@
 )]
 
 mod channel;
-mod duplex;
 mod error;
+mod fork;
 mod grinding;
+mod nonce;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
-mod preview;
 mod protocol;
 mod prover;
 mod site;
 mod sponge;
+mod state;
 mod verifier;
 
 pub use channel::Channel;
-pub use duplex::SMALL_CHALLENGE_BYTES;
 pub use error::TranscriptError;
+pub use fork::{Fork, FORK_SEED_LEN};
 pub use grinding::{
     grinding_predicate_accepts, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_LEN,
-    MAX_GRINDING_BITS,
+    GRINDING_SEED_LEN, MAX_GRINDING_BITS,
 };
-pub use preview::Preview;
+pub use nonce::Nonce;
 pub use protocol::{ProtocolId, PROTOCOL_ID_LEN};
 pub use prover::ProverTranscript;
 #[cfg(feature = "logging")]
@@ -64,6 +67,7 @@ pub use spongefish::instantiations::Keccak;
 /// The duplex interface every [`Sponge`] implements; re-exported so a custom
 /// sponge needs no direct spongefish dependency.
 pub use spongefish::DuplexSpongeInterface;
+pub use state::SMALL_CHALLENGE_BYTES;
 pub use verifier::VerifierTranscript;
 
 #[cfg(feature = "transcript-poseidon")]

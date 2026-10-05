@@ -18,8 +18,8 @@ pub fn verifier<'a>(session: &[u8], narg: &'a [u8]) -> VerifierTranscript<'a, Bl
 }
 
 /// Sponge state after both sides finish, which must agree for an honest run.
-pub fn fingerprint<C: Channel>(channel: &C) -> [u8; 32] {
-    channel.preview().squeeze()
+pub fn fingerprint<C: Channel>(channel: &mut C) -> [u8; 32] {
+    channel.challenge_bytes::<32>()
 }
 
 pub fn fr(value: u64) -> Fr {

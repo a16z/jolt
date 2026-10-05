@@ -89,7 +89,7 @@ fn run<H: Sponge>(
             Op::Challenge => {}
         }
     }
-    let state = transcript.preview().squeeze();
+    let state = transcript.challenge_bytes::<32>();
     (challenges, transcript.finish(), state)
 }
 

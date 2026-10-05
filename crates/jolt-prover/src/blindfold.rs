@@ -115,7 +115,10 @@ where
 {
     let mut replay =
         VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, transcript.narg());
-    let VerifiedStages::Zk(protocol) = verify_stages::<F, PCS, VC, H>(
+    let VerifiedStages::Zk {
+        protocol,
+        checkpoint,
+    } = verify_stages::<F, PCS, VC, H>(
         &preprocessing.verifier,
         public_io,
         trusted_advice_commitment,
@@ -126,11 +129,12 @@ where
             reason: "the verifier replay of a ZK proof produced no BlindFold protocol",
         });
     };
-    // Hard error (not debug-only) so release provers diagnose drift here
-    // rather than as a downstream BlindFold verification failure.
-    if replay.remaining() != 0
-        || replay.preview().squeeze::<32>() != transcript.preview().squeeze::<32>()
-    {
+    // The prover draws the same checkpoint the verifier draws after the stage
+    // spine; equal checkpoints over the whole argument string mean the replay
+    // reached the prover's sponge state. Hard error (not debug-only) so release
+    // provers diagnose drift here rather than as a downstream BlindFold
+    // verification failure.
+    if replay.remaining() != 0 || transcript.challenge_bytes::<32>() != checkpoint {
         return Err(ProverError::InvariantViolation {
             reason: "the verifier replay diverged from the prover's forward transcript",
         });

@@ -265,7 +265,7 @@ mod field_inline_round_trip {
             Through::Stage2,
             &test_checked_inputs(),
             &field_arithmetic_preprocessing(),
-            &prover_transcript,
+            &mut prover_transcript,
         );
     }
 }
@@ -334,7 +334,7 @@ mod field_inline_zk {
             Through::Stage2,
             &test_checked_inputs(),
             &field_arithmetic_preprocessing(),
-            &prover_transcript,
+            &mut prover_transcript,
         );
     }
 }

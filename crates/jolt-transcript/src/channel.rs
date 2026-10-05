@@ -2,7 +2,7 @@
 
 use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
 
-use crate::{Preview, SiteId, Sponge, TranscriptError};
+use crate::{SiteId, Sponge, TranscriptError};
 
 /// One party's end of a Fiat-Shamir proof channel.
 ///
@@ -71,7 +71,4 @@ pub trait Channel {
 
     /// Squeezes `N` raw challenge bytes.
     fn challenge_bytes<const N: usize>(&mut self) -> [u8; N];
-
-    /// A detached copy of the current sponge state.
-    fn preview(&self) -> Preview<Self::Sponge>;
 }

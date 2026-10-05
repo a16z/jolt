@@ -624,8 +624,8 @@ pub(crate) mod test_transcript {
         let mut right = fresh();
         let expected = documented(&mut right);
         assert_eq!(
-            left.preview().squeeze::<32>(),
-            right.preview().squeeze::<32>(),
+            left.challenge_bytes::<32>(),
+            right.challenge_bytes::<32>(),
             "production and documented draws diverge"
         );
         (produced, expected)

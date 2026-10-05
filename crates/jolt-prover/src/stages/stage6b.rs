@@ -289,7 +289,7 @@ mod field_inline_round_trip {
             Through::Stage6b,
             &checked,
             &preprocessing,
-            &prover_transcript,
+            &mut prover_transcript,
         );
     }
 
@@ -471,6 +471,6 @@ mod field_inline_zk {
             1
         );
 
-        verify_through(Through::Stage6b, &checked, &preprocessing, &transcript);
+        verify_through(Through::Stage6b, &checked, &preprocessing, &mut transcript);
     }
 }

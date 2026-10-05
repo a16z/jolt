@@ -27,6 +27,7 @@ light-poseidon = { workspace = true, optional = true }
 # spongefish 0.7 references its sha3 `StdHash` even when another sponge is
 # selected, so the feature is required to build at all.
 spongefish = { workspace = true, features = ["sha3"] }
+rand = { workspace = true, features = ["std_rng"] }
 rand_core = { workspace = true }
 thiserror = { workspace = true }
 jolt-field = { path = "../jolt-field", default-features = false }

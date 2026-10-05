@@ -749,8 +749,8 @@ mod tests {
             symbolic: ToySymbolic::new(ROUNDS),
             reference_point: reference_point(),
         };
-        let mut verifier_transcript =
-            VerifierTranscript::<Blake2b512>::new(&protocol, b"", prover_transcript.narg());
+        let narg = prover_transcript.narg().to_vec();
+        let mut verifier_transcript = VerifierTranscript::<Blake2b512>::new(&protocol, b"", &narg);
         let verifier_challenges = verifier_relation
             .draw_challenges(&mut verifier_transcript)
             .unwrap();
@@ -776,8 +776,8 @@ mod tests {
         assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
         assert_eq!(received, output_claims.opening_values());
         assert_eq!(
-            verifier_transcript.preview().squeeze::<32>(),
-            prover_transcript.preview().squeeze::<32>()
+            verifier_transcript.challenge_bytes::<32>(),
+            prover_transcript.challenge_bytes::<32>()
         );
         verifier_transcript.finish().unwrap();
     }

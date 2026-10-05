@@ -6,7 +6,7 @@
 //! value as a prover message, so the argument string holds exactly Dory's
 //! messages in Fiat-Shamir order. dory-pcs verifies from a proof struct it
 //! receives up front, so the verifier first rebuilds that struct by reading the
-//! messages on a scratch copy of the transcript, then runs `dory::verify` with
+//! messages from the transcript's unread bytes without absorbing them, then runs `dory::verify` with
 //! an adapter whose every `append_serde` receives the next message from the
 //! live transcript and checks it equals the value dory-pcs absorbs.
 //!
@@ -29,7 +29,7 @@ use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use crate::scheme::{jolt_fr_to_ark, ArkFr, ArkG1, ArkGT};
 
 /// Prover side: every absorbed value becomes a prover message.
-pub(crate) struct DoryProverChannel<'a, H> {
+pub(crate) struct DoryProverChannel<'a, H: Sponge> {
     transcript: &'a mut ProverTranscript<H>,
 }
 
@@ -82,7 +82,7 @@ impl<H: Sponge> DoryTranscript for DoryProverChannel<'_, H> {
 }
 
 /// Verifier side: every absorbed value must be the next prover message.
-pub(crate) struct DoryVerifierChannel<'a, 'p, H> {
+pub(crate) struct DoryVerifierChannel<'a, 'p, H: Sponge> {
     transcript: &'a mut VerifierTranscript<'p, H>,
     mismatch: bool,
 }
@@ -160,27 +160,27 @@ fn compressed<S: DorySerialize + ?Sized>(value: &S) -> Vec<u8> {
 /// Rebuilds the Dory proof for a `num_vars`-variable opening from the next
 /// prover messages, reading them from `scout`, a scratch copy of the live
 /// verifier transcript. Message order mirrors `dory::verify`.
-pub(crate) fn read_proof<H: Sponge>(
-    mut scout: VerifierTranscript<'_, H>,
+pub(crate) fn read_proof(
+    unread: &[u8],
     num_vars: usize,
     zk: bool,
 ) -> Result<ArkDoryProof, OpeningsError> {
     let sigma = num_vars.div_ceil(2);
     let nu = num_vars - sigma;
-    let reader = &mut scout;
+    let reader = &mut { unread };
 
     let vmv_message = VMVMessage {
-        c: read::<ArkGT, H>(reader)?,
+        c: read::<ArkGT>(reader)?,
         d2: read(reader)?,
-        e1: read::<ArkG1, H>(reader)?,
+        e1: read::<ArkG1>(reader)?,
     };
     let zk_prefix = if zk {
-        let e2 = read::<ArkG2, H>(reader)?;
-        let y_com = read::<ArkG1, H>(reader)?;
-        let sigma1_commitments = (read::<ArkG2, H>(reader)?, read::<ArkG1, H>(reader)?);
+        let e2 = read::<ArkG2>(reader)?;
+        let y_com = read::<ArkG1>(reader)?;
+        let sigma1_commitments = (read::<ArkG2>(reader)?, read::<ArkG1>(reader)?);
         let sigma2 = Sigma2Proof {
-            a: read::<ArkGT, H>(reader)?,
-            z1: read::<ArkFr, H>(reader)?,
+            a: read::<ArkGT>(reader)?,
+            z1: read::<ArkFr>(reader)?,
             z2: read(reader)?,
         };
         Some((e2, y_com, sigma1_commitments, sigma2))
@@ -192,27 +192,27 @@ pub(crate) fn read_proof<H: Sponge>(
     let mut second_messages = Vec::with_capacity(sigma);
     for _ in 0..sigma {
         first_messages.push(FirstReduceMessage {
-            d1_left: read::<ArkGT, H>(reader)?,
+            d1_left: read::<ArkGT>(reader)?,
             d1_right: read(reader)?,
             d2_left: read(reader)?,
             d2_right: read(reader)?,
-            e1_beta: read::<ArkG1, H>(reader)?,
-            e2_beta: read::<ArkG2, H>(reader)?,
+            e1_beta: read::<ArkG1>(reader)?,
+            e2_beta: read::<ArkG2>(reader)?,
         });
         second_messages.push(SecondReduceMessage {
-            c_plus: read::<ArkGT, H>(reader)?,
+            c_plus: read::<ArkGT>(reader)?,
             c_minus: read(reader)?,
-            e1_plus: read::<ArkG1, H>(reader)?,
+            e1_plus: read::<ArkG1>(reader)?,
             e1_minus: read(reader)?,
-            e2_plus: read::<ArkG2, H>(reader)?,
+            e2_plus: read::<ArkG2>(reader)?,
             e2_minus: read(reader)?,
         });
     }
 
     let Some((e2, y_com, (a1, a2), sigma2)) = zk_prefix else {
         let final_message = ScalarProductMessage {
-            e1: read::<ArkG1, H>(reader)?,
-            e2: read::<ArkG2, H>(reader)?,
+            e1: read::<ArkG1>(reader)?,
+            e2: read::<ArkG2>(reader)?,
         };
         return Ok(ArkDoryProof {
             vmv_message,
@@ -230,20 +230,20 @@ pub(crate) fn read_proof<H: Sponge>(
     };
 
     let scalar_product = ScalarProductProof {
-        p1: read::<ArkGT, H>(reader)?,
+        p1: read::<ArkGT>(reader)?,
         p2: read(reader)?,
         q: read(reader)?,
         r: read(reader)?,
-        e1: read::<ArkG1, H>(reader)?,
-        e2: read::<ArkG2, H>(reader)?,
-        r1: read::<ArkFr, H>(reader)?,
+        e1: read::<ArkG1>(reader)?,
+        e2: read::<ArkG2>(reader)?,
+        r1: read::<ArkFr>(reader)?,
         r2: read(reader)?,
         r3: read(reader)?,
     };
     let sigma1 = Sigma1Proof {
         a1,
         a2,
-        z1: read::<ArkFr, H>(reader)?,
+        z1: read::<ArkFr>(reader)?,
         z2: read(reader)?,
         z3: read(reader)?,
     };
@@ -284,13 +284,18 @@ impl CompressedWidth for ArkGT {
 }
 
 /// Reads one compressed element.
-fn read<T, H>(scout: &mut VerifierTranscript<'_, H>) -> Result<T, OpeningsError>
+/// Parses the next compressed `T` from the unread proof bytes, advancing
+/// `unread` past it.
+fn read<T>(unread: &mut &[u8]) -> Result<T, OpeningsError>
 where
     T: DoryDeserialize + CompressedWidth,
-    H: Sponge,
 {
-    let bytes = scout.receive_bytes(T::BYTES)?;
-    T::deserialize_compressed(bytes).map_err(|_| OpeningsError::VerificationFailed)
+    let (bytes, rest) = unread
+        .split_at_checked(T::BYTES)
+        .ok_or(OpeningsError::VerificationFailed)?;
+    let value = T::deserialize_compressed(bytes).map_err(|_| OpeningsError::VerificationFailed)?;
+    *unread = rest;
+    Ok(value)
 }
 
 #[cfg(test)]

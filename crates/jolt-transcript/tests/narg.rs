@@ -5,9 +5,10 @@
 
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr, Ring};
 use jolt_transcript::{
-    Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
-    TranscriptError, VerifierTranscript, SMALL_CHALLENGE_BYTES,
+    Blake2b512, Channel, Keccak, Nonce, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
+    TranscriptError, VerifierTranscript, GRINDING_NONCE_SLACK_BITS, SMALL_CHALLENGE_BYTES,
 };
+use spongefish::Encoding as _;
 
 const SESSION: &[u8] = b"narg-tests";
 
@@ -132,13 +133,13 @@ fn public_bytes_are_framed() {
 #[test]
 fn failed_receive_poisons_without_consuming() {
     let mut prover = ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION);
-    prover.send(&7u64);
+    prover.send(&7u32);
     let narg = prover.finish();
     let mut verifier =
         VerifierTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION, &narg);
     assert_eq!(verifier.receive::<Fr>(), Err(TranscriptError::Truncated));
     assert_eq!(verifier.remaining(), narg.len());
-    assert_eq!(verifier.receive::<u64>(), Err(TranscriptError::Poisoned));
+    assert_eq!(verifier.receive::<u32>(), Err(TranscriptError::Poisoned));
     assert_eq!(verifier.finish(), Err(TranscriptError::Poisoned));
 }
 
@@ -180,20 +181,6 @@ fn bounds_are_checked_before_reading() {
 }
 
 #[test]
-fn preview_does_not_advance_the_transcript() {
-    let mut prover = ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION);
-    let mut untouched = prover.clone();
-    let mut preview = prover.preview();
-    preview.absorb(&Fr::from_u64(1));
-    let _ = preview.squeeze::<32>();
-    assert_eq!(
-        prover.challenge_bytes::<32>(),
-        untouched.challenge_bytes::<32>()
-    );
-    assert!(prover.narg().is_empty());
-}
-
-#[test]
 fn grinding_rejects_a_stronger_claim_and_unsupported_difficulty() {
     let protocol = protocol::<Blake2b512>();
     let mut prover = ProverTranscript::<Blake2b512>::new(&protocol, SESSION);
@@ -212,12 +199,51 @@ fn grinding_rejects_a_stronger_claim_and_unsupported_difficulty() {
 
 #[test]
 fn small_challenge_decodes_the_next_squeezed_bytes() {
-    let mut prover = ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION);
+    let mut small = ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION);
+    let mut raw = ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION);
     for _ in 0..8 {
-        let expected =
-            Fr::from_challenge_bytes(&prover.preview().squeeze::<SMALL_CHALLENGE_BYTES>());
-        assert_eq!(prover.challenge_small::<Fr>(), expected);
+        let expected = Fr::from_challenge_bytes(&raw.challenge_bytes::<SMALL_CHALLENGE_BYTES>());
+        assert_eq!(small.challenge_small::<Fr>(), expected);
     }
+}
+
+/// A grind squeezes a seed and sends a `u32` nonce; the verifier rejects a
+/// nonce outside the search range and a nonce that fails the predicate.
+#[test]
+fn grinding_rejects_out_of_range_and_failing_nonces() {
+    let protocol = protocol::<Blake2b512>();
+    let bits = 6;
+    let mut prover = ProverTranscript::<Blake2b512>::new(&protocol, SESSION);
+    let nonce = prover.grind(bits).unwrap();
+    let honest = prover.finish();
+    assert_eq!(honest, Nonce(nonce).encode().as_ref());
+
+    let out_of_range = Nonce(1u32 << (bits + GRINDING_NONCE_SLACK_BITS))
+        .encode()
+        .as_ref()
+        .to_vec();
+    let mut verifier = VerifierTranscript::<Blake2b512>::new(&protocol, SESSION, &out_of_range);
+    assert_eq!(
+        verifier.check_grind(bits),
+        Err(TranscriptError::OutOfBounds)
+    );
+
+    let failing = Nonce((0..nonce).next().unwrap_or(nonce + 1))
+        .encode()
+        .as_ref()
+        .to_vec();
+    let mut verifier = VerifierTranscript::<Blake2b512>::new(&protocol, SESSION, &failing);
+    assert_eq!(
+        verifier.check_grind(bits),
+        Err(TranscriptError::GrindingRejected)
+    );
+
+    // The same nonce under a different seed (another session) is rejected.
+    let mut verifier = VerifierTranscript::<Blake2b512>::new(&protocol, b"other", &honest);
+    assert_eq!(
+        verifier.check_grind(bits),
+        Err(TranscriptError::GrindingRejected)
+    );
 }
 
 #[test]
