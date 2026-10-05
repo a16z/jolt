@@ -193,9 +193,6 @@ mod tests {
         }
     }
 
-    /// The encoder rows decode back to the encoded value through the centered
-    /// value map and the chunking's place values — the balanced numeral is a
-    /// faithful signed encoding over the whole `|value| < 2^64` window.
     #[test]
     fn encoder_rows_decode_to_the_encoded_value() {
         for width in [4usize, 8] {

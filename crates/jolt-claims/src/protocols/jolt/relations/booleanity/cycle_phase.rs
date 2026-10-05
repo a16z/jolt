@@ -1,5 +1,3 @@
-//! The cycle-phase split of the booleanity symbolic sumcheck relation.
-
 use jolt_field::Ring;
 
 use super::monolith::{BooleanityInputClaims, BooleanityOutputClaims};

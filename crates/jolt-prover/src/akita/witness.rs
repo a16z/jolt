@@ -31,9 +31,6 @@ use jolt_witness::{
 
 use crate::ProverError;
 
-/// The per-cycle sources every `OneHotTrace` column derives from: the
-/// instruction's lookup index, the mapped bytecode PC, the remapped RAM word
-/// address, and the fused increment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct OneHotTraceSourceRow {
     lookup_index: LookupIndex,

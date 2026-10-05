@@ -189,8 +189,6 @@ const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 40);
 #[cfg(not(feature = "akita"))]
 const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 32);
 
-/// The bundle row the packing pass extracts; never materialized beyond one
-/// streaming chunk.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct WideInstructionRow {
     lookup_index: LookupIndex,
@@ -225,14 +223,10 @@ impl StreamConsumer for PackRows {
 }
 
 impl InstructionCycleRow {
-    /// One streaming bundle pass over the cycle domain, packed row by row (the
-    /// wide bundle row exists only per chunk).
     pub(crate) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Vec<Self>, KernelError<F>> {
-        // Slice-backed sources pack index-parallel (the wide bundle row still
-        // never exists beyond a register); re-emulating sources stream.
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
                 let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
@@ -315,8 +309,6 @@ impl InstructionCycleRow {
     }
 }
 
-/// Optimized [`PrepareKernel`] implementor for the `instruction_read_raf`
-/// slot.
 pub struct OptimizedInstructionReadRaf;
 
 impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionReadRaf {
@@ -376,8 +368,6 @@ impl<F: JoltField> RafDecomposition<F> {
         }
     }
 
-    /// `(eval at c = 0, eval at c = 2)` of `prefix · q_shift + q_value` at
-    /// chunk-domain index `b`.
     #[inline]
     fn message_evals(&self, b: usize, half: usize) -> (F, F) {
         let (p0, p2) = extension_pair(self.prefix.evals(), b, half);
@@ -396,8 +386,6 @@ impl<F: JoltField> RafDecomposition<F> {
     }
 }
 
-/// Linear extension of a dense table's top variable at `c = 0` and `c = 2`:
-/// `(evals[b], 2·evals[b + half] − evals[b])`.
 #[inline]
 fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
     let lo = evals[b];
@@ -405,12 +393,10 @@ fn extension_pair<F: JoltField>(evals: &[F], b: usize, half: usize) -> (F, F) {
     (lo, hi + hi - lo)
 }
 
-/// Cycle-round state: the Gruen-split eq factor plus the cycle tables.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct CycleState<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     tables: CycleTables<F>,
-    /// Reused low-to-high binding buffer (swapped through every bind).
     bind_scratch: Vec<F>,
 }
 
@@ -431,11 +417,8 @@ enum CycleTables<F: JoltField> {
     },
 }
 
-/// Everything the pending-base evaluations need beyond the kernel's own
-/// rows / claim columns / phase eq tables.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct PendingCycleTables<F: JoltField> {
-    /// Per-table combined value at the bound address point.
     table_values: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     raf_interleaved: F,
@@ -443,8 +426,6 @@ struct PendingCycleTables<F: JoltField> {
     raf_identity: F,
 }
 
-/// Per-thread RAF scan accumulators over one phase's chunk domain, in
-/// deferred-reduction form.
 struct RafScan<F: JoltField> {
     shift_half: Vec<F::Accumulator>,
     left: Vec<F::Accumulator>,
@@ -454,7 +435,6 @@ struct RafScan<F: JoltField> {
     upper_all_ones: Vec<F::Accumulator>,
 }
 
-/// The reduced (field-element) form of one thread's [`RafScan`].
 struct RafSums<F> {
     shift_half: Vec<F>,
     left: Vec<F>,
@@ -541,8 +521,6 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     prefix_checkpoints: Vec<PrefixEval<F>>,
     /// `ALL_PREFIXES` indices referenced by tables with non-empty buckets.
     prefix_indices: Vec<usize>,
-    /// Materialized prefix chunk polynomials for the current phase, in
-    /// `prefix_indices` order.
     prefix_tables: Vec<Polynomial<F>>,
     /// Per present table: enum value + suffix `Q` polynomials in
     /// `table.suffixes()` order.
@@ -552,7 +530,6 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     raf_right: RafDecomposition<F>,
     raf_identity: RafDecomposition<F>,
     raf_upper_all_ones: RafDecomposition<F>,
-    /// Completed phases' bound-challenge eq tables.
     v_tables: Vec<Vec<F>>,
     phase_challenges: Vec<F>,
     cycle_challenges: Vec<F>,
@@ -757,14 +734,11 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.address_bits() / CHUNK_LEN
     }
 
-    /// Bits below (and excluding) phase `p`'s chunk.
     fn suffix_len(&self, phase: usize) -> usize {
         self.address_bits() - (phase + 1) * CHUNK_LEN
     }
 
     fn init_phase(&mut self, phase: usize) {
-        // Condensation: fold the previous phase's bound-challenge eq weights
-        // into the per-cycle mass.
         if phase != 0 {
             let shift = self.suffix_len(phase - 1);
             let rows = Arc::clone(&self.rows);
@@ -783,8 +757,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         };
         let upper_suffix_bits = suffix_len.saturating_sub(self.address_bits() / 2);
 
-        // Fused RAF scan over the whole trace (deferred-reduction sums,
-        // primitive-scalar multiplies).
         let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
         let raf = map_reduce_chunks(
@@ -839,8 +811,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .map(|value| value.mul_pow_2(suffix_len))
             .collect();
 
-        // RAF prefix chunk polynomials from the checkpoints — identical
-        // construction to the reference kernel.
         let identity_prefix: Vec<F> = (0..CHUNK_SIZE)
             .map(|x| self.raf_identity.checkpoint.mul_pow_2(CHUNK_LEN) + F::from_u64(x as u64))
             .collect();
@@ -888,8 +858,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
 
         self.init_suffix_tables(suffix_len, suffix_mask);
 
-        // Table-prefix chunk polynomials from the checkpoints, one prefix per
-        // parallel task.
         let checkpoints = self.prefix_checkpoints.as_slice();
         let prefix_indices = self.prefix_indices.as_slice();
         self.prefix_tables = map_indices(prefix_indices.len(), |position| {
@@ -913,10 +881,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.phase_challenges.clear();
     }
 
-    /// Read-checking suffix accumulators for the phase, per present table:
-    /// tables in parallel, each over parallel bucket chunks, suffixes
-    /// classified once (`One` adds, {0,1}-valued adds conditionally, general
-    /// ones use the primitive-scalar multiply).
     fn init_suffix_tables(&mut self, suffix_len: usize, suffix_mask: u128) {
         let rows = self.rows.as_slice();
         let u_evals = self.u_evals.as_slice();
@@ -990,7 +954,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     /// through the same `from_evals` constructor as the reference.
     fn address_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let half = self.raf_left.prefix.evals().len() / 2;
-        // Partial sums: [read, left, right, identity, upper] × {c=0, c=2}.
         let sums = map_reduce_chunks(
             half,
             (half / 8).max(8),
@@ -1117,8 +1080,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         }
                     }
                     CycleTables::Pending(pending) => {
-                        // First cycle round: same pair math over the bases —
-                        // the values a dense materialization would hold.
                         {
                             let lo = e_in * self.pending_combined_base(pending, 2 * row);
                             let hi = e_in * self.pending_combined_base(pending, 2 * row + 1);
@@ -1184,9 +1145,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             })
     }
 
-    /// Handoff at the address/cycle boundary — same collapse as the
-    /// reference, with parallel materialization and a Gruen-split eq factor
-    /// instead of a dense `T`-sized eq table.
     fn init_cycle_rounds(&mut self) {
         let gamma_sqr = self.gamma * self.gamma;
         let empty_bits = LookupBits::new(0, 0);
@@ -1248,7 +1206,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.buckets = Vec::new();
     }
 
-    /// The pending combined-value base at cycle `j` (packed-byte lookup).
     #[inline]
     fn pending_combined_base(&self, pending: &PendingCycleTables<F>, j: usize) -> F {
         let packed = self.claim_columns[j];
@@ -1264,7 +1221,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         table_value + raf_value
     }
 
-    /// The pending `ra_i` base at cycle `j` (the phase eq-table product).
     #[inline]
     fn pending_ra_base(&self, i: usize, j: usize) -> F {
         let ra_count = self.dimensions.num_virtual_ra_polys();
@@ -1377,7 +1333,6 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                         }))
                     })
                     .collect();
-                // The rows' and phase eq tables' last read is behind us.
                 self.rows = Arc::new(Vec::new());
                 self.v_tables = Vec::new();
                 if let Some(cycle) = self.cycle.as_mut() {
@@ -1509,8 +1464,6 @@ mod tests {
 
     use super::{build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel};
 
-    /// Packs reference-typed fixture rows into the optimized kernel's shared
-    /// row form (the stage-5 kernel reads no PC/RAM columns).
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
             .map(|row| {
@@ -1531,7 +1484,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// Deterministic non-Boolean challenge stream.
     fn challenge(round: usize) -> Fr {
         fr(0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11)
     }
@@ -1544,9 +1496,6 @@ mod tests {
         z ^ (z >> 31)
     }
 
-    /// Synthetic rows exercising every branch: a handful of present tables,
-    /// no-table rows, both RAF branches, and edge indices (0, all-ones,
-    /// all-ones upper half — the canonical-address path).
     fn fixture_rows(log_t: usize, seed: u64) -> Vec<InstructionReadRafWitness> {
         let tables = [
             LookupTableKind::<RISCV_XLEN>::And(Default::default()).index(),
@@ -1648,10 +1597,6 @@ mod tests {
             .sum()
     }
 
-    /// Runs reference and optimized kernels through the full round loop with
-    /// identical challenges, asserting byte-equal round polynomials (equal
-    /// canonical coefficient vectors of equal length) every round and equal
-    /// output claims.
     fn assert_parity(log_t: usize, num_virtual_ra_polys: usize, seed: u64) {
         assert_parity_case(log_t, num_virtual_ra_polys, seed, None);
     }
@@ -1732,8 +1677,6 @@ mod tests {
         assert_parity(3, 4, 67890);
     }
 
-    /// All-RAF rows: the identity path (and the canonical-address guard) is
-    /// the entire summand; interleaved-operand accumulators stay empty.
     #[test]
     fn parity_all_raf_rows() {
         let log_t = 3;

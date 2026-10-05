@@ -12,7 +12,6 @@ use rayon::prelude::*;
 
 use super::decomp_2d::{decompose_scalar_2d, glv_endomorphism};
 
-/// Shamir's trick for 2-point scalar multiplication with sign handling.
 pub(crate) fn shamir_glv_mul_2d(
     bases: &[G1Projective; 2],
     coeffs: &[<Fr as PrimeField>::BigInt; 2],
@@ -46,8 +45,6 @@ pub(crate) fn shamir_glv_mul_2d(
     result
 }
 
-/// Precomputed Shamir lookup table for 2D GLV: all 16 combinations
-/// of [P, λ(P)] with sign bits.
 struct PrecomputedShamir2Table {
     table: [G1Projective; 16],
 }
@@ -85,7 +82,6 @@ impl PrecomputedShamir2Table {
     }
 }
 
-/// Shamir's trick using precomputed table.
 fn shamir_glv_mul_2d_precomputed(
     table: &PrecomputedShamir2Table,
     coeffs: &[<Fr as PrimeField>::BigInt; 2],

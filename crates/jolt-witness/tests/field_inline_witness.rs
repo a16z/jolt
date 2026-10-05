@@ -356,7 +356,6 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
         provider.committed_order(),
         vec![FieldInlineCommittedPolynomial::FieldRdInc]
     );
-    // The dyn seam serves the same column as the inherent view.
     assert_eq!(
         provider
             .oracle_table(FieldInlinePolynomialId::Committed(

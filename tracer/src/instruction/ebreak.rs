@@ -15,8 +15,8 @@ use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RIS
 
 declare_riscv_instr!(
     name   = EBREAK,
-    mask   = 0xffffffff,  // Exact match
-    match  = 0x00100073,  // EBREAK encoding
+    mask   = 0xffffffff,
+    match  = 0x00100073,
     format = FormatI,
     registers = RegisterStateI,
     ram    = ()

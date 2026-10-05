@@ -1,9 +1,3 @@
-//! Integration tests: full prover-verifier roundtrips with product compositions.
-//!
-//! These tests construct honest sumcheck proofs for polynomials of varying
-//! degree and verify them, exercising the complete protocol flow including
-//! transcript synchronization.
-
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
 use jolt_field::{Fr, Ring};
@@ -32,7 +26,6 @@ fn prove_product(
     let n = 1 << num_vars;
     assert!(polys.iter().all(|p| p.len() == n));
 
-    // Compute claimed sum
     let claimed_sum: F = (0..n)
         .map(|i| polys.iter().map(|p| p[i]).product::<F>())
         .sum();
@@ -43,10 +36,6 @@ fn prove_product(
     for _round in 0..num_vars {
         let half = bufs[0].len() / 2;
 
-        // Evaluate the round polynomial at points 0, 1, ..., degree.
-        // At point t, for each pair (lo, hi):
-        //   f_j(t) = lo + t*(hi - lo)
-        // The round poly value is: sum_i prod_j f_j(t)
         let evals: Vec<F> = (0..=degree)
             .map(|t| {
                 let ft = F::from_u64(t as u64);
@@ -64,7 +53,6 @@ fn prove_product(
             })
             .collect();
 
-        // Interpolate to get the degree-d round polynomial in coefficient form
         let points: Vec<(F, F)> = evals
             .iter()
             .enumerate()
@@ -97,7 +85,6 @@ fn prove_product(
 
 #[test]
 fn degree3_final_eval_correct() {
-    // Verify that the final eval matches the product of individual evals at the point
     let num_vars = 3;
     let n = 1 << num_vars;
 
@@ -125,7 +112,6 @@ fn degree3_final_eval_correct() {
     } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt)
         .unwrap();
 
-    // f(r) * g(r) * h(r) should equal the final_eval
     let f_at_r = Polynomial::new(f_evals).evaluate_and_consume(&challenges);
     let g_at_r = Polynomial::new(g_evals).evaluate_and_consume(&challenges);
     let h_at_r = Polynomial::new(h_evals).evaluate_and_consume(&challenges);
@@ -228,7 +214,6 @@ fn labeled_round_verifier_roundtrip() {
 
     let label = SUMCHECK_ROUND_TRANSCRIPT_LABEL;
 
-    // Prove with labeled absorption
     let mut pt = Blake2bTranscript::new(b"sumcheck-roundtrip");
     let degree = 2;
     let mut bufs = vec![f.clone(), g.clone()];

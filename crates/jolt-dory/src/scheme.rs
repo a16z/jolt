@@ -1,5 +1,3 @@
-//! Dory PCS implementing the `jolt-openings` trait hierarchy.
-
 #![expect(
     clippy::unimplemented,
     reason = "the dory adapter's commit is unreachable because DoryScheme pre-computes row commitments"
@@ -451,7 +449,6 @@ impl ZkOpeningScheme for DoryScheme {
     }
 }
 
-/// Dense commit: full MSM per row, parallel over rows.
 fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     sigma: usize,
@@ -471,7 +468,6 @@ fn commit_rows_dense<P: MultilinearPoly<Fr> + ?Sized>(
         .collect()
 }
 
-/// One-hot commit: O(T) group additions for unit-valued one-hot polynomials.
 fn commit_rows_one_hot<P: MultilinearPoly<Fr> + ?Sized>(
     poly: &P,
     num_rows: usize,
@@ -632,7 +628,6 @@ mod tests {
     fn commit_rejects_polynomial_exceeding_setup_capacity() {
         let mut rng = ChaCha20Rng::seed_from_u64(700);
         let prover_setup = DoryScheme::setup_prover(2);
-        // 6-variable poly: 8 columns > the 2-var setup's SRS width.
         let poly = Polynomial::<Fr>::random(6, &mut rng);
         let err = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap_err();
         assert!(

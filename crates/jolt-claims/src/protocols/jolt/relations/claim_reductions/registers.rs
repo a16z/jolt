@@ -1,5 +1,3 @@
-//! Registers claim-reduction symbolic sumcheck relation.
-
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::registers::{
@@ -45,7 +43,6 @@ pub struct RegistersClaimReductionInputClaims<C> {
     pub rs2_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the registers claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RegistersClaimReductionChallenges<F> {

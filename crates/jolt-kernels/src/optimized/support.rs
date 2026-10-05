@@ -1,8 +1,3 @@
-//! Shared machinery of the optimized kernels: the split-eq (Gruen) round
-//! driver, round/typed-row bookkeeping, deferred-reduction accumulator
-//! helpers, and the cfg(parallel) fold shims. One home per idiom — kernels
-//! hold the summand math, this module holds the plumbing they all repeat.
-
 use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
@@ -44,12 +39,10 @@ impl RoundProgress {
         self.total
     }
 
-    /// Rounds bound so far (multi-phase kernels key their transitions on it).
     pub(crate) fn bound(&self) -> usize {
         self.bound
     }
 
-    /// Record one bound round.
     pub(crate) fn advance(&mut self) {
         self.bound += 1;
     }
@@ -93,9 +86,6 @@ pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     source: &(impl RowSource + ?Sized),
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
-    // Slice-backed sources collect index-parallel — no chunk staging, no
-    // serial consume copy (out-of-range requests fall through for the
-    // walk's validation).
     if let Some(access) = source.random_access() {
         if cycles <= access.cycles() {
             return collect_par_map(&access, cycles, |bundle: B| bundle);
@@ -236,7 +226,6 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
     }
 }
 
-// Product samples at 1, 2, and infinity; finite differences supply later points.
 #[inline]
 fn quadratic_product_samples<F: JoltField>(values: [F; 2], steps: [F; 2]) -> [F; 3] {
     [
@@ -463,12 +452,10 @@ impl<F: JoltField> RoundChallenges<F> {
         self.total
     }
 
-    /// Rounds bound so far.
     pub(crate) fn bound(&self) -> usize {
         self.challenges.len()
     }
 
-    /// Record one bound round's challenge.
     pub(crate) fn push(&mut self, challenge: F) {
         self.challenges.push(challenge);
     }
@@ -534,8 +521,6 @@ pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
     }
 }
 
-/// Kernel-side extension of [`GruenSplitEqPolynomial`]: assemble a round
-/// message from the eq-stripped inner factor's evaluations.
 pub(crate) trait GruenRoundMessage<F: JoltField> {
     /// `s(t) = ℓ(t) · q(t)` at `t = 0, 1, …, q_evals.len() − 1`, checked
     /// against `s(0) + s(1) = previous_claim` (the reference tier's round
@@ -743,7 +728,6 @@ pub(crate) fn round_poly_from_skipped_evals<F: JoltField>(
     UnivariatePoly::from_evals(&evals)
 }
 
-/// Sum per-thread accumulator vectors elementwise.
 #[cfg(feature = "parallel")]
 pub(crate) fn merge_evals<F: JoltField>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
     for (left, right) in left.iter_mut().zip(right) {
@@ -845,7 +829,6 @@ pub(crate) fn par_sum_pair_groups_reusing<F: JoltField, S: Send>(
     }
 }
 
-/// `merge`-fold of `map` over index chunks of at most `chunk_size`.
 pub(crate) fn map_reduce_chunks<R: Send>(
     len: usize,
     chunk_size: usize,
@@ -883,7 +866,6 @@ pub(crate) fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + S
     }
 }
 
-/// Indexed in-place update of a slice.
 pub(crate) fn for_each_index_mut<T: Send>(
     items: &mut [T],
     f: impl Fn(usize, &mut T) + Send + Sync,
@@ -904,7 +886,6 @@ pub(crate) fn for_each_index_mut<T: Send>(
     }
 }
 
-/// Pool-scaled chunk size for the chunked scans.
 pub(crate) fn scan_chunk_size(len: usize) -> usize {
     #[cfg(feature = "parallel")]
     {
@@ -998,8 +979,6 @@ impl<F: JoltField> SplitLt<F> {
             } => {
                 bind_pairs(lt_lo, r);
                 if lt_lo.len() == 1 {
-                    // Lo variables exhausted: fold the lo scalar into the hi
-                    // table and continue densely.
                     let lo_scalar = lt_lo[0];
                     let dense: Vec<F> = lt_hi
                         .iter()
@@ -1066,7 +1045,6 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
     }
 }
 
-/// One pass's borrowed row provider over a [`BundleStore`].
 pub(crate) enum BundleAccess<'a, B> {
     View(&'a RandomAccessRows),
     Retained(&'a [B]),
@@ -1084,7 +1062,6 @@ impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
     }
 }
 
-/// `left * right`, skipping the multiply when either side is zero.
 #[inline(always)]
 pub(crate) fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
     if left.is_zero() || right.is_zero() {

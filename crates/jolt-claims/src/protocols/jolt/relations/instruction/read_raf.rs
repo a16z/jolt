@@ -1,5 +1,3 @@
-//! Instruction read-RAF symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use serde::{Deserialize, Serialize};
@@ -33,8 +31,6 @@ pub struct InstructionReadRafOutputClaims<C> {
     pub instruction_raf_flag: C,
 }
 
-/// Consumed instruction-lookup openings (the reduced lookup output + left/right
-/// operands), wired from the upstream instruction claim-reduction.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionReadRafInputClaims<C> {
     #[opening(LookupOutput, from = InstructionClaimReduction)]
@@ -45,7 +41,6 @@ pub struct InstructionReadRafInputClaims<C> {
     pub right_lookup_operand: C,
 }
 
-/// Fiat-Shamir challenge drawn by the instruction read-RAF sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionReadRafChallenges<F> {

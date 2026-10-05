@@ -3,8 +3,6 @@ mod exec_functions {
 
     #[test]
     fn test_exec_sha256_multi_block() {
-        // Test with a two-block message
-        // First block
         let input1 = [
             0x61626364, 0x62636465, 0x63646566, 0x64656667, 0x65666768, 0x66676869, 0x6768696a,
             0x68696a6b, 0x696a6b6c, 0x6a6b6c6d, 0x6b6c6d6e, 0x6c6d6e6f, 0x6d6e6f70, 0x6e6f7071,
@@ -97,7 +95,6 @@ mod sdk_tests {
 
     #[test]
     fn test_sha256_sdk_digest() {
-        // Test vector for "abc"
         let input = b"abc";
         let result = Sha256::digest(input);
 
@@ -112,7 +109,6 @@ mod sdk_tests {
 
     #[test]
     fn test_sha256_sdk_update_finalize() {
-        // Test incremental hashing
         let mut hasher = Sha256::new();
         hasher.update(b"ab");
         hasher.update(b"c");
@@ -138,15 +134,12 @@ mod sdk_tests {
         ];
 
         for &size in &test_sizes {
-            // Create aligned buffer
             let aligned: Vec<u8> = (0..size).map(|i| (i * 37 + 11) as u8).collect();
 
-            // Create unaligned buffer by adding 1-byte offset
             let mut unaligned_buf = vec![0u8; size + 1];
             unaligned_buf[1..].copy_from_slice(&aligned);
             let unaligned = &unaligned_buf[1..];
 
-            // Verify alignment difference
             if size > 0 {
                 assert_ne!(
                     aligned.as_ptr() as usize % 4,
@@ -155,7 +148,6 @@ mod sdk_tests {
                 );
             }
 
-            // Both should produce identical results
             let aligned_result = Sha256::digest(&aligned);
             let unaligned_result = Sha256::digest(unaligned);
 
@@ -164,7 +156,6 @@ mod sdk_tests {
                 "SHA256: aligned vs unaligned mismatch at size {size}"
             );
 
-            // Also verify against reference implementation
             let expected: [u8; 32] = RefSha256::digest(&aligned).into();
             assert_eq!(
                 aligned_result, expected,

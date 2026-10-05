@@ -77,7 +77,6 @@ impl<F: JoltField> LtPolynomial<F> {
         self.lt_hi.is_empty()
     }
 
-    /// Reconstructs `LT[idx]` from the split tables.
     #[inline]
     fn get(&self, idx: usize) -> F {
         let lo_size = self.lt_lo.len();
@@ -155,7 +154,6 @@ fn lt_evals<F: JoltField>(r: &[F]) -> Vec<F> {
     evals
 }
 
-/// In-place HighToLow bind: `v[j] = v[j] + challenge · (v[j+half] - v[j])`.
 #[inline]
 fn bind_in_place<F: JoltField>(v: &mut Vec<F>, challenge: F) {
     let half = v.len() / 2;
@@ -189,7 +187,6 @@ mod tests {
 
     #[test]
     fn boolean_correctness() {
-        // LT(x, r) = 1 iff x < r on Boolean inputs.
         for n in 1..=5 {
             for r_int in 0..(1u64 << n) {
                 let r_bits = index_to_bits(r_int as usize, n);
@@ -244,7 +241,6 @@ mod tests {
 
     #[test]
     fn sequential_bind_converges() {
-        // Bind all variables → single scalar = evaluate(challenges, r).
         let mut rng = ChaCha20Rng::seed_from_u64(200);
         for n in 2..=8 {
             let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
@@ -266,7 +262,6 @@ mod tests {
 
     #[test]
     fn multi_round_bind_matches_full_table() {
-        // Bind several rounds and verify each round matches the full table.
         let mut rng = ChaCha20Rng::seed_from_u64(400);
         let n = 6;
         let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();

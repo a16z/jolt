@@ -1,5 +1,3 @@
-//! Streaming (chunked) commitment for the Dory scheme.
-
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use dory::backends::arkworks::ArkG1;
@@ -361,8 +359,6 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
     )
 }
 
-/// One column-major one-hot chunk's `one_hot_k` partial row commitments —
-/// the shared body behind the single and batch streaming entry points.
 fn one_hot_chunk_commitments(
     bases: &[G1Affine],
     setup: &DoryProverSetup,

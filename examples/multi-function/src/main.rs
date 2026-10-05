@@ -4,7 +4,6 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    // Prove addition.
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_add(target_dir);
 
@@ -16,7 +15,6 @@ pub fn main() {
     let prove_add = guest::build_prover_add(program, prover_preprocessing);
     let verify_add = guest::build_verifier_add(verifier_preprocessing);
 
-    // Prove multiplication.
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_mul(target_dir);
 

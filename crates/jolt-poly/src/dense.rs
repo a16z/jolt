@@ -9,11 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::eq::EqPolynomial;
 use crate::BindingOrder;
 
-/// Minimum number of evaluations before parallelizing bind/evaluate.
-///
-/// Below this threshold the overhead of Rayon work-stealing exceeds the
-/// benefit. 1024 field elements is roughly one L1 cache line's worth of
-/// useful work per core, keeping synchronization cost negligible.
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
@@ -42,7 +37,6 @@ pub struct Polynomial<T> {
     num_vars: usize,
 }
 
-/// Wire-format helper for validated deserialization.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "T: for<'a> Deserialize<'a>"))]
 struct PolynomialRaw<T> {
@@ -117,7 +111,6 @@ impl<T> Polynomial<T> {
         &self.evals
     }
 
-    /// Consumes the polynomial and returns the evaluation vector.
     pub fn into_evals(self) -> Vec<T> {
         self.evals
     }
@@ -818,7 +811,6 @@ mod tests {
         let r2 = Fr::random(&mut rng);
         let remaining: Vec<Fr> = (0..1).map(|_| Fr::random(&mut rng)).collect();
 
-        // bind_to_field(r1) then bind(r2) should match dense evaluate
         let mut bound = compact.bind_to_field::<Fr>(r1);
         bound.bind(r2);
         let result = bound.evaluate(&remaining);

@@ -11,13 +11,9 @@ const INITIAL_STATE: [u64; STATE_VECTOR_LEN] = {
 };
 
 pub struct Blake2b {
-    /// Hash state (8 x 64-bit words)
     h: [u64; STATE_VECTOR_LEN],
-    /// Buffer for incomplete blocks
     buffer: [u8; BLOCK_INPUT_SIZE_IN_BYTES],
-    /// Current number of bytes in `buffer`.
     buffer_len: usize,
-    /// Total number of bytes processed so far.
     counter: u64,
 }
 
@@ -58,7 +54,6 @@ impl Blake2b {
 
         let mut offset = 0;
 
-        // Handle partial buffer first
         if self.buffer_len != 0 {
             let needed = BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len;
             let to_copy = needed.min(input_len);
@@ -100,7 +95,6 @@ impl Blake2b {
             offset += BLOCK_INPUT_SIZE_IN_BYTES;
         }
 
-        // Buffer any remaining bytes
         let final_bytes = input_len - offset;
         if final_bytes > 0 {
             unsafe {
@@ -118,7 +112,6 @@ impl Blake2b {
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
         self.counter += self.buffer_len as u64;
 
-        // Zero the remaining bytes using optimized pointer write
         if self.buffer_len < BLOCK_INPUT_SIZE_IN_BYTES {
             unsafe {
                 core::ptr::write_bytes(
@@ -129,7 +122,6 @@ impl Blake2b {
             }
         }
 
-        // Process the final block
         compression_caller(&mut self.h, &self.buffer, self.counter, true);
 
         #[cfg(target_endian = "little")]
@@ -140,7 +132,6 @@ impl Blake2b {
 
         #[cfg(target_endian = "big")]
         {
-            // For big-endian, convert each u64 to little-endian bytes
             let mut hash = [0u8; OUTPUT_SIZE];
             for i in 0..STATE_VECTOR_LEN {
                 let bytes = self.h[i].to_le_bytes();
@@ -187,19 +178,16 @@ impl Blake2b {
     fn digest_from_state(mut h: [u64; STATE_VECTOR_LEN], input: &[u8]) -> [u8; OUTPUT_SIZE] {
         let len = input.len();
 
-        // Empty input: direct compression
         if len == 0 {
             compress_direct(&mut h, &[], 0, true);
             return to_bytes(h);
         }
 
-        // Single block (≤128 bytes): direct compression (no intermediate buffer)
         if len <= BLOCK_INPUT_SIZE_IN_BYTES {
             compress_direct(&mut h, input, len as u64, true);
             return to_bytes(h);
         }
 
-        // Large input: process full blocks directly, then final block
         let full_blocks = len / BLOCK_INPUT_SIZE_IN_BYTES;
         let tail_len = len % BLOCK_INPUT_SIZE_IN_BYTES;
         let non_final_blocks = if tail_len == 0 {
@@ -208,7 +196,6 @@ impl Blake2b {
             full_blocks
         };
 
-        // Process non-final blocks directly (no copy)
         for i in 0..non_final_blocks {
             let offset = i * BLOCK_INPUT_SIZE_IN_BYTES;
             let block = &input[offset..offset + BLOCK_INPUT_SIZE_IN_BYTES];
@@ -220,14 +207,11 @@ impl Blake2b {
             );
         }
 
-        // Final block
         if tail_len == 0 {
-            // Last full block is final
             let offset = (full_blocks - 1) * BLOCK_INPUT_SIZE_IN_BYTES;
             let block = &input[offset..offset + BLOCK_INPUT_SIZE_IN_BYTES];
             compress(&mut h, block, len as u64, true);
         } else {
-            // Partial final block: use direct compression
             let tail_offset = full_blocks * BLOCK_INPUT_SIZE_IN_BYTES;
             compress_direct(&mut h, &input[tail_offset..], len as u64, true);
         }
@@ -262,7 +246,6 @@ fn initial_state_with_params(salt: &[u8], persona: &[u8]) -> [u64; STATE_VECTOR_
     h
 }
 
-/// Convert hash state to output bytes.
 #[inline(always)]
 fn to_bytes(h: [u64; STATE_VECTOR_LEN]) -> [u8; OUTPUT_SIZE] {
     #[cfg(target_endian = "little")]
@@ -302,7 +285,6 @@ fn compression_caller(
 
     #[cfg(target_endian = "big")]
     {
-        // For big-endian, we need to convert each u64
         for i in 0..MSG_BLOCK_LEN {
             let offset = i * 8;
             message[i] = u64::from_le_bytes([
@@ -326,7 +308,6 @@ fn compression_caller(
     }
 }
 
-/// Compress a 128-byte block.
 #[inline(always)]
 fn compress(hash_state: &mut [u64; STATE_VECTOR_LEN], block: &[u8], counter: u64, is_final: bool) {
     let mut message = [0u64; MSG_BLOCK_LEN + 2];
@@ -382,11 +363,9 @@ fn compress_direct(
 
     #[cfg(target_endian = "little")]
     unsafe {
-        // Copy input directly to message
         if len > 0 {
             core::ptr::copy_nonoverlapping(input.as_ptr(), message_ptr, len);
         }
-        // Zero only the padding bytes (from input end to block end)
         if len < BLOCK_INPUT_SIZE_IN_BYTES {
             core::ptr::write_bytes(message_ptr.add(len), 0, BLOCK_INPUT_SIZE_IN_BYTES - len);
         }
@@ -395,12 +374,10 @@ fn compress_direct(
     #[cfg(target_endian = "big")]
     {
         let message_ref = unsafe { &mut *message.as_mut_ptr() };
-        // Zero the message block first for big-endian
         for i in 0..MSG_BLOCK_LEN {
             message_ref[i] = 0;
         }
 
-        // For big-endian, handle partial bytes carefully
         let full_words = len / 8;
         let remaining = len % 8;
 
@@ -428,7 +405,6 @@ fn compress_direct(
         }
     }
 
-    // Set counter and is_final, then compress
     unsafe {
         let message_ref = &mut *message.as_mut_ptr();
         message_ref[MSG_BLOCK_LEN] = counter;
@@ -480,7 +456,6 @@ pub(crate) unsafe fn blake2b_compress(state: *mut u64, message: *const u64) {
     let state_slice = core::slice::from_raw_parts_mut(state, 8);
     let message_slice = core::slice::from_raw_parts(message, 18);
 
-    // Convert to arrays for type safety
     let state_array: &mut [u64; 8] = state_slice
         .try_into()
         .expect("State pointer must reference exactly 8 u64 values");
@@ -549,15 +524,12 @@ mod digest_tests {
     #[test]
     fn test_blake2b_variable_input_lengths() {
         const MAX_LENGTH: usize = 1200;
-        // Pre-generate a large input buffer with a repeating pattern
         let input_buffer: [u8; MAX_LENGTH] = std::array::from_fn(|i| {
-            // Create a more complex pattern that changes based on position
             let base = (i % 256) as u8;
             let modifier = ((i / 256) * 17 + (i % 7) * 31) as u8;
             base.wrapping_add(modifier)
         });
 
-        // Test every length from 0 to MAX_LENGTH
         for length in 0..=MAX_LENGTH {
             let input = &input_buffer[..length];
             use blake2::Digest as RefDigest;
@@ -673,14 +645,12 @@ mod streaming_tests {
         const MAX_LENGTH: usize = 512;
         let input_buffer: [u8; MAX_LENGTH] = std::array::from_fn(|i| ((i * 137 + 42) % 256) as u8);
 
-        // Test different chunk sizes
         let chunk_sizes = [1, 3, 7, 16, 32, 63, 64, 65, 128];
         let test_lengths = [0, 1, 63, 64, 65, 127, 128, 129, 255, 256, 257, MAX_LENGTH];
 
         for &chunk_size in &chunk_sizes {
             for total_length in test_lengths {
                 let input = &input_buffer[..total_length];
-                // Feed data incrementally
                 let mut hasher = Blake2b::new();
                 let mut expected_hasher = blake2::Blake2b512::new();
                 let mut offset = 0;
@@ -706,11 +676,11 @@ mod streaming_tests {
         let test_data = b"Some test data for empty update testing";
 
         let mut hasher = Blake2b::new();
-        hasher.update(b""); // Empty update at start
+        hasher.update(b"");
         hasher.update(&test_data[..10]);
-        hasher.update(b""); // Empty update in middle
+        hasher.update(b"");
         hasher.update(&test_data[10..]);
-        hasher.update(b""); // Empty update at end
+        hasher.update(b"");
 
         assert_eq!(
             hasher.finalize(),
@@ -721,21 +691,17 @@ mod streaming_tests {
 
     #[test]
     fn test_blake2b_aligned_vs_unaligned() {
-        // Test various sizes to cover different code paths
         let test_sizes = [
             0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 65, 127, 128, 129, 256, 512, 1024, 2048,
         ];
 
         for &size in &test_sizes {
-            // Create aligned buffer (array is naturally aligned)
             let aligned: Vec<u8> = (0..size).map(|i| (i * 37 + 11) as u8).collect();
 
-            // Create unaligned buffer by adding 1-byte offset
             let mut unaligned_buf = vec![0u8; size + 1];
             unaligned_buf[1..].copy_from_slice(&aligned);
             let unaligned = &unaligned_buf[1..];
 
-            // Verify alignment difference
             if size > 0 {
                 assert_ne!(
                     aligned.as_ptr() as usize % 8,
@@ -744,7 +710,6 @@ mod streaming_tests {
                 );
             }
 
-            // Both should produce identical results
             let aligned_result = Blake2b::digest(&aligned);
             let unaligned_result = Blake2b::digest(unaligned);
 
@@ -753,7 +718,6 @@ mod streaming_tests {
                 "Blake2b: aligned vs unaligned mismatch at size {size}"
             );
 
-            // Also verify against reference implementation
             use blake2::Digest as RefDigest;
             let expected: [u8; 64] = blake2::Blake2b512::digest(&aligned).into();
             assert_eq!(

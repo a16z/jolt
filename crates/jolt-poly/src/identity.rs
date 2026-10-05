@@ -68,7 +68,6 @@ pub struct IdentityPolynomial {
 }
 
 impl IdentityPolynomial {
-    /// Creates an identity polynomial over $n$ variables.
     pub fn new(num_vars: usize) -> Self {
         Self { num_vars }
     }

@@ -1,5 +1,3 @@
-//! field_inline registers claim-reduction symbolic sumcheck relation.
-
 use crate::protocols::field_inline::geometry::claim_reductions::registers::{
     field_rd_value_reduced, field_rd_value_spartan, field_rs1_value_reduced,
     field_rs1_value_spartan, field_rs2_value_reduced, field_rs2_value_spartan,
@@ -49,7 +47,6 @@ pub struct FieldRegistersClaimReductionInputClaims<C> {
     pub rs2_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the field-register claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[protocol(field_inline)]

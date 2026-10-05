@@ -1,5 +1,3 @@
-//! RAM read/write-checking symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +40,6 @@ pub struct RamReadWriteInputClaims<C> {
     pub ram_write_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the RAM read/write-checking sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamReadWriteChallenges<F> {

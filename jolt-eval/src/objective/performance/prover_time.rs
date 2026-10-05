@@ -3,7 +3,6 @@ use jolt_host::Program;
 use crate::guests::{self, GuestConfig, GuestProgram, ProverPreprocessing};
 use crate::objective::Objective;
 
-/// Per-iteration state: everything needed to call `prove`.
 pub struct ProverTimeSetup {
     pub program: GuestProgram,
     pub prover_pp: ProverPreprocessing,
@@ -38,7 +37,6 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         let mc = self.guest.memory_config();
         let input = self.guest.input();
 
-        // Compile
         let target_dir = std::env::temp_dir().join("jolt-eval-bench-targets");
         let mut host_program = Program::new(self.guest.package());
         if let Some(func) = self.guest.func() {

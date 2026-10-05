@@ -1,5 +1,3 @@
-//! Instruction claim-reduction symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +54,6 @@ pub struct InstructionClaimReductionInputClaims<C> {
     pub right_instruction_input: C,
 }
 
-/// Fiat-Shamir challenge drawn by the instruction claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionClaimReductionChallenges<F> {

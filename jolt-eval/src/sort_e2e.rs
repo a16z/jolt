@@ -103,7 +103,6 @@ impl Invariant for NaiveSortInvariant {
     }
 }
 
-/// Run the red-team e2e test against `CandidateSortInvariant`.
 pub fn run_redteam_test(
     model: &str,
     max_turns: usize,

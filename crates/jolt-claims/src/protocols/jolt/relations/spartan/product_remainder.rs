@@ -1,5 +1,3 @@
-//! Spartan product remainder symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};

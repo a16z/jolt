@@ -187,8 +187,6 @@ fn symbolic_relations_stay_in_claims() {
     );
 }
 
-/// The shared Twist-identity module carries no protocol ids: it must not reference
-/// either protocol module.
 #[test]
 fn twist_reference_no_protocol_module() {
     let mut violations = Vec::new();

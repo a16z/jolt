@@ -1,4 +1,3 @@
-//! BLAKE3 inline implementation module
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x0B;
@@ -54,9 +53,8 @@ pub const BLOCK_INPUT_SIZE_IN_BYTES: usize = 64;
 pub const OUTPUT_SIZE_IN_BYTES: usize = 32;
 pub const WORD_SIZE: usize = 32;
 
-// BLAKE3 flags
 pub const FLAG_CHUNK_START: u32 = 1;
 pub const FLAG_CHUNK_END: u32 = 2;
 pub const FLAG_PARENT: u32 = 4; // Used for Merkle tree parent nodes
 pub const FLAG_ROOT: u32 = 8;
-pub const FLAG_KEYED_HASH: u32 = 16; // Used in tests for generic compress
+pub const FLAG_KEYED_HASH: u32 = 16;

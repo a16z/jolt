@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 4 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
@@ -114,7 +112,6 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     }
 }
 
-/// The shared opening-point accessors over the point-only stage-4 aggregate.
 impl<F: JoltField> Stage4OutputPoints<F> {
     /// The register read-write opening point (shared by all five register
     /// openings).
@@ -318,7 +315,6 @@ mod tests {
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        // The RAM value-check domain separator lands after the leading gammas.
         assert!(matches!(draw_events.first(), Some(DrawEvent::Squeeze(1))));
         assert!(draw_events
             .iter()
@@ -334,10 +330,6 @@ mod tests {
         assert_eq!(challenges.ram_val_check.gamma, inline_ram_gamma);
     }
 
-    /// The generated `output_claim_count` sums the members' wire sets: the five register
-    /// openings and the two RAM value-check ones (no staged advice / program-image
-    /// contributions in this fixture) — plus, under `field-inline`, the field-register
-    /// read-write member's five.
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();

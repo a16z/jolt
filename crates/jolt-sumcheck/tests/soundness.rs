@@ -1,9 +1,3 @@
-//! Soundness tests: adversarial scenarios for sumcheck verification.
-//!
-//! These tests probe whether a malicious prover can trick the verifier into
-//! accepting an invalid claim. Each test targets a specific attack vector
-//! against the sumcheck protocol.
-
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
 use jolt_field::{Fr, Ring};
@@ -37,7 +31,6 @@ fn new_transcript() -> Blake2bTranscript<F> {
     Blake2bTranscript::new(b"soundness-test")
 }
 
-/// Honest degree-1 sumcheck prover.
 fn honest_prove(
     evals: &[F],
     num_vars: usize,
@@ -115,7 +108,6 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
     let sum_g = compute_sum(&g_evals);
     assert_eq!(sum_f, sum_g, "precondition: f and g must have equal sums");
 
-    // Construct honest proof for g
     let mut pt = new_transcript();
     let proof = honest_prove(&g_evals, 3, &mut pt);
 
@@ -151,7 +143,6 @@ fn corrupted_last_round_detected() {
     let mut pt = new_transcript();
     let mut proof = honest_prove(&evals, 3, &mut pt);
 
-    // Corrupt only the last round polynomial
     proof.round_polynomials[2] = UnivariatePoly::new(vec![F::from_u64(0), F::from_u64(0)]);
 
     let claim = SumcheckClaim {
@@ -196,8 +187,6 @@ fn swapped_round_order_rejected() {
 
 #[test]
 fn all_zero_polynomial_honest_proof_for_zero_sum() {
-    // The zero polynomial f(x) = 0 for all x has sum = 0.
-    // An honest proof should be all-zero round polynomials and must verify.
     let num_vars = 3;
     let evals = vec![F::from_u64(0); 1 << num_vars];
 
@@ -235,7 +224,6 @@ fn verifier_transcript_desync_rejected() {
         claimed_sum: sum,
     };
 
-    // Poison the verifier transcript with extra data
     let mut vt = new_transcript();
     F::from_u64(0xdead).append_to_transcript(&mut vt);
 
@@ -251,9 +239,6 @@ fn verifier_transcript_desync_rejected() {
 
 #[test]
 fn num_vars_zero_accepts_any_claimed_sum() {
-    // With 0 variables, the "polynomial" is a constant. The sum over the empty
-    // hypercube {0,1}^0 = {()} is just the constant value itself.
-    // The verifier should accept with no rounds and return (claimed_sum, []).
     let claim = SumcheckClaim {
         num_vars: 0,
         degree: 1,

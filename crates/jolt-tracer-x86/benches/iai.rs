@@ -44,19 +44,16 @@ fn bench_regs() -> [u64; REGS] {
     // Distinct operand values; the branch benches rely on x5 != x6.
     pre[5] = 1;
     pre[6] = 2;
-    pre[7] = 1 << 20; // one-hot bitmask for the register-form shift
-    pre[8] = SCRATCH_START; // aligned base for memory ops
+    pre[7] = 1 << 20;
+    pre[8] = SCRATCH_START;
     pre
 }
 
-/// Setup: straight-line repetition of a non-control-flow row (or a `Jal +4`
-/// chain, which is also address-sequential).
 fn straight(kind: JoltInstructionKind, operands: Operands) -> Prepared {
     let program = straight_line_program(row(kind, operands), COUNT);
     Prepared::new(&program, bench_regs()).expect("prepare failed")
 }
 
-/// Setup: one dispatched `Jalr` through the jump table.
 fn jalr_single() -> Prepared {
     let mut pre = bench_regs();
     pre[5] = TEST_ADDR + 8;

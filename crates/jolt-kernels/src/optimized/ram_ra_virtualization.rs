@@ -109,7 +109,6 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
     }
 }
 
-/// Address chunk `i`, absent on no-access cycles.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
     addresses: Arc<Vec<u32>>,
@@ -255,7 +254,6 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         let mut q_evals = self.gruen.par_fold_out_in(
             || vec![F::zero(); points],
             |acc, row, _x_in, e_in| {
-                // With no committed RA polynomials, the product is one.
                 if num_committed == 0 {
                     for value in acc.iter_mut() {
                         *value += e_in;
@@ -373,7 +371,6 @@ mod tests {
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
 
-    /// The fixture's one-hot chunk width (`JoltOneHotConfig.log_k_chunk`).
     const CHUNK_BITS: usize = 4;
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
@@ -412,8 +409,6 @@ mod tests {
                 CHUNK_BITS,
             );
 
-            // The honest reduced claim: the eq-weighted sum of the committed
-            // chunk products, straight off the oracle grids.
             let chunks = committed_address_chunks(&ram_reduced_address, CHUNK_BITS);
             let folded: Vec<Vec<Fr>> = chunks
                 .iter()
@@ -507,8 +502,6 @@ mod tests {
 
     #[test]
     fn parity_two_committed_chunks() {
-        // log_k = 8 with 4-bit chunks: two committed RA polynomials, hot
-        // words on both sides of the chunk boundary.
         run_parity(
             FixtureShape {
                 log_t: 4,
@@ -568,7 +561,6 @@ mod tests {
         }
     }
 
-    /// Covers the empty committed-RA product when `ram_k = 1`.
     #[test]
     fn zero_committed_chunks_prove_in_parity_and_fail_closed() {
         let seed = 443;

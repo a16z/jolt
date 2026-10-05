@@ -1,5 +1,3 @@
-//! Instruction RA-virtualization symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +32,6 @@ pub struct InstructionRaVirtualizationInputClaims<C> {
     pub instruction_ra: Vec<C>,
 }
 
-/// Fiat-Shamir challenge drawn by the instruction RA-virtualization sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionRaVirtualizationChallenges<F> {

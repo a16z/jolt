@@ -156,7 +156,6 @@ pub use virt::WindowMaskB;
 pub use virt::WindowMaskH;
 pub use virt::WindowMaskW;
 
-// Atomic + system + advice-load + virtual lw/sw additions
 pub use a::AmoAddD;
 pub use a::AmoAddW;
 pub use a::AmoAndD;

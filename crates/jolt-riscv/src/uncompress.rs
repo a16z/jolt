@@ -648,7 +648,7 @@ mod tests {
     fn c_lw_expands_with_word_scaled_offset() {
         assert_eq!(expand(c_lw(7, 0, 0)), i_type(0, 8, 0b010, 15, 0x03));
         assert_eq!(expand(c_lw(0, 7, 124)), i_type(124, 15, 0b010, 8, 0x03)); // max offset
-        assert_eq!(expand(c_lw(2, 1, 84)), i_type(84, 9, 0b010, 10, 0x03)); // bits 2,4,6
+        assert_eq!(expand(c_lw(2, 1, 84)), i_type(84, 9, 0b010, 10, 0x03));
         for b in 2..=6 {
             let imm = 1u32 << b;
             assert_eq!(
@@ -662,7 +662,7 @@ mod tests {
     fn c_ld_expands_with_doubleword_scaled_offset() {
         assert_eq!(expand(c_ld(1, 2, 8)), i_type(8, 10, 0b011, 9, 0x03));
         assert_eq!(expand(c_ld(6, 5, 248)), i_type(248, 13, 0b011, 14, 0x03)); // max offset
-        assert_eq!(expand(c_ld(4, 3, 168)), i_type(168, 11, 0b011, 12, 0x03)); // bits 3,5,7
+        assert_eq!(expand(c_ld(4, 3, 168)), i_type(168, 11, 0b011, 12, 0x03));
         for b in 3..=7 {
             let imm = 1u32 << b;
             assert_eq!(
@@ -789,7 +789,7 @@ mod tests {
     #[test]
     fn c_srli_c_srai_expand_rv64_shift_range() {
         assert_eq!(expand(cb_alu(0b00, 0, 1)), i_type(1, 8, 0b101, 8, 0x13));
-        assert_eq!(expand(cb_alu(0b00, 7, 63)), i_type(63, 15, 0b101, 15, 0x13)); // shamt[5] set
+        assert_eq!(expand(cb_alu(0b00, 7, 63)), i_type(63, 15, 0b101, 15, 0x13));
         assert_eq!(expand(cb_alu(0b00, 2, 42)), i_type(42, 10, 0b101, 10, 0x13));
         // SRAI carries 0b010000 in imm[11:6]
         assert_eq!(
@@ -832,7 +832,7 @@ mod tests {
             expand(ca(0, 0b00, 0, 7)),
             r_type(0x20, 15, 8, 0b000, 8, 0x33)
         ); // c.sub
-        assert_eq!(expand(ca(0, 0b01, 1, 6)), r_type(0, 14, 9, 0b100, 9, 0x33)); // c.xor
+        assert_eq!(expand(ca(0, 0b01, 1, 6)), r_type(0, 14, 9, 0b100, 9, 0x33));
         assert_eq!(
             expand(ca(0, 0b10, 2, 5)),
             r_type(0, 13, 10, 0b110, 10, 0x33)
@@ -846,7 +846,6 @@ mod tests {
             r_type(0x20, 8, 15, 0b000, 15, 0x3b)
         ); // c.subw
         assert_eq!(expand(ca(1, 0b01, 6, 1)), r_type(0, 9, 14, 0b000, 14, 0x3b));
-        // c.addw
     }
 
     #[test]
@@ -861,7 +860,7 @@ mod tests {
         assert_eq!(expand(c_j(-2)), j_type(-2, 0));
         assert_eq!(expand(c_j(2046)), j_type(2046, 0)); // max
         assert_eq!(expand(c_j(-2048)), j_type(-2048, 0)); // min
-        assert_eq!(expand(c_j(1366)), j_type(1366, 0)); // bits 1,2,4,6,8,10
+        assert_eq!(expand(c_j(1366)), j_type(1366, 0));
         assert_eq!(expand(c_j(-1366)), j_type(-1366, 0));
         for b in 1..=10 {
             let offset = 1 << b;
@@ -875,7 +874,7 @@ mod tests {
         // comparison commutes so this is spec-equivalent.
         assert_eq!(expand(cb_branch(0b110, 1, -256)), b_type(-256, 9, 0, 0b000)); // min
         assert_eq!(expand(cb_branch(0b110, 0, 254)), b_type(254, 8, 0, 0b000)); // max
-        assert_eq!(expand(cb_branch(0b110, 7, 170)), b_type(170, 15, 0, 0b000)); // bits 1,3,5,7
+        assert_eq!(expand(cb_branch(0b110, 7, 170)), b_type(170, 15, 0, 0b000));
         assert_eq!(expand(cb_branch(0b111, 2, -86)), b_type(-86, 10, 0, 0b001));
         assert_eq!(expand(cb_branch(0b111, 5, 6)), b_type(6, 13, 0, 0b001));
         for b in 1..=7 {
@@ -958,11 +957,11 @@ mod tests {
     fn c_swsp_c_sdsp_c_fsdsp_expand_sp_relative_stores() {
         assert_eq!(expand(c_swsp(31, 252)), s_type(252, 31, 2, 0b010, 0x23)); // max
         assert_eq!(expand(c_swsp(1, 4)), s_type(4, 1, 2, 0b010, 0x23));
-        assert_eq!(expand(c_swsp(8, 84)), s_type(84, 8, 2, 0b010, 0x23)); // bits 2,4,6
+        assert_eq!(expand(c_swsp(8, 84)), s_type(84, 8, 2, 0b010, 0x23));
 
         assert_eq!(expand(c_sdsp(8, 504)), s_type(504, 8, 2, 0b011, 0x23)); // max
         assert_eq!(expand(c_sdsp(31, 8)), s_type(8, 31, 2, 0b011, 0x23));
-        assert_eq!(expand(c_sdsp(2, 328)), s_type(328, 2, 2, 0b011, 0x23)); // bits 3,6,8
+        assert_eq!(expand(c_sdsp(2, 328)), s_type(328, 2, 2, 0b011, 0x23));
 
         assert_eq!(expand(c_fsdsp(9, 16)), s_type(16, 9, 2, 0b011, 0x27));
 
@@ -999,7 +998,7 @@ mod tests {
 
     #[test]
     fn non_compressed_or_unallocated_encodings_return_all_ones() {
-        assert_eq!(expand(0x8093), 0xffff_ffff); // low bits 0b11: not compressed
+        assert_eq!(expand(0x8093), 0xffff_ffff);
         assert_eq!(expand(0xffff), 0xffff_ffff);
         assert_eq!(expand(0x0003), 0xffff_ffff);
     }

@@ -1,4 +1,3 @@
-//! Error-path and ordering-contract tests for the claim derives.
 #![expect(
     clippy::expect_used,
     reason = "tests should fail loudly on I/O or parse errors"
@@ -14,9 +13,6 @@ fn pretty(tokens: TokenStream2) -> String {
     prettyplease::unparse(&file)
 }
 
-/// Covers the full `OutputClaims` grammar: scalar virtual, payload-carrying
-/// virtual, indexed (`Vec`) family, conditional (`Option`) committed, and
-/// scalar advice openings.
 fn representative_output_struct() -> DeriveInput {
     parse_quote! {
         #[relation(SpartanOuter)]

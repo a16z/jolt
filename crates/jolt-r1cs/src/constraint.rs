@@ -60,7 +60,6 @@ pub struct MatrixColumnContributions<F: Field> {
     pub c: F,
 }
 
-/// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
 struct RawConstraintMatrices<F: Field> {

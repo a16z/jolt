@@ -231,8 +231,6 @@ pub(in crate::expand) fn expand_amo_minmax_d(
         (v0.operand(), reg(rs2(instruction)?))
     };
 
-    // v0 = old memory. v1 = whether rs2 should be stored. v2 = conditional
-    // delta from old memory to rs2.
     asm.emit_i(
         SourceInstructionKind::LD,
         v0.operand(),
@@ -507,10 +505,8 @@ pub(in crate::expand) fn expand_narrow_store(
         andi v1, v0, format_i_imm(-8);
         ld v2, v1, 0;
     });
-    // v3 = mask of the addressed lane.
     asm.emit_i(window_mask, v3.operand(), v0.operand(), 0);
     jolt_asm!(asm, { andn v2, v2, v3; });
-    // v3 = store data shifted into the lane.
     asm.emit_r(shift_data, v3.operand(), source, v0.operand());
     jolt_asm!(asm, {
         add v2, v2, v3;

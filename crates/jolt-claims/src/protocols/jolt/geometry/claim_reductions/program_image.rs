@@ -22,8 +22,6 @@ use super::precommitted::{
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
 };
 
-/// Committed length of the program-image polynomial: the initial RAM
-/// bytecode-word slice padded to a power of two (at least two words).
 fn padded_program_image_len_words(program_image_len_words: usize) -> usize {
     program_image_len_words.next_power_of_two().max(2)
 }
@@ -274,7 +272,6 @@ mod tests {
         let r_addr: Vec<Fr> = [3, 5, 7, 11].into_iter().map(fr).collect();
         let opening_point: Vec<Fr> = [13, 17].into_iter().map(fr).collect();
 
-        // 14 and 15 wrap past 2^ell, exercising the DP's carry-out path.
         for start_index in [0usize, 3, 4, 9, 12, 14, 15] {
             let dp = eval_shifted_eq_poly_at_opening_point(&r_addr, start_index, &opening_point)
                 .unwrap_or_else(|error| panic!("shifted eq should evaluate: {error}"));

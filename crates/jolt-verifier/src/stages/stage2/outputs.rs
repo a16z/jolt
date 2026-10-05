@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 2 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
@@ -112,8 +110,6 @@ pub struct Stage2BatchSumchecks<F: JoltField> {
     pub ram_output_check: RamOutputCheck<F>,
 }
 
-/// The shared per-relation opening-point accessors over the point-only stage-2
-/// batch aggregate.
 impl<F: JoltField> Stage2BatchOutputPoints<F> {
     /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
     pub fn ram_read_write_point(&self) -> &[F] {
@@ -435,11 +431,8 @@ mod tests {
 
         let expected = (1..=11)
             .map(fr)
-            // The field-inline part of the product member.
             .chain([fr(201), fr(202), fr(203)])
-            // The instruction claim-reduction non-aliased outputs.
             .chain([fr(12), fr(13)])
-            // RAM RAF evaluation, RAM output check.
             .chain([fr(14), fr(15)])
             .collect::<Vec<_>>();
         assert_eq!(sumchecks().opening_values(&claims), expected);

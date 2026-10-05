@@ -12,8 +12,6 @@ use crate::objective::objective_fn::ObjectiveFunction;
 use crate::objective::optimize::{auto_optimize, OptimizeConfig, OptimizeEnv};
 use crate::objective::{OptimizationObjective, HALSTEAD_BUGS, LLOC};
 
-// Test invariants
-
 struct AlwaysPassInvariant;
 impl InvariantTargets for AlwaysPassInvariant {
     fn targets(&self) -> EnumSet<SynthesisTarget> {
@@ -63,8 +61,6 @@ impl Invariant for AlwaysFailInvariant {
         vec![42]
     }
 }
-
-// auto_redteam tests with MockAgent
 
 fn envelope(analysis: &str, counterexample: impl serde::Serialize) -> String {
     serde_json::json!({
@@ -236,8 +232,6 @@ fn redteam_zero_iterations_returns_immediately() {
     assert!(agent.recorded_prompts().is_empty());
 }
 
-// Mock OptimizeEnv
-
 fn lloc() -> OptimizationObjective {
     LLOC
 }
@@ -339,8 +333,6 @@ fn opt_config(iterations: usize) -> OptimizeConfig {
     }
 }
 
-// auto_optimize tests
-
 #[test]
 fn optimize_custom_objective_function() {
     const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
@@ -356,8 +348,8 @@ fn optimize_custom_objective_function() {
     })]);
 
     let mut env = MockOptimizeEnv::new().with_measurements(vec![
-        m(&[(lloc(), 10.0), (halstead(), 100.0)]), // score = 120
-        m(&[(lloc(), 8.0), (halstead(), 110.0)]),  // score = 126 (regression!)
+        m(&[(lloc(), 10.0), (halstead(), 100.0)]),
+        m(&[(lloc(), 8.0), (halstead(), 110.0)]),
     ]);
 
     let config = opt_config(1);
@@ -401,17 +393,14 @@ fn optimize_multi_iteration_progressive_improvement() {
     assert_eq!(env.accepted, vec![1, 3]);
     assert_eq!(env.rejected, 1);
 
-    // iter1: 8.0 vs best=10.0 (accepted), baseline=10.0
     assert!(result.attempts[0].accepted);
     assert_eq!(result.attempts[0].score_delta_vs_best, -2.0);
     assert_eq!(result.attempts[0].score_delta_vs_baseline, -2.0);
 
-    // iter2: 9.0 vs best=8.0 (rejected), baseline=10.0
     assert!(!result.attempts[1].accepted);
     assert_eq!(result.attempts[1].score_delta_vs_best, 1.0);
     assert_eq!(result.attempts[1].score_delta_vs_baseline, -1.0);
 
-    // iter3: 6.0 vs best=8.0 (accepted), baseline=10.0
     assert!(result.attempts[2].accepted);
     assert_eq!(result.attempts[2].score_delta_vs_best, -2.0);
     assert_eq!(result.attempts[2].score_delta_vs_baseline, -4.0);

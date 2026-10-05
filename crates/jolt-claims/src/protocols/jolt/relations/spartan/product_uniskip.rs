@@ -1,5 +1,3 @@
-//! Spartan product univariate-skip symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -96,9 +94,6 @@ mod tests {
     use super::*;
     use jolt_field::{Fr, Ring};
 
-    /// The derived `InputClaims` wiring: each consumed opening resolves under
-    /// its Spartan-outer id in field-declaration order, and an id from a
-    /// different relation resolves to `None`.
     #[test]
     fn input_claims_resolve_by_spartan_outer_ids_in_declaration_order() {
         let claims = ProductUniskipInputClaims {

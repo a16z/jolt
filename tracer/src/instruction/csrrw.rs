@@ -24,15 +24,14 @@ use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RIS
 
 declare_riscv_instr!(
     name   = CSRRW,
-    mask   = 0x0000707f,  // Match opcode (7 bits) + funct3 (3 bits)
-    match  = 0x00001073,  // opcode=1110011, funct3=001
+    mask   = 0x0000707f,
+    match  = 0x00001073,
     format = FormatI,
     registers = RegisterStateI,
     ram    = ()
 );
 
 impl CSRRW {
-    /// Extract CSR address from the immediate field (bits [31:20] of instruction)
     fn csr_address(&self) -> u16 {
         (self.operands.imm & 0xfff) as u16
     }
@@ -41,13 +40,10 @@ impl CSRRW {
         let csr_addr = self.csr_address();
         let rs1_val = cpu.x[self.operands.rs1 as usize] as u64;
 
-        // Read old CSR value from CSR state
         let old_val = cpu.read_csr_raw(csr_addr);
 
-        // Write new value to CSR state
         cpu.write_csr_raw(csr_addr, rs1_val);
 
-        // Write old value to rd (if rd != x0)
         if self.operands.rd != 0 {
             cpu.write_register(self.operands.rd as usize, cpu.sign_extend(old_val as i64));
         }
@@ -59,9 +55,6 @@ impl RISCVTrace for CSRRW {
         // Don't call self.execute() - the inline sequence handles everything.
         // Virtual registers are the single source of truth; we don't use cpu.csr[].
 
-        // Generate and execute inline sequence
-        // The inline sequence reads from virtual register and writes to rd,
-        // then writes rs1 to virtual register.
         super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
     }
 }
@@ -111,10 +104,8 @@ mod tests {
         let mut trace: Vec<Cycle> = Vec::new();
         csrrw.trace(&mut cpu, Some(&mut trace));
 
-        // Architectural rd (t0) gets old value from virtual register.
         assert_eq!(cpu.x[5] as u64, old_vr_val);
 
-        // Virtual register (vr34 = mtvec) should have the new value (from rs1).
         assert_eq!(cpu.x[34] as u64, write_val);
     }
 }

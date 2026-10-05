@@ -9,8 +9,6 @@ use crate::lattice::BalancedChunkingError;
 /// value of [`BalancedIncCarry`](crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncCarry):
 /// the shared balanced-digit window.
 pub use crate::lattice::BALANCED_INC_BITS as FUSED_INC_BITS;
-/// The shared balanced-digit algebra ([`crate::lattice`]), re-exported at
-/// its historical home (here the digits decompose the fused increment).
 pub use crate::lattice::{balanced_inc_value, BalancedIncChunking};
 
 /// Bytecode read-raf val stages in lattice mode: the base stages plus one

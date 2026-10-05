@@ -36,8 +36,6 @@ fn unhex(s: &str) -> Vec<u8> {
         .collect()
 }
 
-/// Element from the reducing decode; canonical bytes and bincode wire must
-/// equal the fixture, and the checked decode must round-trip.
 fn check_prime_rows<F>(rows: &[(&str, &str)])
 where
     F: CanonicalEncoding
@@ -878,8 +876,6 @@ mod solinas {
         (&[0xce146918fcdfd134a198ba496b6b54cd, 0xe0645714d27314b6c72085ecabcaa748, 0x535d0db82474e0e464ab32ae4896f3e2, 0xf6a32e67c18093bc7f5a6f74268c2d1d, 0xed84f79242e677ce9255ca839fe83795, 0x811838518589bb5b667dccdb2c7133d4, 0xf800638fd1130f3469c6a029834c576e, 0x4ce9d686a152cec904597b0f3decb776], "cd546b6b49ba98a134d1dffc186914ce48a7caabec8520c7b61473d2145764e0e2f39648ae32ab64e4e07424b80d5d531d2d8c26746f5a7fbc9380c1672ea3f69537e89f83ca5592ce77e64292f784edd433712cdbcc7d665bbb8985513818816e574c8329a0c669340f13d18f6300f876b7ec3d0f7b5904c9ce52a186d6e94c"),
     ];
 
-    /// Extension element from canonical coefficients; the bincode wire must
-    /// equal the fixture and decode back.
     fn check_ext_rows<F, E>(rows: &[(&[u128], &str)])
     where
         F: CanonicalEncoding + two::Field,

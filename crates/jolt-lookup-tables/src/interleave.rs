@@ -67,9 +67,6 @@ mod tests {
         let x: u64 = 0b01;
         let y: u64 = 0b10;
         let interleaved = interleave_bits(x, y);
-        // x=01 → bits at positions 1,3: 0,1
-        // y=10 → bits at positions 0,2: 0,1
-        // Combined (MSB first): bit3=0, bit2=1, bit1=1, bit0=0 = 0b0110 = 6
         assert_eq!(interleaved, 0b0110);
         let (rx, ry) = uninterleave_bits(interleaved);
         assert_eq!((rx, ry), (x, y));

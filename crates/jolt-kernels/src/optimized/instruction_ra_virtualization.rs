@@ -58,8 +58,6 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-/// Optimized [`PrepareKernel`] implementor for the
-/// `instruction_ra_virtualization` slot.
 pub struct OptimizedInstructionRaVirtualization;
 
 impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
@@ -249,9 +247,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         let folded_ra = &self.folded_ra;
 
         struct Scratch<F: JoltField> {
-            /// Cross-row lanes for `q(1), …, q(N−1), q(∞)`.
             lanes: Vec<F::Accumulator>,
-            /// Per-row product lanes (reduced and folded by `e_in` each row).
             row_lanes: Vec<F::Accumulator>,
             pairs: Vec<(F, F)>,
             evals: Vec<F>,
@@ -494,8 +490,6 @@ mod tests {
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
-    /// Packs reference-typed fixture rows into the optimized kernels' shared
-    /// row form (this kernel reads only the lookup index).
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
             .map(|row| {
@@ -651,8 +645,6 @@ mod tests {
             chunk_bits,
         );
 
-        // The reference tier, assembled exactly as its `prepare` does: one-hot
-        // grids behind a fixed oracle, address-folded per committed chunk.
         let mut backend = FixedBackend::new();
         for index in 0..num_committed {
             let grid = one_hot_grid(&rows, index, num_committed, chunk_bits);
@@ -742,7 +734,6 @@ mod tests {
                 )
             };
 
-        // True input claim: the full hypercube sum of the output summand.
         let eq_cycle = eq_table(&r_cycle);
         let mut claim = fr(0);
         for j in 0..rows.len() {
@@ -794,8 +785,6 @@ mod tests {
                 .any(|value| *value != fr(0)));
         }
 
-        // The optimized eq scalar passes the same derived-table cross-check
-        // the naive tier's materialized table does.
         let sumcheck_point: Vec<Fr> = (0..rounds).map(challenge).collect();
         let output_points = relation
             .derive_opening_points(&sumcheck_point, &input_points)
@@ -848,7 +837,6 @@ mod tests {
         }
     }
 
-    /// Odd geometry: 3 virtuals × 2 committed, 2-bit chunks, odd log_t.
     #[test]
     fn parity_small_odd_geometry() {
         assert_parity(3, 3, 2, 2, 1337, false);

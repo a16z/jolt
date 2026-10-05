@@ -39,7 +39,6 @@ pub const NUM_BYTECODE_VAL_STAGES: usize = 6;
 
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
-/// Total number of lanes encoded by committed-bytecode rows.
 pub const fn total_lanes() -> usize {
     3 * REGISTER_COUNT
         + 2
@@ -49,7 +48,6 @@ pub const fn total_lanes() -> usize {
         + 1
 }
 
-/// Fixed lane capacity for committed bytecode rows.
 pub const COMMITTED_BYTECODE_LANE_CAPACITY: usize = total_lanes().next_power_of_two();
 
 pub const fn committed_lane_vars() -> usize {
@@ -85,8 +83,6 @@ pub fn is_valid_committed_bytecode_chunking_for_len(
         && bytecode_len.is_multiple_of(chunk_count)
 }
 
-/// Chunk-count half of the chunking rules, shared with the formula
-/// constructors that validate a chunk count without the bytecode length.
 const fn is_valid_chunk_count(chunk_count: usize) -> bool {
     chunk_count > 0
         && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
@@ -296,9 +292,6 @@ impl BytecodeClaimReductionLayout {
         self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
     }
 
-    /// Evaluate the gamma-weighted lane selector against the chunk opening
-    /// point: `(sum_lane lane_weights[lane] * eq(r_lane)[lane]) * eq(r_cycle,
-    /// r_bc)`, with the lane/cycle split determined by the trace layout.
     fn eq_combined<F: JoltField>(
         &self,
         inputs: &BytecodeOutputWeightInputs<'_, F>,
@@ -377,7 +370,6 @@ pub struct BytecodeAddressPoint<F> {
     pub r_bc: Vec<F>,
 }
 
-/// Stage-6b inputs to the final committed-bytecode output weights.
 pub struct BytecodeOutputWeightInputs<'a, F> {
     pub r_bc: &'a [F],
     pub chunk_rbc_weights: &'a [F],
@@ -861,9 +853,6 @@ mod tests {
         assert_eq!(point.r_bc, r_bc_full);
     }
 
-    /// `eq_combined` must factorize the MLE of the coefficient grid
-    /// `lane_weights[lane] * eq(r_bc)[cycle]` laid out in the active trace
-    /// order, for any opening point of matching length.
     #[test]
     fn final_output_weights_match_naive_grid_evaluation() {
         for trace_order in [

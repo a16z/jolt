@@ -77,7 +77,6 @@ mod exec_unit {
             step_fn(&mut state);
             assert_eq!(state, expected, "round 1: mismatch after {name}");
         }
-        // Iota has a different signature; apply it separately and check final snapshot.
         execute_iota(&mut state, ROUND_CONSTANTS[round]);
         assert_eq!(state, expected_states.iota, "round 1: mismatch after iota");
     }

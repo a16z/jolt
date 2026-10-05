@@ -10,7 +10,6 @@ macro_rules! transcript_tests {
         use jolt_transcript::Transcript;
         use std::collections::HashSet;
 
-        // Helper: drive a transcript through a closure and squeeze a challenge.
         fn challenge_after<F: FnOnce(&mut $transcript_type)>(
             label: &'static [u8],
             f: F,
@@ -91,7 +90,6 @@ macro_rules! transcript_tests {
                 baseline, with_empty,
                 "append_bytes(&[]) must observably change challenge"
             );
-            // Determinism for empty appends.
             let with_empty_again = challenge_after(b"empty_test", |t| {
                 t.append_bytes(&[]);
             });

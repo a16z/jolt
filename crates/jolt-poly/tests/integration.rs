@@ -1,9 +1,3 @@
-//! Cross-type integration tests for jolt-poly.
-//!
-//! These tests verify composition patterns between polynomial types
-//! (Polynomial, EqPolynomial, UnivariatePoly, IdentityPolynomial, RlcSource)
-//! that are used throughout the proving system.
-
 use jolt_field::{Ext2, Field, Fr, One, Prime64Offset59, Ring, Zero};
 use jolt_poly::{
     IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, OmittedConstantPoly, Polynomial,
@@ -12,9 +6,6 @@ use jolt_poly::{
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
-// Sequential binding converges to evaluate
-
-/// Binding all variables one-by-one yields the same result as evaluate.
 #[test]
 fn sequential_bind_equals_evaluate() {
     let mut rng = ChaCha20Rng::seed_from_u64(2000);
@@ -32,8 +23,6 @@ fn sequential_bind_equals_evaluate() {
         assert_eq!(working.evaluations()[0], expected, "nv={nv}");
     }
 }
-
-// UnivariatePoly interpolation
 
 fn check_equispaced_interpolation<F: Field>(coefficients: Vec<F>) {
     let original = UnivariatePoly::new(coefficients);
@@ -143,7 +132,6 @@ fn omitted_constant_payload_preserves_shape_and_evaluates() {
     );
 }
 
-/// Lagrange interpolation recovers the original polynomial at domain points.
 #[test]
 fn univariate_interpolation_recovers_points() {
     let mut rng = ChaCha20Rng::seed_from_u64(4000);
@@ -160,9 +148,6 @@ fn univariate_interpolation_recovers_points() {
     }
 }
 
-// IdentityPolynomial
-
-/// IdentityPolynomial at a random point matches manual computation.
 #[test]
 fn identity_polynomial_random_point() {
     let mut rng = ChaCha20Rng::seed_from_u64(6000);
@@ -172,7 +157,6 @@ fn identity_polynomial_random_point() {
 
     let eval = id.evaluate(&point);
 
-    // Manual: sum_i r_i * 2^(n-1-i)
     let expected: Fr = point
         .iter()
         .enumerate()
@@ -182,9 +166,6 @@ fn identity_polynomial_random_point() {
     assert_eq!(eval, expected);
 }
 
-// RlcSource: lazy random linear combination
-
-/// RlcSource evaluation matches materializing and linearly combining.
 #[test]
 fn rlc_source_matches_materialized_combination() {
     let mut rng = ChaCha20Rng::seed_from_u64(7000);
@@ -197,14 +178,12 @@ fn rlc_source_matches_materialized_combination() {
     let scalars: Vec<Fr> = (0..num_polys).map(|_| Fr::random(&mut rng)).collect();
     let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
 
-    // Materialized: sum_i scalar_i * poly_i.evaluate(point)
     let expected: Fr = polys
         .iter()
         .zip(scalars.iter())
         .map(|(p, s)| *s * p.evaluate(&point))
         .sum();
 
-    // Lazy via RlcSource
     let rlc = RlcSource::new(polys, scalars);
     let actual = rlc.evaluate(&point);
 

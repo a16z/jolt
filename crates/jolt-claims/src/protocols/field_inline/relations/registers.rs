@@ -1,5 +1,3 @@
-//! field_inline registers symbolic sumcheck relations.
-
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::field_inline::geometry::registers::{
@@ -56,7 +54,6 @@ pub struct FieldRegistersReadWriteInputClaims<C> {
     pub rs2_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the field-register read/write-checking sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[protocol(field_inline)]
@@ -111,8 +108,6 @@ pub struct FieldRegistersValEvaluationOutputClaims<C> {
     pub rd_wa: C,
 }
 
-/// Consumed field-register value-evaluation opening, wired from the upstream
-/// field-register read-write checking.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 #[protocol(field_inline)]
 pub struct FieldRegistersValEvaluationInputClaims<C> {

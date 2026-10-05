@@ -140,7 +140,6 @@ impl<G: GuestConfig + 'static> Objective for TraceGenObjective<G> {
 
     fn setup(&self) -> TraceGenSetup {
         let (program, inputs) = build_trace_setup(&self.guest);
-        // One un-timed trace to learn the row count for throughput reporting.
         let mut backend = TracerBackend::new();
         let output = program
             .trace_with(&mut backend, inputs.clone())

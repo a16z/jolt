@@ -1,5 +1,3 @@
-//! registers read-write checking symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -47,7 +45,6 @@ pub struct RegistersReadWriteInputClaims<C> {
     pub rs2_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the registers read/write-checking sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RegistersReadWriteChallenges<F> {

@@ -322,7 +322,6 @@ mod akita_tests {
         };
         verify(&proof).expect("committed Akita proof must verify");
 
-        // A mutated direct bytecode claim breaks the grouped opening.
         let mut tampered = proof;
         let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
             panic!("Akita proofs carry clear claims");

@@ -41,7 +41,6 @@ mod clear {
     use crate::support::field_inline::akita::Proof;
     use crate::support::field_inline::{akita, field_ops, muldiv};
 
-    /// A labeled packed kernel-backend constructor.
     type BackendCase = (
         &'static str,
         fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
@@ -76,7 +75,6 @@ mod clear {
         }
     }
 
-    /// Commit the honest increment polynomial under a supplied layout digest.
     fn commit_inc_with_digest(fixture: &IncFixture, digest: [u8; 32]) -> AkitaCommitment {
         use jolt_openings::TransparentObjectSetup;
         use jolt_poly::Polynomial;
@@ -95,7 +93,6 @@ mod clear {
         commitment
     }
 
-    /// Both backends' packed field-inline proofs must verify AND be equal wire objects.
     #[test]
     fn akita_field_inline_field_ops_backends_have_identical_proofs() {
         let mut case = field_ops();
@@ -174,8 +171,6 @@ mod clear {
         );
     }
 
-    /// The packed field-inline tamper matrix: one honest proof, mutations on fresh
-    /// clones, every one rejected.
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
         let (output, inc) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_inc);

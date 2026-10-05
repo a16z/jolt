@@ -86,7 +86,6 @@ where
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type.
     let sumchecks = Stage1BatchSumchecks {
         outer_remainder: OuterRemainder::new(
             SpartanOuterDimensions::rv64(log_t),
@@ -193,15 +192,12 @@ mod field_inline_round_trip {
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }
 
-        // The verifier twin.
         let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
         twins::replay_stage1(&mut transcript, &out);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }
 
-    /// Actual field-inline rows via decoded field-inline instruction words (two field loads and a
-    /// multiply).
     #[test]
     fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
         round_trip(field_arithmetic_backend());
@@ -283,7 +279,6 @@ mod field_inline_zk {
             50usize.div_ceil(CAPACITY)
         );
 
-        // The replay.
         let checked = CheckedInputs {
             public_io: JoltDevice::default(),
             zk: true,

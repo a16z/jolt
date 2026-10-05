@@ -147,9 +147,6 @@ struct ZkBatchFixture {
     proof: DoryProof,
 }
 
-/// Produces an honest ZK batch proof over two random 2-variable polynomials,
-/// bound to a caller-chosen transcript label so each test can replay the
-/// exact prover transcript.
 fn zk_batch_fixture(seed: u64, label: &'static [u8]) -> ZkBatchFixture {
     let (polynomials, point) = homomorphic_polynomials(2, 2, seed);
     let prover_setup = DoryScheme::setup_prover(point.len());
@@ -229,7 +226,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_commitment() {
         "swapped commitments must fail verification: {result:?}"
     );
 
-    // Control: the untampered statement verifies under the same label.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,
@@ -261,7 +257,6 @@ fn dory_homomorphic_zk_batch_rejects_wrong_opening_point() {
         "a shifted opening point must fail verification: {result:?}"
     );
 
-    // Control: the point the proof was produced for verifies.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,
@@ -316,7 +311,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_hiding_commitment() {
         "a missing hiding commitment must fail verification: {result:?}"
     );
 
-    // Control: the intact proof verifies.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,

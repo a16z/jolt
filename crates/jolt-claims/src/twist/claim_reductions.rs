@@ -58,7 +58,6 @@ pub struct IncrementReductionGroup<O, P> {
     pub consumed: [O; 2],
     /// Eq publics paired index-for-index with [`consumed`](Self::consumed).
     pub eq_publics: [P; 2],
-    /// The produced reduced opening the group folds into.
     pub reduced: O,
 }
 

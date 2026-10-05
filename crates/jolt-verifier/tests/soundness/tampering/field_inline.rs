@@ -43,8 +43,6 @@ mod active {
         claims
     }
 
-    /// Offset each listed field-inline claim cell by one on a fresh clone of `base`; each
-    /// mutation must reject, under the named (Active) manifest target.
     fn offset_each_cell(base: &VerifierFixtureCase, target: &str, cells: &[CellSelector]) {
         for select in cells {
             assert_verifier_fixture_tamper_rejects(required_target(target), base, |case| {

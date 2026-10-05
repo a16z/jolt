@@ -17,10 +17,6 @@ use jolt_field::JoltField;
 
 use crate::Polynomial;
 
-// ---------------------------------------------------------------------------
-// Evaluation + binding traits (sumcheck interface)
-// ---------------------------------------------------------------------------
-
 /// Multilinear polynomial evaluation at an arbitrary point.
 ///
 /// Any multilinear polynomial $f: \mathbb{F}^n \to \mathbb{F}$ is uniquely
@@ -53,10 +49,6 @@ pub trait MultilinearEvaluation<F: JoltField>: Send + Sync {
 pub trait MultilinearBinding<F: JoltField>: Send + Sync {
     fn bind(&mut self, scalar: F);
 }
-
-// ---------------------------------------------------------------------------
-// Streaming / matrix-view trait (PCS interface)
-// ---------------------------------------------------------------------------
 
 /// A multilinear polynomial $f : \{0,1\}^n \to \mathbb{F}$ in evaluation form.
 ///
@@ -176,10 +168,6 @@ pub trait MultilinearPoly<F: JoltField>: Send + Sync {
     fn for_each_one(&self, _f: &mut dyn FnMut(usize)) {}
 }
 
-// ---------------------------------------------------------------------------
-// MultilinearPoly impls for Polynomial<F>, [F], Vec<F>, and source pointers.
-// ---------------------------------------------------------------------------
-
 impl<F: JoltField> MultilinearPoly<F> for Polynomial<F> {
     #[inline]
     fn num_vars(&self) -> usize {
@@ -287,7 +275,6 @@ impl<F: JoltField> MultilinearPoly<F> for Vec<F> {
     }
 }
 
-/// Forwards every `MultilinearPoly` method through a pointer-like wrapper.
 macro_rules! forward_multilinear_poly {
     ($($wrapper:ty),* $(,)?) => {$(
         impl<F, P> MultilinearPoly<F> for $wrapper
@@ -340,10 +327,6 @@ macro_rules! forward_multilinear_poly {
 }
 
 forward_multilinear_poly!(&P, Box<P>, std::sync::Arc<P>);
-
-// ---------------------------------------------------------------------------
-// RlcSource — lazy random linear combination
-// ---------------------------------------------------------------------------
 
 /// Lazy RLC composition of multilinear polynomials.
 ///
@@ -418,8 +401,6 @@ impl<F: JoltField, S: MultilinearPoly<F>> MultilinearPoly<F> for RlcSource<F, S>
         let nu = self.num_vars.saturating_sub(sigma);
         let num_rows = 1usize << nu;
 
-        // Collect all rows from all sources.
-        // Each inner vec has num_rows entries, each of length num_cols.
         let all_rows: Vec<Vec<Vec<F>>> = self
             .sources
             .iter()
@@ -503,7 +484,6 @@ mod tests {
 
         let result = poly.fold_rows(&left, sigma);
 
-        // Manual VMP
         let mut expected = vec![Fr::zero(); num_cols];
         for (row, &l) in left.iter().enumerate() {
             for (col, dest) in expected.iter_mut().enumerate() {
@@ -528,11 +508,9 @@ mod tests {
         let s2 = Fr::random(&mut rng);
         let left: Vec<Fr> = (0..num_rows).map(|_| Fr::random(&mut rng)).collect();
 
-        // Lazy fold
         let rlc = RlcSource::new(vec![p1.clone(), p2.clone()], vec![s1, s2]);
         let lazy_result = rlc.fold_rows(&left, sigma);
 
-        // Materialized fold
         let combined_evals: Vec<Fr> = p1
             .evaluations()
             .iter()

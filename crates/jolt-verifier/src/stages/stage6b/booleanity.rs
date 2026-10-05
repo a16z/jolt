@@ -48,7 +48,6 @@ pub struct Booleanity<F: JoltField> {
     dimensions: BooleanityCycleDimensions,
     /// The address opening prefix from the stage-6a phase.
     r_address: Vec<F>,
-    /// The reference address/cycle the `EqAddressCycle` public compares against.
     reference_address: Vec<F>,
     reference_cycle: Vec<F>,
 }

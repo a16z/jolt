@@ -1,5 +1,3 @@
-//! The full bytecode read-RAF symbolic sumcheck (monolith).
-
 use jolt_field::Ring;
 
 use crate::protocols::jolt::geometry::bytecode::{

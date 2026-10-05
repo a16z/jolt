@@ -1,5 +1,4 @@
 #![expect(clippy::expect_used)]
-//! Serialization round-trip tests for all BN254 types.
 
 use jolt_crypto::{Bn254, Bn254G1, Bn254GT, JoltGroup, PedersenSetup};
 use rand_chacha::ChaCha20Rng;

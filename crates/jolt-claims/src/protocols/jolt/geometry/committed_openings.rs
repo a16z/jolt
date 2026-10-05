@@ -141,8 +141,6 @@ pub fn commitment_embedding_scale<F: JoltField>(
     )
 }
 
-/// Inputs to [`final_opening_point`], gathered from earlier verification
-/// stages.
 pub struct FinalOpeningPointInputs<'a, F: JoltField> {
     pub log_t: usize,
     pub log_k_chunk: usize,
@@ -252,8 +250,6 @@ mod tests {
     #[test]
     fn embedding_scales_match_independently_placed_tables() {
         use jolt_poly::Polynomial;
-        // Native table [1,2,3,4]: two trace cycles at each of two addresses,
-        // or the rows of a 2x2 precommitted matrix in a 4x4 grid.
         let native = [1, 2, 3, 4].map(Fr::from_u64).to_vec();
         let cases = [
             (

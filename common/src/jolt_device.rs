@@ -122,7 +122,7 @@ impl JoltDevice {
         if self.is_panic(address) {
             self.panic as u8
         } else if self.is_termination(address) {
-            0 // Termination bit should never be loaded after it is set
+            0
         } else if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
             self.inputs.get(internal_address).copied().unwrap_or(0)
@@ -143,7 +143,7 @@ impl JoltDevice {
             self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
             assert!(address <= RAM_START_ADDRESS - 8);
-            0 // zero-padding
+            0
         }
     }
 
@@ -351,7 +351,6 @@ impl MemoryLayout {
             "MemoryLayout requires bytecode size to be set"
         );
 
-        // helper to align ‘val’ *up* to a multiple of ‘align’, panicking on overflow
         #[inline]
         fn align_up(val: u64, align: u64) -> u64 {
             if align == 0 {
@@ -396,20 +395,17 @@ impl MemoryLayout {
         // Padded so that the witness index corresponding to `input_start`
         // has the form 0b11...100...0
         let io_region_words = (io_region_bytes / 8).next_power_of_two();
-        // let io_region_words = (io_region_bytes / 8 + 1).next_power_of_two() - 1;
 
         let io_bytes = io_region_words
             .checked_mul(8)
             .expect("I/O region byte count overflow");
 
-        // Place the larger or equal-sized advice region first in memory (at the lower address).
         let (
             trusted_advice_start,
             trusted_advice_end,
             untrusted_advice_start,
             untrusted_advice_end,
         ) = if max_trusted_advice_size >= max_untrusted_advice_size {
-            // Trusted advice goes first
             let trusted_start = RAM_START_ADDRESS
                 .checked_sub(io_bytes)
                 .expect("I/O region exceeds RAM_START_ADDRESS");
@@ -422,7 +418,6 @@ impl MemoryLayout {
                 .expect("untrusted_advice_end overflow");
             (trusted_start, trusted_end, untrusted_start, untrusted_end)
         } else {
-            // Untrusted advice goes first
             let untrusted_start = RAM_START_ADDRESS
                 .checked_sub(io_bytes)
                 .expect("I/O region exceeds RAM_START_ADDRESS");
@@ -488,7 +483,6 @@ impl MemoryLayout {
         }
     }
 
-    /// Returns the start address memory.
     pub fn get_lowest_address(&self) -> u64 {
         self.trusted_advice_start.min(self.untrusted_advice_start)
     }
@@ -609,9 +603,6 @@ mod tests {
 
     #[test]
     fn layout_packs_io_regions_contiguously_below_ram_start() {
-        // trusted (4096) < untrusted (8192) forces the untrusted-first branch.
-        // io_region_bytes = 4096 + 8192 + 4096 + 4096 + 16 = 20496 bytes
-        //   => 2562 words => padded to 4096 words => 32768 bytes below RAM_START.
         let layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 4096,

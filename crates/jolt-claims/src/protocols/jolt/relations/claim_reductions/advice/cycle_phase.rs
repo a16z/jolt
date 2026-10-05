@@ -35,7 +35,6 @@ pub struct TrustedAdviceCyclePhaseOutputClaims<C> {
     pub trusted: C,
 }
 
-/// The consumed RAM value-check trusted-advice opening.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct TrustedAdviceCyclePhaseInputClaims<C> {
     #[opening(trusted_advice, from = RamValCheck)]
@@ -56,7 +55,6 @@ pub struct UntrustedAdviceCyclePhaseOutputClaims<C> {
     pub untrusted: C,
 }
 
-/// The consumed RAM value-check untrusted-advice opening.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct UntrustedAdviceCyclePhaseInputClaims<C> {
     #[opening(untrusted_advice, from = RamValCheck)]

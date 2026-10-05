@@ -164,7 +164,7 @@ where
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
         let memory_config = common::jolt_device::MemoryConfig {
             heap_size: TEST_MEMORY_CAPACITY,
-            program_size: Some(1024), // Set a small program size for tests
+            program_size: Some(1024),
             ..Default::default()
         };
         original_cpu.get_mut_mmu().jolt_device =
@@ -176,13 +176,10 @@ where
             Some(common::jolt_device::JoltDevice::new(&memory_config));
         virtual_cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
 
-        // Initialize memory with test values for AMO operations
-        // Write some test values at aligned addresses throughout memory
         for i in 0..100 {
-            let offset = (i * 8) as u64; // 8-byte aligned offsets
+            let offset = (i * 8) as u64;
             if offset < TEST_MEMORY_CAPACITY {
                 let test_value = 0x12345678 + i;
-                // Store as doubleword for AMO.D instructions
                 let addr = DRAM_BASE + offset;
                 original_cpu
                     .mmu

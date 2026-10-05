@@ -16,7 +16,6 @@ use rayon::prelude::*;
 
 use crate::ProverError;
 
-/// The full instruction lookup key width: two `XLEN`-bit operands.
 const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
 #[cfg(feature = "parallel")]
 const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
@@ -32,7 +31,6 @@ const MIN_PADDED_TRACE_LENGTH: usize = 256;
 #[cfg(feature = "akita")]
 const MIN_PADDED_TRACE_LENGTH: usize = 1 << 12;
 
-/// The proof-shape configuration for one proving run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(non_snake_case)]
 pub struct ProverConfig {
@@ -79,7 +77,6 @@ impl ProverConfig {
         )
     }
 
-    /// Derives the proof shape from compact proof rows.
     #[tracing::instrument(
         skip_all,
         name = "ProverConfig::derive_compact",

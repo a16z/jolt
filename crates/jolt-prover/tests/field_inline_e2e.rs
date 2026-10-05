@@ -125,8 +125,6 @@ mod zk {
     use crate::support;
     use crate::support::field_inline::{dory, field_ops, muldiv};
 
-    /// The field-inline tampers on the ZK wire: the FieldRdInc commitment and
-    /// the BlindFold payload. Mutate clones of one accepted base proof.
     #[test]
     fn field_inline_tampered_proofs_are_rejected() {
         support::with_zk_stack(|| {

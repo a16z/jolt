@@ -134,8 +134,6 @@ pub fn validate_proof_config(
 mod tests {
     use super::*;
 
-    // This is the field-inline-era format, including the disabled extension
-    // axis. The old three-axis format has no implicit decoder fallback.
     #[test]
     fn protocol_wire_format_is_explicit() {
         let protocol = JoltProtocolConfig {

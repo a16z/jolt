@@ -43,7 +43,6 @@ impl PprofGuard {
     }
 }
 
-/// Stub type when `pprof` feature is not enabled.
 #[cfg(not(feature = "pprof"))]
 pub struct PprofGuard;
 
