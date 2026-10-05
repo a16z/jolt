@@ -27,8 +27,8 @@ use jolt_akita::schedules::emit::{
     ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
 };
 use jolt_akita::{
-    AkitaOneHotChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
+    AKITA_ONE_HOT_K256,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use std::sync::Arc;
@@ -81,7 +81,7 @@ fn dense_producer_certificates_cover_every_supported_chunk_count() {
     }
 }
 
-fn one_hot_catalog(one_hot_k: usize, profile: AkitaOneHotChunkProfile) -> ValidatedScheduleCatalog {
+fn one_hot_catalog(one_hot_k: usize, profile: AkitaChunkProfile) -> ValidatedScheduleCatalog {
     artifacts()
         .one_hot_catalog_for_profile(one_hot_k, profile)
         .expect("one-hot catalog")
@@ -119,7 +119,7 @@ fn four_file_directory_supports_single_profile() {
         .expect("Single catalog must remain available");
     let error = AkitaScheme::setup(
         AkitaSetupParams::one_hot_only(16, 1, [3; 32], AKITA_ONE_HOT_K16, Arc::new(loaded))
-            .with_one_hot_chunk_profile(AkitaOneHotChunkProfile::Two),
+            .with_akita_chunk_profile(AkitaChunkProfile::Two),
     )
     .expect_err("selecting a missing companion catalog must fail setup");
     assert!(matches!(error, OpeningsError::InvalidSetup(_)));
@@ -130,11 +130,11 @@ fn four_file_directory_supports_single_profile() {
 fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (catalog, num_vars) in [
         (
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single),
             K16_NUM_VARS,
         ),
         (
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single),
             K256_NUM_VARS,
         ),
     ] {
@@ -161,19 +161,19 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
 fn multi_chunk_catalogs_cover_every_supported_profile() {
     for (profile, chunk_cfg, k16_family, k256_family) in [
         (
-            AkitaOneHotChunkProfile::Two,
+            AkitaChunkProfile::Two,
             ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W2R2),
             JoltOneHotK16W2R2::schedule_family_name(),
             JoltOneHotK256W2R2::schedule_family_name(),
         ),
         (
-            AkitaOneHotChunkProfile::Four,
+            AkitaChunkProfile::Four,
             ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W4R2),
             JoltOneHotK16W4R2::schedule_family_name(),
             JoltOneHotK256W4R2::schedule_family_name(),
         ),
         (
-            AkitaOneHotChunkProfile::Eight,
+            AkitaChunkProfile::Eight,
             ChunkedWitnessCfg::d64_production(),
             JoltOneHotK16W8R2::schedule_family_name(),
             JoltOneHotK256W8R2::schedule_family_name(),
@@ -236,11 +236,11 @@ fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
 fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
     for (catalog, packing_variables) in [
         (
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single),
             K16_PACKING_VARIABLES,
         ),
         (
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single),
             K256_PACKING_VARIABLES,
         ),
     ] {
@@ -300,7 +300,7 @@ fn assert_adaptation_preserves_main_skeleton(
 #[test]
 fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single);
     let key = trusted_advice_grouped_key(&dense);
     assert!(base.resolve_key(&key).is_err());
 
@@ -339,7 +339,7 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
 #[test]
 fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single);
     let precommit =
         dense_group_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP).expect("trusted advice profile");
     for final_num_vars in [
@@ -376,7 +376,7 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
 #[test]
 fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single);
     let key = trusted_advice_grouped_key(&dense);
     let rows = jolt_akita::schedule_registry::provision_groups_for_k(
         &dense,
@@ -416,7 +416,7 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
 #[test]
 fn base_catalogs_contain_no_grouped_advice_rows() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single);
     assert!(base
         .rows()
         .all(|row| row.profiles().precommitteds.is_empty()));
@@ -441,10 +441,10 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
 fn grouped_provisioning_rejects_out_of_family_final_arity() {
     for one_hot_k in [AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256] {
         for (profile, final_num_vars) in [
-            (AkitaOneHotChunkProfile::Single, 11),
-            (AkitaOneHotChunkProfile::Two, 11),
-            (AkitaOneHotChunkProfile::Four, 12),
-            (AkitaOneHotChunkProfile::Eight, 13),
+            (AkitaChunkProfile::Single, 11),
+            (AkitaChunkProfile::Two, 11),
+            (AkitaChunkProfile::Four, 12),
+            (AkitaChunkProfile::Eight, 13),
         ] {
             for grouped in [false, true] {
                 let request = grouped.then(|| {
@@ -465,7 +465,7 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
                         request,
                         Arc::new(artifacts()),
                     )
-                    .with_one_hot_chunk_profile(profile),
+                    .with_akita_chunk_profile(profile),
                 )
                 .expect_err("an arity below the profile floor must fail setup");
                 let message = error.to_string();
@@ -487,35 +487,35 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
     let cases = [
         (
             "jolt-fp128-onehot-k16",
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single),
         ),
         (
             "jolt-fp128-onehot-k256",
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single),
         ),
         (
             "jolt-fp128-onehot-k16-w2r2",
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Two),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Two),
         ),
         (
             "jolt-fp128-onehot-k256-w2r2",
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Two),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Two),
         ),
         (
             "jolt-fp128-onehot-k16-w4r2",
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Four),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Four),
         ),
         (
             "jolt-fp128-onehot-k256-w4r2",
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Four),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Four),
         ),
         (
             "jolt-fp128-onehot-k16-w8r2",
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Eight),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Eight),
         ),
         (
             "jolt-fp128-onehot-k256-w8r2",
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Eight),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Eight),
         ),
         ("jolt-fp128-dense-bounded", dense_catalog()),
         ("jolt-fp128-dense-full", full_dense_catalog()),
@@ -570,7 +570,7 @@ mod field_inc {
 
     use akita_config::CommitmentConfig;
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
-    use jolt_akita::configs::AkitaOneHotChunkProfile;
+    use jolt_akita::configs::AkitaChunkProfile;
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::GroupedScheduleParams;
     use jolt_akita::schedule_registry::{
@@ -601,7 +601,7 @@ mod field_inc {
     ) {
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
-        let base = one_hot_catalog(one_hot_k, AkitaOneHotChunkProfile::Single);
+        let base = one_hot_catalog(one_hot_k, AkitaChunkProfile::Single);
         let overhead = trace_arity_overhead(one_hot_k);
         let reachable_min = (overhead + PROVER_MIN_LOG_T).max(declared_min);
         for final_num_vars in reachable_min..=ceiling {
@@ -657,7 +657,7 @@ mod field_inc {
         let full = DenseGroupLayout::FullWidth { num_vars: 30 };
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
-        let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single);
+        let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single);
         for layouts in [
             vec![
                 DenseGroupLayout::Bounded { num_vars: 14 },
@@ -685,7 +685,7 @@ mod field_inc {
     fn field_inline_rows_append_the_inc_group_to_every_advice_combination() {
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
-        let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single);
+        let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single);
         let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.1;
         let layout = FieldIncLayout::new(final_num_vars - trace_arity_overhead(AKITA_ONE_HOT_K16));
         let trusted = FIXTURE_TRUSTED_ADVICE_GROUP.num_vars();

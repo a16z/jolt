@@ -27,7 +27,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
-use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull};
+use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{
     with_one_hot_family, AkitaOneHotBackendScheme, AkitaOneHotBackendVerifier, OneHotFamily,
 };
@@ -49,6 +49,12 @@ const _: () = assert!(
 ///
 /// These bytes are ordinary input data. They are intentionally neither
 /// generated Rust nor embedded with `include_bytes!`.
+///
+/// Serialized bundles are regenerable preprocessing inputs, not a stable binary
+/// format. The multi-chunk fields break compatibility with older bincode bundles;
+/// reload compatible `.aks` catalogs and rebuild cached setup parameters. Serde
+/// defaults support omitted fields in map-based formats such as JSON, not older
+/// bincode encodings. This is separate from [`AkitaVerifierSetup`] transport.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaScheduleArtifacts {
@@ -197,13 +203,13 @@ impl AkitaScheduleArtifacts {
         &self,
         one_hot_k: usize,
     ) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        self.one_hot_catalog_for_profile(one_hot_k, AkitaOneHotChunkProfile::Single)
+        self.one_hot_catalog_for_profile(one_hot_k, AkitaChunkProfile::Single)
     }
 
     pub fn one_hot_catalog_for_profile(
         &self,
         one_hot_k: usize,
-        profile: AkitaOneHotChunkProfile,
+        profile: AkitaChunkProfile,
     ) -> Result<ValidatedScheduleCatalog, AkitaError> {
         let family = OneHotFamily::from_parts(one_hot_k, profile)?;
         with_one_hot_family!(family, |Cfg| {
@@ -345,6 +351,14 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     backend_pool().install(f)
 }
 
+/// Regenerable recipe for constructing an Akita setup.
+///
+/// Its bincode representation is tied to the implementation version. The
+/// multi-chunk profile and expanded [`AkitaScheduleArtifacts`] make older
+/// serialized recipes incompatible; discard those caches and rerun preprocessing
+/// with the current code and compatible catalogs. Serde defaults do not provide
+/// bincode backward compatibility. The legacy `Single` [`AkitaVerifierSetup`]
+/// encoding is preserved separately.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaSetupParams {
@@ -357,7 +371,7 @@ pub struct AkitaSetupParams {
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
     #[serde(default)]
-    pub(crate) one_hot_chunk_profile: AkitaOneHotChunkProfile,
+    pub(crate) akita_chunk_profile: AkitaChunkProfile,
     pub(crate) flavor: AkitaSetupFlavor,
     /// Recipe for the dynamic grouped rows accepted by this setup.
     ///
@@ -390,7 +404,7 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::Single,
             flavor: AkitaSetupFlavor::Both,
             grouped_schedule: None,
             schedule_artifacts,
@@ -413,7 +427,7 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k,
-            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::Single,
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule: None,
             schedule_artifacts,
@@ -437,7 +451,7 @@ impl AkitaSetupParams {
             max_total_batch_polys,
             default_layout_digest,
             one_hot_k,
-            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::Single,
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule,
             schedule_artifacts,
@@ -458,7 +472,7 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::Single,
             flavor: AkitaSetupFlavor::Dense,
             grouped_schedule: None,
             schedule_artifacts,
@@ -470,14 +484,14 @@ impl AkitaSetupParams {
     }
 
     /// Selects 1, 2, 4, or 8 witness chunks for the one-hot trace backend.
-    /// Constructors default to [`AkitaOneHotChunkProfile::Single`].
-    pub fn with_one_hot_chunk_profile(mut self, profile: AkitaOneHotChunkProfile) -> Self {
-        self.one_hot_chunk_profile = profile;
+    /// Constructors default to [`AkitaChunkProfile::Single`].
+    pub fn with_akita_chunk_profile(mut self, profile: AkitaChunkProfile) -> Self {
+        self.akita_chunk_profile = profile;
         self
     }
 
-    pub fn one_hot_chunk_profile(&self) -> AkitaOneHotChunkProfile {
-        self.one_hot_chunk_profile
+    pub fn akita_chunk_profile(&self) -> AkitaChunkProfile {
+        self.akita_chunk_profile
     }
 
     pub fn max_total_batch_polys(&self) -> usize {
@@ -599,11 +613,11 @@ pub(crate) enum AkitaVerifierScheduleArtifacts {
         one_hot: Vec<u8>,
     },
     OneHotChunked {
-        profile: AkitaOneHotChunkProfile,
+        profile: AkitaChunkProfile,
         one_hot: Vec<u8>,
     },
     BothChunked {
-        profile: AkitaOneHotChunkProfile,
+        profile: AkitaChunkProfile,
         dense: Vec<u8>,
         one_hot: Vec<u8>,
     },
@@ -629,11 +643,11 @@ impl AkitaVerifierScheduleArtifacts {
         }
     }
 
-    fn one_hot_chunk_profile(&self) -> AkitaOneHotChunkProfile {
+    fn akita_chunk_profile(&self) -> AkitaChunkProfile {
         match self {
             Self::OneHotChunked { profile, .. } | Self::BothChunked { profile, .. } => *profile,
             Self::Dense { .. } | Self::OneHot { .. } | Self::Both { .. } => {
-                AkitaOneHotChunkProfile::Single
+                AkitaChunkProfile::Single
             }
         }
     }
@@ -660,8 +674,8 @@ impl AkitaVerifierSetup {
         self.one_hot_k
     }
 
-    pub fn one_hot_chunk_profile(&self) -> AkitaOneHotChunkProfile {
-        self.schedule_artifacts.one_hot_chunk_profile()
+    pub fn akita_chunk_profile(&self) -> AkitaChunkProfile {
+        self.schedule_artifacts.akita_chunk_profile()
     }
 
     /// Primes the lazy verifier cache from freshly built backend keys, so
@@ -704,7 +718,7 @@ impl AkitaVerifierSetup {
                 .one_hot()
                 .ok_or_else(|| "Akita verifier setup has no one-hot schedule artifact".to_string())
                 .and_then(|bytes| {
-                    OneHotFamily::from_parts(self.one_hot_k, self.one_hot_chunk_profile())
+                    OneHotFamily::from_parts(self.one_hot_k, self.akita_chunk_profile())
                         .and_then(|family| AkitaOneHotBackendScheme::from_artifact(family, bytes))
                         .map_err(|error| error.to_string())
                 })
@@ -806,7 +820,7 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     setup: &AkitaVerifierSetup,
     flavor: AkitaBackendFlavor,
 ) -> Result<(), OpeningsError> {
-    let one_hot_chunk_profile = setup.one_hot_chunk_profile();
+    let akita_chunk_profile = setup.akita_chunk_profile();
     transcript.append(&Label(b"akita_setup_key"));
     transcript.append_bytes(b"akita/fp128");
     transcript.append_bytes(flavor.transcript_label());
@@ -814,11 +828,9 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
     transcript.append(&U64Word(setup.max_total_batch_polys as u64));
     transcript.append(&U64Word(setup.one_hot_k as u64));
-    if flavor == AkitaBackendFlavor::OneHot
-        && one_hot_chunk_profile != AkitaOneHotChunkProfile::Single
-    {
-        transcript.append(&Label(b"akita_one_hot_chunk_profile"));
-        transcript.append(&U64Word(one_hot_chunk_profile.num_chunks() as u64));
+    if flavor == AkitaBackendFlavor::OneHot && akita_chunk_profile != AkitaChunkProfile::Single {
+        transcript.append(&Label(b"akita_chunk_profile"));
+        transcript.append(&U64Word(akita_chunk_profile.num_chunks() as u64));
     }
     transcript.append_bytes(&setup.default_layout_digest);
     let catalog_digest = match flavor {

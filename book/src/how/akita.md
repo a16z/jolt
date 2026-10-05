@@ -42,12 +42,15 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-`ProverConfig::derive` selects the original single-chunk one-hot profile. To use
-two, four, or eight chunks, set `config.one_hot_chunk_profile` before Akita
-preprocessing and use that config for proving. The selected profile is carried
+`ProverConfig::derive` selects the single-chunk Akita profile. To use
+two, four, or eight chunks, set `config.akita_chunk_profile` before Akita
+preprocessing and use that config for proving. Proving rejects a profile that
+differs from the prepared setup. The selected profile is carried
 by the verifier setup. Existing four-file schedule directories remain valid
 for the default profile; a nondefault profile needs its matching companion
 catalog for the selected one-hot domain size.
+
+Nondefault chunk profiles bind the `akita_chunk_profile` transcript label.
 
 Both prover and verifier must be built for the same protocol. The `akita` feature selects packed commitments and little-endian scalar challenges. A compiled verifier accepts only its selected protocol configuration and rejects a mismatching proof. Dory and Akita proofs therefore require matching preprocessing and verifier builds.
 

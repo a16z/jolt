@@ -23,7 +23,7 @@ use akita_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull};
+use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 
 /// Upper bound on rows planned by one preprocessing request.
@@ -106,7 +106,7 @@ impl GroupedScheduleParams {
         full_dense_catalog: &ValidatedScheduleCatalog,
         one_hot_catalog: &ValidatedScheduleCatalog,
         one_hot_k: usize,
-        profile: AkitaOneHotChunkProfile,
+        profile: AkitaChunkProfile,
     ) -> Result<ValidatedScheduleCatalog, AkitaError> {
         let family = OneHotFamily::from_parts(one_hot_k, profile)?;
         with_one_hot_family!(family, |Cfg| {
@@ -382,7 +382,7 @@ pub fn provision_groups_for_k(
     params: &GroupedScheduleParams,
     one_hot_k: usize,
 ) -> Result<RegisteredRows, AkitaError> {
-    let family = OneHotFamily::from_parts(one_hot_k, AkitaOneHotChunkProfile::Single)?;
+    let family = OneHotFamily::from_parts(one_hot_k, AkitaChunkProfile::Single)?;
     with_one_hot_family!(family, |Cfg| {
         provision_groups_for_config::<Cfg>(
             dense_catalog,
@@ -412,10 +412,10 @@ mod tests {
         let full_producer =
             dense_group_profile(&full_dense, PolynomialGroupLayout::new(14, 1)).unwrap();
         for profile in [
-            AkitaOneHotChunkProfile::Single,
-            AkitaOneHotChunkProfile::Two,
-            AkitaOneHotChunkProfile::Four,
-            AkitaOneHotChunkProfile::Eight,
+            AkitaChunkProfile::Single,
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
         ] {
             for (one_hot_k, final_num_vars) in [(AKITA_ONE_HOT_K16, 22), (AKITA_ONE_HOT_K256, 20)] {
                 let base = artifacts

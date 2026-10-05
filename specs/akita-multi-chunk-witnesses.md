@@ -5,12 +5,12 @@
 | Author(s)   | @RadNi                                          |
 | Created     | 2026-09-23                                      |
 | Status      | implemented                                     |
-| PR          | [#1896](https://github.com/a16z/jolt/pull/1896) |
+| PR          | [#1976](https://github.com/a16z/jolt/pull/1976) |
 
 ## Summary
 
 Jolt's Akita adapter previously exposed only single-chunk fold witnesses for the packed
-`OneHotTrace`. PR #1896 adopts Akita's chunk-aware batch decompose-fold kernel and adds
+`OneHotTrace`. PR #1976 ports #1896's chunk-aware batch decompose-fold integration and adds
 trusted schedule artifacts for two-, four-, and eight-chunk trace witnesses. All chunk
 witnesses are produced during one traversal of the streamed trace, allowing setup to select
 multi-chunk geometry without materializing the one-hot polynomial or rereading the trace for
@@ -46,7 +46,10 @@ grouped-opening statement.
   invalid chunk partitions before witness construction.
 - The verifier setup serializes the selected profile and exact finalized catalog. The
   Fiat-Shamir setup preamble absorbs the catalog digest for every setup and a labeled chunk
-  count for nondefault one-hot profiles. `Single` and `Dense` keep the #1948 preamble.
+  count under `akita_chunk_profile` for nondefault one-hot profiles. `Single` and `Dense`
+  omit this label.
+- Stage 0 rejects a `ProverConfig.akita_chunk_profile` that differs from the prepared
+  verifier setup before making commitments; proving cannot change the setup's profile.
 
 No existing `jolt-eval` invariant changes. Its transcript invariants exercise the generic
 sponge API rather than Akita's setup preamble; the Akita-specific binding is covered by the
@@ -86,17 +89,25 @@ Fiat-Shamir inventory and setup round-trip tests.
   assignment budget. Dense-only setup rejects a one-hot profile selection.
 - [x] Prover and verifier bind a labeled chunk count for nondefault one-hot profiles and use
   the same profile-specific catalog digest. `Single` and `Dense` retain the #1948 preamble.
+- [x] Chunk-profile APIs and named setup serialization use the Akita-specific names below,
+  with no legacy aliases. Nondefault profiles bind the `akita_chunk_profile` transcript label.
+- [x] Proving rejects profile mismatches for both single-chunk and chunked preprocessing.
 
 ### Testing Strategy
 
-The primary gate is:
+The focused checks are:
 
 ```text
 cargo nextest run -p jolt-akita --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(akita_e2e)' --cargo-quiet
+cargo nextest run -p jolt-verifier --features fs-audit --test fs_obligations --cargo-quiet
 ```
 
 The suite compares streamed and materialized chunk witnesses, counts trace-row visits, checks
-the complete artifact grids, and round-trips both K values under all profiles. The Akita
+the complete artifact grids, and round-trips both K values under all profiles. These round trips
+also reject transported verifier setups whose profile disagrees with their catalog, including
+chunked catalogs encoded as the legacy single-chunk variant. The prover
+suite covers profile-mismatch rejection and streamed proofs under every profile. The Akita
 Fiat-Shamir inventory retains the conditional chunk-profile absorption sites, and a frozen
 digest test pins the #1948 `Single` setup preamble. Lint and formatting gates are:
 
@@ -115,6 +126,24 @@ witnesses share one trace traversal and one prepared rotation set. Position-task
 sizing includes the number of chunk accumulators so additional chunks do not silently multiply
 the intended cache budget.
 
+On 2026-10-05, an isolated synthetic streamed-kernel comparison used the pre-chunk
+decomposition and kernel entry points from `4f442a3caf6ecc0621986c133789f16eef2bc0f2`
+against the current implementation, with the same remaining sources and dependencies.
+Both builds used optimization level 3 without LTO, four Rayon workers, 65,536 generated
+trace rows, K=16, 64 selector slots, and 8,192 positions. The 24 cases crossed D=64/256,
+3/48 semantic columns, 1/3 digits, and Dense/Sparse/Compact rotations. Each process
+discarded two warmups and measured eleven samples; two passes reversed revision order.
+The reported changes compare the means of the two per-process medians.
+
+The 48-column cases ranged from a 7.7% improvement to a 1.5% slowdown. Small D64 cases
+showed measurable overhead: Dense took 1.091 ms versus 0.892 ms with one digit (+22.2%),
+and 1.266 ms versus 1.086 ms with three digits (+16.7%); Compact with one digit took
+1.942 ms versus 1.643 ms (+18.2%). These measurements include traversal, rotation
+preparation, accumulation, digit expansion, and witness construction, but exclude setup,
+fixture creation, and the rest of proving. They do not establish a full-proof speedup or
+rule out single-chunk regressions. Peak process RSS was recorded separately; it is not
+an allocation count. The one-chunk, one-digit expansion reuses its coefficient buffer.
+
 No `jolt-eval` objective is added: the current framework has no Akita-specific decomposition or
 prover objective. The traversal-count test mechanically guards the principal performance
 property introduced here.
@@ -123,8 +152,9 @@ property introduced here.
 
 ### Architecture
 
-`ProverConfig` passes `AkitaOneHotChunkProfile` to Akita setup, which selects one of eight typed
-one-hot families: K=16 or K=256 crossed with one, two, four, or eight chunks. The selected
+`ProverConfig` passes its `akita_chunk_profile: AkitaChunkProfile` choice to Akita setup,
+which selects one of eight typed one-hot families: K=16 or K=256 crossed with one, two,
+four, or eight chunks. The selected
 profile is serialized in `AkitaVerifierSetup`. The two dense catalogs plus those eight
 families form a ten-artifact runtime bundle. `from_directory` requires the four base
 files and loads any of the six companion files that are present. A selected profile
@@ -167,7 +197,51 @@ under that pinned planner, as are the regenerated conservative dense catalogs.
 
 ## Documentation
 
-`crates/jolt-akita/schedules/README.md` documents the three required artifacts, six optional
+### Breaking changes and migration
+
+The chunk-profile API is renamed throughout setup, proving, and verification:
+
+| Previous name | Current name |
+|---------------|--------------|
+| `AkitaOneHotChunkProfile` | `AkitaChunkProfile` |
+| `one_hot_chunk_profile` field and accessor | `akita_chunk_profile` |
+| `with_one_hot_chunk_profile` builder | `with_akita_chunk_profile` |
+
+Callers must use the new names; no deprecated aliases are provided. The `Single`,
+`Two`, `Four`, and `Eight` variants retain their meanings and discriminants.
+
+`AkitaSetupParams` also serializes the field as `akita_chunk_profile` in named formats
+such as JSON. Recipes containing the old `one_hot_chunk_profile` key are rejected by
+`deny_unknown_fields`; rename the key or regenerate the recipe. There is no serde alias
+for the old key. Renaming fields and types does not itself change positional bincode
+encoding; the added profile and artifact fields cause the cache break described below.
+
+For nondefault one-hot profiles, the setup preamble's transcript label changes from
+`akita_one_hot_chunk_profile` to `akita_chunk_profile`. This changes Fiat-Shamir challenges:
+proofs created with the previous label must be regenerated with the updated prover and
+verified with the updated verifier. No legacy transcript path is provided. `Single` and
+`Dense` omit this label, so the label rename does not change their preamble or the legacy
+`Single` verifier-setup encoding. The Fiat-Shamir absorption inventory records the new label.
+
+Proving now rejects a `config.akita_chunk_profile` that differs from preprocessing with
+`ProverError::Unsupported` at stage 0, before commitments. Previously, the prove-time
+setting was silently ignored. Reuse the preprocessing configuration or regenerate
+preprocessing for the requested profile. A newly derived `ProverConfig` defaults to
+`Single`; when reusing a chunked setup, explicitly retain its selected profile.
+
+This change intentionally breaks bincode compatibility for previously serialized
+`AkitaSetupParams` and `AkitaScheduleArtifacts`. These are regenerable preprocessing
+inputs: discard caches written before the multi-chunk fields were added, reload
+compatible schedule catalogs, and rerun preprocessing with the current implementation.
+`#[serde(default)]` supports omitted fields in map-based formats such as JSON; it does
+not make older bincode encodings compatible. No legacy decoder or migration is provided.
+The legacy `Single` verifier-setup encoding remains unchanged. Compatible `.aks`
+catalogs can be reused; rebuilding these caches does not itself require catalog
+regeneration.
+
+### Supporting documentation
+
+`crates/jolt-akita/schedules/README.md` documents the four required artifacts, six optional
 companions, profile geometry, supported arities, and regeneration selectors. The Jolt book
 documents profile selection through `ProverConfig`; `specs/lattice-claims.md` remains the
 normative statement-level Akita contract.
@@ -186,6 +260,7 @@ normative statement-level Akita contract.
 
 ## References
 
+- [Jolt PR #1976](https://github.com/a16z/jolt/pull/1976)
 - [Jolt PR #1896](https://github.com/a16z/jolt/pull/1896)
 - [Jolt PR #1948](https://github.com/a16z/jolt/pull/1948)
 - [`specs/lattice-claims.md`](lattice-claims.md)

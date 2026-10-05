@@ -313,6 +313,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     rows: usize,
     num_positions: usize,
     committed_zero_column: Option<usize>,
+    num_digits: usize,
 ) {
     const COLUMNS: usize = 3;
     const CAPACITY: usize = 8;
@@ -384,7 +385,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     let decompose_plan = DecomposeFoldPlan {
         challenges: &challenges,
         num_positions_per_block: num_positions,
-        num_digits: 2,
+        num_digits,
         log_basis: 3,
     };
     let streamed = <TestBackend as OpeningFoldKernel<
@@ -418,7 +419,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         &challenges,
         &single_chunk,
         num_positions,
-        2,
+        num_digits,
         DecomposeRotationMode::Dense,
     )
     .unwrap()
@@ -429,7 +430,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         &challenges,
         &single_chunk,
         num_positions,
-        2,
+        num_digits,
         DecomposeRotationMode::Sparse,
     )
     .unwrap()
@@ -440,7 +441,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         &challenges,
         &single_chunk,
         num_positions,
-        2,
+        num_digits,
         DecomposeRotationMode::Compact,
     )
     .unwrap()
@@ -462,7 +463,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
             DecomposeFoldBatchPlan::Sparse {
                 challenges: &challenges,
                 num_positions_per_block: num_positions,
-                num_digits: 2,
+                num_digits,
                 log_basis: 3,
             }
         } else {
@@ -470,7 +471,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
                 challenges: &challenge_set,
                 chunk_ranges: &chunk_ranges,
                 num_positions_per_block: num_positions,
-                num_digits: 2,
+                num_digits,
                 log_basis: 3,
             }
         };
@@ -552,21 +553,24 @@ fn d128_auto_uses_compact_rotations() {
 
 #[test]
 fn blockwise_opening_kernels_match_materialized_onehot() {
-    assert_opening_kernels_match_materialized::<64>(256, 32, 16, None);
-    assert_opening_kernels_match_materialized::<64>(256, 32, 1, None);
-    assert_opening_kernels_match_materialized::<128>(256, 32, 16, None);
-    assert_opening_kernels_match_materialized::<256>(256, 32, 16, None);
-    assert_opening_kernels_match_materialized::<512>(256, 32, 8, None);
-    assert_opening_kernels_match_materialized::<64>(16, 32, 4, None);
-    assert_opening_kernels_match_materialized::<128>(16, 32, 2, None);
-    assert_opening_kernels_match_materialized::<256>(16, 32, 2, None);
-    assert_opening_kernels_match_materialized::<512>(16, 32, 1, None);
-    assert_opening_kernels_match_materialized::<64>(16, 32, 16, None);
-    assert_opening_kernels_match_materialized::<128>(16, 32, 8, None);
-    assert_opening_kernels_match_materialized::<256>(16, 32, 4, None);
-    assert_opening_kernels_match_materialized::<512>(16, 32, 2, None);
-    assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1));
-    assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1));
+    assert_opening_kernels_match_materialized::<64>(256, 32, 16, None, 2);
+    assert_opening_kernels_match_materialized::<64>(256, 32, 1, None, 2);
+    assert_opening_kernels_match_materialized::<128>(256, 32, 16, None, 2);
+    assert_opening_kernels_match_materialized::<256>(256, 32, 16, None, 2);
+    assert_opening_kernels_match_materialized::<512>(256, 32, 8, None, 2);
+    assert_opening_kernels_match_materialized::<64>(16, 32, 4, None, 2);
+    assert_opening_kernels_match_materialized::<128>(16, 32, 2, None, 2);
+    assert_opening_kernels_match_materialized::<256>(16, 32, 2, None, 2);
+    assert_opening_kernels_match_materialized::<512>(16, 32, 1, None, 2);
+    assert_opening_kernels_match_materialized::<64>(16, 32, 16, None, 2);
+    assert_opening_kernels_match_materialized::<128>(16, 32, 8, None, 2);
+    assert_opening_kernels_match_materialized::<256>(16, 32, 4, None, 2);
+    assert_opening_kernels_match_materialized::<512>(16, 32, 2, None, 2);
+    assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2);
+    assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2);
+    assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1), 1);
+    assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1), 1);
+    assert_opening_kernels_match_materialized::<256>(256, 32, 16, Some(1), 1);
 }
 
 fn batch_decompose_test_source<const D: usize>() -> TracePackedOneHot {

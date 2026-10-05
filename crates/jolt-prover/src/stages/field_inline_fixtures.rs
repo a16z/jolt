@@ -412,7 +412,7 @@ pub(crate) fn test_prover_config() -> ProverConfig {
         one_hot_config: crate::config::one_hot_config(LOG_T),
         trace_polynomial_order: Default::default(),
         #[cfg(feature = "akita")]
-        one_hot_chunk_profile: Default::default(),
+        akita_chunk_profile: Default::default(),
     }
 }
 

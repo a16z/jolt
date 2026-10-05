@@ -56,6 +56,11 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
+    if config.akita_chunk_profile != PCS::akita_chunk_profile(&preprocessing.verifier.pcs_setup) {
+        return Err(ProverError::Unsupported {
+            reason: "Akita chunk profile differs from preprocessing; reuse its configuration or regenerate preprocessing",
+        });
+    }
     if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
         return Err(ProverError::Unsupported {
             reason: "Akita supports only cycle-major trace polynomials",

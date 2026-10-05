@@ -776,15 +776,20 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         num_digits,
     )
     .entered();
-    let mut expanded = (0..num_chunks)
-        .map(|_| Vec::with_capacity(num_positions.saturating_mul(num_digits)))
-        .collect::<Vec<_>>();
-    for position in compressed.chunks_exact(num_chunks) {
-        for (expanded, &coeffs) in expanded.iter_mut().zip(position) {
-            expanded.push(coeffs);
-            expanded.extend((1..num_digits).map(|_| [0i32; D]));
+    let expanded = if num_chunks == 1 && num_digits == 1 {
+        vec![compressed]
+    } else {
+        let mut expanded = (0..num_chunks)
+            .map(|_| Vec::with_capacity(num_positions.saturating_mul(num_digits)))
+            .collect::<Vec<_>>();
+        for position in compressed.chunks_exact(num_chunks) {
+            for (expanded, &coeffs) in expanded.iter_mut().zip(position) {
+                expanded.push(coeffs);
+                expanded.extend((1..num_digits).map(|_| [0i32; D]));
+            }
         }
-    }
+        expanded
+    };
     drop(_expand_span);
     let _witness_span = tracing::info_span!(
         "trace_onehot_decompose_build_witness",

@@ -26,7 +26,7 @@ use crate::adapters::{
     AkitaScheduleArtifacts, AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts,
     AkitaVerifierSetup, BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
 };
-use crate::configs::AkitaOneHotChunkProfile;
+use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -62,6 +62,9 @@ fn commit_one_hot_source(
 
 /// Prover seam for committing the packed trace directly from selected one-hot rows.
 pub trait TraceOneHotCommitment: CommitmentScheme {
+    /// Witness chunk profile fixed by preprocessing.
+    fn akita_chunk_profile(setup: &Self::VerifierSetup) -> AkitaChunkProfile;
+
     fn commit_trace_one_hot(
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
@@ -397,6 +400,10 @@ impl AkitaScheme {
 }
 
 impl TraceOneHotCommitment for AkitaScheme {
+    fn akita_chunk_profile(setup: &Self::VerifierSetup) -> AkitaChunkProfile {
+        setup.akita_chunk_profile()
+    }
+
     fn commit_trace_one_hot(
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
@@ -427,15 +434,14 @@ impl CommitmentScheme for AkitaScheme {
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
-        if params.flavor == AkitaSetupFlavor::Dense
-            && params.one_hot_chunk_profile.num_chunks() != 1
+        if params.flavor == AkitaSetupFlavor::Dense && params.akita_chunk_profile.num_chunks() != 1
         {
             return Err(OpeningsError::InvalidSetup(
                 "dense-only Akita setup cannot select one-hot witness chunking".to_owned(),
             ));
         }
         if params.flavor != AkitaSetupFlavor::Dense {
-            OneHotFamily::from_parts(params.one_hot_k, params.one_hot_chunk_profile)
+            OneHotFamily::from_parts(params.one_hot_k, params.akita_chunk_profile)
                 .and_then(|family| {
                     family.validate_num_vars(
                         params.max_num_vars,
@@ -458,7 +464,7 @@ impl CommitmentScheme for AkitaScheme {
         let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
         let one_hot_schedule_artifact = || {
             let base = artifacts
-                .one_hot_catalog_for_profile(params.one_hot_k, params.one_hot_chunk_profile)
+                .one_hot_catalog_for_profile(params.one_hot_k, params.akita_chunk_profile)
                 .map_err(invalid_setup)?;
             let catalog = params
                 .grouped_schedule
@@ -471,15 +477,15 @@ impl CommitmentScheme for AkitaScheme {
                             &artifacts.full_dense_catalog()?,
                             &base,
                             params.one_hot_k,
-                            params.one_hot_chunk_profile,
+                            params.akita_chunk_profile,
                         )
                     },
                 )
                 .map_err(invalid_setup)?;
             catalog.to_artifact_bytes().map_err(invalid_setup)
         };
-        let schedule_artifacts = match (params.flavor, params.one_hot_chunk_profile) {
-            (AkitaSetupFlavor::Both, AkitaOneHotChunkProfile::Single) => {
+        let schedule_artifacts = match (params.flavor, params.akita_chunk_profile) {
+            (AkitaSetupFlavor::Both, AkitaChunkProfile::Single) => {
                 AkitaVerifierScheduleArtifacts::Both {
                     dense: dense_schedule_artifact()?,
                     one_hot: one_hot_schedule_artifact()?,
@@ -490,7 +496,7 @@ impl CommitmentScheme for AkitaScheme {
                 dense: dense_schedule_artifact()?,
                 one_hot: one_hot_schedule_artifact()?,
             },
-            (AkitaSetupFlavor::OneHot, AkitaOneHotChunkProfile::Single) => {
+            (AkitaSetupFlavor::OneHot, AkitaChunkProfile::Single) => {
                 AkitaVerifierScheduleArtifacts::OneHot {
                     one_hot: one_hot_schedule_artifact()?,
                 }
@@ -1019,14 +1025,14 @@ mod tests {
 
     fn one_hot_roundtrip(
         one_hot_k: usize,
-        profile: AkitaOneHotChunkProfile,
+        profile: AkitaChunkProfile,
         num_vars: usize,
         num_polys: usize,
     ) {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let setup_params =
             AkitaSetupParams::one_hot_only(num_vars, num_polys, [4; 32], one_hot_k, artifacts)
-                .with_one_hot_chunk_profile(profile);
+                .with_akita_chunk_profile(profile);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let row_count = 1usize << (num_vars - one_hot_k.ilog2() as usize);
         let polynomials = (0..num_polys)
@@ -1077,6 +1083,48 @@ mod tests {
         .unwrap();
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
+        if num_vars == 16 && num_polys == 1 {
+            let one_hot = match &verifier_setup.schedule_artifacts {
+                AkitaVerifierScheduleArtifacts::OneHot { one_hot }
+                | AkitaVerifierScheduleArtifacts::OneHotChunked { one_hot, .. } => one_hot.clone(),
+                AkitaVerifierScheduleArtifacts::Dense { .. }
+                | AkitaVerifierScheduleArtifacts::Both { .. }
+                | AkitaVerifierScheduleArtifacts::BothChunked { .. } => {
+                    panic!("one-hot fixture must carry a one-hot-only catalog")
+                }
+            };
+            let wrong_profile = if profile == AkitaChunkProfile::Four {
+                AkitaChunkProfile::Eight
+            } else {
+                AkitaChunkProfile::Four
+            };
+            for schedule_artifacts in [
+                AkitaVerifierScheduleArtifacts::OneHotChunked {
+                    profile: wrong_profile,
+                    one_hot: one_hot.clone(),
+                },
+                AkitaVerifierScheduleArtifacts::OneHot { one_hot },
+            ] {
+                if schedule_artifacts == verifier_setup.schedule_artifacts {
+                    continue;
+                }
+                let mut tampered = verifier_setup.clone();
+                tampered.schedule_artifacts = schedule_artifacts;
+                // Transport drops the honest setup's primed backend caches.
+                let bytes = serde_json::to_vec(&tampered).unwrap();
+                let transported: AkitaVerifierSetup = serde_json::from_slice(&bytes).unwrap();
+                let mut transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
+                let error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+                    &transported,
+                    &statement,
+                    &proof,
+                    &mut transcript,
+                )
+                .expect_err("a verifier profile must match its embedded catalog");
+                assert!(matches!(error, OpeningsError::InvalidSetup(_)));
+            }
+        }
+
         let mut wrong_k_statement = statement;
         wrong_k_statement[0].commitment.one_hot_k = if one_hot_k == AKITA_ONE_HOT_K16 {
             AKITA_ONE_HOT_K256
@@ -1096,10 +1144,10 @@ mod tests {
     #[test]
     fn one_hot_k16_roundtrip() {
         for profile in [
-            AkitaOneHotChunkProfile::Single,
-            AkitaOneHotChunkProfile::Two,
-            AkitaOneHotChunkProfile::Four,
-            AkitaOneHotChunkProfile::Eight,
+            AkitaChunkProfile::Single,
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
         ] {
             let family = OneHotFamily::from_parts(AKITA_ONE_HOT_K16, profile).unwrap();
             for num_polys in [1, 2] {
@@ -1113,10 +1161,10 @@ mod tests {
     #[test]
     fn one_hot_k256_roundtrip() {
         for profile in [
-            AkitaOneHotChunkProfile::Single,
-            AkitaOneHotChunkProfile::Two,
-            AkitaOneHotChunkProfile::Four,
-            AkitaOneHotChunkProfile::Eight,
+            AkitaChunkProfile::Single,
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
         ] {
             let family = OneHotFamily::from_parts(AKITA_ONE_HOT_K256, profile).unwrap();
             for num_polys in [1, 2] {
@@ -1210,10 +1258,7 @@ mod tests {
             let (decoded, consumed): (AkitaVerifierSetup, usize) =
                 bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
             assert_eq!(consumed, bytes.len());
-            assert_eq!(
-                decoded.one_hot_chunk_profile(),
-                AkitaOneHotChunkProfile::Single
-            );
+            assert_eq!(decoded.akita_chunk_profile(), AkitaChunkProfile::Single);
         }
         let one_hot = match &setup.schedule_artifacts {
             AkitaVerifierScheduleArtifacts::OneHot { one_hot } => one_hot,
@@ -1232,10 +1277,7 @@ mod tests {
             bincode::serde::encode_to_vec(&setup, bincode::config::standard()).unwrap(),
             legacy_bytes
         );
-        assert_eq!(
-            legacy.one_hot_chunk_profile(),
-            AkitaOneHotChunkProfile::Single
-        );
+        assert_eq!(legacy.akita_chunk_profile(), AkitaChunkProfile::Single);
 
         let mut current_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
         append_verifier_setup(&mut current_transcript, &setup, AkitaBackendFlavor::OneHot).unwrap();

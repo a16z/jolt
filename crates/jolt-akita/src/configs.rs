@@ -120,7 +120,7 @@ pub type JoltOneHotK256 = RecursiveCommitmentConfig<JoltOneHotK256Direct>;
 )]
 #[repr(u8)]
 #[serde(rename_all = "snake_case")]
-pub enum AkitaOneHotChunkProfile {
+pub enum AkitaChunkProfile {
     #[default]
     Single = 0,
     Two = 1,
@@ -128,7 +128,7 @@ pub enum AkitaOneHotChunkProfile {
     Eight = 3,
 }
 
-impl AkitaOneHotChunkProfile {
+impl AkitaChunkProfile {
     pub(crate) const fn witness_cfg(self) -> ChunkedWitnessCfg {
         match self {
             Self::Single => ChunkedWitnessCfg::default_non_chunked(),
@@ -176,7 +176,7 @@ chunked_one_hot_config!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    AkitaOneHotChunkProfile::Two,
+    AkitaChunkProfile::Two,
     "jolt-fp128-onehot-k16-w2r2-direct-planner",
     "jolt-fp128-onehot-k16-w2r2"
 );
@@ -186,7 +186,7 @@ chunked_one_hot_config!(
     JoltOneHotK256W2R2,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    AkitaOneHotChunkProfile::Two,
+    AkitaChunkProfile::Two,
     "jolt-fp128-onehot-k256-w2r2-direct-planner",
     "jolt-fp128-onehot-k256-w2r2"
 );
@@ -198,7 +198,7 @@ chunked_one_hot_config!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    AkitaOneHotChunkProfile::Four,
+    AkitaChunkProfile::Four,
     "jolt-fp128-onehot-k16-w4r2-direct-planner",
     "jolt-fp128-onehot-k16-w4r2"
 );
@@ -208,7 +208,7 @@ chunked_one_hot_config!(
     JoltOneHotK256W4R2,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    AkitaOneHotChunkProfile::Four,
+    AkitaChunkProfile::Four,
     "jolt-fp128-onehot-k256-w4r2-direct-planner",
     "jolt-fp128-onehot-k256-w4r2"
 );
@@ -220,7 +220,7 @@ delegate_preset!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    AkitaOneHotChunkProfile::Eight.witness_cfg(),
+    AkitaChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-onehot-k16-w8r2-direct-planner"
 );
 
@@ -229,7 +229,7 @@ delegate_preset!(
     JoltOneHotK256W8R2Direct,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    AkitaOneHotChunkProfile::Eight.witness_cfg(),
+    AkitaChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-onehot-k256-w8r2-direct-planner"
 );
 
@@ -253,7 +253,7 @@ delegate_preset!(
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
-    AkitaOneHotChunkProfile::Eight.witness_cfg(),
+    AkitaChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-dense-bounded"
 );
 
@@ -263,7 +263,7 @@ delegate_preset!(
     JoltDenseFull,
     Dense,
     <Dense as CommitmentConfig>::committed_source_class(),
-    AkitaOneHotChunkProfile::Eight.witness_cfg(),
+    AkitaChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-dense-full"
 );
 
@@ -295,11 +295,11 @@ mod tests {
         assert!(JoltOneHotK256::recursive_setup_planning());
         assert_eq!(
             JoltOneHotK16W8R2::chunked_witness_cfg(),
-            ChunkedWitnessCfg::d64_production()
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
         );
         assert_eq!(
             JoltOneHotK256W8R2::chunked_witness_cfg(),
-            ChunkedWitnessCfg::d64_production()
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
         );
         for actual in [
             JoltOneHotK16W2R2::chunked_witness_cfg(),

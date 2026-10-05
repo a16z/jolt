@@ -3,7 +3,7 @@ use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier};
 use akita_types::AkitaVerifierSetup;
 
 use crate::adapters::AkitaScheduleArtifacts;
-use crate::configs::{AkitaOneHotChunkProfile, JoltOneHotK16};
+use crate::configs::{AkitaChunkProfile, JoltOneHotK16};
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 
 pub const AKITA_ONE_HOT_K16: usize = 16;
@@ -46,10 +46,10 @@ macro_rules! define_family_types {
 
             pub(crate) fn from_parts(
                 k: usize,
-                profile: AkitaOneHotChunkProfile,
+                profile: AkitaChunkProfile,
             ) -> Result<Self, AkitaError> {
                 match (k, profile) {
-                    $(($k, AkitaOneHotChunkProfile::$profile) => Ok(Self::$variant)),+,
+                    $(($k, AkitaChunkProfile::$profile) => Ok(Self::$variant)),+,
                     _ => Err(AkitaError::InvalidSetup(format!(
                         "unsupported Akita one-hot K={k} with profile {profile:?}"
                     ))),
@@ -62,9 +62,9 @@ macro_rules! define_family_types {
                 }
             }
 
-            pub(crate) const fn profile(self) -> AkitaOneHotChunkProfile {
+            pub(crate) const fn profile(self) -> AkitaChunkProfile {
                 match self {
-                    $(Self::$variant => AkitaOneHotChunkProfile::$profile),+
+                    $(Self::$variant => AkitaChunkProfile::$profile),+
                 }
             }
 
@@ -77,11 +77,11 @@ macro_rules! define_family_types {
                 // Two-polynomial rows provide more live blocks for the two
                 // chunked levels. These floors are admitted by the pinned planner.
                 let min = match (self.profile(), num_polys) {
-                    (AkitaOneHotChunkProfile::Single | AkitaOneHotChunkProfile::Two, _)
-                    | (AkitaOneHotChunkProfile::Four, 2) => base_min,
-                    (AkitaOneHotChunkProfile::Four, _)
-                    | (AkitaOneHotChunkProfile::Eight, 2) => base_min + 1,
-                    (AkitaOneHotChunkProfile::Eight, _) => base_min + 2,
+                    (AkitaChunkProfile::Single | AkitaChunkProfile::Two, _)
+                    | (AkitaChunkProfile::Four, 2) => base_min,
+                    (AkitaChunkProfile::Four, _)
+                    | (AkitaChunkProfile::Eight, 2) => base_min + 1,
+                    (AkitaChunkProfile::Eight, _) => base_min + 2,
                 };
                 (min, max)
             }

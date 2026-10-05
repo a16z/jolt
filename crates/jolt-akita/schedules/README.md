@@ -29,6 +29,14 @@ The resulting exact catalog is serialized inside `AkitaVerifierSetup`, so a
 transported verifier setup does not depend on process-global state or on these
 source-tree files.
 
+Serialized `AkitaSetupParams` and `AkitaScheduleArtifacts` are regenerable
+preprocessing inputs whose bincode format is tied to the implementation version.
+The multi-chunk fields intentionally break compatibility with older serialized
+values. Discard those caches, reload compatible `.aks` catalogs, and rerun
+preprocessing with the current code. Serde defaults do not provide bincode
+backward compatibility. Compatible catalogs can be reused without regeneration.
+The legacy `Single` verifier-setup encoding remains unchanged.
+
 The one-hot artifacts are hybrid catalogs. A logical trace shorter than
 `2^21` uses a direct schedule. A trace of `2^21` cycles or longer uses a
 setup-offloaded schedule. Akita uses K=16 committed chunks at every trace
