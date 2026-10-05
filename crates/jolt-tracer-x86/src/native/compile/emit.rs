@@ -22,9 +22,9 @@ use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 use super::super::helpers;
 use super::super::state::{
     advice_slot_offset, reg_offset, ExitReason, OBSERVATION_SIZE, OBS_RAM_ADDRESS, OBS_RAM_POST,
-    OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_EXIT,
-    OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC, OFF_ROW_LIMIT,
-    OFF_TRACE_LEN,
+    OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_CANARY_OFFSET,
+    OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC,
+    OFF_ROW_LIMIT, OFF_TRACE_LEN,
 };
 use super::emitter::{EmitOutcome, RowEmitter};
 use super::{EmitMode, Emitter};
@@ -52,6 +52,7 @@ const RCX: Rq = Rq::RCX;
 const RDX: Rq = Rq::RDX;
 
 const RAM_START: u64 = common::constants::RAM_START_ADDRESS;
+const STACK_CANARY_SIZE: u64 = common::constants::STACK_CANARY_SIZE;
 
 impl Emitter {
     fn load_reg(&mut self, gpr: Rq, reg: Option<u8>) {
@@ -377,7 +378,8 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
-    /// `Sd`: mirror of `Ld` with the store value in rsi's place.
+    /// `Sd`: mirror of `Ld` with the store value in rsi's place, plus the
+    /// stack-canary check that only stores are subject to.
     fn emit_store_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
         // EA = x[rs1].wrapping_add(imm) as u64 — imm used as full i64 here.
         e.load_reg(RAX, row.operands.rs1);
@@ -406,6 +408,13 @@ impl DynasmEmitter {
             ; jae >slow
             ; test al, 7
             ; jnz >slow
+            // Stack canary: plane offsets in [canary_offset, canary_offset +
+            // STACK_CANARY_SIZE) are a stack overflow. One unsigned compare
+            // covers both ends of the range; the helper reports the fault.
+            ; mov rsi, rcx
+            ; sub rsi, QWORD [r12 + OFF_CANARY_OFFSET]
+            ; cmp rsi, STACK_CANARY_SIZE as i32
+            ; jb >slow
         );
         if e.mode == EmitMode::Record {
             e.obs_reload();
