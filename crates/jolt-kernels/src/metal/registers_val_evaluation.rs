@@ -171,7 +171,7 @@ impl PrepareKernel<AkitaField, RegistersValEvaluation<AkitaField>> for MetalBack
                 cycles,
                 cutoff_elements,
                 source = "instruction_rows_v1",
-                row_layout = "column_major_packed_u64_v3",
+                row_layout = "column_major_packed_u64_v4",
                 source_generation = receipt.generation(),
                 source_device_registry_id = receipt.device_registry_id(),
                 source_ready_serial = receipt.completion_serial(),

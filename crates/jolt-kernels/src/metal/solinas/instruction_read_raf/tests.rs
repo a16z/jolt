@@ -83,7 +83,7 @@ fn physical_count_rank_is_table_major_then_none() {
 
 #[test]
 fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
-    let row = BooleanityRow::new(9, Some(262143), Some(7), -11).unwrap();
+    let row = BooleanityRow::new(9, Some(262_143), Some(7), -11).unwrap();
     let mut lookup_lo = [MaybeUninit::uninit()];
     let mut lookup_hi = [MaybeUninit::uninit()];
     let mut fused_inc_magnitude = [MaybeUninit::uninit()];
@@ -126,7 +126,7 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
         instruction_read_raf_bytecode_chunk_rank(encoded_row, encoded_claim),
         0xd5
     );
-    assert_eq!(encoded_row.mapped_pc(), Some(262143));
+    assert_eq!(encoded_row.mapped_pc(), Some(262_143));
     assert_eq!(encoded_row.words()[4] >> 63, 1);
     assert_eq!(counts[79], 1);
 }
@@ -134,7 +134,7 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
 #[test]
 fn repeated_stage1_fill_matches_scalar_pushes() {
     const ROWS: usize = 7;
-    let row = BooleanityRow::new(17, Some(262144), Some(19), 32).unwrap();
+    let row = BooleanityRow::new(17, Some(262_144), Some(19), 32).unwrap();
     let register_write = Some((6, 41, 73));
 
     let mut scalar_lookup_lo = [MaybeUninit::uninit(); ROWS];
@@ -198,8 +198,8 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
             .map(|value| unsafe { value.assume_init() })
             .collect::<Vec<_>>()
     };
-    assert_eq!(initialized_u64(&scalar_pc), vec![262145; ROWS]);
-    assert_eq!(initialized_u64(&repeated_pc), vec![262145; ROWS]);
+    assert_eq!(initialized_u64(&scalar_pc), vec![262_145; ROWS]);
+    assert_eq!(initialized_u64(&repeated_pc), vec![262_145; ROWS]);
     let initialized_u8 = |values: &[MaybeUninit<u8>]| {
         values
             .iter()

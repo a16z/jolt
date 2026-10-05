@@ -325,7 +325,7 @@ fn fused_stage1_scatter_rejects_rank_past_the_exact_chunk_cell() {
         .lease(padded_rows, context.device_registry_id())
         .unwrap();
     // SAFETY: no command has been submitted, the shared allocation contains
-    // four initialized columns of `padded_rows`, and the lease keeps it alive.
+    // five initialized columns of `padded_rows`, and the lease keeps it alive.
     unsafe {
         let words = corrupt_source.row_buffer().contents().cast::<u64>();
         let first = BooleanityRow::from_instruction_source_words([

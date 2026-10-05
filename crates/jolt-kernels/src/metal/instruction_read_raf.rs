@@ -526,7 +526,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                         cycles = source_receipt.cycles(),
                         explicit_rows = source_receipt.explicit_rows(),
                         source = "instruction_read_raf_stage1_rows_v1",
-                        row_layout = "column_major_packed_u64_v3",
+                        row_layout = "column_major_packed_u64_v4",
                         source_generation = source_receipt.generation(),
                         source_device_registry_id = source_receipt.device_registry_id(),
                         source_ready_serial = source_receipt.completion_serial(),

@@ -41,6 +41,7 @@ use super::{
     REGISTERS_READ_WRITE_WIDE_INDEXED_COOPERATIVE_PIPELINE,
     REGISTERS_READ_WRITE_WIDE_TRANSITION_COOPERATIVE_PIPELINE,
 };
+use crate::metal::solinas::booleanity::BOOLEANITY_SOURCE_ROW_BYTES;
 use crate::metal::solinas::registers_claim_reduction::RegistersClaimResidentRdPlane;
 use crate::metal::solinas::runtime::PooledPrivateBuffer;
 #[cfg(feature = "test-utils")]
@@ -986,7 +987,7 @@ impl SolinasMetal {
                     .checked_mul(6 * size_of::<u64>())
                     .ok_or(MetalError::InputTooLong(cycles))?;
                 let expected_instruction_read_raf_bytes = cycles
-                    .checked_mul(4 * size_of::<u64>())
+                    .checked_mul(BOOLEANITY_SOURCE_ROW_BYTES)
                     .ok_or(MetalError::InputTooLong(cycles))?;
                 let expected_rd_index_bytes = cycles;
                 let expected_rd_post_bytes = cycles
