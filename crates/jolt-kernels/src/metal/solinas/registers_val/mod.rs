@@ -11,7 +11,7 @@ use jolt_field::Zero as _;
 use jolt_poly::{EqPolynomial, LtPolynomial};
 use metal::{
     foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
-    ComputePipelineState, MTLResourceOptions, MTLSize,
+    ComputePipelineState, MTLPurgeableState, MTLResourceOptions, MTLSize,
 };
 
 use super::{
@@ -268,6 +268,7 @@ pub struct RegistersValSequence {
     reduction_limits: PipelineLimits,
     buffers: SequenceBuffers,
     reduction_steps: Vec<ReductionStep>,
+    initial_elements: usize,
     current_elements: usize,
     current_lt_lo_length: usize,
     lt_lo_capacity: usize,
@@ -808,6 +809,7 @@ impl RegistersValFirstTransitionInvocation {
                 partial_b,
             },
             reduction_steps: self.reduction_steps,
+            initial_elements: current_elements,
             current_elements,
             current_lt_lo_length,
             lt_lo_capacity: self.lt_lo_capacity,
@@ -969,7 +971,24 @@ impl RegistersValSequence {
         self.current_elements = next_elements;
         self.current_lt_lo_length = next_lt_lo_length;
         self.source_in_a = !self.source_in_a;
+        self.release_initial_dense()?;
         Ok((message, active_time))
+    }
+
+    /// Only the first dense bind reads the native transition's output.
+    /// Replacing it with the next level's quarter-size destination frees its
+    /// storage for the rest of the tail.
+    fn release_initial_dense(&mut self) -> Result<(), MetalError> {
+        if 2 * self.current_elements == self.initial_elements {
+            let _ = self
+                .buffers
+                .dense_a
+                .set_purgeable_state(MTLPurgeableState::Empty);
+            self.buffers.dense_a = self
+                .context
+                .new_registers_val_buffer(self.current_elements)?;
+        }
+        Ok(())
     }
 
     fn execute_current_bind_and_message(
@@ -1077,10 +1096,6 @@ impl RegistersValSequence {
         pipeline_limits => transition_limits: PipelineLimits,
         reduction_pipeline_limits => reduction_limits: PipelineLimits,
     }}
-
-    pub const fn round_device_buffer_allocations(&self) -> usize {
-        0
-    }
 
     pub const fn dynamic_threadgroup_memory_bytes(&self) -> usize {
         2 * SAMPLES * (self.threads_per_threadgroup / SIMD_WIDTH) * size_of::<Fp128>()
