@@ -108,11 +108,25 @@ pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
     Ok(consumers.0.rows)
 }
 
+/// Largest factor count [`accumulate_product_grid`] accepts; `n!` must fit a
+/// `u64` for the finite-difference extension. Kernels whose factor count
+/// follows the one-hot chunk widths reject a larger one at construction.
+pub(crate) const MAX_GRID_FACTORS: usize = 20;
+
+/// Scratch length [`accumulate_product_grid`] needs for `n` factors: two
+/// child tables per tree level plus one difference table.
+pub(crate) const fn product_grid_scratch_len(n: usize) -> usize {
+    6 * n + 2
+}
+
+/// Largest factor count whose grid is cheaper to walk directly (every
+/// factor multiplied at every point) than through the product tree.
+const DIRECT_GRID_FACTORS: usize = 4;
+
 /// Accumulates `Π factors` into `lane`, fusing the last multiply into the
 /// deferred-reduction accumulator. Requires at least two factors.
 #[inline]
-pub(crate) fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accumulator) {
-    debug_assert!(factors.len() >= 2);
+fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accumulator) {
     let last = factors.len() - 1;
     let mut product = factors[0];
     for factor in &factors[1..last] {
@@ -121,17 +135,31 @@ pub(crate) fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accu
     lane.fmadd(product, factors[last]);
 }
 
-/// Walk one row's product grid: with `evals` seeded at the `t = 1` factor
-/// values and `steps` their per-factor linear steps, accumulate the factor
-/// product `Π evals` into `lanes[t − 1]` for `t = 1, …, n − 1` (advancing
-/// every factor by its step between points) and the leading coefficient
-/// `Π steps` into `lanes[n − 1]`, where `n = lanes.len()`.
+/// Walk one row's product grid: with `evals` the `t = 1` values of `n`
+/// linear factors and `steps` their slopes, accumulate their product at
+/// `t = 1, …, n − 1` into `lanes[t − 1]` and its leading coefficient
+/// `Π steps` into `lanes[n − 1]`, where `n = lanes.len() ≥ 2`.
+///
+/// Above [`DIRECT_GRID_FACTORS`] the product is built as a balanced tree:
+/// each node multiplies its two halves pointwise at exactly as many points
+/// as its degree, after extending both halves to those points by finite
+/// differences (additions only). That costs `O(n log n)` multiplications
+/// instead of the `n · (n − 2)` of multiplying every factor at every point;
+/// the root's multiplications fuse into the deferred-reduction lanes.
+/// Four and eight factors take unrolled forms of the same tree that keep
+/// every table on the stack.
+/// `scratch` must hold [`product_grid_scratch_len`]`(n)` elements.
 #[inline]
 pub(crate) fn accumulate_product_grid<F: JoltField>(
-    evals: &mut [F],
+    evals: &[F],
     steps: &[F],
     lanes: &mut [F::Accumulator],
+    scratch: &mut [F],
 ) {
+    let n = lanes.len();
+    debug_assert!((2..=MAX_GRID_FACTORS).contains(&n));
+    debug_assert_eq!(evals.len(), n);
+    debug_assert_eq!(steps.len(), n);
     match (evals, steps, lanes) {
         ([a, b, c, d], [da, db, dc, dd], lanes @ [_, _, _, _]) => {
             let left = quadratic_product_samples([*a, *b], [*da, *db]);
@@ -169,16 +197,31 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
             }
             lanes[7].fmadd(left[4], right[4]);
         }
-        (evals, steps, lanes) => {
-            let n = lanes.len();
-            accumulate_product(evals, &mut lanes[0]);
+        (evals, steps, lanes) if n <= DIRECT_GRID_FACTORS => {
+            let point = &mut scratch[..n];
+            point.copy_from_slice(evals);
+            accumulate_product(point, &mut lanes[0]);
             for lane in &mut lanes[1..n - 1] {
-                for (eval, step) in evals.iter_mut().zip(steps) {
-                    *eval += *step;
+                for (value, step) in point.iter_mut().zip(steps) {
+                    *value += *step;
                 }
-                accumulate_product(evals, lane);
+                accumulate_product(point, lane);
             }
             accumulate_product(steps, &mut lanes[n - 1]);
+        }
+        (evals, steps, lanes) => {
+            let mid = n / 2;
+            let (left, rest) = scratch.split_at_mut(n - 1);
+            let (right, rest) = rest.split_at_mut(n - 1);
+            let left_lead = linear_product(&evals[..mid], &steps[..mid], &mut left[..mid], rest);
+            let right_lead =
+                linear_product(&evals[mid..], &steps[mid..], &mut right[..n - mid], rest);
+            extend_by_differences(left, mid, left_lead, rest);
+            extend_by_differences(right, n - mid, right_lead, rest);
+            for ((lane, left), right) in lanes[..n - 1].iter_mut().zip(&*left).zip(&*right) {
+                lane.fmadd(*left, *right);
+            }
+            lanes[n - 1].fmadd(left_lead, right_lead);
         }
     }
 }
@@ -221,6 +264,91 @@ fn quartic_next<F: JoltField>(window: [F; 4], six_leading: F) -> F {
     let mut next = six_leading + window[3] - window[2] + window[1];
     next = next + next - window[2];
     next + next - window[0]
+}
+
+/// The product of the linear factors `values[i] + (t − 1) · steps[i]` at
+/// `t = 1, …, degree` into `out` (`degree = values.len() = out.len()`);
+/// returns its leading coefficient.
+fn linear_product<F: JoltField>(values: &[F], steps: &[F], out: &mut [F], scratch: &mut [F]) -> F {
+    let degree = values.len();
+    if degree == 1 {
+        out[0] = values[0];
+        return steps[0];
+    }
+    let mid = degree / 2;
+    let (left, rest) = scratch.split_at_mut(degree);
+    let (right, rest) = rest.split_at_mut(degree);
+    let left_lead = linear_product(&values[..mid], &steps[..mid], &mut left[..mid], rest);
+    let right_lead = linear_product(
+        &values[mid..],
+        &steps[mid..],
+        &mut right[..degree - mid],
+        rest,
+    );
+    extend_by_differences(left, mid, left_lead, rest);
+    extend_by_differences(right, degree - mid, right_lead, rest);
+    for ((out, left), right) in out.iter_mut().zip(&*left).zip(&*right) {
+        *out = *left * *right;
+    }
+    left_lead * right_lead
+}
+
+/// Extends a degree-`degree` polynomial known at `t = 1, …, degree`
+/// (`values[..degree]`) with leading coefficient `lead` to every
+/// `t ≤ values.len()`: the `degree`-th difference is the constant
+/// `degree! · lead`, so each new point costs `degree` additions after one
+/// backward-difference table at `t = degree`.
+fn extend_by_differences<F: JoltField>(
+    values: &mut [F],
+    degree: usize,
+    lead: F,
+    scratch: &mut [F],
+) {
+    const FACTORIALS: [u64; MAX_GRID_FACTORS + 1] = {
+        let mut table = [1u64; MAX_GRID_FACTORS + 1];
+        let mut i = 1;
+        while i <= MAX_GRID_FACTORS {
+            table[i] = table[i - 1] * i as u64;
+            i += 1;
+        }
+        table
+    };
+    if values.len() <= degree {
+        return;
+    }
+    let (known, unknown) = values.split_at_mut(degree);
+    if degree == 1 {
+        let mut value = known[0];
+        for next in unknown {
+            value += lead;
+            *next = value;
+        }
+        return;
+    }
+    // `back[k] = ∇^k p(degree)`: the last entry of each difference order.
+    let (work, back) = scratch.split_at_mut(degree);
+    let back = &mut back[..degree];
+    work.copy_from_slice(known);
+    back[0] = work[degree - 1];
+    for (order, last) in back.iter_mut().enumerate().skip(1) {
+        for i in (order..degree).rev() {
+            work[i] -= work[i - 1];
+        }
+        *last = work[degree - 1];
+    }
+    let top = if degree == 2 {
+        lead + lead
+    } else {
+        lead.mul_u64(FACTORIALS[degree])
+    };
+    for next in unknown {
+        let mut higher = top;
+        for difference in back.iter_mut().rev() {
+            *difference += higher;
+            higher = *difference;
+        }
+        *next = higher;
+    }
 }
 
 /// Accumulate `eq · F(value)` for a full-range `u64` on the small-scalar
@@ -980,16 +1108,36 @@ mod product_grid_tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    use super::accumulate_product_grid;
+    use super::{accumulate_product_grid, product_grid_scratch_len, MAX_GRID_FACTORS};
 
+    /// Accumulates several rows into shared lanes and compares every lane to
+    /// the factors multiplied one by one at that lane's point. The scratch is
+    /// refilled with random elements before each row, and the first two rows
+    /// have all-zero slopes and all-zero values.
     fn assert_product_grid<F: JoltField>(factors: usize) {
         let mut rng = ChaCha20Rng::seed_from_u64(431);
         let mut lanes = vec![F::Accumulator::default(); factors];
         let mut expected = vec![F::zero(); factors];
-        for _ in 0..32 {
-            let values: Vec<F> = (0..factors).map(|_| F::random(&mut rng)).collect();
-            let steps: Vec<F> = (0..factors).map(|_| F::random(&mut rng)).collect();
-            accumulate_product_grid(&mut values.clone(), &steps, &mut lanes);
+        let mut scratch = vec![F::zero(); product_grid_scratch_len(factors)];
+        let mut random = |zero: bool| -> Vec<F> {
+            (0..factors)
+                .map(|_| {
+                    let value = F::random(&mut rng);
+                    if zero {
+                        F::zero()
+                    } else {
+                        value
+                    }
+                })
+                .collect()
+        };
+        for row in 0..32 {
+            let values = random(row == 1);
+            let steps = random(row == 0);
+            for (slot, value) in scratch.iter_mut().zip(random(false).iter().cycle()) {
+                *slot = *value;
+            }
+            accumulate_product_grid(&values, &steps, &mut lanes, &mut scratch);
             for (index, expected) in expected.iter_mut().enumerate() {
                 *expected += if index == factors - 1 {
                     steps.iter().copied().product::<F>()
@@ -1003,21 +1151,26 @@ mod product_grid_tests {
                 };
             }
         }
-        for (lane, expected) in lanes.iter().zip(expected) {
-            assert_eq!(lane.reduce(), expected);
+        for (index, (lane, expected)) in lanes.iter().zip(expected).enumerate() {
+            assert_eq!(lane.reduce(), expected, "{factors} factors, lane {index}");
         }
     }
 
+    /// Covers the direct walk (2, 3), the unrolled forms (4, 8), and the
+    /// balanced tree at every other length up to the largest supported one,
+    /// odd splits included.
     #[test]
-    fn specialized_products_match_direct_evaluations() {
-        assert_product_grid::<Fr>(4);
-        assert_product_grid::<Fr>(8);
+    fn products_match_direct_evaluations_at_every_supported_length() {
+        for factors in 2..=MAX_GRID_FACTORS {
+            assert_product_grid::<Fr>(factors);
+        }
     }
 
     #[cfg(feature = "akita")]
     #[test]
-    fn specialized_products_match_direct_evaluations_fp128() {
-        assert_product_grid::<Prime128OffsetA7F7>(4);
-        assert_product_grid::<Prime128OffsetA7F7>(8);
+    fn products_match_direct_evaluations_at_every_supported_length_fp128() {
+        for factors in 2..=MAX_GRID_FACTORS {
+            assert_product_grid::<Prime128OffsetA7F7>(factors);
+        }
     }
 }

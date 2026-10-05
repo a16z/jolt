@@ -3319,6 +3319,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "bincode 2.0.1",
+ "bytemuck",
  "cc",
  "criterion",
  "num-bigint 0.4.6",
@@ -3540,9 +3541,12 @@ name = "jolt-metal"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "criterion",
+ "jolt-field",
  "objc2",
  "objc2-foundation",
  "objc2-metal",
+ "rayon",
  "thiserror 2.0.20",
 ]
 
@@ -4496,6 +4500,7 @@ checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.11.0",
  "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
 ]
 
