@@ -29,7 +29,8 @@ use jolt_kernels::{
 };
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    ProveRounds, RecordedSumcheck, RoundScheduler, SumcheckError, SumcheckRecorder,
+    ProveRounds, RecordedSumcheck, RoundExecutionDomain, RoundScheduler, SumcheckError,
+    SumcheckRecorder,
 };
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{
@@ -148,6 +149,10 @@ where
 {
     fn num_rounds(&self) -> usize {
         self.inner.num_rounds()
+    }
+
+    fn execution_domain(&self) -> RoundExecutionDomain {
+        self.inner.execution_domain()
     }
 
     fn prove_round(
