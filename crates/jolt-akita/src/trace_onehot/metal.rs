@@ -64,6 +64,17 @@ fn packed_metal_view(source: &TracePackedOneHot) -> Result<PackedOneHotCommitVie
     }
 }
 
+fn supports_packed_metal_decomposition<const D: usize>(source: &TracePackedOneHot) -> bool {
+    matches!(
+        (D, source.one_hot_k, source.column_capacity),
+        (128 | 512, 256, 32)
+    ) || (D == 512
+        && source.one_hot_k == 16
+        && source.column_capacity == 64
+        && source.num_rows == 1 << 21
+        && source.rows.packed_selectors().is_some())
+}
+
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, D>
     for akita_metal::MetalBackend
@@ -124,10 +135,7 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
-        if !matches!(D, 128 | 512)
-            || source.source().one_hot_k != 256
-            || source.source().column_capacity != 32
-        {
+        if !supports_packed_metal_decomposition::<D>(source.source()) {
             self.record_opening_cpu_fallback(1)
                 .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
             return CpuBackend::DEFAULT.decompose_fold(None, source, plan);
@@ -147,10 +155,7 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
         source: TracePackedOneHotBatchView<'_, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
-        if !matches!(D, 128 | 512)
-            || source.source().one_hot_k != 256
-            || source.source().column_capacity != 32
-        {
+        if !supports_packed_metal_decomposition::<D>(source.source()) {
             self.record_opening_cpu_fallback(1)
                 .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
             return CpuBackend::DEFAULT.decompose_fold_batch(None, source, plan);

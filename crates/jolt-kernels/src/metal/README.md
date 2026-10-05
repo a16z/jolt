@@ -119,7 +119,8 @@ K16 trace with column capacity 64), in addition to their existing large-trace
 ranges. This uses the existing D512 schedule and kernels; it does not change
 proof parameters or the verifier. Adjacent arities retain CPU routing pending
 qualification. PIOP kernels keep their independent shape and size checks, and
-K16 packed decomposition still runs on the CPU.
+K16 packed decomposition uses Metal for the qualified resident `2^21`-row,
+D512/capacity64 shape; other K16 shapes retain CPU routing.
 
 The shared instruction source stores the full 56-bit logical bytecode PC in a
 separate column. Its five `u64` columns cost 40 bytes per row, an increase of
@@ -177,3 +178,23 @@ improved; all 30 proofs verified and 15 altered-output checks rejected.
 Separate profiles reduced each selector-validation call from about 100 ms to
 5–7 ms and Metal coefficient packing from 129 ms to 35 ms. Parameters, workload,
 and benchmark procedure were unchanged.
+
+The K16 packed decompose-fold route supports both sparse challenges and embedded
+subring-64 challenges. It consumes the compact selector bytes directly, including
+committed zeros, and skips blocks wholly inside the certified zero suffix. D128
+and D512 K256 routes remain supported. Akita's CPU-oracle regression covers signed
+challenges, 59 live columns, multiple digit counts, and a suffix that ends inside
+a ring:
+
+```sh
+# In the pinned companion Akita checkout:
+cargo nextest run --release -p akita-metal k16_decompose_fold_matches_cpu
+```
+
+A five-round matched run of this fold follow-up measured 1.840 s for the previous
+Metal version (`a50743b`), 1.780 s for the new version, and 3.538 s CPU: 3.3% less
+proving time and about 1.99x the CPU throughput on this fixture. All five matched
+rounds improved; all 30 proofs verified and 15 altered-output checks rejected.
+The same fresh-process warmup and rotating-order procedure was used. Separate
+profiles put the packed fold at 94 ms on CPU and 28 ms on Metal. These figures
+qualify this small workload, not larger K16 traces or general GPU throughput.
