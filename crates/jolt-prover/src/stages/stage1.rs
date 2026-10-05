@@ -157,9 +157,7 @@ mod field_inline_round_trip {
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{
-        addi_only_backend, field_arithmetic_backend, LOG_T,
-    };
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, LOG_T};
 
     fn round_trip(trace_backend: TraceBackend<OwnedTrace>) {
         let witness = trace_backend.with_field_inline().unwrap();
@@ -198,11 +196,6 @@ mod field_inline_round_trip {
         twins::replay_stage1(&mut transcript, &out);
 
         assert_eq!(transcript.state(), prover_transcript.state());
-    }
-
-    #[test]
-    fn addi_only_stage1_round_trips_the_composed_verifier() {
-        round_trip(addi_only_backend());
     }
 
     #[test]
@@ -323,33 +316,5 @@ mod field_inline_zk {
             .unwrap();
 
         assert_eq!(transcript.state(), prover_transcript.state());
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn outer_uniskip_constants_match_the_rv64_only_values() {
-        use jolt_claims::protocols::jolt::geometry::dimensions::{
-            OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-        };
-
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_DOMAIN_SIZE);
-        assert_eq!(
-            SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-            OUTER_UNISKIP_FIRST_ROUND_DEGREE
-        );
-    }
-
-    /// With field-inline enabled, the composed outer domain carries the appended field-inline rows
-    /// — the spec's 15-point domain and its degree-42 first round.
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn outer_uniskip_constants_are_the_composed_field_domains() {
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
     }
 }

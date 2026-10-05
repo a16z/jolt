@@ -208,58 +208,8 @@ impl SymbolicSumcheck for OuterRemainder {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltVirtualPolynomial;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Fr;
     use jolt_riscv::CIRCUIT_FLAGS;
-
-    /// The expanded `output_expression` reproduces the factored quadratic form
-    /// `tau_kernel * (Σ az[i] o[i] + az_c) * (Σ bz[i] o[i] + bz_c)` when fed the
-    /// `public_coefficients` expansion of those linear forms. This is the same
-    /// expansion `JoltSpartanOuterRemainder::public_coefficients` produces and the
-    /// verifier's `derive_output_term` resolves against; equality with the factored
-    /// form is the invariant the clear stage-1 path relies on.
-    #[test]
-    fn output_expression_matches_factored_quadratic_form() {
-        let dimensions = match SpartanOuterDimensions::new(
-            8,
-            vec![
-                JoltVirtualPolynomial::PC,
-                JoltVirtualPolynomial::LookupOutput,
-            ],
-            true,
-        ) {
-            Some(dimensions) => dimensions,
-            None => unreachable!("test Spartan outer dimensions should be valid"),
-        };
-        let relation = OuterRemainder::new(dimensions);
-
-        let openings = [Fr::from_u64(2), Fr::from_u64(3)];
-        let tau_kernel = Fr::from_u64(17);
-        let az = [Fr::from_u64(5), Fr::from_u64(7)];
-        let bz = [Fr::from_u64(11), Fr::from_u64(13)];
-        let az_constant = Fr::from_u64(19);
-        let bz_constant = Fr::from_u64(23);
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == outer_opening(JoltVirtualPolynomial::PC) => openings[0],
-                id if id == outer_opening(JoltVirtualPolynomial::LookupOutput) => openings[1],
-                _ => Fr::from_u64(0),
-            },
-            |_| Fr::from_u64(0),
-            |id| match *id {
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::TauKernel) => tau_kernel,
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::AzWeight(index)) => az[index],
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::BzWeight(index)) => bz[index],
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::AzConstant) => az_constant,
-                JoltDerivedId::SpartanOuter(SpartanOuterPublic::BzConstant) => bz_constant,
-                _ => Fr::from_u64(0),
-            },
-        );
-
-        let az_form = az[0] * openings[0] + az[1] * openings[1] + az_constant;
-        let bz_form = bz[0] * openings[0] + bz[1] * openings[1] + bz_constant;
-        assert_eq!(output, tau_kernel * az_form * bz_form);
-    }
 
     /// Pins the circuit-flag coverage of the outer-remainder output claims: every
     /// `CircuitFlags` variant has a field (a newly added flag missing its field

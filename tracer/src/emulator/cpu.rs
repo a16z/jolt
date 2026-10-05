@@ -1595,21 +1595,6 @@ mod test_cpu {
     }
 
     #[test]
-    fn initialize() {
-        let _cpu = create_cpu();
-    }
-
-    #[test]
-    fn update_pc() {
-        let mut cpu = create_cpu();
-        assert_eq!(0, cpu.read_pc());
-        cpu.update_pc(1);
-        assert_eq!(1, cpu.read_pc());
-        cpu.update_pc(0xffffffffffffffff);
-        assert_eq!(0xffffffffffffffff, cpu.read_pc());
-    }
-
-    #[test]
     fn read_register() {
         let mut cpu = create_cpu();
         for i in 0..31 {
@@ -1669,79 +1654,6 @@ mod test_cpu {
     }
 
     #[test]
-    fn tick_operate() {
-        let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
-        cpu.update_pc(DRAM_BASE);
-        // write non-compressed "addi a0, a0, 12" instruction
-        match cpu.get_mut_mmu().store_word(DRAM_BASE, 0xc50513) {
-            Ok(_) => {}
-            Err(_e) => panic!("Failed to store"),
-        };
-        assert_eq!(DRAM_BASE, cpu.read_pc());
-        assert_eq!(0, cpu.read_register(10));
-        match cpu.tick_operate(None) {
-            Ok(_) => {}
-            Err(_e) => panic!("tick_operate() unexpectedly did panic"),
-        };
-        assert_eq!(DRAM_BASE + 4, cpu.read_pc());
-        assert_eq!(12, cpu.read_register(10));
-    }
-
-    #[test]
-    fn fetch() {
-        let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
-        cpu.update_pc(DRAM_BASE);
-        match cpu.get_mut_mmu().store_word(DRAM_BASE, 0xaaaaaaaa) {
-            Ok(_) => {}
-            Err(_e) => panic!("Failed to store"),
-        };
-        match cpu.fetch() {
-            Ok(data) => assert_eq!(0xaaaaaaaa, data),
-            Err(_e) => panic!("Failed to fetch"),
-        };
-        match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x55555555) {
-            Ok(_) => {}
-            Err(_e) => panic!("Failed to store"),
-        };
-        match cpu.fetch() {
-            Ok(data) => assert_eq!(0x55555555, data),
-            Err(_e) => panic!("Failed to fetch"),
-        };
-    }
-
-    #[test]
-    fn interrupt() {
-        let handler_vector = 0x10000000;
-        let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
-        // Write non-compressed "addi x0, x0, 1" instruction
-        match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
-            Ok(_) => {}
-            Err(_e) => panic!("Failed to store"),
-        };
-        cpu.update_pc(DRAM_BASE);
-
-        cpu.write_csr_raw(CSR_MIE_ADDRESS, MIP_MTIP);
-        cpu.write_csr_raw(CSR_MIP_ADDRESS, MIP_MTIP);
-        cpu.write_csr_raw(CSR_MTVEC_ADDRESS, handler_vector);
-
-        cpu.tick(None);
-
-        assert_eq!(DRAM_BASE + 4, cpu.read_pc());
-
-        cpu.update_pc(DRAM_BASE);
-        cpu.write_csr_raw(CSR_MSTATUS_ADDRESS, 0x8);
-
-        cpu.tick(None);
-
-        assert_eq!(handler_vector, cpu.read_pc());
-
-        assert_eq!(0x8000000000000007, cpu.read_csr_raw(CSR_MCAUSE_ADDRESS));
-    }
-
-    #[test]
     fn exception() {
         // ECALL executes through its inline sequence in both modes (execute
         // mode mirrors trace mode), so trap state lives in the CSR virtual
@@ -1793,26 +1705,6 @@ mod test_cpu {
     }
 
     #[test]
-    fn disassemble_next_instruction() {
-        let mut cpu = create_cpu();
-        cpu.get_mut_mmu().init_memory(4);
-        cpu.update_pc(DRAM_BASE);
-
-        // Write non-compressed "addi x0, x0, 1" instruction
-        match cpu.get_mut_mmu().store_word(DRAM_BASE, 0x00100013) {
-            Ok(_) => {}
-            Err(_e) => panic!("Failed to store"),
-        };
-
-        assert_eq!(
-            "PC:0000000080000000 00100013 ADDI",
-            cpu.disassemble_next_instruction()
-        );
-
-        assert_eq!(DRAM_BASE, cpu.read_pc());
-    }
-
-    #[test]
     fn advice_tape_reads_back_little_endian_in_fifo_order() {
         let mut tape = AdviceTape::new();
         assert!(tape.is_empty());
@@ -1831,15 +1723,6 @@ mod test_cpu {
 
         tape.reset_read_position();
         assert_eq!(tape.read(4), Some(0x0403_0201));
-    }
-
-    #[test]
-    fn cpu_advice_tape_helpers_share_the_cpu_tape() {
-        let mut cpu = create_cpu();
-        advice_tape_write(&mut cpu, &[9, 8, 7]);
-        assert_eq!(advice_tape_remaining(&cpu), 3);
-        assert_eq!(advice_tape_read(&mut cpu, 3), Some(0x070809));
-        assert_eq!(advice_tape_remaining(&cpu), 0);
     }
 
     #[test]

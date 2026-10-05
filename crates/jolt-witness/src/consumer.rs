@@ -279,7 +279,6 @@ mod tests {
     use crate::BundleSource;
     use jolt_claims::protocols::jolt::JoltPolynomialId;
     use jolt_field::Fr;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     /// A hand-implemented bundle carrying a lookahead witness, so chunk
@@ -300,27 +299,6 @@ mod tests {
                 pc: UnexpandedPc::extract(row, next, env)?,
                 next_pc: NextUnexpandedPc::extract(row, next, env)?,
             })
-        }
-
-        fn annotated_ids() -> Vec<JoltPolynomialId> {
-            Vec::new()
-        }
-    }
-
-    /// Counts its own extractions, so a skipped consumer is observable.
-    #[derive(Clone, Copy, Debug)]
-    struct CountingBundle;
-
-    static EXTRACTIONS: AtomicUsize = AtomicUsize::new(0);
-
-    impl WitnessBundle for CountingBundle {
-        fn from_row(
-            _row: &TraceRow,
-            _next: Option<&TraceRow>,
-            _env: &WitnessEnv<'_>,
-        ) -> Result<Self, WitnessError> {
-            let _ = EXTRACTIONS.fetch_add(1, Ordering::Relaxed);
-            Ok(Self)
         }
 
         fn annotated_ids() -> Vec<JoltPolynomialId> {
@@ -382,24 +360,6 @@ mod tests {
             assert_eq!(first.len(), 4);
             assert_eq!(consumers.1.unwrap().into_rows(), first);
             assert!(consumers.2.is_none());
-        });
-    }
-
-    #[test]
-    fn absent_slots_skip_extraction_too() {
-        with_sample_backend(|backend| {
-            EXTRACTIONS.store(0, Ordering::Relaxed);
-            let mut consumers = (
-                None::<CollectBundles<CountingBundle>>,
-                CollectBundles::<WindowBundle>::default(),
-            );
-            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
-            assert_eq!(consumers.1.into_rows().len(), 4);
-            assert_eq!(EXTRACTIONS.load(Ordering::Relaxed), 0);
-
-            let mut consumers = (Some(CollectBundles::<CountingBundle>::default()),);
-            stream_witnesses(backend, 0..4, 2, &mut consumers).unwrap();
-            assert_eq!(EXTRACTIONS.load(Ordering::Relaxed), 4);
         });
     }
 

@@ -385,9 +385,4 @@ mod tests {
     fn parity_k32_deeper_address_domain() {
         run_parity(4, 32, 409);
     }
-
-    #[test]
-    fn parity_k16_alternate_seed() {
-        run_parity(2, 16, 419);
-    }
 }

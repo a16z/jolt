@@ -36,9 +36,7 @@ mod tests;
 pub use source::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
 
 #[cfg(test)]
-use decomposition::{
-    decompose_fold_packed_with_mode, prepare_rotations, DecomposeRotationMode, PreparedRotations,
-};
+use decomposition::{decompose_fold_packed_with_mode, DecomposeRotationMode};
 #[cfg(test)]
 use traversal::{
     coefficient_packing_partials_packed, visit_segment_ring_range, AkitaWideRing, DeferredFp128Ring,

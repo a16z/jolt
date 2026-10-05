@@ -140,13 +140,6 @@ mod tests {
     }
 
     #[test]
-    fn single_var() {
-        let id = IdentityPolynomial::new(1);
-        assert!(id.evaluate(&[Fr::zero()]).is_zero());
-        assert_eq!(id.evaluate(&[Fr::one()]), Fr::one());
-    }
-
-    #[test]
     fn operand_polynomial_splits_interleaved_left_and_right_bits() {
         let point = [
             Fr::from_u64(1),

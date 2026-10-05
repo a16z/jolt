@@ -1,29 +1,5 @@
 use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial};
 
-#[cfg(test)]
-pub(crate) fn rd_write_value_claim() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RdWriteValue,
-        JoltRelationId::RegistersClaimReduction,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn rs1_value_claim() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::Rs1Value,
-        JoltRelationId::RegistersClaimReduction,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn rs2_value_claim() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::Rs2Value,
-        JoltRelationId::RegistersClaimReduction,
-    )
-}
-
 pub fn registers_val_read_write() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RegistersVal,

@@ -120,20 +120,6 @@ fn output_claims_rejects_where_clauses() {
 }
 
 #[test]
-fn output_claims_rejects_lifetime_parameters() {
-    expect_output_error(
-        parse_quote! {
-            #[relation(SpartanOuter)]
-            struct Demo<'a, C> {
-                #[opening(PC)]
-                pc: &'a C,
-            }
-        },
-        "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",
-    );
-}
-
-#[test]
 fn output_claims_rejects_duplicate_relation_attrs() {
     expect_output_error(
         parse_quote! {

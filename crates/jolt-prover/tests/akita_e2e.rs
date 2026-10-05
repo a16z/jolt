@@ -385,8 +385,3 @@ mod akita_tests {
         .expect("committed advice Akita proof must verify");
     }
 }
-
-#[cfg(not(all(feature = "prover-fixtures", feature = "akita")))]
-#[test]
-#[ignore = "enable --features akita,prover-fixtures to run the Akita e2e"]
-fn muldiv_e2e_akita() {}

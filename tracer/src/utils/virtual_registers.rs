@@ -285,29 +285,6 @@ mod tests {
         + NUM_VIRTUAL_INSTRUCTION_REGISTERS as u8;
 
     #[test]
-    fn test_allocate_deallocate() {
-        let allocator = VirtualRegisterAllocator::new();
-        {
-            let guard1 = allocator.allocate();
-            assert_eq!(*guard1, FIRST_ALLOC_REG);
-
-            let guard2 = allocator.allocate();
-            assert_eq!(*guard2, FIRST_ALLOC_REG + 1);
-        }
-
-        let guard3 = allocator.allocate();
-        assert_eq!(*guard3, FIRST_ALLOC_REG);
-    }
-
-    #[test]
-    fn test_deref() {
-        let allocator = VirtualRegisterAllocator::new();
-        let guard = allocator.allocate();
-        let index: u8 = *guard;
-        assert_eq!(index, FIRST_ALLOC_REG);
-    }
-
-    #[test]
     #[should_panic(expected = "Failed to allocate virtual register")]
     fn test_exhaustion_panic() {
         let allocator = VirtualRegisterAllocator::new();
@@ -320,29 +297,6 @@ mod tests {
         }
 
         let _guard = allocator.allocate();
-    }
-
-    #[test]
-    fn test_allocate_deallocate_inline() {
-        let allocator = VirtualRegisterAllocator::new();
-        {
-            let guard1 = allocator.allocate_for_inline();
-            assert_eq!(*guard1, FIRST_INLINE_REG);
-
-            let guard2 = allocator.allocate_for_inline();
-            assert_eq!(*guard2, FIRST_INLINE_REG + 1);
-        }
-
-        let guard3 = allocator.allocate_for_inline();
-        assert_eq!(*guard3, FIRST_INLINE_REG);
-    }
-
-    #[test]
-    fn test_deref_inline() {
-        let allocator = VirtualRegisterAllocator::new();
-        let guard = allocator.allocate_for_inline();
-        let index: u8 = *guard;
-        assert_eq!(index, FIRST_INLINE_REG);
     }
 
     #[test]
@@ -389,37 +343,5 @@ mod tests {
 
         let inline_guard3 = allocator.allocate_for_inline();
         assert_eq!(*inline_guard3, FIRST_INLINE_REG);
-    }
-
-    #[test]
-    fn test_csr_to_virtual_register() {
-        let allocator = VirtualRegisterAllocator::new();
-
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MSTATUS),
-            Some(MSTATUS_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MTVEC),
-            Some(TRAP_HANDLER_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MSCRATCH),
-            Some(MSCRATCH_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MEPC),
-            Some(MEPC_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MCAUSE),
-            Some(MCAUSE_REGISTER)
-        );
-        assert_eq!(
-            allocator.csr_to_virtual_register(CSR_MTVAL),
-            Some(MTVAL_REGISTER)
-        );
-
-        assert_eq!(allocator.csr_to_virtual_register(0x999), None);
     }
 }

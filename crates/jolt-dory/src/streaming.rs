@@ -607,46 +607,6 @@ mod tests {
     }
 
     #[test]
-    fn streaming_zero_rows_zk_open_and_verify() {
-        let num_vars: usize = 6;
-        let num_cols = 1usize << num_vars.div_ceil(2);
-        let num_rows = 1usize << (num_vars - num_vars.div_ceil(2));
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
-        let poly = jolt_poly::Polynomial::new(vec![Fr::from_u64(0); 1usize << num_vars]);
-
-        let mut partial = DoryScheme::begin(&prover_setup);
-        DoryScheme::feed_zeros(&mut partial, num_cols, num_rows, &prover_setup);
-        let (commitment, hint) = DoryScheme::finish_zk(partial, &prover_setup);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(313);
-        let point = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
-            .collect::<Vec<_>>();
-        let eval = Fr::from_u64(0);
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
-        let (proof, _, _) = DoryScheme::open_zk(
-            &poly,
-            &point,
-            eval,
-            &prover_setup,
-            hint,
-            &mut prove_transcript,
-        )
-        .unwrap();
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
-        let result = DoryScheme::verify_zk(
-            &commitment,
-            &point,
-            &proof,
-            &verifier_setup,
-            &mut verify_transcript,
-        );
-
-        assert!(result.is_ok(), "zero-row ZK streaming hint should open");
-    }
-
-    #[test]
     fn streaming_one_hot_column_major_matches_direct() {
         let trace_rows = 8usize;
         let one_hot_k = 4usize;

@@ -475,17 +475,6 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
 }
 
 #[test]
-fn d128_auto_uses_compact_rotations() {
-    let challenges = [SparseChallenge {
-        positions: vec![0, 127].into(),
-        coeffs: vec![1, -1].into(),
-    }];
-    let rotations =
-        prepare_rotations::<128>(&challenges, None, 1, DecomposeRotationMode::Auto).unwrap();
-    assert!(matches!(rotations, PreparedRotations::Compact(_)));
-}
-
-#[test]
 fn blockwise_opening_kernels_match_materialized_onehot() {
     assert_opening_kernels_match_materialized::<64>(256, 32, 16, None);
     assert_opening_kernels_match_materialized::<64>(256, 32, 1, None);

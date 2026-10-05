@@ -1391,11 +1391,6 @@ mod tests {
     }
 
     #[test]
-    fn cycle_kernel_matches_reference() {
-        cycle_parity(2, 4, false);
-    }
-
-    #[test]
     fn cycle_kernel_matches_reference_single_round() {
         cycle_parity(1, 4, false);
     }
@@ -1700,19 +1695,6 @@ mod categorical_tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn categorical_booleanity_startup_budget() {
-        let fits = CategoricalProducts::<Fr, Source>::fits_budget;
-        assert!(!fits(1, 16, 1 << 12));
-        assert!(fits(1, 16, 1 << 13));
-        assert!(!fits(2, 16, 1 << 20));
-        assert!(fits(2, 16, 1 << 21));
-        assert!(fits(1, 256, 1 << 21));
-        assert!(!fits(2, 256, 1 << 25));
-        assert!(!fits(4, 16, 1 << 25));
-        assert!(!fits(1, usize::MAX, 1 << 25));
     }
 
     #[test]

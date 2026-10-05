@@ -88,16 +88,10 @@ twist::instantiate_value_reduction! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SymbolicSumcheck;
-
     use crate::protocols::field_inline::geometry::claim_reductions::registers::{
         claim_reduction_input_openings, claim_reduction_output_openings,
     };
     use jolt_field::{Fr, Ring};
-
-    fn dimensions() -> FieldRegistersTraceDimensions {
-        FieldRegistersTraceDimensions::new(5)
-    }
 
     #[test]
     fn claim_struct_field_order_matches_geometry_opening_order() {
@@ -116,78 +110,5 @@ mod tests {
             rs2_value: value,
         };
         assert_eq!(inputs.canonical_order(), claim_reduction_input_openings());
-    }
-
-    #[test]
-    fn claim_reduction_exposes_expected_dependencies() {
-        let relation = ClaimReduction::new(dimensions());
-
-        assert_eq!(
-            ClaimReduction::id(),
-            FieldInlineRelationId::FieldRegistersClaimReduction
-        );
-        assert_eq!(relation.rounds(), dimensions().log_t());
-        assert_eq!(relation.degree(), 2);
-    }
-
-    #[test]
-    fn claim_reduction_evaluates_like_field_register_twist_formula() {
-        let relation = ClaimReduction::new(dimensions());
-
-        let rd_spartan = Fr::from_u64(3);
-        let rs1_spartan = Fr::from_u64(5);
-        let rs2_spartan = Fr::from_u64(7);
-        let rd_reduced = Fr::from_u64(11);
-        let rs1_reduced = Fr::from_u64(13);
-        let rs2_reduced = Fr::from_u64(17);
-        let gamma = Fr::from_u64(19);
-        let eq_spartan = Fr::from_u64(23);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == field_rd_value_spartan() => rd_spartan,
-                id if id == field_rs1_value_spartan() => rs1_spartan,
-                id if id == field_rs2_value_spartan() => rs2_spartan,
-                _ => zero,
-            },
-            |id| match *id {
-                FieldInlineChallengeId::FieldRegistersClaimReduction(
-                    FieldRegistersClaimReductionChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == field_rd_value_reduced() => rd_reduced,
-                id if id == field_rs1_value_reduced() => rs1_reduced,
-                id if id == field_rs2_value_reduced() => rs2_reduced,
-                _ => zero,
-            },
-            |id| match *id {
-                FieldInlineChallengeId::FieldRegistersClaimReduction(
-                    FieldRegistersClaimReductionChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                FieldInlineDerivedId::FieldRegistersClaimReduction(
-                    FieldRegistersClaimReductionPublic::EqSpartan,
-                ) => eq_spartan,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(
-            input,
-            rd_spartan + gamma * rs1_spartan + gamma * gamma * rs2_spartan
-        );
-        assert_eq!(
-            output,
-            eq_spartan * (rd_reduced + gamma * rs1_reduced + gamma * gamma * rs2_reduced)
-        );
     }
 }

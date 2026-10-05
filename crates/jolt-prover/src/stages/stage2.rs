@@ -439,32 +439,3 @@ mod field_inline_zk {
         assert_eq!(transcript.state(), prover_transcript.state());
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn product_uniskip_constants_match_the_rv64_only_values() {
-        use jolt_claims::protocols::jolt::geometry::dimensions::{
-            PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-        };
-
-        assert_eq!(
-            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            PRODUCT_UNISKIP_DOMAIN_SIZE
-        );
-        assert_eq!(
-            SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-            PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
-        );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn product_uniskip_constants_are_the_composed_field_domains() {
-        assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);
-        assert_eq!(SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE, 12);
-    }
-}

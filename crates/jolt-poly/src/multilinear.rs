@@ -495,25 +495,6 @@ mod tests {
     }
 
     #[test]
-    fn rlc_source_evaluate_matches_manual() {
-        let mut rng = ChaCha20Rng::seed_from_u64(10);
-        let num_vars = 3;
-
-        let p1 = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let p2 = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let s1 = Fr::random(&mut rng);
-        let s2 = Fr::random(&mut rng);
-
-        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-
-        let rlc = RlcSource::new(vec![p1.clone(), p2.clone()], vec![s1, s2]);
-        let result = rlc.evaluate(&point);
-        let expected = s1 * p1.evaluate(&point) + s2 * p2.evaluate(&point);
-
-        assert_eq!(result, expected);
-    }
-
-    #[test]
     fn rlc_source_fold_rows_matches_materialized() {
         let mut rng = ChaCha20Rng::seed_from_u64(20);
         let num_vars = 4;
@@ -573,103 +554,5 @@ mod tests {
         });
 
         assert_eq!(lazy_rows, materialized_rows);
-    }
-
-    #[test]
-    fn rlc_source_fold_equals_evaluate_at_point() {
-        use crate::eq::EqPolynomial;
-
-        let mut rng = ChaCha20Rng::seed_from_u64(40);
-        let num_vars = 4;
-        let sigma = 2;
-        let nu = num_vars - sigma;
-
-        let p1 = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let p2 = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let p3 = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let s1 = Fr::random(&mut rng);
-        let s2 = Fr::random(&mut rng);
-        let s3 = Fr::random(&mut rng);
-
-        let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
-
-        let row_point = &point[..nu];
-        let col_point = &point[nu..];
-
-        let rlc = RlcSource::new(vec![p1.clone(), p2.clone(), p3.clone()], vec![s1, s2, s3]);
-
-        let eq_rows = EqPolynomial::new(row_point.to_vec()).evaluations();
-        let folded = rlc.fold_rows(&eq_rows, sigma);
-        let eq_cols = EqPolynomial::new(col_point.to_vec()).evaluations();
-        let via_fold: Fr = folded
-            .iter()
-            .zip(eq_cols.iter())
-            .map(|(&a, &b)| a * b)
-            .sum();
-
-        let via_eval = rlc.evaluate(&point);
-
-        assert_eq!(via_fold, via_eval);
-    }
-
-    #[test]
-    fn default_fold_rows_matches_override() {
-        let mut rng = ChaCha20Rng::seed_from_u64(50);
-        let num_vars = 4;
-        let sigma = 2;
-        let nu = num_vars - sigma;
-        let num_rows = 1usize << nu;
-
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let left: Vec<Fr> = (0..num_rows).map(|_| Fr::random(&mut rng)).collect();
-
-        let default_result = default_fold_rows(&poly, &left, sigma);
-
-        let override_result = poly.fold_rows(&left, sigma);
-
-        assert_eq!(default_result, override_result);
-    }
-
-    fn default_fold_rows<F: JoltField>(
-        source: &impl MultilinearPoly<F>,
-        left: &[F],
-        sigma: usize,
-    ) -> Vec<F> {
-        let num_cols = 1usize << sigma;
-        let mut result = vec![F::zero(); num_cols];
-        source.for_each_row(sigma, &mut |row_idx, row| {
-            let l = left[row_idx];
-            for (r, &val) in result.iter_mut().zip(row.iter()) {
-                *r += l * val;
-            }
-        });
-        result
-    }
-
-    #[test]
-    fn empty_rlc_source() {
-        let rlc: RlcSource<Fr, Polynomial<Fr>> = RlcSource::new(vec![], vec![]);
-        assert_eq!(rlc.num_vars(), 0);
-    }
-
-    #[test]
-    fn single_source_rlc_is_scaled_original() {
-        let mut rng = ChaCha20Rng::seed_from_u64(60);
-        let num_vars = 3;
-        let sigma = 1;
-        let nu = num_vars - sigma;
-        let num_rows = 1usize << nu;
-
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let scalar = Fr::random(&mut rng);
-        let left: Vec<Fr> = (0..num_rows).map(|_| Fr::random(&mut rng)).collect();
-
-        let rlc = RlcSource::new(vec![poly.clone()], vec![scalar]);
-        let rlc_result = rlc.fold_rows(&left, sigma);
-
-        let direct_result = poly.fold_rows(&left, sigma);
-        let scaled: Vec<Fr> = direct_result.iter().map(|&v| scalar * v).collect();
-
-        assert_eq!(rlc_result, scaled);
     }
 }

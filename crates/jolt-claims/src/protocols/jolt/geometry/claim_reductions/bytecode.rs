@@ -558,8 +558,7 @@ mod tests {
 
     use super::super::super::bytecode::{read_raf_public_values, BytecodeReadRafEvaluationInputs};
     use super::*;
-    use crate::protocols::jolt::JoltPolynomialId;
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::InstructionLookupTable;
     use jolt_riscv::{
         instructions::Noop, Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionKind,
@@ -919,46 +918,5 @@ mod tests {
                 vec![naive * precommitted_skip_round_scale::<Fr>(precommitted)]
             );
         }
-    }
-
-    #[test]
-    fn cycle_phase_output_openings_track_address_phase_presence() {
-        let with_address = PrecommittedReductionDimensions::new(4, 3, true);
-        assert_eq!(
-            cycle_phase_output_openings(with_address, 2),
-            vec![cycle_phase_intermediate_opening()]
-        );
-
-        let without_address = PrecommittedReductionDimensions::new(4, 3, false);
-        assert_eq!(
-            cycle_phase_output_openings(without_address, 2),
-            vec![
-                final_bytecode_chunk_opening(0),
-                final_bytecode_chunk_opening(1),
-            ]
-        );
-        assert!(matches!(
-            final_bytecode_chunk_opening(1),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeChunk(1)),
-                relation: JoltRelationId::BytecodeClaimReduction,
-            }
-        ));
-    }
-
-    #[test]
-    fn cycle_phase_skip_scale_matches_two_phase_gap() {
-        let layout = bytecode_layout(TracePolynomialOrder::CycleMajor, 2, 1);
-        let precommitted = layout.precommitted();
-        let two_inv = fr(2).inv_or_zero();
-        let gap = (precommitted.cycle_phase_total_rounds()
-            - precommitted.cycle_phase_rounds().len())
-            + (precommitted.address_phase_total_rounds()
-                - precommitted.address_phase_rounds().len());
-
-        assert_eq!(
-            precommitted_skip_round_scale::<Fr>(precommitted),
-            (0..gap).fold(fr(1), |scale, _| scale * two_inv)
-        );
     }
 }

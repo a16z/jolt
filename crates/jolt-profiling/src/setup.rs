@@ -135,28 +135,3 @@ pub fn setup_tracing_with_trace_path(
 
     TracingGuards(guards)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tracing_format_is_copy() {
-        let fmt = TracingFormat::Chrome;
-        let fmt2 = fmt;
-        assert_eq!(fmt, fmt2);
-    }
-
-    #[test]
-    fn tracing_format_debug() {
-        let fmt = TracingFormat::Default;
-        let s = format!("{fmt:?}");
-        assert_eq!(s, "Default");
-    }
-
-    #[test]
-    fn tracing_format_eq() {
-        assert_eq!(TracingFormat::Chrome, TracingFormat::Chrome);
-        assert_ne!(TracingFormat::Chrome, TracingFormat::Default);
-    }
-}

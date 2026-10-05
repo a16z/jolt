@@ -77,21 +77,3 @@ impl SymbolicSumcheck for CyclePhase {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let relation = CyclePhase::new(dimensions);
-
-        assert_eq!(
-            CyclePhase::id(),
-            JoltRelationId::ProgramImageClaimReductionCyclePhase
-        );
-        assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
-        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-    }
-}

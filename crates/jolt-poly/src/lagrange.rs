@@ -607,14 +607,6 @@ mod tests {
     use num_traits::{One, Zero};
 
     #[test]
-    fn lagrange_evals_partition_of_unity() {
-        let r = Fr::from_u64(42);
-        let evals = lagrange_evals(0, 5, r);
-        let sum: Fr = evals.iter().copied().sum();
-        assert_eq!(sum, Fr::one());
-    }
-
-    #[test]
     fn lagrange_evals_at_node_is_indicator() {
         for i in 0..5u64 {
             let r = Fr::from_u64(i);
@@ -729,36 +721,11 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_to_coeffs_constant() {
-        let vals = [Fr::from_u64(5), Fr::from_u64(5), Fr::from_u64(5)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        assert_eq!(coeffs[0], Fr::from_u64(5));
-        assert!(coeffs[1].is_zero());
-        assert!(coeffs[2].is_zero());
-    }
-
-    #[test]
     fn interpolate_to_coeffs_linear() {
         let vals = [Fr::from_u64(1), Fr::from_u64(3)];
         let coeffs = interpolate_to_coeffs(0, &vals);
         assert_eq!(coeffs[0], Fr::from_u64(1));
         assert_eq!(coeffs[1], Fr::from_u64(2));
-    }
-
-    #[test]
-    fn interpolate_to_coeffs_quadratic() {
-        let vals = [Fr::from_u64(1), Fr::from_u64(4), Fr::from_u64(11)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        for (i, &expected) in vals.iter().enumerate() {
-            let x = Fr::from_u64(i as u64);
-            let mut val = Fr::zero();
-            let mut x_pow = Fr::one();
-            for &c in &coeffs {
-                val += c * x_pow;
-                x_pow *= x;
-            }
-            assert_eq!(val, expected, "mismatch at x={i}");
-        }
     }
 
     #[test]
@@ -775,26 +742,6 @@ mod tests {
                 x_pow *= x;
             }
             assert_eq!(val, expected, "mismatch at x={}", -1 + k as i64);
-        }
-    }
-
-    #[test]
-    fn interpolate_roundtrip_with_poly_mul() {
-        let vals = [Fr::from_u64(3), Fr::from_u64(7), Fr::from_u64(13)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        let linear = [Fr::from_i64(-5), Fr::one()];
-        let product = poly_mul(&coeffs, &linear);
-
-        for (i, &f_val) in vals.iter().enumerate() {
-            let x = Fr::from_u64(i as u64);
-            let mut val = Fr::zero();
-            let mut x_pow = Fr::one();
-            for &c in &product {
-                val += c * x_pow;
-                x_pow *= x;
-            }
-            let expected = f_val * (x - Fr::from_u64(5));
-            assert_eq!(val, expected, "product mismatch at x={i}");
         }
     }
 

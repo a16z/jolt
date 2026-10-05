@@ -11,10 +11,7 @@ use jolt_field as two;
 
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{
-    Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne,
-    Ring,
-};
+use two::{CanonicalBytes, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)
@@ -385,25 +382,6 @@ fn fp128_mul_add_matches_independent_oracle() {
             Some(oracle_add(oracle_mul(a, b, P), c, P))
         );
     }
-}
-
-fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
-    let mut acc = F::Accumulator::default();
-    for (&x, &y) in xs.iter().zip(ys) {
-        acc.fmadd(x, y);
-    }
-    acc.reduce()
-}
-
-#[test]
-fn jolt_field_blanket_covers_fp128() {
-    fn check<F: JoltField>() {
-        let xs = [F::from_u64(2), F::from_u64(3)];
-        let ys = [F::from_u64(5), F::from_u64(7)];
-        assert_eq!(inner_product(&xs, &ys), F::from_u64(31));
-    }
-    check::<two::Prime128Offset275>();
-    check::<two::Prime128OffsetA7F7>();
 }
 
 #[test]

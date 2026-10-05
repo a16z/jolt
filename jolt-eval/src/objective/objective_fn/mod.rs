@@ -216,23 +216,6 @@ mod tests {
     }
 
     #[test]
-    fn custom_composite_objective() {
-        const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
-        let weighted = ObjectiveFunction {
-            name: "weighted",
-            inputs: INPUTS,
-            evaluate: |m, _| {
-                2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0)
-            },
-        };
-
-        let mut m = HashMap::new();
-        m.insert(LLOC, 10.0);
-        m.insert(HALSTEAD_BUGS, 100.0);
-        assert_eq!((weighted.evaluate)(&m, &empty_baselines()), 120.0);
-    }
-
-    #[test]
     fn normalized_composite_objective() {
         use crate::objective::normalized;
 

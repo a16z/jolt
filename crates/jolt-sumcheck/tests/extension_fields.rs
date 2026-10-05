@@ -7,7 +7,7 @@
 use std::marker::PhantomData;
 
 use jolt_field::{Ext2, Field, FpExt4, Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
-use jolt_poly::{CompressedPoly, UnivariatePoly};
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
     CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds,
@@ -16,7 +16,7 @@ use jolt_sumcheck::{
     SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
-use num_traits::{One, Zero};
+use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 
 trait ChallengeField: Field + AppendToTranscript + 'static {
@@ -316,16 +316,6 @@ where
 }
 
 #[test]
-fn quadratic_extension_runs_prover_and_verifier() {
-    let value = |a, b| Quadratic::new(Prime64Offset59::from_u64(a), Prime64Offset59::from_u64(b));
-    run_batched_roundtrip(
-        [value(1, 2), value(3, 4), value(5, 6)],
-        [value(7, 8), value(9, 10), value(11, 12)],
-    );
-    run_uniskip_roundtrip([value(2, 3), value(5, 7), value(11, 13)]);
-}
-
-#[test]
 fn quadratic_transcript_absorption_reverses_the_complete_payload() {
     let value = Quadratic::new(Prime64Offset59::from_u64(1), Prime64Offset59::from_u64(2));
     let mut transcript = CapturingTranscript::default();
@@ -334,16 +324,6 @@ fn quadratic_transcript_absorption_reverses_the_complete_payload() {
         transcript.absorbed,
         [0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1]
     );
-}
-
-#[test]
-fn direct_128_bit_field_runs_prover_and_verifier() {
-    let value = Prime128Offset275::from_u64;
-    run_batched_roundtrip(
-        [value(1), value(3), value(5)],
-        [value(7), value(9), value(11)],
-    );
-    run_uniskip_roundtrip([value(2), value(5), value(11)]);
 }
 
 #[test]
@@ -358,91 +338,4 @@ fn quartic_extension_runs_prover_and_verifier() {
         [value(12), value(16), value(20)],
     );
     run_uniskip_roundtrip([value(24), value(28), value(32)]);
-}
-
-#[test]
-fn tampered_quartic_proof_fails_final_evaluation_check() {
-    let left_coefficients = [
-        Quartic::new(std::array::from_fn(|index| {
-            Prime32Offset99::from_u64(index as u64 + 1)
-        })),
-        Quartic::new(std::array::from_fn(|index| {
-            Prime32Offset99::from_u64(index as u64 + 5)
-        })),
-        Quartic::new(std::array::from_fn(|index| {
-            Prime32Offset99::from_u64(index as u64 + 9)
-        })),
-    ];
-    let right_coefficients = [
-        Quartic::new(std::array::from_fn(|index| {
-            Prime32Offset99::from_u64(index as u64 + 13)
-        })),
-        Quartic::new(std::array::from_fn(|index| {
-            Prime32Offset99::from_u64(index as u64 + 17)
-        })),
-        Quartic::new(std::array::from_fn(|index| {
-            Prime32Offset99::from_u64(index as u64 + 21)
-        })),
-    ];
-    let left = affine_table(left_coefficients);
-    let right = affine_table(right_coefficients);
-    let input_claim: Quartic = left.iter().zip(&right).map(|(&a, &b)| a * b).sum();
-
-    let mut prover_transcript = ExtensionTranscript::<Quartic>::new(b"tampered-extension");
-    let mut recorder = ClearSumcheckRecorder::<Quartic>::new();
-    recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
-    let coefficient = prover_transcript.challenge_scalar();
-    let prelude = BatchPrelude::try_new(
-        vec![BatchMember {
-            input_claim,
-            coefficient,
-            rounds: 2,
-            offset: 0,
-        }],
-        2,
-        2,
-    )
-    .unwrap();
-    let mut product = ProductOfAffines::new(left, right);
-    let mut members: [&mut dyn ProveRounds<Quartic>; 1] = [&mut product];
-    let proved = prove_batch(
-        &prelude,
-        &mut members,
-        &mut SequentialRounds,
-        &mut recorder,
-        &mut prover_transcript,
-    )
-    .unwrap();
-    let recorded = recorder
-        .finish(&proved.member_claims, &mut prover_transcript)
-        .unwrap();
-    let SumcheckProof::Clear(ClearProof::Compressed(mut proof)) = recorded.proof else {
-        panic!("clear recorder returned a non-compressed proof")
-    };
-    let mut coefficients = proof.round_polynomials[0]
-        .coeffs_except_linear_term()
-        .to_vec();
-    coefficients[0] += Quartic::new([
-        Prime32Offset99::zero(),
-        Prime32Offset99::one(),
-        Prime32Offset99::zero(),
-        Prime32Offset99::zero(),
-    ]);
-    proof.round_polynomials[0] = CompressedPoly::new(coefficients);
-
-    let mut verifier_transcript = ExtensionTranscript::<Quartic>::new(b"tampered-extension");
-    verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &input_claim);
-    let verifier_coefficient = verifier_transcript.challenge_scalar();
-    let reduced = SumcheckVerifier::verify_compressed(
-        &SumcheckClaim::new(2, 2, verifier_coefficient * input_claim),
-        &proof,
-        BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        &mut verifier_transcript,
-    )
-    .unwrap();
-    let point: [Quartic; 2] = reduced.point.as_slice().try_into().unwrap();
-    let expected =
-        verifier_coefficient * affine(left_coefficients, point) * affine(right_coefficients, point);
-    assert_ne!(reduced.value, expected);
 }

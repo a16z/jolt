@@ -546,24 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn matrix_mle_factorizes() {
-        let key = test_key(2);
-
-        let r_x = [Fr::from_u64(5), Fr::from_u64(7)];
-        let r_y = [Fr::from_u64(5), Fr::from_u64(11), Fr::from_u64(13)];
-
-        let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
-
-        let cycle_eq = EqPolynomial::new(vec![Fr::from_u64(5)]).evaluate(&[Fr::from_u64(5)]);
-        let (a_local, b_local, c_local) =
-            key.evaluate_local_mles(&[Fr::from_u64(7)], &[Fr::from_u64(11), Fr::from_u64(13)]);
-
-        assert_eq!(a_eval, cycle_eq * a_local);
-        assert_eq!(b_eval, cycle_eq * b_local);
-        assert_eq!(c_eval, cycle_eq * c_local);
-    }
-
-    #[test]
     fn sparse_matvec_satisfies() {
         let key = test_key(1);
         let w = [

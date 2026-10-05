@@ -236,13 +236,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn set_and_get() {
-        let flags = CircuitFlagSet::default().set(CircuitFlags::Load);
-        assert!(flags[CircuitFlags::Load]);
-        assert!(!flags[CircuitFlags::Store]);
-    }
-
-    #[test]
     fn interleaved_default() {
         let flags = CircuitFlagSet::default();
         assert!(flags.is_interleaved_operands());

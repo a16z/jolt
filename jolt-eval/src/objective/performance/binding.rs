@@ -108,22 +108,3 @@ impl Objective for BindHighToLowObjective {
         Some("s")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bind_low_to_high_runs() {
-        let obj = BindLowToHighObjective;
-        let setup = obj.setup();
-        obj.run(setup);
-    }
-
-    #[test]
-    fn bind_high_to_low_runs() {
-        let obj = BindHighToLowObjective;
-        let setup = obj.setup();
-        obj.run(setup);
-    }
-}

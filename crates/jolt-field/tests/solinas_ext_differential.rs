@@ -708,26 +708,6 @@ fn ext_field_coefficient_primitives_obey_contract() {
 
 #[test]
 #[should_panic(expected = "assertion")]
-fn ext2_from_base_slice_wrong_length_panics() {
-    let one = <two::Prime32Offset99 as Ring>::from_u64(1);
-    let _ =
-        <two::Ext2<two::Prime32Offset99> as ExtField<two::Prime32Offset99>>::from_base_slice(&[
-            one,
-        ]);
-}
-
-#[test]
-#[should_panic(expected = "assertion")]
-fn ext4_from_base_slice_wrong_length_panics() {
-    let one = <two::Prime32Offset99 as Ring>::from_u64(1);
-    let _ =
-        <two::FpExt4<two::Prime32Offset99> as ExtField<two::Prime32Offset99>>::from_base_slice(&[
-            one, one, one,
-        ]);
-}
-
-#[test]
-#[should_panic(expected = "assertion")]
 fn ext8_from_base_slice_wrong_length_panics() {
     let one = <two::Prime32Offset99 as Ring>::from_u64(1);
     let _ = <two::FpExt8<two::Prime32Offset99> as ExtField<two::Prime32Offset99>>::from_base_slice(

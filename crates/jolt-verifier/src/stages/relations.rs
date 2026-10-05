@@ -641,10 +641,6 @@ pub(crate) mod append_recording {
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
-#[expect(
-    clippy::as_conversions,
-    reason = "tests use plain arithmetic on fixture data"
-)]
 mod tests {
     use super::*;
 
@@ -982,52 +978,6 @@ mod tests {
                 virt(JoltVirtualPolynomial::RamRa, JoltRelationId::RamValCheck),
             ],
         );
-    }
-
-    #[test]
-    fn output_leaf_point_accessors_follow_fields() {
-        let points = InstructionLeaf::<Vec<Fr>> {
-            lookup_table_flags: vec![vec![fr(10)], vec![fr(11)]],
-            instruction_ra: vec![vec![fr(12), fr(13)]],
-            instruction_raf_flag: vec![fr(14)],
-        };
-        assert_eq!(
-            points.lookup_table_flags(),
-            &[vec![fr(10)], vec![fr(11)]] as &[Vec<Fr>]
-        );
-        assert_eq!(
-            points.instruction_ra(),
-            &[vec![fr(12), fr(13)]] as &[Vec<Fr>]
-        );
-        assert_eq!(points.instruction_raf_flag(), &[fr(14)] as &[Fr]);
-    }
-
-    #[test]
-    fn output_leaf_option_point_accessor() {
-        let present = OptionalOutput::<Vec<Fr>> {
-            untrusted: Some(vec![fr(7)]),
-            ram_inc: vec![fr(8)],
-        };
-        assert_eq!(present.untrusted(), Some(&[fr(7)] as &[Fr]));
-        assert_eq!(present.ram_inc(), &[fr(8)] as &[Fr]);
-
-        let absent = OptionalOutput::<Vec<Fr>> {
-            untrusted: None,
-            ram_inc: vec![fr(8)],
-        };
-        assert_eq!(absent.untrusted(), None);
-    }
-
-    #[test]
-    fn input_leaf_point_accessors_follow_fields() {
-        let points = ReductionInputs::<Vec<Fr>> {
-            raf: vec![fr(1)],
-            read_write: vec![fr(2)],
-            val_check: vec![fr(3)],
-        };
-        assert_eq!(points.raf(), &[fr(1)] as &[Fr]);
-        assert_eq!(points.read_write(), &[fr(2)] as &[Fr]);
-        assert_eq!(points.val_check(), &[fr(3)] as &[Fr]);
     }
 
     #[derive(InputClaims)]

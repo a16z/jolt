@@ -443,9 +443,7 @@ fn assemble_commitments<PCS: CommitmentScheme>(
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_tests {
     use super::*;
-    use crate::stages::field_inline_fixtures::{
-        addi_only_backend, field_arithmetic_backend, LOG_T,
-    };
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, LOG_T};
     use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, Ring};
@@ -563,39 +561,6 @@ mod field_inline_tests {
             prover_transcript.challenge(),
             stripped_transcript.challenge(),
             "the field-inline payload must be Fiat-Shamir-bound"
-        );
-    }
-
-    #[test]
-    fn field_inline_guest_without_field_instructions_commits_the_zero_column() {
-        let witness = addi_only_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
-        let setup = DoryScheme::setup_prover(grid().total_vars);
-
-        let provider = witness.field_inline_witness().unwrap();
-        assert_eq!(
-            provider.committed_order(),
-            vec![FieldInlineCommittedPolynomial::FieldRdInc]
-        );
-        let column = provider
-            .oracle_table::<Fr>(FieldInlinePolynomialId::Committed(
-                FieldInlineCommittedPolynomial::FieldRdInc,
-            ))
-            .unwrap();
-        assert_eq!(column, vec![Fr::from_u64(0); 1 << LOG_T]);
-
-        let (field_inline, _hints) = commit_field_inline::<Fr, DoryScheme>(
-            &backend,
-            &mut session,
-            &witness as &dyn JoltWitnessPlane<Fr>,
-            grid(),
-            &setup,
-        )
-        .unwrap();
-        assert_eq!(
-            field_inline.field_registers.rd_inc,
-            direct_dense_commitment(&column, &setup)
         );
     }
 

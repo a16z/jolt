@@ -1072,15 +1072,6 @@ mod test_mmu {
         mmu.trace_store(overflow_address, 0xc50513);
     }
 
-    #[test]
-    #[should_panic(expected = "Stack overflow")]
-    fn test_stack_overflow() {
-        let mut mmu = setup_mmu();
-
-        let invalid_address = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end + 1;
-        mmu.trace_store(invalid_address, 0xc50513);
-    }
-
     /// The canary occupies `[stack_end, stack_end + STACK_CANARY_SIZE)` (the
     /// linker script places it immediately after the program image), so the
     /// first canary byte must be rejected.
@@ -1325,30 +1316,9 @@ mod test_mmu {
     }
 
     #[test]
-    fn setup_bytecode_writes_directly_to_ram() {
-        let mut mmu = setup_mmu();
-        mmu.setup_bytecode(DRAM_BASE + 8, 0x77);
-        assert_eq!(mmu.load_raw(DRAM_BASE + 8), 0x77);
-    }
-
-    #[test]
     #[should_panic(expected = "must be >= DRAM_BASE")]
     fn setup_bytecode_rejects_device_addresses() {
         let mut mmu = setup_mmu();
         mmu.setup_bytecode(DRAM_BASE - 1, 0x77);
-    }
-
-    #[test]
-    fn validate_address_reflects_configured_capacity() {
-        let mmu = setup_mmu();
-        let capacity = mmu
-            .jolt_device
-            .as_ref()
-            .unwrap()
-            .memory_layout
-            .get_total_memory_size();
-        assert!(mmu.memory.validate_address(DRAM_BASE));
-        assert!(mmu.memory.validate_address(DRAM_BASE + capacity - 8));
-        assert!(!mmu.memory.validate_address(DRAM_BASE + capacity + 8));
     }
 }

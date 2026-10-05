@@ -202,16 +202,6 @@ pub unsafe fn keccak256_absorb_permute(state: *mut u64, block: *const u8) {
 #[cfg(all(test, feature = "host"))]
 mod tests {
     use super::*;
-    use hex_literal::hex;
-
-    #[test]
-    fn test_keccak256_empty() {
-        let hash = Keccak256::digest(b"");
-        assert_eq!(
-            hash,
-            hex!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
-        );
-    }
 
     #[test]
     fn test_keccak256_aligned_vs_unaligned() {

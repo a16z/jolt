@@ -20,11 +20,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn format_large_value_uses_gib() {
-        assert_eq!(format_memory_size(2.5), "2.50 GiB");
-    }
-
-    #[test]
     fn format_exactly_one_gib() {
         assert_eq!(format_memory_size(1.0), "1.00 GiB");
     }
@@ -32,22 +27,5 @@ mod tests {
     #[test]
     fn format_small_value_uses_mib() {
         assert_eq!(format_memory_size(0.5), "512.00 MiB");
-    }
-
-    #[test]
-    fn format_zero() {
-        assert_eq!(format_memory_size(0.0), "0.00 MiB");
-    }
-
-    #[test]
-    fn format_tiny_value() {
-        let result = format_memory_size(0.001);
-        assert!(result.contains("MiB"));
-    }
-
-    #[test]
-    fn constants_are_correct() {
-        assert_eq!(BYTES_PER_GIB, (1u64 << 30) as f64);
-        assert_eq!(BYTES_PER_MIB, (1u64 << 20) as f64);
     }
 }

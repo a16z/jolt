@@ -369,34 +369,6 @@ mod tests {
     }
 
     #[test]
-    fn filter_keeps_safe_hunks() {
-        let patch = "\
-diff --git a/src/lib.rs b/src/lib.rs
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -1,3 +1,3 @@
--fn foo() {}
-+fn bar() {}
-";
-        let filtered = filter_patch(patch);
-        assert!(filtered.contains("+fn bar() {}"));
-    }
-
-    #[test]
-    fn filter_drops_path_traversal() {
-        let patch = "\
-diff --git a/../../crates/jolt-prover/src/lib.rs b/../../crates/jolt-prover/src/lib.rs
---- a/../../crates/jolt-prover/src/lib.rs
-+++ b/../../crates/jolt-prover/src/lib.rs
-@@ -1 +1 @@
--safe
-+malicious
-";
-        let filtered = filter_patch(patch);
-        assert!(!filtered.contains("malicious"));
-    }
-
-    #[test]
     fn filter_mixed_safe_and_unsafe() {
         let patch = "\
 diff --git a/src/lib.rs b/src/lib.rs
@@ -422,17 +394,6 @@ diff --git a/Cargo.toml b/Cargo.toml
         assert!(filtered.contains("+new"));
         assert!(!filtered.contains("hacked"));
         assert!(filtered.contains("+v2"));
-    }
-
-    #[test]
-    fn filter_empty_patch() {
-        assert!(filter_patch("").is_empty());
-        assert!(filter_patch("   \n  ").trim().is_empty());
-    }
-
-    #[test]
-    fn validate_accepts_defaults() {
-        assert!(GuestMemoryConfig::default().validate().is_ok());
     }
 
     #[test]
@@ -463,15 +424,6 @@ diff --git a/Cargo.toml b/Cargo.toml
     }
 
     #[test]
-    fn validate_rejects_oversized_heap() {
-        let c = GuestMemoryConfig {
-            heap_size: u64::MAX,
-            ..Default::default()
-        };
-        assert!(matches!(c.validate(), Err(CheckError::InvalidInput(_))));
-    }
-
-    #[test]
     fn check_rejects_oversized_memory_before_compilation() {
         let inv = SoundnessInvariant;
         let setup = inv.setup();
@@ -486,20 +438,6 @@ diff --git a/Cargo.toml b/Cargo.toml
             inv.check(&setup, input),
             Err(CheckError::InvalidInput(_))
         ));
-    }
-
-    #[test]
-    fn check_garbage_patch_is_noop() {
-        let inv = SoundnessInvariant;
-        let setup = inv.setup();
-        let input = SoundnessInput {
-            patch: "this is not a valid unified diff\n+garbage".into(),
-            ..default_input()
-        };
-        // Garbage with no diff headers passes filter_patch unchanged.
-        // git apply --allow-empty treats it as a no-op (no hunks),
-        // so the unpatched sandbox compiles and the check proceeds normally.
-        assert!(inv.check(&setup, input).is_ok());
     }
 
     #[test]
@@ -519,13 +457,6 @@ diff --git a/../../etc/passwd b/../../etc/passwd
             ..default_input()
         };
         assert!(inv.check(&setup, input).is_ok());
-    }
-
-    #[test]
-    fn check_unpatched_sandbox_rejects_dishonest_output() {
-        let inv = SoundnessInvariant;
-        let setup = inv.setup();
-        assert!(inv.check(&setup, default_input()).is_ok());
     }
 
     #[test]

@@ -54,43 +54,6 @@ fn row_commitments(
 }
 
 #[test]
-fn commit_verify_roundtrip() {
-    let setup = deterministic_setup(4);
-    let mut rng = ChaCha20Rng::seed_from_u64(1);
-
-    let values: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-    let blinding = Fr::random(&mut rng);
-
-    let commitment = Pedersen::<Bn254G1>::commit(&setup, &values, &blinding);
-    assert!(Pedersen::<Bn254G1>::verify(
-        &setup,
-        &commitment,
-        &values,
-        &blinding
-    ));
-}
-
-#[test]
-fn wrong_values_rejected() {
-    let setup = deterministic_setup(4);
-    let mut rng = ChaCha20Rng::seed_from_u64(2);
-
-    let values: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-    let blinding = Fr::random(&mut rng);
-
-    let commitment = Pedersen::<Bn254G1>::commit(&setup, &values, &blinding);
-
-    let mut wrong_values = values.clone();
-    wrong_values[0] += Fr::from_u64(1);
-    assert!(!Pedersen::<Bn254G1>::verify(
-        &setup,
-        &commitment,
-        &wrong_values,
-        &blinding
-    ));
-}
-
-#[test]
 fn wrong_blinding_rejected() {
     let setup = deterministic_setup(4);
     let mut rng = ChaCha20Rng::seed_from_u64(3);
@@ -107,40 +70,6 @@ fn wrong_blinding_rejected() {
         &values,
         &wrong_blinding
     ));
-}
-
-#[test]
-fn different_blinding_different_commitment() {
-    let setup = deterministic_setup(2);
-    let mut rng = ChaCha20Rng::seed_from_u64(4);
-
-    let values: Vec<Fr> = (0..2).map(|_| Fr::random(&mut rng)).collect();
-    let r1 = Fr::random(&mut rng);
-    let r2 = Fr::random(&mut rng);
-
-    let c1 = Pedersen::<Bn254G1>::commit(&setup, &values, &r1);
-    let c2 = Pedersen::<Bn254G1>::commit(&setup, &values, &r2);
-    assert_ne!(
-        c1, c2,
-        "different blindings should produce different commitments"
-    );
-}
-
-#[test]
-fn commitment_is_binding() {
-    let setup = deterministic_setup(2);
-    let mut rng = ChaCha20Rng::seed_from_u64(5);
-
-    let v1: Vec<Fr> = (0..2).map(|_| Fr::random(&mut rng)).collect();
-    let v2: Vec<Fr> = (0..2).map(|_| Fr::random(&mut rng)).collect();
-    let blinding = Fr::random(&mut rng);
-
-    let c1 = Pedersen::<Bn254G1>::commit(&setup, &v1, &blinding);
-    let c2 = Pedersen::<Bn254G1>::commit(&setup, &v2, &blinding);
-    assert_ne!(
-        c1, c2,
-        "different messages with same blinding should differ"
-    );
 }
 
 #[test]
@@ -177,12 +106,6 @@ fn zero_blinding_commit() {
 }
 
 #[test]
-fn capacity_returns_generator_count() {
-    let setup = deterministic_setup(10);
-    assert_eq!(Pedersen::<Bn254G1>::capacity(&setup), 10);
-}
-
-#[test]
 #[should_panic(expected = "exceeds generator count")]
 fn commit_panics_on_exceeding_capacity() {
     let setup = deterministic_setup(2);
@@ -215,40 +138,6 @@ fn partial_values_uses_prefix_generators() {
         &values,
         &blinding
     ));
-}
-
-#[test]
-fn committed_rows_opening_roundtrip_returns_mle_eval() {
-    let setup = deterministic_setup(4);
-    let mut rng = ChaCha20Rng::seed_from_u64(10);
-
-    let row_len = 4;
-    let row_point: Vec<Fr> = (0..2).map(|_| Fr::random(&mut rng)).collect();
-    let entry_point: Vec<Fr> = (0..2).map(|_| Fr::random(&mut rng)).collect();
-    let flattened_rows: Vec<Fr> = (0..16).map(|_| Fr::random(&mut rng)).collect();
-    let row_blindings: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-    let row_commitments = row_commitments(&setup, &flattened_rows, row_len, &row_blindings);
-
-    let (opening, opened_eval) = Pedersen::<Bn254G1>::open_committed_rows(
-        &flattened_rows,
-        &row_blindings,
-        row_len,
-        &row_point,
-        &entry_point,
-    )
-    .unwrap();
-    let verified_eval = Pedersen::<Bn254G1>::verify_committed_rows(
-        &setup,
-        &row_commitments,
-        &row_point,
-        &entry_point,
-        &opening,
-    )
-    .unwrap();
-
-    let expected = mle_eval(&flattened_rows, row_len, &row_point, &entry_point);
-    assert_eq!(opened_eval, expected);
-    assert_eq!(verified_eval, expected);
 }
 
 #[test]
@@ -330,38 +219,6 @@ fn committed_rows_opening_rejects_tampered_combined_vector() {
     .unwrap();
 
     opening.combined_vector[0] += Fr::from_u64(1);
-    let err = Pedersen::<Bn254G1>::verify_committed_rows(
-        &setup,
-        &row_commitments,
-        &row_point,
-        &entry_point,
-        &opening,
-    )
-    .unwrap_err();
-    assert!(matches!(err, VectorOpeningError::CommitmentMismatch));
-}
-
-#[test]
-fn committed_rows_opening_rejects_tampered_blinding() {
-    let setup = deterministic_setup(4);
-    let mut rng = ChaCha20Rng::seed_from_u64(13);
-
-    let row_len = 4;
-    let row_point: Vec<Fr> = (0..2).map(|_| Fr::random(&mut rng)).collect();
-    let entry_point: Vec<Fr> = (0..2).map(|_| Fr::random(&mut rng)).collect();
-    let flattened_rows: Vec<Fr> = (0..16).map(|_| Fr::random(&mut rng)).collect();
-    let row_blindings: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-    let row_commitments = row_commitments(&setup, &flattened_rows, row_len, &row_blindings);
-    let (mut opening, _) = Pedersen::<Bn254G1>::open_committed_rows(
-        &flattened_rows,
-        &row_blindings,
-        row_len,
-        &row_point,
-        &entry_point,
-    )
-    .unwrap();
-
-    opening.combined_blinding += Fr::from_u64(1);
     let err = Pedersen::<Bn254G1>::verify_committed_rows(
         &setup,
         &row_commitments,

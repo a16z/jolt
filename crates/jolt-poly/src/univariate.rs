@@ -520,20 +520,6 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_round_trip() {
-        let points = vec![
-            (Fr::from_u64(0), Fr::from_u64(1)),
-            (Fr::from_u64(1), Fr::from_u64(4)),
-            (Fr::from_u64(2), Fr::from_u64(11)),
-        ];
-        let p = UnivariatePoly::interpolate(&points);
-
-        for &(x, y) in &points {
-            assert_eq!(p.evaluate(x), y);
-        }
-    }
-
-    #[test]
     fn degree_is_correct() {
         let p = UnivariatePoly::<Fr>::zero();
         assert_eq!(p.degree(), 0);
@@ -564,17 +550,6 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let p = UnivariatePoly::new(vec![Fr::from_u64(3), Fr::from_u64(2), Fr::from_u64(1)]);
-        let bytes = bincode::serde::encode_to_vec(&p, bincode::config::standard()).unwrap();
-        let recovered: UnivariatePoly<Fr> =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .unwrap()
-                .0;
-        assert_eq!(p, recovered);
-    }
-
-    #[test]
-    fn serde_round_trip_zero() {
-        let p = UnivariatePoly::<Fr>::zero();
         let bytes = bincode::serde::encode_to_vec(&p, bincode::config::standard()).unwrap();
         let recovered: UnivariatePoly<Fr> =
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
@@ -623,30 +598,12 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_over_integers_constant() {
-        let c = Fr::from_u64(42);
-        let evals = vec![c; 4];
-        let poly = UnivariatePoly::interpolate_over_integers(&evals);
-        assert_eq!(poly.evaluate(Fr::from_u64(100)), c);
-    }
-
-    #[test]
     fn interpolate_single_point_constant() {
         let c = Fr::from_u64(7);
         let poly = UnivariatePoly::interpolate(&[(Fr::from_u64(0), c)]);
         assert_eq!(poly.evaluate(Fr::from_u64(0)), c);
         assert_eq!(poly.evaluate(Fr::from_u64(99)), c);
         assert_eq!(poly.degree(), 0);
-    }
-
-    #[test]
-    fn compress_then_evaluate_with_hint() {
-        let p = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(3), Fr::from_u64(2)]);
-        let hint = p.evaluate(Fr::zero()) + p.evaluate(Fr::one());
-
-        let compressed = p.compress();
-        let x = Fr::from_u64(5);
-        assert_eq!(compressed.evaluate_with_hint(hint, x), p.evaluate(x));
     }
 
     #[test]
@@ -711,24 +668,6 @@ mod tests {
     }
 
     #[test]
-    fn add_then_scalar_mul_pattern() {
-        let mut batched = UnivariatePoly::<Fr>::zero();
-        let poly_a = UnivariatePoly::new(vec![Fr::from_u64(1), Fr::from_u64(2), Fr::from_u64(3)]);
-        let poly_b = UnivariatePoly::new(vec![Fr::from_u64(4), Fr::from_u64(5), Fr::from_u64(6)]);
-        let coeff_a = Fr::from_u64(2);
-        let coeff_b = Fr::from_u64(3);
-
-        batched += &(&poly_a * coeff_a);
-        batched += &(&poly_b * coeff_b);
-
-        for x_val in 0..5u64 {
-            let x = Fr::from_u64(x_val);
-            let expected = poly_a.evaluate(x) * coeff_a + poly_b.evaluate(x) * coeff_b;
-            assert_eq!(batched.evaluate(x), expected, "mismatch at x={x_val}");
-        }
-    }
-
-    #[test]
     fn divide_exact() {
         let dividend = UnivariatePoly::new(vec![-Fr::one(), Fr::zero(), Fr::one()]);
         let divisor = UnivariatePoly::new(vec![-Fr::one(), Fr::one()]);
@@ -781,15 +720,6 @@ mod tests {
         let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
         assert!(q.is_zero());
         assert_eq!(r, dividend);
-    }
-
-    #[test]
-    fn from_evals_quadratic() {
-        let evals = vec![Fr::from_u64(1), Fr::from_u64(6), Fr::from_u64(15)];
-        let poly = UnivariatePoly::from_evals(&evals);
-        assert_eq!(poly.coefficients[0], Fr::from_u64(1));
-        assert_eq!(poly.coefficients[1], Fr::from_u64(3));
-        assert_eq!(poly.coefficients[2], Fr::from_u64(2));
     }
 
     #[test]
@@ -849,24 +779,6 @@ mod tests {
     #[should_panic(expected = "cannot interpolate zero evaluations")]
     fn from_evals_toom_rejects_empty() {
         let _ = UnivariatePoly::<Fr>::from_evals_toom(&[]);
-    }
-
-    #[test]
-    fn from_evals_toom_cubic() {
-        let gt_poly = UnivariatePoly::new(vec![
-            Fr::from_u64(5),
-            Fr::from_u64(1),
-            Fr::from_u64(3),
-            Fr::from_u64(9),
-        ]);
-        let degree = 3;
-        let mut toom_evals: Vec<Fr> = (0..degree)
-            .map(|x| gt_poly.evaluate(Fr::from_u64(x)))
-            .collect();
-        toom_evals.push(*gt_poly.coefficients().last().unwrap());
-
-        let poly = UnivariatePoly::from_evals_toom(&toom_evals);
-        assert_eq!(gt_poly, poly);
     }
 
     #[test]

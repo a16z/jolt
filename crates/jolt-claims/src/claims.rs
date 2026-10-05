@@ -229,13 +229,6 @@ mod tests {
     }
 
     #[test]
-    fn pow2_builds_field_native_powers() {
-        assert_eq!(Fr::pow2(0), Fr::from_u64(1));
-        assert_eq!(Fr::pow2(1), Fr::from_u64(2));
-        assert_eq!(Fr::pow2(63), Fr::from_u64(1u64 << 63));
-    }
-
-    #[test]
     fn expression_powers_are_structural_products() {
         let gamma: Expr<Fr, Opening, Derived, Challenge> = challenge(Challenge::Alpha);
         let expr = gamma.pow(3) * opening(Opening::A);

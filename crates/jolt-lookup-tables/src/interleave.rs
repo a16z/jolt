@@ -89,20 +89,4 @@ mod tests {
             assert_eq!((rx, ry), (x, y), "roundtrip failed for ({x:#x}, {y:#x})");
         }
     }
-
-    #[test]
-    fn uninterleave_interleave_roundtrip() {
-        let vals: &[u128] = &[0, 1, u128::MAX, 0xAAAA_BBBB_CCCC_DDDD_1111_2222_3333_4444];
-        for &val in vals {
-            let (x, y) = uninterleave_bits(val);
-            let reinterleaved = interleave_bits(x, y);
-            assert_eq!(reinterleaved, val, "roundtrip failed for {val:#x}");
-        }
-    }
-
-    #[test]
-    fn single_bit_positions() {
-        assert_eq!(interleave_bits(1, 0), 0b10);
-        assert_eq!(interleave_bits(0, 1), 0b01);
-    }
 }

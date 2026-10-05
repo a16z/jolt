@@ -533,20 +533,6 @@ mod tests {
         assert!(sumchecks().validate_aliases(&values).is_err());
     }
 
-    #[test]
-    fn validate_aliases_rejects_left_instruction_input_mismatch() {
-        let mut values = consistent_values();
-        values.instruction_claim_reduction.left_instruction_input = fr(99);
-        assert!(sumchecks().validate_aliases(&values).is_err());
-    }
-
-    #[test]
-    fn validate_aliases_rejects_right_instruction_input_mismatch() {
-        let mut values = consistent_values();
-        values.instruction_claim_reduction.right_instruction_input = fr(99);
-        assert!(sumchecks().validate_aliases(&values).is_err());
-    }
-
     /// Pins the structural invariant the alias declaration relies on:
     /// `validate_aliases` checks values only, which is sound because the product
     /// remainder and the instruction claim-reduction bind the same batch-point

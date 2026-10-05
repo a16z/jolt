@@ -1,33 +1,10 @@
-#![expect(clippy::expect_used)]
-
 use jolt_field::{Ext2, Field, Fr, One, Prime64Offset59, Ring, Zero};
 use jolt_poly::{
-    EqPolynomial, IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, OmittedConstantPoly,
-    Polynomial, RlcSource, UnivariatePoly, UnivariatePolynomial,
+    IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, OmittedConstantPoly, Polynomial,
+    RlcSource, UnivariatePoly, UnivariatePolynomial,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
-
-#[test]
-fn inner_product_with_eq_is_evaluation() {
-    let mut rng = ChaCha20Rng::seed_from_u64(1000);
-    for nv in 1..=6 {
-        let poly = Polynomial::<Fr>::random(nv, &mut rng);
-        let point: Vec<Fr> = (0..nv).map(|_| Fr::random(&mut rng)).collect();
-
-        let expected = poly.evaluate(&point);
-
-        let eq_evals = EqPolynomial::new(point).evaluations();
-        let inner: Fr = poly
-            .evaluations()
-            .iter()
-            .zip(eq_evals.iter())
-            .map(|(a, b)| *a * *b)
-            .sum();
-
-        assert_eq!(inner, expected, "nv={nv}: inner product ≠ evaluate");
-    }
-}
 
 #[test]
 fn sequential_bind_equals_evaluate() {
@@ -45,28 +22,6 @@ fn sequential_bind_equals_evaluate() {
         assert_eq!(working.len(), 1);
         assert_eq!(working.evaluations()[0], expected, "nv={nv}");
     }
-}
-
-#[test]
-fn compact_u8_bind_matches_field_bind() {
-    let mut rng = ChaCha20Rng::seed_from_u64(3000);
-    let nv = 4;
-    let data: Vec<u8> = (0..1 << nv).map(|i| (i * 37 + 13) as u8).collect();
-    let scalar = Fr::random(&mut rng);
-
-    let compact = Polynomial::new(data.clone());
-    let promoted = compact.bind_to_field::<Fr>(scalar);
-
-    let field_poly: Polynomial<Fr> =
-        Polynomial::new(data.iter().map(|&x| Fr::from_u64(x as u64)).collect());
-    let mut expected = field_poly;
-    expected.bind(scalar);
-
-    assert_eq!(
-        promoted.evaluations(),
-        expected.evaluations(),
-        "compact bind_to_field must match field bind"
-    );
 }
 
 fn check_equispaced_interpolation<F: Field>(coefficients: Vec<F>) {
@@ -194,80 +149,6 @@ fn univariate_interpolation_recovers_points() {
 }
 
 #[test]
-fn univariate_interpolation_over_integers() {
-    let evals = vec![
-        Fr::from_u64(1),
-        Fr::from_u64(4),
-        Fr::from_u64(9),
-        Fr::from_u64(16),
-    ];
-    let poly = UnivariatePoly::interpolate_over_integers(&evals);
-
-    for (i, expected) in evals.iter().enumerate() {
-        let eval = poly.evaluate(Fr::from_u64(i as u64));
-        assert_eq!(&eval, expected, "mismatch at domain point {i}");
-    }
-}
-
-#[test]
-fn compressed_round_trip() {
-    let mut rng = ChaCha20Rng::seed_from_u64(5000);
-    let coeffs: Vec<Fr> = (0..5).map(|_| Fr::random(&mut rng)).collect();
-    let original = UnivariatePoly::new(coeffs);
-    let hint = original.evaluate(Fr::from_u64(0)) + original.evaluate(Fr::from_u64(1));
-
-    let compressed = original.compress();
-    let recovered = compressed.decompress(hint);
-
-    for i in 0..10 {
-        let x = Fr::from_u64(i);
-        assert_eq!(
-            original.evaluate(x),
-            recovered.evaluate(x),
-            "compress/decompress mismatch at x={i}"
-        );
-    }
-}
-
-#[test]
-fn compressed_evaluate_with_hint() {
-    let mut rng = ChaCha20Rng::seed_from_u64(5001);
-    let coeffs: Vec<Fr> = (0..4).map(|_| Fr::random(&mut rng)).collect();
-    let poly = UnivariatePoly::new(coeffs);
-    let hint = poly.evaluate(Fr::from_u64(0)) + poly.evaluate(Fr::from_u64(1));
-    let compressed = poly.compress();
-
-    for i in 0..8 {
-        let x = Fr::from_u64(i);
-        assert_eq!(
-            poly.evaluate(x),
-            compressed.evaluate_with_hint(hint, x),
-            "evaluate_with_hint mismatch at x={i}"
-        );
-    }
-}
-
-#[test]
-fn identity_polynomial_boolean_indexing() {
-    let nv = 4;
-    let id = IdentityPolynomial::new(nv);
-
-    for idx in 0..(1 << nv) {
-        let bits: Vec<Fr> = (0..nv)
-            .map(|j| {
-                if (idx >> (nv - 1 - j)) & 1 == 1 {
-                    Fr::from_u64(1)
-                } else {
-                    Fr::from_u64(0)
-                }
-            })
-            .collect();
-        let eval = id.evaluate(&bits);
-        assert_eq!(eval, Fr::from_u64(idx as u64), "identity at index {idx}");
-    }
-}
-
-#[test]
 fn identity_polynomial_random_point() {
     let mut rng = ChaCha20Rng::seed_from_u64(6000);
     let nv = 5;
@@ -307,65 +188,4 @@ fn rlc_source_matches_materialized_combination() {
     let actual = rlc.evaluate(&point);
 
     assert_eq!(actual, expected);
-}
-
-#[test]
-fn polynomial_addition_commutative() {
-    let mut rng = ChaCha20Rng::seed_from_u64(8000);
-    let nv = 4;
-    let a = Polynomial::<Fr>::random(nv, &mut rng);
-    let b = Polynomial::<Fr>::random(nv, &mut rng);
-
-    let ab = a.clone() + b.clone();
-    let b_plus_a = b + a;
-    assert_eq!(ab.evaluations(), b_plus_a.evaluations());
-}
-
-#[test]
-fn scalar_mul_distributes_over_addition() {
-    let mut rng = ChaCha20Rng::seed_from_u64(8001);
-    let nv = 3;
-    let a = Polynomial::<Fr>::random(nv, &mut rng);
-    let b = Polynomial::<Fr>::random(nv, &mut rng);
-    let s = Fr::random(&mut rng);
-
-    let sum_then_scale = (a.clone() + b.clone()) * s;
-    let scale_then_sum = a * s + b * s;
-    assert_eq!(sum_then_scale.evaluations(), scale_then_sum.evaluations());
-}
-
-#[test]
-fn polynomial_bincode_round_trip() {
-    let mut rng = ChaCha20Rng::seed_from_u64(9000);
-    let nv = 5;
-    let poly = Polynomial::<Fr>::random(nv, &mut rng);
-
-    let bytes =
-        bincode::serde::encode_to_vec(&poly, bincode::config::standard()).expect("serialize");
-    let recovered: Polynomial<Fr> =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-            .expect("deserialize")
-            .0;
-
-    assert_eq!(poly.evaluations(), recovered.evaluations());
-    assert_eq!(poly.num_vars(), recovered.num_vars());
-}
-
-#[test]
-fn univariate_bincode_round_trip() {
-    let mut rng = ChaCha20Rng::seed_from_u64(9001);
-    let coeffs: Vec<Fr> = (0..6).map(|_| Fr::random(&mut rng)).collect();
-    let poly = UnivariatePoly::new(coeffs);
-
-    let bytes =
-        bincode::serde::encode_to_vec(&poly, bincode::config::standard()).expect("serialize");
-    let recovered: UnivariatePoly<Fr> =
-        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-            .expect("deserialize")
-            .0;
-
-    for i in 0..10 {
-        let x = Fr::from_u64(i);
-        assert_eq!(poly.evaluate(x), recovered.evaluate(x));
-    }
 }

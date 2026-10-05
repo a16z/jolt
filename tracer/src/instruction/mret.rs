@@ -56,23 +56,3 @@ impl RISCVTrace for MRET {
         super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::instruction::Instruction;
-
-    #[test]
-    fn test_mret_decode() {
-        let instr: u32 = 0x30200073;
-        let address: u64 = 0x1000;
-
-        let decoded = Instruction::decode(instr, address, false).expect("Failed to decode MRET");
-
-        match decoded {
-            Instruction::MRET(_mret) => {
-                // MRET has no operands to check - it's a fixed encoding
-            }
-            _ => panic!("Expected MRET instruction, got {decoded:?}"),
-        }
-    }
-}

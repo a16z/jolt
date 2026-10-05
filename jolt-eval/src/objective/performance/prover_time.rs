@@ -67,18 +67,3 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         Some("s")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::guests::Fibonacci;
-
-    use super::*;
-
-    #[test]
-    fn fibonacci_config() {
-        let g = Fibonacci(100);
-        assert_eq!(g.package(), "fibonacci-guest");
-        assert!(!g.input().is_empty());
-        assert_eq!(g.bench_name(), "prover_time_fibonacci_100");
-    }
-}

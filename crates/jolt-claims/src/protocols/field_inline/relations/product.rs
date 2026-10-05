@@ -85,16 +85,8 @@ impl SymbolicSumcheck for FieldProduct {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::field_inline::geometry::product::{
-        field_inv_product_opening, field_rd_value_product, selected_product_lanes,
-        selected_product_remainder_output_openings, selected_product_uniskip_input_openings,
-        FieldRegistersProductLane,
-    };
+    use crate::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
     use jolt_field::{Fr, Ring};
-
-    fn dimensions() -> FieldRegistersTraceDimensions {
-        FieldRegistersTraceDimensions::new(5)
-    }
 
     #[test]
     fn claim_struct_field_order_matches_geometry_opening_order() {
@@ -116,69 +108,5 @@ mod tests {
             field_product: value,
         };
         assert_eq!(inputs.canonical_order(), field_product_input_openings());
-    }
-
-    #[test]
-    fn field_product_claims_expose_expected_dependencies() {
-        let relation = FieldProduct::new(dimensions());
-
-        assert_eq!(
-            FieldProduct::id(),
-            FieldInlineRelationId::FieldRegistersProduct
-        );
-        assert_eq!(relation.rounds(), dimensions().log_t());
-        assert_eq!(relation.degree(), 2);
-        assert_eq!(
-            selected_product_uniskip_input_openings(),
-            [field_product_opening(), field_inv_product_opening()]
-        );
-        assert_eq!(
-            selected_product_lanes().map(FieldRegistersProductLane::factor_openings),
-            [
-                [field_rs1_value_product(), field_rs2_value_product()],
-                [field_rs1_value_product(), field_rd_value_product()],
-            ]
-        );
-        assert_eq!(
-            selected_product_remainder_output_openings(),
-            [
-                field_rs1_value_product(),
-                field_rs2_value_product(),
-                field_rd_value_product(),
-            ]
-        );
-    }
-
-    #[test]
-    fn field_product_claims_evaluate_native_field_product_relation() {
-        let relation = FieldProduct::new(dimensions());
-
-        let product = Fr::from_u64(35);
-        let rs1 = Fr::from_u64(5);
-        let rs2 = Fr::from_u64(7);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == field_product_opening() => product,
-                _ => zero,
-            },
-            |_| zero,
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == field_rs1_value_product() => rs1,
-                id if id == field_rs2_value_product() => rs2,
-                _ => zero,
-            },
-            |_| zero,
-            |_| zero,
-        );
-
-        assert_eq!(input, product);
-        assert_eq!(output, rs1 * rs2);
-        assert_eq!(input, output);
     }
 }

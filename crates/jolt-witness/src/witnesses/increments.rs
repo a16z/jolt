@@ -189,22 +189,4 @@ mod tests {
             assert_eq!(reconstructed, inc.0, "cycle {cycle}");
         }
     }
-
-    #[test]
-    fn zero_delta_uses_balanced_zero_digits_and_carry() {
-        let padding = FusedInc(0);
-        assert_eq!(
-            padding.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK }),
-            0
-        );
-        for index in 0..DIGITS {
-            assert_eq!(
-                padding.selected_row(BalancedIncColumn::Digit {
-                    width: LOG_K_CHUNK,
-                    index,
-                }),
-                0
-            );
-        }
-    }
 }

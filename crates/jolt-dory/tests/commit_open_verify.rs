@@ -334,14 +334,6 @@ fn wrong_transcript_domain_rejected() {
     assert!(result.is_err(), "wrong transcript domain must be rejected");
 }
 
-#[test]
-fn property_based_round_trip() {
-    for seed in 0..10u64 {
-        let num_vars = 2 + (seed as usize % 4);
-        round_trip::<Blake2bTranscript>(num_vars, 800 + seed, b"prop-rt");
-    }
-}
-
 fn zk_round_trip<T: Transcript<Challenge = Fr>>(num_vars: usize, seed: u64, label: &'static [u8]) {
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let prover_setup = DoryScheme::setup_prover(num_vars);

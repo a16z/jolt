@@ -109,8 +109,3 @@ fn replaced_trusted_advice_commitment_rejects() {
         },
     );
 }
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[ignore = "direct commitment tampering fixtures are not wired yet"]
-fn tampered_commitment_order_reject() {}

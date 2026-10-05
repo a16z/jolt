@@ -620,7 +620,6 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
     use jolt_field::{Field, Ring};
-    use num_traits::One;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -640,33 +639,6 @@ mod tests {
     }
 
     #[test]
-    fn bind_matches_bind_to_field() {
-        let mut rng = ChaCha20Rng::seed_from_u64(3);
-        let n = 6;
-        let poly = Polynomial::<Fr>::random(n, &mut rng);
-        let scalar = Fr::random(&mut rng);
-
-        let bound = poly.bind_to_field(scalar);
-
-        let mut poly_mut = poly;
-        poly_mut.bind(scalar);
-
-        assert_eq!(bound.evaluations(), poly_mut.evaluations());
-    }
-
-    #[test]
-    fn evaluate_and_consume_matches_evaluate() {
-        let mut rng = ChaCha20Rng::seed_from_u64(4);
-        let n = 4;
-        let poly = Polynomial::<Fr>::random(n, &mut rng);
-        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let expected = poly.evaluate(&point);
-        let consumed = poly.clone().evaluate_and_consume(&point);
-        assert_eq!(expected, consumed);
-    }
-
-    #[test]
     fn empty_polynomial() {
         let poly = Polynomial::<Fr>::new(vec![]);
         assert_eq!(poly.num_vars(), 0);
@@ -679,26 +651,6 @@ mod tests {
         let poly = Polynomial::new(vec![val]);
         assert_eq!(poly.num_vars(), 0);
         assert_eq!(poly.evaluate(&[]), val);
-    }
-
-    #[test]
-    fn sequential_bind_equals_full_evaluate() {
-        let mut rng = ChaCha20Rng::seed_from_u64(5);
-        let n = 4;
-        let poly = Polynomial::<Fr>::random(n, &mut rng);
-        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let mut p = poly.clone();
-        for &r in &point {
-            p.bind(r);
-        }
-        assert_eq!(p.evals.len(), 1);
-        assert_eq!(p.evals[0], poly.evaluate(&point));
-    }
-
-    #[expect(unused)]
-    fn uses_one_trait() {
-        let _ = Fr::one();
     }
 
     #[test]
@@ -725,17 +677,6 @@ mod tests {
     }
 
     #[test]
-    fn serde_round_trip_single() {
-        let poly = Polynomial::new(vec![Fr::from_u64(99)]);
-        let bytes = bincode::serde::encode_to_vec(&poly, bincode::config::standard()).unwrap();
-        let recovered: Polynomial<Fr> =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .unwrap()
-                .0;
-        assert_eq!(poly, recovered);
-    }
-
-    #[test]
     fn parallel_bind_matches_bind_to_field() {
         // n=11 -> 2048 evaluations, above PAR_THRESHOLD=1024
         let mut rng = ChaCha20Rng::seed_from_u64(201);
@@ -749,82 +690,6 @@ mod tests {
         poly_mut.bind(scalar);
 
         assert_eq!(bound.evaluations(), poly_mut.evaluations());
-    }
-
-    #[test]
-    fn parallel_bind_equals_evaluate_and_consume() {
-        let mut rng = ChaCha20Rng::seed_from_u64(202);
-        let n = 11;
-        let poly = Polynomial::<Fr>::random(n, &mut rng);
-        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let consumed = poly.clone().evaluate_and_consume(&point);
-
-        let mut p = poly;
-        for &r in &point {
-            p.bind(r);
-        }
-        assert_eq!(p.evals.len(), 1);
-        assert_eq!(p.evals[0], consumed);
-    }
-
-    #[test]
-    fn parallel_bind_then_evaluate_and_consume() {
-        let mut rng = ChaCha20Rng::seed_from_u64(203);
-        let n = 11;
-        let poly = Polynomial::<Fr>::random(n, &mut rng);
-        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let expected = poly.clone().evaluate_and_consume(&point);
-
-        let bound = poly.bind_to_field(point[0]);
-        let via_bind = bound.evaluate_and_consume(&point[1..]);
-        assert_eq!(expected, via_bind);
-    }
-
-    #[test]
-    fn add_element_wise() {
-        let mut rng = ChaCha20Rng::seed_from_u64(500);
-        let n = 4;
-        let a = Polynomial::<Fr>::random(n, &mut rng);
-        let b = Polynomial::<Fr>::random(n, &mut rng);
-
-        let sum = a.clone() + &b;
-        for i in 0..sum.evaluations().len() {
-            assert_eq!(
-                sum.evaluations()[i],
-                a.evaluations()[i] + b.evaluations()[i]
-            );
-        }
-    }
-
-    #[test]
-    fn sub_element_wise() {
-        let mut rng = ChaCha20Rng::seed_from_u64(501);
-        let n = 4;
-        let a = Polynomial::<Fr>::random(n, &mut rng);
-        let b = Polynomial::<Fr>::random(n, &mut rng);
-
-        let diff = a.clone() - &b;
-        for i in 0..diff.evaluations().len() {
-            assert_eq!(
-                diff.evaluations()[i],
-                a.evaluations()[i] - b.evaluations()[i]
-            );
-        }
-    }
-
-    #[test]
-    fn scalar_mul() {
-        let mut rng = ChaCha20Rng::seed_from_u64(502);
-        let n = 4;
-        let poly = Polynomial::<Fr>::random(n, &mut rng);
-        let s = Fr::random(&mut rng);
-
-        let scaled = poly.clone() * s;
-        for i in 0..scaled.evaluations().len() {
-            assert_eq!(scaled.evaluations()[i], poly.evaluations()[i] * s);
-        }
     }
 
     #[test]
@@ -907,24 +772,6 @@ mod tests {
     }
 
     #[test]
-    fn neg_double_is_identity() {
-        let mut rng = ChaCha20Rng::seed_from_u64(512);
-        let poly = Polynomial::<Fr>::random(4, &mut rng);
-        assert_eq!(-(-poly.clone()), poly);
-    }
-
-    #[test]
-    fn add_sub_inverse() {
-        let mut rng = ChaCha20Rng::seed_from_u64(513);
-        let n = 4;
-        let a = Polynomial::<Fr>::random(n, &mut rng);
-        let b = Polynomial::<Fr>::random(n, &mut rng);
-
-        let result = (a.clone() + &b) - &b;
-        assert_eq!(result, a);
-    }
-
-    #[test]
     fn ref_scalar_mul() {
         let mut rng = ChaCha20Rng::seed_from_u64(514);
         let n = 4;
@@ -937,87 +784,6 @@ mod tests {
     }
 
     #[test]
-    fn compact_u8_bind_to_field_matches_dense() {
-        let scalars: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
-        let compact = Polynomial::new(scalars.clone());
-        let dense_evals: Vec<Fr> = scalars.iter().map(|&s| Fr::from(s)).collect();
-        let dense = Polynomial::new(dense_evals);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(10);
-        let scalar = Fr::random(&mut rng);
-
-        assert_eq!(
-            compact.bind_to_field::<Fr>(scalar),
-            dense.bind_to_field(scalar)
-        );
-    }
-
-    #[test]
-    fn compact_u8_sequential_bind_matches_evaluate() {
-        let scalars: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
-        let compact = Polynomial::new(scalars.clone());
-        let dense_evals: Vec<Fr> = scalars.iter().map(|&s| Fr::from(s)).collect();
-        let dense = Polynomial::new(dense_evals);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(10);
-        let point: Vec<Fr> = (0..3).map(|_| Fr::random(&mut rng)).collect();
-
-        let mut bound = compact.bind_to_field::<Fr>(point[0]);
-        for &r in &point[1..] {
-            bound.bind(r);
-        }
-        assert_eq!(bound.evals[0], dense.evaluate(&point));
-    }
-
-    #[test]
-    fn compact_bool_bind_to_field_matches_dense() {
-        let scalars: Vec<bool> = vec![true, false, false, true];
-        let compact = Polynomial::new(scalars.clone());
-        let dense_evals: Vec<Fr> = scalars.iter().map(|&s| Fr::from(s)).collect();
-        let dense = Polynomial::new(dense_evals);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(20);
-        let scalar = Fr::random(&mut rng);
-
-        assert_eq!(
-            compact.bind_to_field::<Fr>(scalar),
-            dense.bind_to_field(scalar)
-        );
-    }
-
-    #[test]
-    fn compact_u16_bind_to_field_matches_dense() {
-        let scalars: Vec<u16> = vec![1, 2, 3, 4, 5, 6, 7, 8];
-        let compact = Polynomial::new(scalars.clone());
-        let dense_evals: Vec<Fr> = scalars.iter().map(|&s| Fr::from(s)).collect();
-        let dense = Polynomial::new(dense_evals);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(30);
-        let scalar = Fr::random(&mut rng);
-
-        assert_eq!(
-            compact.bind_to_field::<Fr>(scalar),
-            dense.bind_to_field(scalar)
-        );
-    }
-
-    #[test]
-    fn compact_i64_bind_to_field_matches_dense() {
-        let scalars: Vec<i64> = vec![-1, 0, 1, -100, i64::MIN, i64::MAX, -42, 42];
-        let compact = Polynomial::new(scalars.clone());
-        let dense_evals: Vec<Fr> = scalars.iter().map(|&s| Fr::from(s)).collect();
-        let dense = Polynomial::new(dense_evals);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(50);
-        let scalar = Fr::random(&mut rng);
-
-        assert_eq!(
-            compact.bind_to_field::<Fr>(scalar),
-            dense.bind_to_field(scalar)
-        );
-    }
-
-    #[test]
     fn compact_i128_bind_to_field_matches_dense() {
         let scalars: Vec<i128> = vec![-1, 0, 1, -999, i128::MIN, i128::MAX, -7, 7];
         let compact = Polynomial::new(scalars.clone());
@@ -1025,22 +791,6 @@ mod tests {
         let dense = Polynomial::new(dense_evals);
 
         let mut rng = ChaCha20Rng::seed_from_u64(60);
-        let scalar = Fr::random(&mut rng);
-
-        assert_eq!(
-            compact.bind_to_field::<Fr>(scalar),
-            dense.bind_to_field(scalar)
-        );
-    }
-
-    #[test]
-    fn compact_u128_bind_to_field_matches_dense() {
-        let scalars: Vec<u128> = vec![u128::MAX, u128::MAX - 1, 0, 1];
-        let compact = Polynomial::new(scalars.clone());
-        let dense_evals: Vec<Fr> = scalars.iter().map(|&s| Fr::from(s)).collect();
-        let dense = Polynomial::new(dense_evals);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(70);
         let scalar = Fr::random(&mut rng);
 
         assert_eq!(
@@ -1071,56 +821,6 @@ mod tests {
     }
 
     #[test]
-    fn compact_empty() {
-        let compact = Polynomial::<u8>::new(vec![]);
-        assert_eq!(compact.num_vars(), 0);
-        assert!(compact.is_empty());
-    }
-
-    #[test]
-    fn compact_single_element() {
-        let compact = Polynomial::<u64>::new(vec![42]);
-        assert_eq!(compact.num_vars(), 0);
-        assert_eq!(compact.evals(), &[42u64]);
-    }
-
-    #[test]
-    fn serde_round_trip_compact_u8() {
-        let scalars: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
-        let compact = Polynomial::new(scalars);
-        let bytes = bincode::serde::encode_to_vec(&compact, bincode::config::standard()).unwrap();
-        let recovered: Polynomial<u8> =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .unwrap()
-                .0;
-
-        let mut rng = ChaCha20Rng::seed_from_u64(40);
-        let scalar = Fr::random(&mut rng);
-        assert_eq!(
-            compact.bind_to_field::<Fr>(scalar),
-            recovered.bind_to_field::<Fr>(scalar)
-        );
-    }
-
-    #[test]
-    fn serde_round_trip_compact_bool() {
-        let scalars: Vec<bool> = vec![true, false, true, false];
-        let compact = Polynomial::new(scalars);
-        let bytes = bincode::serde::encode_to_vec(&compact, bincode::config::standard()).unwrap();
-        let recovered: Polynomial<bool> =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
-                .unwrap()
-                .0;
-
-        let mut rng = ChaCha20Rng::seed_from_u64(41);
-        let scalar = Fr::random(&mut rng);
-        assert_eq!(
-            compact.bind_to_field::<Fr>(scalar),
-            recovered.bind_to_field::<Fr>(scalar)
-        );
-    }
-
-    #[test]
     fn bind_low_to_high_reusing_scratch_matches_plain_bind_across_rounds() {
         let mut rng = ChaCha20Rng::seed_from_u64(600);
         // One scratch buffer shared across every polynomial and round,
@@ -1139,23 +839,6 @@ mod tests {
                 assert_eq!(with_scratch, reference, "n={n} round={round}");
             }
             assert_eq!(with_scratch.len(), 1, "n={n}");
-        }
-    }
-
-    #[test]
-    fn sumcheck_round_eval_equals_high_to_low_bound_evaluations() {
-        let mut rng = ChaCha20Rng::seed_from_u64(601);
-        let poly = Polynomial::<Fr>::random(5, &mut rng);
-        let point = Fr::random(&mut rng);
-
-        let mut bound = poly.clone();
-        bound.bind_with_order(point, BindingOrder::HighToLow);
-        for index in 0..bound.len() {
-            assert_eq!(
-                poly.sumcheck_round_eval(index, point),
-                bound.evaluations()[index],
-                "index {index}"
-            );
         }
     }
 

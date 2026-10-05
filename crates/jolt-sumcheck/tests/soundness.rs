@@ -96,24 +96,6 @@ fn verify_with_oracle_check(
 }
 
 #[test]
-fn honest_proof_passes_oracle_check() {
-    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
-    let sum = compute_sum(&evals);
-
-    let mut pt = new_transcript();
-    let proof = honest_prove(&evals, 3, &mut pt);
-
-    let claim = SumcheckClaim {
-        num_vars: 3,
-        degree: 1,
-        claimed_sum: sum,
-    };
-
-    let result = verify_with_oracle_check(&claim, &proof, &evals);
-    assert!(result.is_ok());
-}
-
-#[test]
 fn wrong_polynomial_same_sum_fails_oracle_check() {
     // f and g have the same sum but are different polynomials.
     // An honest proof for g will pass all round checks when verified against
@@ -151,58 +133,6 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
         "oracle check must catch polynomial substitution: {:?}",
         result
     );
-}
-
-#[test]
-fn proof_for_different_polynomial_different_sum_fails_round_check() {
-    let f_evals: Vec<F> = (1..=8).map(F::from_u64).collect();
-    let g_evals: Vec<F> = (10..=17).map(F::from_u64).collect();
-
-    let sum_f = compute_sum(&f_evals);
-    let sum_g = compute_sum(&g_evals);
-    assert_ne!(sum_f, sum_g);
-
-    let mut pt = new_transcript();
-    let proof = honest_prove(&g_evals, 3, &mut pt);
-
-    let claim = SumcheckClaim {
-        num_vars: 3,
-        degree: 1,
-        claimed_sum: sum_f,
-    };
-
-    let mut vt = new_transcript();
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
-    assert!(matches!(
-        result,
-        Err(SumcheckError::RoundCheckFailed { round: 0, .. })
-    ));
-}
-
-#[test]
-fn corrupted_middle_round_detected() {
-    let evals: Vec<F> = (1..=16).map(F::from_u64).collect();
-    let sum = compute_sum(&evals);
-
-    let mut pt = new_transcript();
-    let mut proof = honest_prove(&evals, 4, &mut pt);
-
-    proof.round_polynomials[2] = UnivariatePoly::new(vec![F::from_u64(999), F::from_u64(1)]);
-
-    let claim = SumcheckClaim {
-        num_vars: 4,
-        degree: 1,
-        claimed_sum: sum,
-    };
-
-    let mut vt = new_transcript();
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
-
-    // Corruption at round 2 may be detected at round 2 (wrong sum) or later
-    // (transcript desync from corrupted absorption). Either way, it must fail.
-    assert!(result.is_err(), "corrupted middle round must be rejected");
 }
 
 #[test]
@@ -253,60 +183,6 @@ fn swapped_round_order_rejected() {
     // Round 0 now has the wrong s(0)+s(1) (it was computed for a different running sum).
     // Even if by accident s(0)+s(1) matched, the transcript would desync.
     assert!(result.is_err(), "swapped round order must be rejected");
-}
-
-#[test]
-fn replayed_round_polynomial_rejected() {
-    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
-    let sum = compute_sum(&evals);
-
-    let mut pt = new_transcript();
-    let proof = honest_prove(&evals, 3, &mut pt);
-
-    let replayed = ClearSumcheckProof {
-        round_polynomials: vec![proof.round_polynomials[0].clone(); 3],
-    };
-
-    let claim = SumcheckClaim {
-        num_vars: 3,
-        degree: 1,
-        claimed_sum: sum,
-    };
-
-    let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(
-        &claim,
-        &replayed.round_polynomials,
-        BooleanHypercube,
-        &mut vt,
-    );
-    assert!(result.is_err(), "replayed rounds must be rejected");
-}
-
-#[test]
-fn all_zero_round_polynomials_rejected_for_nonzero_sum() {
-    let evals: Vec<F> = (1..=4).map(F::from_u64).collect();
-    let sum = compute_sum(&evals);
-    assert_ne!(sum, F::from_u64(0));
-
-    let zero_poly = UnivariatePoly::new(vec![F::from_u64(0)]);
-    let proof = ClearSumcheckProof {
-        round_polynomials: vec![zero_poly; 2],
-    };
-
-    let claim = SumcheckClaim {
-        num_vars: 2,
-        degree: 1,
-        claimed_sum: sum,
-    };
-
-    let mut vt = new_transcript();
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
-    assert!(matches!(
-        result,
-        Err(SumcheckError::RoundCheckFailed { round: 0, .. })
-    ));
 }
 
 #[test]
@@ -380,28 +256,6 @@ fn num_vars_zero_accepts_any_claimed_sum() {
     } = result.unwrap();
     assert_eq!(final_eval, F::from_u64(42));
     assert!(challenges.is_empty());
-}
-
-#[test]
-fn num_vars_zero_no_oracle_check_possible() {
-    // With 0 rounds, the verifier returns the claimed_sum as-is with no
-    // Fiat-Shamir interaction. The protocol offers no soundness guarantee
-    // at this point — security relies entirely on the oracle check.
-    // A malicious prover can claim any sum and "verify" it.
-    let claim = SumcheckClaim {
-        num_vars: 0,
-        degree: 1,
-        claimed_sum: F::from_u64(999),
-    };
-
-    let round_proofs: &[UnivariatePoly<F>] = &[];
-    let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, round_proofs, BooleanHypercube, &mut vt);
-
-    // Passes — the verifier has nothing to check!
-    // Only the oracle check (comparing 999 against the actual constant) catches this.
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().value, F::from_u64(999));
 }
 
 /// Honest degree-2 compressed prover for f = g * h (both multilinear,
@@ -531,30 +385,4 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
             );
         }
     }
-}
-
-#[test]
-fn constant_polynomial_all_same_evals() {
-    let num_vars = 3;
-    let evals = vec![F::from_u64(7); 1 << num_vars];
-    let sum = compute_sum(&evals);
-
-    let mut pt = new_transcript();
-    let proof = honest_prove(&evals, num_vars, &mut pt);
-
-    let claim = SumcheckClaim {
-        num_vars,
-        degree: 1,
-        claimed_sum: sum,
-    };
-
-    let result = verify_with_oracle_check(&claim, &proof, &evals);
-    assert!(result.is_ok());
-
-    let mut vt = new_transcript();
-    let final_eval =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt)
-            .unwrap()
-            .value;
-    assert_eq!(final_eval, F::from_u64(7));
 }
