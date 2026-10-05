@@ -94,7 +94,9 @@ impl TraceCommitmentBackend {
 
     pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
         match one_hot_k {
-            AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
+            // K16 packs ten address/column variables alongside the trace. The
+            // D512 route is qualified at T=2^21 as well as the large-trace range.
+            AKITA_ONE_HOT_K16 => matches!(num_vars, 31 | 34..=38),
             AKITA_ONE_HOT_K256 => matches!(num_vars, 38..=41),
             _ => false,
         }
@@ -106,7 +108,7 @@ impl TraceCommitmentBackend {
         num_vars: usize,
     ) -> bool {
         match one_hot_k {
-            AKITA_ONE_HOT_K16 => matches!(num_vars, 34..=38),
+            AKITA_ONE_HOT_K16 => Self::shape_is_metal_qualified(one_hot_k, num_vars),
             AKITA_ONE_HOT_K256 => matches!(num_vars, 37..=41),
             _ => false,
         }
@@ -1593,3 +1595,6 @@ mod tests {
         .expect_err("direct commitment layout must not be accepted through setup default");
     }
 }
+
+#[cfg(all(test, feature = "metal", target_os = "macos"))]
+mod metal_tests;

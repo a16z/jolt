@@ -111,3 +111,25 @@ proof and verifier tests.
 cargo nextest run -p jolt-kernels --features metal --test-threads 1
 python3 -m unittest discover -s scripts/tests -p test_akita_metal_matrix.py
 ```
+
+## Small K16 traces
+
+The Akita commitment and opening routes admit packed arity 31 (a `2^21`-row
+K16 trace with column capacity 64), in addition to their existing large-trace
+ranges. This uses the existing D512 schedule and kernels; it does not change
+proof parameters or the verifier. Adjacent arities retain CPU routing pending
+qualification. PIOP kernels keep their independent shape and size checks, and
+K16 packed decomposition still runs on the CPU.
+
+The shared instruction source stores the full 56-bit logical bytecode PC in a
+separate column. Its five `u64` columns cost 40 bytes per row, an increase of
+16 MiB at `2^21` rows (2 GiB at `2^28`) over the old four-column representation.
+This fixes the former 14-bit source-packing limit; individual bytecode kernels
+still have their own supported-domain checks.
+
+On a Metal-capable Mac, run the small trace commitment/opening regression with:
+
+```sh
+cargo nextest run --release -p jolt-akita --features metal small_k16_trace
+cargo nextest run --release -p jolt-kernels --features metal product_cap_fallback_releases_metal_sources
+```
