@@ -233,9 +233,12 @@ impl<F: JoltField> InstructionRaInitialization<F> {
     #[cfg(all(feature = "metal", target_os = "macos"))]
     pub(crate) fn supports_metal_sequence(&self) -> bool {
         self.num_committed_per_virtual == 4
-            && self.committed_chunk_bits == 8
-            && self.chunk_tables.len() == 16
-            && self.chunk_tables.iter().all(|table| table.len() == 256)
+            && matches!(self.committed_chunk_bits, 4 | 8)
+            && self.chunk_tables.len() == 128 / self.committed_chunk_bits
+            && self
+                .chunk_tables
+                .iter()
+                .all(|table| table.len() == 1 << self.committed_chunk_bits)
     }
 
     pub(crate) fn into_cpu(
@@ -271,7 +274,8 @@ impl<F: JoltField> InstructionRaInitialization<F> {
     ) -> Result<(OptimizedInstructionRaVirtualizationKernel<F>, Vec<F>), KernelError<F>> {
         if !self.supports_metal_sequence() {
             return Err(KernelError::Unsupported {
-                reason: "instruction RA Metal sequence requires 4x4 8-bit geometry",
+                reason:
+                    "instruction RA Metal sequence requires groups of four 4-bit or 8-bit factors",
             });
         }
         let tables = core::mem::take(&mut self.chunk_tables);
@@ -982,5 +986,118 @@ mod tests {
     #[test]
     fn parity_with_carried_session_rows() {
         assert_parity(4, 8, 4, 4, 42, true);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_k16_and_k256_sequences_match_cpu_through_handoff() {
+        use super::InstructionRaInitialization;
+        use crate::metal::solinas::{
+            InstructionRaMaterializeWidth, InstructionRaSequenceConfig, SolinasMetal,
+        };
+        use jolt_field::{One, Prime128OffsetA7F7 as F, Zero};
+        let context = SolinasMetal::for_akita().unwrap();
+        let log_t = 10;
+        let rows = Arc::new(pack(&fixture_rows(log_t, 73)));
+        let address: Vec<F> = (0..128).map(|i| F::from_u64(7 + i * 13)).collect();
+        let cycle: Vec<F> = (0..log_t)
+            .map(|i| F::from_u64(19 + i as u64 * 17))
+            .collect();
+        for chunk_bits in [4, 8] {
+            for width in [
+                InstructionRaMaterializeWidth::W16,
+                InstructionRaMaterializeWidth::W32,
+            ] {
+                let initialize = || {
+                    InstructionRaInitialization::new(
+                        log_t,
+                        32 / chunk_bits,
+                        4,
+                        &address,
+                        &cycle,
+                        chunk_bits,
+                        F::from_u64(11),
+                    )
+                    .unwrap()
+                };
+                let initial = initialize();
+                let weights = eq_table(&cycle);
+                let mut claim = F::zero();
+                for (j, row) in rows.iter().enumerate() {
+                    let mut sum = F::zero();
+                    for group in 0..32 / chunk_bits {
+                        let mut product = F::one();
+                        for local in 0..4 {
+                            let factor = 4 * group + local;
+                            let shift = 128 - (factor + 1) * chunk_bits;
+                            let index =
+                                (row.lookup_index() >> shift) as usize & ((1 << chunk_bits) - 1);
+                            product *= initial.chunk_tables[factor][index];
+                        }
+                        sum += product;
+                    }
+                    claim += weights[j] * sum;
+                }
+                let mut expected = initialize().into_cpu(Arc::clone(&rows)).unwrap();
+                let (mut actual, tables) = initial.into_offloaded().unwrap();
+                let (e_in, e_out) = actual.metal_weights().unwrap();
+                let storage = context
+                    .prepare_instruction_ra_storage_with_chunks(
+                        rows.len(),
+                        e_in.len(),
+                        e_out.len(),
+                        InstructionRaSequenceConfig {
+                            materialize_width: width,
+                            ..Default::default()
+                        },
+                        chunk_bits,
+                    )
+                    .unwrap();
+                let plane = context.upload_instruction_ra_lookups(&rows).unwrap();
+                let mut sequence = Some(storage.attach(plane, &tables).unwrap());
+                let challenges: Vec<F> = (0..log_t)
+                    .map(|i| F::from_u64(113 + 29 * i as u64))
+                    .collect();
+                for round in 0..log_t {
+                    let bind = round.checked_sub(1).map(|i| challenges[i]);
+                    if sequence
+                        .as_ref()
+                        .is_some_and(|s| s.is_dense() && s.current_elements() <= 16)
+                    {
+                        let seq = sequence.take().unwrap();
+                        let elements = seq.current_elements();
+                        let mut tail = vec![F::zero(); (128 / chunk_bits) * elements];
+                        seq.read_current_tables(&mut tail).unwrap();
+                        actual.metal_restore_dense(&tail, elements).unwrap();
+                    }
+                    let got = if let Some(seq) = sequence.as_mut() {
+                        if let Some(bind) = bind {
+                            actual.metal_bind_offloaded(bind).unwrap();
+                        }
+                        let (e_in, e_out) = actual.metal_weights().unwrap();
+                        let q = match bind {
+                            Some(bind) => seq.bind_and_message(bind, e_in, e_out).unwrap(),
+                            None => seq.message(e_in, e_out).unwrap(),
+                        };
+                        actual.metal_message(q, claim).unwrap()
+                    } else {
+                        actual.prove_round(bind, round, claim).unwrap()
+                    };
+                    let want = expected.prove_round(bind, round, claim).unwrap();
+                    assert_eq!(
+                        got, want,
+                        "bits={chunk_bits}, width={width:?}, round={round}"
+                    );
+                    assert_eq!(got.evaluate(F::zero()) + got.evaluate(F::one()), claim);
+                    claim = want.evaluate(challenges[round]);
+                }
+                actual.finish_rounds(challenges[log_t - 1]).unwrap();
+                expected.finish_rounds(challenges[log_t - 1]).unwrap();
+                assert_eq!(
+                    actual.folded_ra.final_values(),
+                    expected.folded_ra.final_values()
+                );
+            }
+        }
     }
 }

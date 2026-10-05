@@ -123,6 +123,9 @@ impl MetalConfig {
         config.registers_val_evaluation.source = RegistersValEvaluationSource::Stage1Resident;
         config.registers_val_evaluation.trace_cutoff_elements = 1 << 26;
         config.ram_read_write.gpu_record_scatter_cutoff_elements = 1 << 29;
+        config.instruction_input.trace_cutoff_elements = 1 << 21;
+        config.registers_claim_reduction.trace_cutoff_elements = 1 << 21;
+        config.ram_val_check.trace_cutoff_elements = 1 << 21;
         config
     }
 }

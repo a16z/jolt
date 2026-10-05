@@ -17,12 +17,16 @@ use crate::optimized::instruction_ra_virtualization::{
     prepare_instruction_ra_from_initialization, prepare_instruction_ra_initialization,
     OptimizedInstructionRaVirtualizationKernel,
 };
+use crate::optimized::instruction_read_raf::InstructionCycleRow;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionRaVirtualizationMetalConfig {
+    /// Separately qualified K16 route at 2^21 cycles, using a compact lookup upload.
+    pub enable_small_k16: bool,
+    /// Minimum trace size for the resident K256 route.
     pub trace_cutoff_elements: usize,
     pub cutoff_elements: usize,
     pub dispatch: InstructionRaSequenceConfig,
@@ -31,6 +35,7 @@ pub struct InstructionRaVirtualizationMetalConfig {
 impl Default for InstructionRaVirtualizationMetalConfig {
     fn default() -> Self {
         Self {
+            enable_small_k16: true,
             trace_cutoff_elements: 1 << 25,
             cutoff_elements: 1 << 10,
             dispatch: InstructionRaSequenceConfig::default(),
@@ -50,12 +55,15 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
     > {
         let trace_elements = 1usize << inputs.relation.dimensions().log_t();
         let dispatch = self.config.instruction_ra_virtualization.dispatch;
+        let chunk_bits = inputs.relation.committed_chunk_bits();
+        let config = self.config.instruction_ra_virtualization;
+        let admitted = if chunk_bits == 4 {
+            config.enable_small_k16 && trace_elements == 1 << 21
+        } else {
+            trace_elements >= config.trace_cutoff_elements
+        };
         let initialization = prepare_instruction_ra_initialization(inputs)?;
-        if trace_elements
-            < self
-                .config
-                .instruction_ra_virtualization
-                .trace_cutoff_elements
+        if !admitted
             || trace_elements < 2 * dispatch.materialize_width.elements()
             || !initialization.supports_metal_sequence()
         {
@@ -68,12 +76,20 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
             )?));
         }
 
-        let plane =
-            session
-                .take::<ResidentLookupIndexPlane>()
-                .ok_or(KernelError::InvariantViolation {
+        let plane = match session.take::<ResidentLookupIndexPlane>() {
+            Some(plane) => plane,
+            None if chunk_bits == 4 => {
+                let rows = InstructionCycleRow::shared(session, witness, trace_elements)?;
+                self.context
+                    .upload_instruction_ra_lookups(&rows)
+                    .map_err(|error| metal_error(error.to_string()))?
+            }
+            None => {
+                return Err(KernelError::InvariantViolation {
                     reason: "Metal Instruction RA requires the resident stage-5 lookup plane",
-                })?;
+                })
+            }
+        };
         if plane.len() != trace_elements {
             return Err(KernelError::TableSizeMismatch {
                 table: "resident Metal lookup-index plane".to_owned(),
@@ -96,13 +112,14 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
             let storage = session
                 .take::<InstructionRaSequenceStorage>()
                 .filter(|storage| {
-                    storage.matches(
-                        &self.context,
-                        trace_elements,
-                        e_in_capacity,
-                        e_out_capacity,
-                        dispatch,
-                    )
+                    chunk_bits == 8
+                        && storage.matches(
+                            &self.context,
+                            trace_elements,
+                            e_in_capacity,
+                            e_out_capacity,
+                            dispatch,
+                        )
                 });
             let _span = tracing::info_span!(
                 "MetalInstructionRaVirtualization::sequence_prepare",
@@ -111,13 +128,23 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
             .entered();
             match storage {
                 Some(storage) => storage.attach(plane, &chunk_tables),
-                _ => self.context.prepare_instruction_ra_sequence_with_plane(
+                _ if chunk_bits == 8 => self.context.prepare_instruction_ra_sequence_with_plane(
                     plane,
                     &chunk_tables,
                     e_in_capacity,
                     e_out_capacity,
                     dispatch,
                 ),
+                _ => self
+                    .context
+                    .prepare_instruction_ra_storage_with_chunks(
+                        trace_elements,
+                        e_in_capacity,
+                        e_out_capacity,
+                        dispatch,
+                        chunk_bits,
+                    )
+                    .and_then(|storage| storage.attach(plane, &chunk_tables)),
             }
             .map_err(|error| metal_error(error.to_string()))?
         };

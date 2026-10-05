@@ -40,10 +40,10 @@ inline void instruction_ra_gather_group(
             uint table = (factor * branch_width + offset) * INSTRUCTION_RA_BINS;
             factors[local].at_infinity = solinas_add(
                 factors[local].at_infinity,
-                branches[table + instruction_ra_lookup_byte(lo_lookup, factor)]);
+                branches[table + instruction_ra_lookup_chunk(lo_lookup, factor)]);
             factors[local].at_one = solinas_add(
                 factors[local].at_one,
-                branches[table + instruction_ra_lookup_byte(hi_lookup, factor)]);
+                branches[table + instruction_ra_lookup_chunk(hi_lookup, factor)]);
         }
     }
 

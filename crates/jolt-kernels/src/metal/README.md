@@ -133,3 +133,31 @@ On a Metal-capable Mac, run the small trace commitment/opening regression with:
 cargo nextest run --release -p jolt-akita --features metal small_k16_trace
 cargo nextest run --release -p jolt-kernels --features metal product_cap_fallback_releases_metal_sources
 ```
+
+The instruction-RA sequence supports four-factor groups with either 4-bit
+or 8-bit committed chunks. The production K16 route is qualified at `2^21`
+cycles and can be disabled with
+`instruction_ra_virtualization.enable_small_k16 = false`. It uploads the
+shared stage-5 lookup indices when a resident address plane is unavailable;
+the existing K256 route continues to consume that plane directly. Both routes
+use the same lazy-prefix, dense-transition, and CPU-tail machinery.
+
+Production instruction-input, registers claim-reduction, and RAM value-check
+routes now admit traces from `2^21` cycles. Their existing shape and source
+checks still apply. Other PIOP cutoffs, proof parameters, and verifier code
+are unchanged by this follow-up.
+
+The chunk-width and CPU-handoff regression is:
+
+```sh
+cargo nextest run --release -p jolt-kernels --features metal metal_k16_and_k256_sequences
+```
+
+On the local Longfellow fixture (1,102,270 cycles padded to `2^21`, K16,
+`2^18` bytecode entries), an M5 Max with 18 Rayon threads measured median
+prover times of 3.249 s CPU, 2.179 s before this follow-up, and 1.899 s with
+the default Metal configuration after it. Each backend had five measured
+samples, each following a fresh-process warmup; configuration order rotated
+across rounds. All 30 proofs verified and all 15 altered-output checks rejected.
+These are non-ZK measurements without tracing or threshold overrides, not a
+claim about other guests or larger-trace throughput.

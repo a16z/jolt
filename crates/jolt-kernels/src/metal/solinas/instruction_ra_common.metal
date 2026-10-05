@@ -1,9 +1,13 @@
-#define INSTRUCTION_RA_GROUPS 4u
+constant uint instruction_ra_chunk_bits_override [[function_constant(23)]];
+constant uint instruction_ra_chunk_bits =
+    is_function_constant_defined(instruction_ra_chunk_bits_override)
+        ? instruction_ra_chunk_bits_override : 8u;
+#define INSTRUCTION_RA_GROUPS (32u / instruction_ra_chunk_bits)
 #define INSTRUCTION_RA_FACTORS_PER_GROUP 4u
 #define INSTRUCTION_RA_FACTORS \
     (INSTRUCTION_RA_GROUPS * INSTRUCTION_RA_FACTORS_PER_GROUP)
 #define INSTRUCTION_RA_SAMPLES 4u
-#define INSTRUCTION_RA_BINS 256u
+#define INSTRUCTION_RA_BINS (1u << instruction_ra_chunk_bits)
 
 struct InstructionRaLookup {
     ulong2 limbs;
@@ -32,11 +36,11 @@ struct InstructionRaQuadratic {
     SolinasFp128 at_infinity;
 };
 
-inline uint instruction_ra_lookup_byte(InstructionRaLookup lookup, uint factor) {
-    uint shift = (INSTRUCTION_RA_FACTORS - 1u - factor) * 8u;
+inline uint instruction_ra_lookup_chunk(InstructionRaLookup lookup, uint factor) {
+    uint shift = (INSTRUCTION_RA_FACTORS - 1u - factor) * instruction_ra_chunk_bits;
     return shift < 64u
-        ? (uint)(lookup.limbs[0] >> shift) & 0xffu
-        : (uint)(lookup.limbs[1] >> (shift - 64u)) & 0xffu;
+        ? (uint)(lookup.limbs[0] >> shift) & (INSTRUCTION_RA_BINS - 1u)
+        : (uint)(lookup.limbs[1] >> (shift - 64u)) & (INSTRUCTION_RA_BINS - 1u);
 }
 
 inline InstructionRaLinear instruction_ra_linear(
@@ -47,9 +51,9 @@ inline InstructionRaLinear instruction_ra_linear(
 {
     uint table = factor * INSTRUCTION_RA_BINS;
     SolinasFp128 lo = chunk_tables[
-        table + instruction_ra_lookup_byte(lo_lookup, factor)];
+        table + instruction_ra_lookup_chunk(lo_lookup, factor)];
     SolinasFp128 hi = chunk_tables[
-        table + instruction_ra_lookup_byte(hi_lookup, factor)];
+        table + instruction_ra_lookup_chunk(hi_lookup, factor)];
     InstructionRaLinear result;
     result.at_one = hi;
     result.at_infinity = solinas_sub(hi, lo);
