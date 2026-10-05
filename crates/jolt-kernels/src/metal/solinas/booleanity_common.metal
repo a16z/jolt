@@ -66,6 +66,37 @@ struct BooleanitySelector {
     uint shift;
 };
 
+// Chunk of an offset-by-one source (bytecode PC + 1, RAM address + 1); a zero
+// source is a cold cycle.
+inline bool booleanity_offset_chunk(ulong plus_one, uint shift, uint mask, thread uint& hot)
+{
+    if (plus_one == 0ul) {
+        return false;
+    }
+    hot = (uint)((plus_one - 1ul) >> shift) & mask;
+    return true;
+}
+
+// Balanced fused-increment chunk: digit (kind 3) or carry (kind 4).
+inline uint booleanity_inc_chunk(
+    ulong magnitude,
+    bool negative,
+    BooleanitySelector selector,
+    uint chunk_bits,
+    ulong inc_bias)
+{
+    uint mask = (1u << chunk_bits) - 1u;
+    ulong biased = negative ? inc_bias - magnitude : inc_bias + magnitude;
+    if (selector.kind == 3u) {
+        // Adding 2^(chunk_bits - 1) modulo 2^chunk_bits flips the chunk's top bit.
+        return ((uint)(biased >> selector.shift) & mask) ^ (1u << (chunk_bits - 1u));
+    }
+    if (negative) {
+        return magnitude > inc_bias ? mask : 0u;
+    }
+    return biased < inc_bias ? 1u : 0u;
+}
+
 inline bool booleanity_hot_index(
     BooleanityRow row,
     BooleanitySelector selector,
@@ -81,37 +112,18 @@ inline bool booleanity_hot_index(
         return true;
     }
     if (selector.kind == 1u) {
-        ulong plus_one = row.packed_pc_and_flags & 0x00ffFFFFFFFFFFFFul;
-        if (plus_one == 0ul) {
-            return false;
-        }
-        hot = (uint)((plus_one - 1ul) >> selector.shift) & mask;
-        return true;
+        return booleanity_offset_chunk(
+            row.packed_pc_and_flags & 0x00ffFFFFFFFFFFFFul, selector.shift, mask, hot);
     }
     if (selector.kind == 2u) {
-        ulong plus_one = row.ram_address_plus_one & 0x00ffFFFFFFFFFFFFul;
-        if (plus_one == 0ul) {
-            return false;
-        }
-        hot = (uint)((plus_one - 1ul) >> selector.shift) & mask;
-        return true;
+        return booleanity_offset_chunk(
+            row.ram_address_plus_one & 0x00ffFFFFFFFFFFFFul, selector.shift, mask, hot);
     }
-
-    bool negative = (row.packed_pc_and_flags >> 63) != 0ul;
-    ulong biased;
-    int carry;
-    if (negative) {
-        biased = inc_bias - row.fused_inc_magnitude;
-        carry = row.fused_inc_magnitude > inc_bias ? -1 : 0;
-    } else {
-        biased = inc_bias + row.fused_inc_magnitude;
-        carry = biased < inc_bias ? 1 : 0;
-    }
-    if (selector.kind == 3u) {
-        uint standard = (uint)(biased >> selector.shift) & mask;
-        hot = (standard + (1u << (chunk_bits - 1u))) & mask;
-    } else {
-        hot = (uint)carry & mask;
-    }
+    hot = booleanity_inc_chunk(
+        row.fused_inc_magnitude,
+        (row.packed_pc_and_flags >> 63) != 0ul,
+        selector,
+        chunk_bits,
+        inc_bias);
     return true;
 }

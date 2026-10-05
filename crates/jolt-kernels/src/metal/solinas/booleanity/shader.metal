@@ -98,6 +98,8 @@ inline SolinasFp128 booleanity_lazy_wide_reduce(BooleanityLazyWideSum sum)
     return solinas_add(solinas_reduce(sum.low), correction);
 }
 
+// booleanity_hot_index over the resident source planes, loading only the
+// source words its selector reads (layout: booleanity_row_word).
 inline bool booleanity_row_hot_index(
     device const ulong* rows,
     uint row_count,
@@ -107,21 +109,60 @@ inline bool booleanity_row_hot_index(
     ulong inc_bias,
     thread uint& hot)
 {
-    BooleanityRow value = {};
+    uint mask = (1u << chunk_bits) - 1u;
     if (selector.kind == 0u) {
-        ulong word = booleanity_row_word(
+        ulong word = booleanity_source_word(
             rows, row_count, selector.shift < 64u ? 0u : 1u, row);
-        value.lookup_lo = word;
-        value.lookup_hi = word;
-    } else if (selector.kind == 1u) {
-        value.packed_pc_and_flags = booleanity_row_word(rows, row_count, 4u, row);
-    } else if (selector.kind == 2u) {
-        value.ram_address_plus_one = booleanity_row_word(rows, row_count, 2u, row);
-    } else {
-        value.fused_inc_magnitude = booleanity_row_word(rows, row_count, 3u, row);
-        value.packed_pc_and_flags = booleanity_row_word(rows, row_count, 4u, row);
+        hot = (uint)(word >> (selector.shift & 63u)) & mask;
+        return true;
     }
-    return booleanity_hot_index(value, selector, chunk_bits, inc_bias, hot);
+    ulong metadata = booleanity_source_word(rows, row_count, 3u, row);
+    if (selector.kind == 1u) {
+        return booleanity_offset_chunk(
+            (metadata >> BOOLEANITY_SOURCE_PC_SHIFT) & BOOLEANITY_SOURCE_PC_MASK,
+            selector.shift,
+            mask,
+            hot);
+    }
+    if (selector.kind == 2u) {
+        return booleanity_offset_chunk(
+            metadata & BOOLEANITY_SOURCE_RAM_MASK, selector.shift, mask, hot);
+    }
+    hot = booleanity_inc_chunk(
+        booleanity_source_word(rows, row_count, 2u, row),
+        ((metadata >> BOOLEANITY_SOURCE_FUSED_SIGN_SHIFT) & 1ul) != 0ul,
+        selector,
+        chunk_bits,
+        inc_bias);
+    return true;
+}
+
+// Lazy h sums of one polynomial whose hot index is a chunk of a 32-bit source
+// half. An offset-by-one source (one = 1) adds nothing for a zero (cold) row.
+inline void booleanity_lazy_half_sums(
+    device const uint* halves,
+    device const SolinasFp128* table,
+    uint original,
+    uint branch_width,
+    uint k,
+    uint value_mask,
+    uint one,
+    uint shift,
+    uint mask,
+    thread BooleanityLazySum& lazy_0,
+    thread BooleanityLazySum& lazy_1)
+{
+    for (uint offset = 0; offset < branch_width; offset++) {
+        uint lo = halves[2u * (original + offset)] & value_mask;
+        uint hi = halves[2u * (original + branch_width + offset)] & value_mask;
+        if (lo >= one) {
+            booleanity_lazy_add(lazy_0, table[((lo - one) >> shift) & mask]);
+        }
+        if (hi >= one) {
+            booleanity_lazy_add(lazy_1, table[((hi - one) >> shift) & mask]);
+        }
+        table += k;
+    }
 }
 
 inline void booleanity_lazy_pair(
@@ -173,18 +214,34 @@ inline void booleanity_lazy_pair(
         BooleanityLazySum lazy_0 = booleanity_lazy_zero();
         BooleanityLazySum lazy_1 = booleanity_lazy_zero();
         uint original = 2u * pair * params.branch_width;
+        uint mask = (1u << params.chunk_bits) - 1u;
+        device const SolinasFp128* table = branches + poly * params.branch_width * params.k;
         if (selector.kind == 0u && (selector.shift & 31u) + params.chunk_bits <= 32u) {
-            // Same hot index as booleanity_hot_index for a lookup chunk, read from
-            // the 32-bit half of the lookup word that holds the whole chunk.
-            device const uint* halves = (device const uint*)(
-                rows + (selector.shift < 64u ? 0u : params.rows)) + ((selector.shift >> 5) & 1u);
-            uint shift = selector.shift & 31u;
-            uint mask = (1u << params.chunk_bits) - 1u;
-            device const SolinasFp128* table =
-                branches + poly * params.branch_width * params.k;
+            booleanity_lazy_half_sums(
+                (device const uint*)(rows + (selector.shift < 64u ? 0u : params.rows))
+                    + ((selector.shift >> 5) & 1u),
+                table, original, params.branch_width, params.k,
+                0xffffffffu, 0u, selector.shift & 31u, mask, lazy_0, lazy_1);
+        } else if ((selector.kind == 1u || selector.kind == 2u) && selector.shift < 32u) {
+            booleanity_lazy_half_sums(
+                (device const uint*)(rows + 3u * params.rows) + (selector.kind == 1u ? 1u : 0u),
+                table, original, params.branch_width, params.k,
+                selector.kind == 1u ? (uint)BOOLEANITY_SOURCE_PC_MASK : 0xffffffffu,
+                1u, selector.shift, mask, lazy_0, lazy_1);
+        } else if (selector.kind >= 3u) {
+            device const ulong* magnitudes = rows + 2u * params.rows;
+            device const uint* metadata_high = (device const uint*)(rows + 3u * params.rows) + 1u;
             for (uint offset = 0; offset < params.branch_width; offset++) {
-                uint lo = (halves[2u * (original + offset)] >> shift) & mask;
-                uint hi = (halves[2u * (original + params.branch_width + offset)] >> shift) & mask;
+                uint lo_row = original + offset;
+                uint hi_row = lo_row + params.branch_width;
+                uint lo = booleanity_inc_chunk(
+                    magnitudes[lo_row],
+                    ((metadata_high[2u * lo_row] >> (BOOLEANITY_SOURCE_FUSED_SIGN_SHIFT - 32u)) & 1u) != 0u,
+                    selector, params.chunk_bits, params.inc_bias);
+                uint hi = booleanity_inc_chunk(
+                    magnitudes[hi_row],
+                    ((metadata_high[2u * hi_row] >> (BOOLEANITY_SOURCE_FUSED_SIGN_SHIFT - 32u)) & 1u) != 0u,
+                    selector, params.chunk_bits, params.inc_bias);
                 booleanity_lazy_add(lazy_0, table[lo]);
                 booleanity_lazy_add(lazy_1, table[hi]);
                 table += params.k;
@@ -192,17 +249,17 @@ inline void booleanity_lazy_pair(
         } else {
             for (uint offset = 0; offset < params.branch_width; offset++) {
                 uint hot;
-                uint table = (poly * params.branch_width + offset) * params.k;
                 if (booleanity_row_hot_index(
                         rows, params.rows, original + offset, selector,
                         params.chunk_bits, params.inc_bias, hot)) {
-                    booleanity_lazy_add(lazy_0, branches[table + hot]);
+                    booleanity_lazy_add(lazy_0, table[hot]);
                 }
                 if (booleanity_row_hot_index(
                         rows, params.rows, original + params.branch_width + offset, selector,
                         params.chunk_bits, params.inc_bias, hot)) {
-                    booleanity_lazy_add(lazy_1, branches[table + hot]);
+                    booleanity_lazy_add(lazy_1, table[hot]);
                 }
+                table += params.k;
             }
         }
         SolinasFp128 h_0 = booleanity_lazy_reduce(lazy_0);
