@@ -37,7 +37,7 @@ use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
 use super::support::{
     accumulate_product_grid, pin_derived_term, product_grid_scratch_len, GruenRoundMessage,
-    RoundProgress,
+    RoundProgress, MAX_GRID_FACTORS,
 };
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -67,6 +67,11 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
         if committed_chunk_bits == 0 || committed_chunk_bits > 32 {
             return Err(KernelError::Unsupported {
                 reason: "committed RAM RA chunk width outside the supported one-hot range",
+            });
+        }
+        if num_committed > MAX_GRID_FACTORS {
+            return Err(KernelError::Unsupported {
+                reason: "more committed RAM RA chunks than the product grid supports",
             });
         }
         let ram_reduced_cycle = relation.ram_reduced_cycle();

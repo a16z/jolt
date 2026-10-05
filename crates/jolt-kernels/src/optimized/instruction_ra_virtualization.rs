@@ -40,7 +40,7 @@ use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     accumulate_product_grid, map_indices, pin_derived_term, product_grid_scratch_len,
-    GruenRoundMessage, RoundProgress,
+    GruenRoundMessage, RoundProgress, MAX_GRID_FACTORS,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -155,6 +155,12 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         if committed_chunk_bits == 0 || committed_chunk_bits > 32 {
             return Err(KernelError::Unsupported {
                 reason: "committed RA chunk width outside the supported one-hot range",
+            });
+        }
+        if num_committed_per_virtual > MAX_GRID_FACTORS {
+            return Err(KernelError::Unsupported {
+                reason: "more committed RA chunks per virtual polynomial than the product grid \
+                         supports",
             });
         }
         if rows.len() != 1 << log_t {
@@ -477,11 +483,14 @@ mod tests {
 
     use crate::reference::instruction_read_raf::InstructionReadRafWitness;
     use crate::reference::views::{address_fold, eq_table};
-    use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+    use crate::{
+        KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
+    };
 
     use super::super::instruction_read_raf::{
         InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
     };
+    use super::super::support::MAX_GRID_FACTORS;
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
@@ -809,6 +818,31 @@ mod tests {
     #[test]
     fn parity_eight_factors_past_lazy_materialization() {
         assert_parity(6, 4, 8, 4, 43, false);
+    }
+
+    /// The product grid's factor bound is a construction error in every
+    /// build profile, not a debug assertion in the round loop.
+    #[test]
+    fn rejects_more_factors_than_the_product_grid_supports() {
+        for (per_virtual, supported) in [(MAX_GRID_FACTORS, true), (MAX_GRID_FACTORS + 1, false)] {
+            let log_t = 2;
+            let instruction_address: Vec<Fr> = (0..per_virtual as u64).map(fr).collect();
+            let kernel = OptimizedInstructionRaVirtualizationKernel::new(
+                log_t,
+                1,
+                per_virtual,
+                &instruction_address,
+                &[fr(3), fr(5)],
+                1,
+                Arc::new(pack(&fixture_rows(log_t, 47))),
+                fr(7),
+            );
+            assert_eq!(
+                !matches!(kernel, Err(KernelError::Unsupported { .. })),
+                supported,
+                "{per_virtual} committed chunks per virtual polynomial"
+            );
+        }
     }
 
     /// Odd geometry: 3 virtuals × 2 committed, 2-bit chunks, odd log_t.

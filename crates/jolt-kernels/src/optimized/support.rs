@@ -119,7 +119,8 @@ pub(crate) fn collect_rows<B: WitnessBundle + Copy + Send + Sync>(
 }
 
 /// Largest factor count [`accumulate_product_grid`] accepts; `n!` must fit a
-/// `u64` for the finite-difference extension.
+/// `u64` for the finite-difference extension. Kernels whose factor count
+/// follows the one-hot chunk widths reject a larger one at construction.
 pub(crate) const MAX_GRID_FACTORS: usize = 20;
 
 /// Scratch length [`accumulate_product_grid`] needs for `n` factors: two
