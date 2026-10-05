@@ -16,6 +16,7 @@ fn device_is_unavailable_off_macos() {
 
 #[cfg(target_os = "macos")]
 mod gpu {
+    use std::time::{Duration, Instant};
 
     use jolt_metal::runtime::{
         host_name, Batch, Binding, DeviceBuffer, Grid, LibrarySpec, Pipeline, ShaderLibrary,
@@ -110,7 +111,7 @@ mod gpu {
             )
         }
         .unwrap();
-        batch.commit_and_wait().unwrap();
+        let _ = batch.commit_and_wait().unwrap();
 
         let expected: Vec<u64> = a.iter().zip(&b).map(|(x, y)| x.wrapping_add(*y)).collect();
         let expected32: Vec<u32> = a32
@@ -150,10 +151,17 @@ mod gpu {
         ];
         // SAFETY: justified with the preceding dispatch.
         unsafe { batch.dispatch_unchecked(pipeline, &second, grid) }.unwrap();
-        batch.commit_and_wait().unwrap();
+        let submitted = Instant::now();
+        let gpu_time = batch.commit_and_wait().unwrap();
+        let wall_time = submitted.elapsed();
 
         let expected: Vec<u32> = a.iter().map(|x| x.wrapping_mul(3)).collect();
         assert_eq!(triple.read().unwrap(), expected);
+        // GPU time is measured inside the host's wait for the batch.
+        assert!(
+            Duration::ZERO < gpu_time && gpu_time <= wall_time,
+            "gpu {gpu_time:?}, wall {wall_time:?}"
+        );
     }
 
     #[test]
@@ -232,7 +240,7 @@ mod gpu {
         ];
         // SAFETY: every lane accesses its same in-bounds index in 64-element buffers.
         unsafe { batch.dispatch_unchecked(pipeline, &valid, grid) }.unwrap();
-        batch.commit_and_wait().unwrap();
+        let _ = batch.commit_and_wait().unwrap();
         assert_eq!(out.read().unwrap(), [2u32; 64]);
     }
 
@@ -252,7 +260,7 @@ mod gpu {
             // SAFETY: every lane writes its same in-bounds byte in `flags`.
             unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(100, 32)) }
                 .unwrap();
-            batch.commit_and_wait().unwrap();
+            let _ = batch.commit_and_wait().unwrap();
             match flags.read() {
                 Ok(read) => assert!(valid && read == [true; 100]),
                 Err(error) => {
@@ -360,7 +368,7 @@ mod gpu {
         ];
         // SAFETY: the zero-thread grid executes no memory access.
         unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(0, 1)) }.unwrap();
-        batch.commit_and_wait().unwrap();
+        let _ = batch.commit_and_wait().unwrap();
         assert!(out.read().unwrap().is_empty());
         // A batch dropped without committing runs nothing and must not raise.
         drop(Batch::new(&device).unwrap());
