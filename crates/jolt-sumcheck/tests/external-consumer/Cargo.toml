@@ -11,6 +11,8 @@ ignored = ["jolt-field", "jolt-poly", "jolt-sumcheck", "jolt-transcript"]
 [workspace]
 
 [dependencies]
+# An external field implements the spongefish codec traits the transcript reads atoms through.
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "ef9741346a150039427d9e0c02d6b2d73e93ec81", default-features = false, features = ["sha3"] }
 jolt-field = { path = "../../../jolt-field", default-features = false, features = [
   "solinas",
 ] }

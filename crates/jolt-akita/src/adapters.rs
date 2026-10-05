@@ -1037,6 +1037,12 @@ impl CanonicalBytes for CommitmentHeader {
     }
 }
 
+impl ::spongefish::Encoding<[u8]> for CommitmentHeader {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        ::jolt_field::narg::encode(self)
+    }
+}
+
 impl CanonicalDecode for CommitmentHeader {
     /// Accepts only headers [`AkitaScheme`](crate::AkitaScheme) can produce: a
     /// known flavor, word values that fit `usize`, and the flavor's one-hot
@@ -1048,7 +1054,8 @@ impl CanonicalDecode for CommitmentHeader {
         let (&tag, rest) = bytes.split_first()?;
         let (digest, words) = rest.split_first_chunk::<{ Self::DIGEST_BYTES }>()?;
         let mut words = words.chunks_exact(u64::NUM_BYTES).map(|word| {
-            u64::from_bytes_le_checked(word).and_then(|word| usize::try_from(word).ok())
+            let word = u64::from_le_bytes(word.try_into().ok()?);
+            usize::try_from(word).ok()
         });
         let mut next = || words.next().flatten();
         let header = Self {
@@ -1064,6 +1071,12 @@ impl CanonicalDecode for CommitmentHeader {
             AkitaBackendFlavor::OneHot => validate_one_hot_k(header.one_hot_k).is_ok(),
         };
         one_hot_k_matches.then_some(header)
+    }
+}
+
+impl ::spongefish::NargDeserialize for CommitmentHeader {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+        ::jolt_field::narg::deserialize(buf)
     }
 }
 
@@ -1092,9 +1105,21 @@ impl CanonicalBytes for AkitaHidingCommitment {
     }
 }
 
+impl ::spongefish::Encoding<[u8]> for AkitaHidingCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        ::jolt_field::narg::encode(self)
+    }
+}
+
 impl CanonicalDecode for AkitaHidingCommitment {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         AkitaField::from_bytes_le_checked(bytes).map(Self::new)
+    }
+}
+
+impl ::spongefish::NargDeserialize for AkitaHidingCommitment {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+        ::jolt_field::narg::deserialize(buf)
     }
 }
 

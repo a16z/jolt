@@ -105,6 +105,7 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
+pub use algebra::narg;
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field,
     JoltField, MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,

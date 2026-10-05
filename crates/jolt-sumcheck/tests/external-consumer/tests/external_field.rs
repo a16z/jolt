@@ -181,9 +181,21 @@ impl CanonicalBytes for ExternalField {
     }
 }
 
+impl spongefish::Encoding<[u8]> for ExternalField {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        jolt_field::narg::encode(self)
+    }
+}
+
 impl CanonicalDecode for ExternalField {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         Prime64Offset59::from_bytes_le_checked(bytes).map(Self)
+    }
+}
+
+impl spongefish::NargDeserialize for ExternalField {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+        jolt_field::narg::deserialize(buf)
     }
 }
 
@@ -284,7 +296,7 @@ fn external_field_runs_stock_clear_prover_and_verifier() {
     recorder
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
-    let prover_state: [u8; 32] = prover_transcript.preview().squeeze();
+    let prover_state: [u8; 32] = prover_transcript.challenge_bytes::<32>();
     let proof = prover_transcript.finish();
 
     let mut verifier_transcript = VerifierTranscript::<Keccak>::new(&PROTOCOL, SESSION, &proof);
@@ -296,7 +308,7 @@ fn external_field_runs_stock_clear_prover_and_verifier() {
     )
     .unwrap();
     let opening_claims: Vec<ExternalField> = verifier_transcript.receive_n(1).unwrap();
-    assert_eq!(verifier_transcript.preview().squeeze::<32>(), prover_state);
+    assert_eq!(verifier_transcript.challenge_bytes::<32>(), prover_state);
     verifier_transcript.finish().unwrap();
 
     let point = reduced.point.as_slice()[0];

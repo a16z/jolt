@@ -62,8 +62,8 @@ pub struct ProofHeader {
 
 impl ProofHeader {
     pub fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
-        transcript.send(&num::u64_from_usize(self.trace_length));
-        transcript.send(&num::u64_from_usize(self.ram_K));
+        transcript.send(&num::u64_from_usize(self.trace_length).to_le_bytes());
+        transcript.send(&num::u64_from_usize(self.ram_K).to_le_bytes());
         transcript.send_all(&[
             self.rw_config.ram_rw_phase1_num_rounds,
             self.rw_config.ram_rw_phase2_num_rounds,
@@ -72,8 +72,13 @@ impl ProofHeader {
             self.one_hot_config.log_k_chunk,
             self.one_hot_config.lookups_ra_virtual_log_k_chunk,
         ]);
-        transcript.send(&self.trace_polynomial_order.transcript_scalar());
-        transcript.send(&u8::from(self.untrusted_advice));
+        transcript.send(
+            &self
+                .trace_polynomial_order
+                .transcript_scalar()
+                .to_le_bytes(),
+        );
+        transcript.send(&[u8::from(self.untrusted_advice)]);
     }
 
     /// Reads the header, rejecting values outside each field's encoding. The
@@ -82,19 +87,19 @@ impl ProofHeader {
     pub fn receive<H: Sponge>(
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self, VerifierError> {
-        let trace_length = usize_field(transcript.receive::<u64>()?, "trace_length")?;
-        let ram_k = usize_field(transcript.receive::<u64>()?, "ram_K")?;
+        let trace_length = usize_field(receive_u64(transcript)?, "trace_length")?;
+        let ram_k = usize_field(receive_u64(transcript)?, "ram_K")?;
         let [ram_phase1, ram_phase2, registers_phase1, registers_phase2, log_k_chunk, lookups_chunk]: [u8; 6] =
             transcript.receive()?;
-        let trace_polynomial_order = TracePolynomialOrder::from_transcript_scalar(
-            transcript.receive::<u64>()?,
-        )
+        let trace_polynomial_order = TracePolynomialOrder::from_transcript_scalar(receive_u64(
+            transcript,
+        )?)
         .ok_or(VerifierError::MalformedProofHeader {
             field: "trace_polynomial_order",
         })?;
-        let untrusted_advice = match transcript.receive::<u8>()? {
-            0 => false,
-            1 => true,
+        let untrusted_advice = match transcript.receive::<[u8; 1]>()? {
+            [0] => false,
+            [1] => true,
             _ => {
                 return Err(VerifierError::MalformedProofHeader {
                     field: "untrusted_advice",
@@ -118,6 +123,13 @@ impl ProofHeader {
             untrusted_advice,
         })
     }
+}
+
+/// A `u64` header field, carried as its eight little-endian bytes.
+fn receive_u64<H: Sponge>(
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<u64, VerifierError> {
+    Ok(u64::from_le_bytes(transcript.receive()?))
 }
 
 fn usize_field(value: u64, field: &'static str) -> Result<usize, VerifierError> {

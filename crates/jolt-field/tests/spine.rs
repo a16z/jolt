@@ -88,10 +88,22 @@ impl CanonicalBytes for M61 {
     }
 }
 
+impl spongefish::Encoding<[u8]> for M61 {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        jolt_field::narg::encode(self)
+    }
+}
+
 impl CanonicalDecode for M61 {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         let arr: [u8; 8] = bytes.try_into().ok()?;
         Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
+    }
+}
+
+impl spongefish::NargDeserialize for M61 {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+        jolt_field::narg::deserialize(buf)
     }
 }
 

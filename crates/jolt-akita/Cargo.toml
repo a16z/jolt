@@ -14,6 +14,7 @@ field-inline = []
 profiling = []
 
 [dependencies]
+spongefish = { workspace = true, features = ["sha3"] }
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
 akita-algebra.workspace = true

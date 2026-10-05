@@ -186,9 +186,21 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
+        impl ::spongefish::Encoding<[u8]> for $wrapper {
+            fn encode(&self) -> impl AsRef<[u8]> {
+                ::jolt_field::narg::encode(self)
+            }
+        }
+
         impl ::jolt_field::CanonicalDecode for $wrapper {
             fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
                 Self::decode_compressed(bytes).ok()
+            }
+        }
+
+        impl ::spongefish::NargDeserialize for $wrapper {
+            fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+                ::jolt_field::narg::deserialize(buf)
             }
         }
 

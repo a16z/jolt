@@ -23,6 +23,7 @@ bn254 = ["jolt-crypto/bn254", "jolt-field/bn254"]
 parallel = ["jolt-crypto/parallel", "jolt-poly/parallel"]
 
 [dev-dependencies]
+spongefish = { workspace = true, features = ["sha3"] }
 jolt-dory.workspace = true
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-transcript = { workspace = true, features = [

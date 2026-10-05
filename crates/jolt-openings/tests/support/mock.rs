@@ -30,14 +30,14 @@ fn send_evaluations<F: JoltField, H: Sponge>(
     evaluations: &[F],
     transcript: &mut ProverTranscript<H>,
 ) {
-    transcript.send(&(evaluations.len() as u64));
+    transcript.send(&(evaluations.len() as u64).to_le_bytes());
     transcript.send_all(evaluations);
 }
 
 fn receive_evaluations<F: JoltField, H: Sponge>(
     transcript: &mut VerifierTranscript<'_, H>,
 ) -> Result<Vec<F>, OpeningsError> {
-    let len = usize::try_from(transcript.receive::<u64>()?)
+    let len = usize::try_from(u64::from_le_bytes(transcript.receive()?))
         .map_err(|_| OpeningsError::VerificationFailed)?;
     Ok(transcript.receive_n(len)?)
 }
@@ -172,9 +172,21 @@ impl<F: JoltField> CanonicalBytes for MockHidingCommitment<F> {
     }
 }
 
+impl<F: JoltField> spongefish::Encoding<[u8]> for MockHidingCommitment<F> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        jolt_field::narg::encode(self)
+    }
+}
+
 impl<F: JoltField> CanonicalDecode for MockHidingCommitment<F> {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         F::from_bytes_le_checked(bytes).map(|eval| Self { eval })
+    }
+}
+
+impl<F: JoltField> spongefish::NargDeserialize for MockHidingCommitment<F> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+        jolt_field::narg::deserialize(buf)
     }
 }
 

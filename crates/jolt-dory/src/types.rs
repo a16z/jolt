@@ -47,9 +47,21 @@ impl CanonicalBytes for DoryCommitment {
     }
 }
 
+impl ::spongefish::Encoding<[u8]> for DoryCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        ::jolt_field::narg::encode(self)
+    }
+}
+
 impl CanonicalDecode for DoryCommitment {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         Bn254GT::from_bytes_le_checked(bytes).map(Self)
+    }
+}
+
+impl ::spongefish::NargDeserialize for DoryCommitment {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+        ::jolt_field::narg::deserialize(buf)
     }
 }
 

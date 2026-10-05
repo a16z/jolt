@@ -1411,6 +1411,12 @@ impl CanonicalBytes for MleAst {
     }
 }
 
+impl spongefish::Encoding<[u8]> for MleAst {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        jolt_field::narg::encode(self)
+    }
+}
+
 impl CanonicalDecode for MleAst {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         if let Some(challenge) = take_pending_challenge() {
@@ -1431,6 +1437,12 @@ impl CanonicalDecode for MleAst {
             *dst = src;
         }
         Some(Self::new_scalar(limbs))
+    }
+}
+
+impl spongefish::NargDeserialize for MleAst {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+        jolt_field::narg::deserialize(buf)
     }
 }
 

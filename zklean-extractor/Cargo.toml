@@ -12,6 +12,7 @@ edition = "2021"
 build-fs-tree = "0.8.1"
 
 [dependencies]
+spongefish = { workspace = true, features = ["sha3"] }
 ark-std.workspace = true
 ark-serialize.workspace = true
 ark-ff.workspace = true

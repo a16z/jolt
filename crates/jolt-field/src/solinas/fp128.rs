@@ -1132,11 +1132,23 @@ impl<const P: u128> CanonicalBytes for Fp128<P> {
     }
 }
 
+impl<const P: u128> ::spongefish::Encoding<[u8]> for Fp128<P> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        crate::narg::encode(self)
+    }
+}
+
 impl<const P: u128> CanonicalDecode for Fp128<P> {
     #[inline]
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         let arr: [u8; 16] = bytes.try_into().ok()?;
         Self::from_u128_checked(u128::from_le_bytes(arr))
+    }
+}
+
+impl<const P: u128> ::spongefish::NargDeserialize for Fp128<P> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+        crate::narg::deserialize(buf)
     }
 }
 

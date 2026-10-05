@@ -55,9 +55,21 @@ impl CanonicalBytes for NoCommitment {
     fn to_bytes_le(&self, _out: &mut [u8]) {}
 }
 
+impl ::spongefish::Encoding<[u8]> for NoCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        ::jolt_field::narg::encode(self)
+    }
+}
+
 impl CanonicalDecode for NoCommitment {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         bytes.is_empty().then_some(Self)
+    }
+}
+
+impl ::spongefish::NargDeserialize for NoCommitment {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+        ::jolt_field::narg::deserialize(buf)
     }
 }
 

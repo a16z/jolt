@@ -34,6 +34,7 @@ bn254 = [
 parallel = ["dep:rayon", "jolt-poly/parallel"]
 
 [dependencies]
+spongefish = { workspace = true, features = ["sha3"] }
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
