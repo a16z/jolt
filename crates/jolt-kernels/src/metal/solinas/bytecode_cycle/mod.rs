@@ -462,6 +462,10 @@ impl BytecodeCycleSequence {
         &self.buffers.tables_a
     }
 
+    pub(super) fn half_table_buffers(&self) -> &[Buffer] {
+        &self.buffers.tables_b
+    }
+
     pub(super) fn partial_buffer(&self) -> &Buffer {
         &self.buffers.partial_a
     }

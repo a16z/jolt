@@ -6,6 +6,7 @@ use jolt_poly::EqPolynomial;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
 use super::bytecode_cycle::bytecode_cycle_side_elements;
+use super::residency::{self, ResidencyPrefetch};
 #[cfg(test)]
 use super::PipelineLimits;
 use super::{
@@ -78,6 +79,9 @@ pub(crate) struct BytecodeCycleRowSequence {
     first_bind_limits: PipelineLimits,
     row_buffers: Option<RowBuffers>,
     dense: BytecodeCycleSequence,
+    /// The first bind and the first dense transition write the initial and
+    /// half-length tables; their residency is warmed while the row rounds run.
+    _dense_residency: ResidencyPrefetch,
     params: Params,
     root_bind_params: RootBindParams,
     root_bind_elements: usize,
@@ -215,6 +219,14 @@ impl SolinasMetal {
             config,
             hi_length,
         )?;
+        let dense_residency = residency::prefetch(
+            dense
+                .initial_table_buffers()
+                .iter()
+                .chain(dense.half_table_buffers())
+                .cloned()
+                .collect(),
+        );
         Ok(BytecodeCycleRowSequence {
             context: self.clone(),
             pipelines,
@@ -233,6 +245,7 @@ impl SolinasMetal {
                 ra1: buffer_from_slice(&self.device, &ra1),
             }),
             dense,
+            _dense_residency: dense_residency,
             params: Params {
                 rows: row_count,
                 lo_length: lo_length_u32,

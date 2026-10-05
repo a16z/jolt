@@ -12,6 +12,7 @@ use metal::{
     MTLResourceOptions, MTLSize,
 };
 
+use super::residency::{self, ResidencyPrefetch};
 use super::{
     encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
     PipelineLimits, ResidentLookupIndexPlane, SolinasMetal,
@@ -240,6 +241,9 @@ pub struct InstructionRaSequence {
     dense: bool,
     dense_in_a: bool,
     dense_elements: usize,
+    /// `dense_b` is first written by the first dense transition; its
+    /// residency is warmed while the materializing round runs.
+    _dense_b_residency: Option<ResidencyPrefetch>,
 }
 
 #[cfg(feature = "allocative")]
@@ -514,6 +518,7 @@ impl InstructionRaSequenceStorage {
             dense: false,
             dense_in_a: true,
             dense_elements: 0,
+            _dense_b_residency: None,
         })
     }
 }
@@ -652,6 +657,13 @@ impl InstructionRaSequence {
             .ok_or(MetalError::InvalidInstructionRaState(
                 "the resident lookup plane is missing",
             ))?;
+        if materialize {
+            self._dense_b_residency = self
+                .buffers
+                .dense_b
+                .as_ref()
+                .map(|dense_b| residency::prefetch(vec![dense_b.clone()]));
+        }
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();

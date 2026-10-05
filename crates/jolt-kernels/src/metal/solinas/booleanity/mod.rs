@@ -1,5 +1,6 @@
 use std::{mem::size_of, slice, sync::Arc};
 
+use super::residency::{self, ResidencyPrefetch};
 use super::{
     buffer_from_slice, encode_column_reductions, set_inline_bytes, validate_completed_command,
     Fp128, MetalError, PipelineLimits, SolinasMetal,
@@ -370,6 +371,9 @@ pub struct BooleanitySequence {
     dense_elements: usize,
     dense_source_in_a: bool,
     rho_values: Vec<AkitaField>,
+    /// `dense_b` is first written by the first dense transition; its
+    /// residency is warmed while the materializing round runs.
+    _dense_b_residency: Option<ResidencyPrefetch>,
 }
 
 impl SolinasMetal {
@@ -619,6 +623,7 @@ impl SolinasMetal {
             dense_elements: 0,
             dense_source_in_a: true,
             rho_values: rho.to_vec(),
+            _dense_b_residency: None,
         })
     }
 
@@ -757,6 +762,9 @@ impl BooleanitySequence {
             e_out.len(),
             materialize,
         )?;
+        if materialize {
+            self._dense_b_residency = Some(residency::prefetch(vec![self.buffers.dense_b.clone()]));
+        }
 
         let queue = self.context.queue.clone();
         let command_buffer = queue.new_command_buffer();
