@@ -1,7 +1,10 @@
 use std::{mem::size_of, slice};
 
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
-use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
+use metal::{
+    objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLPurgeableState, MTLResourceOptions,
+    MTLSize,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -311,21 +314,6 @@ impl Product5Sequence {
         &self.buffers.tables_a
     }
 
-    /// Restores the initial tables without reallocating device buffers.
-    pub fn reset(&mut self, tables: &[AkitaField]) -> Result<(), MetalError> {
-        let expected = PRODUCT5_FACTORS * self.initial_elements;
-        if tables.len() != expected {
-            return Err(MetalError::Product5StorageLength {
-                expected,
-                got: tables.len(),
-            });
-        }
-        write_akita_fields(&self.buffers.tables_a, expected, tables)?;
-        self.current_elements = self.initial_elements;
-        self.source_in_a = true;
-        Ok(())
-    }
-
     /// Computes the message for the current resident tables.
     pub fn message(
         &mut self,
@@ -401,10 +389,6 @@ impl Product5Sequence {
 
     pub const fn resident_buffer_count(&self) -> usize {
         6
-    }
-
-    pub const fn round_device_buffer_allocations(&self) -> usize {
-        0
     }
 
     fn execute_round(
@@ -527,9 +511,28 @@ impl Product5Sequence {
             if mode == Product5Mode::FusedTransition {
                 self.current_elements /= 2;
                 self.source_in_a = !self.source_in_a;
+                self.release_initial_tables()?;
             }
             Ok(message)
         })
+    }
+
+    /// Only the first bind reads the initial tables. Replacing them with the
+    /// next level's quarter-size destination frees their storage for the rest
+    /// of the tail; the first bind itself still holds both tables.
+    fn release_initial_tables(&mut self) -> Result<(), MetalError> {
+        if 2 * self.current_elements == self.initial_elements
+            && self.current_elements >= Product5Mode::FusedTransition.minimum_elements()
+        {
+            let _ = self
+                .buffers
+                .tables_a
+                .set_purgeable_state(MTLPurgeableState::Empty);
+            self.buffers.tables_a = self
+                .context
+                .new_product5_buffer(PRODUCT5_FACTORS * self.current_elements / 2)?;
+        }
+        Ok(())
     }
 
     fn source_buffer(&self) -> &Buffer {
