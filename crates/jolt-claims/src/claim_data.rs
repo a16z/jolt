@@ -107,6 +107,26 @@ pub trait OutputClaims<F: JoltField, O = JoltOpeningId> {
         O: core::fmt::Debug;
 }
 
+/// A produced-claim struct over cell type `A`, mapped cell by cell into the
+/// same struct over cell type `B`.
+///
+/// Cells are visited in canonical (field-declaration) order, each with its
+/// opening id, and the result has exactly the source's shape: every `Vec`
+/// family keeps its length and every `Option` cell its presence. This is how
+/// a claims struct's own declaration drives code that walks it: receiving
+/// values into the shape of verifier-derived opening points, or listing the
+/// ids of the cells a proof commits. `#[derive(OutputClaims)]` implements it.
+pub trait MapCells<A, B, O = JoltOpeningId> {
+    /// The same struct over cell type `B`.
+    type Mapped;
+
+    /// Map every cell through `f`, stopping at the first error.
+    fn try_map_cells<E>(
+        &self,
+        f: &mut impl FnMut(&O, &A) -> Result<B, E>,
+    ) -> Result<Self::Mapped, E>;
+}
+
 /// The input-formula resolver for a relation's *consumed* opening-claim struct
 /// (populated by explicit cross-stage wiring).
 ///
@@ -264,5 +284,74 @@ mod sumcheck_challenges_tests {
                 populated: 1,
             }),
         );
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod map_cells_tests {
+    use crate::{MapCells, OutputClaims};
+    use jolt_field::{Fr, Ring};
+
+    #[derive(Debug, PartialEq, crate::OutputClaims)]
+    #[relation(SpartanOuter)]
+    struct Shaped<C> {
+        #[opening(PC)]
+        pc: C,
+        #[opening(LookupTableFlag)]
+        flags: Vec<C>,
+        #[opening(committed = RamInc)]
+        inc: Option<C>,
+        #[opening(committed = RdInc)]
+        absent: Option<C>,
+    }
+
+    fn points() -> Shaped<Vec<Fr>> {
+        Shaped {
+            pc: vec![Fr::from_u64(1)],
+            flags: vec![vec![Fr::from_u64(2)], vec![Fr::from_u64(3)]],
+            inc: Some(vec![Fr::from_u64(4)]),
+            absent: None,
+        }
+    }
+
+    /// The map visits exactly the cells `canonical_order` lists, in that order,
+    /// and the mapped struct keeps every `Vec` length and `Option` presence.
+    #[test]
+    fn map_follows_canonical_order_and_keeps_shape() {
+        let mut next = 0u64;
+        let mut visited = Vec::new();
+        let values = points()
+            .try_map_cells(&mut |id, _point| {
+                visited.push(*id);
+                next += 1;
+                Ok::<_, ()>(Fr::from_u64(next))
+            })
+            .unwrap();
+        assert_eq!(
+            values,
+            Shaped {
+                pc: Fr::from_u64(1),
+                flags: vec![Fr::from_u64(2), Fr::from_u64(3)],
+                inc: Some(Fr::from_u64(4)),
+                absent: None,
+            }
+        );
+        assert_eq!(visited, values.canonical_order());
+    }
+
+    #[test]
+    fn map_stops_at_the_first_error() {
+        let mut calls = 0;
+        let result = points().try_map_cells(&mut |_, _| {
+            calls += 1;
+            if calls == 2 {
+                Err(calls)
+            } else {
+                Ok(Fr::from_u64(0))
+            }
+        });
+        assert_eq!(result, Err(2));
+        assert_eq!(calls, 2);
     }
 }

@@ -34,8 +34,8 @@ mod symbolic;
 pub mod twist;
 
 pub use claim_data::{
-    ChallengeDrawError, InputClaims, MissingOpeningValue, NoChallenges, NoInputs, NoOutputs,
-    OutputClaims, SumcheckChallenges,
+    ChallengeDrawError, InputClaims, MapCells, MissingOpeningValue, NoChallenges, NoInputs,
+    NoOutputs, OutputClaims, SumcheckChallenges,
 };
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};
