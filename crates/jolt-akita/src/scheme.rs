@@ -28,7 +28,7 @@ use crate::adapters::{
 };
 use crate::configs::AkitaOneHotChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
-use crate::one_hot_family::with_one_hot_family;
+use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +433,16 @@ impl CommitmentScheme for AkitaScheme {
             return Err(OpeningsError::InvalidSetup(
                 "dense-only Akita setup cannot select one-hot witness chunking".to_owned(),
             ));
+        }
+        if params.flavor != AkitaSetupFlavor::Dense {
+            OneHotFamily::from_parts(params.one_hot_k, params.one_hot_chunk_profile)
+                .and_then(|family| {
+                    family.validate_num_vars(
+                        params.max_num_vars,
+                        params.max_num_polys_per_commitment_group.min(2),
+                    )
+                })
+                .map_err(invalid_setup)?;
         }
         if params
             .grouped_schedule
@@ -1007,44 +1017,52 @@ mod tests {
         assert_eq!(verifier.default_layout_digest(), [4; 32]);
     }
 
-    fn one_hot_roundtrip(one_hot_k: usize, profile: AkitaOneHotChunkProfile) {
-        let num_vars =
-            (one_hot_k.ilog2() as usize + 8).max(if profile.num_chunks() == 1 { 0 } else { 16 });
+    fn one_hot_roundtrip(
+        one_hot_k: usize,
+        profile: AkitaOneHotChunkProfile,
+        num_vars: usize,
+        num_polys: usize,
+    ) {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let setup_params =
-            AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k, artifacts)
+            AkitaSetupParams::one_hot_only(num_vars, num_polys, [4; 32], one_hot_k, artifacts)
                 .with_one_hot_chunk_profile(profile);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let row_count = 1usize << (num_vars - one_hot_k.ilog2() as usize);
-        let indices = (0..row_count)
-            .map(|row| {
-                if row == 2 {
-                    None
-                } else {
-                    Some((row % one_hot_k) as u8)
-                }
+        let polynomials = (0..num_polys)
+            .map(|poly| {
+                let indices = (0..row_count)
+                    .map(|row| {
+                        if row == 2 {
+                            None
+                        } else {
+                            Some(((row + poly) % one_hot_k) as u8)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                OneHotPolynomial::new(one_hot_k, indices)
             })
             .collect::<Vec<_>>();
-        let polynomial = OneHotPolynomial::new(one_hot_k, indices);
-        let (commitment, hint) = AkitaScheme::commit_one_hot_group(
-            &prover_setup,
-            [4; 32],
-            std::slice::from_ref(&polynomial),
-        )
-        .unwrap();
+        let (commitment, hint) =
+            AkitaScheme::commit_one_hot_group(&prover_setup, [4; 32], &polynomials).unwrap();
         assert_eq!(commitment.one_hot_k(), one_hot_k);
 
         let point = vec![AkitaField::from_u64(3); num_vars];
-        let value = polynomial.evaluate(&point);
-        let statement = vec![VerifierOpeningClaim {
-            commitment: commitment.clone(),
-            evaluation: EvaluationClaim::new(point, value),
-        }];
+        let statement = polynomials
+            .iter()
+            .map(|polynomial| VerifierOpeningClaim {
+                commitment: commitment.clone(),
+                evaluation: EvaluationClaim::new(point.clone(), polynomial.evaluate(&point)),
+            })
+            .collect::<Vec<_>>();
         let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-one-hot-k");
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
-            vec![&polynomial],
+            polynomials
+                .iter()
+                .map(|poly| poly as &dyn MultilinearPoly<AkitaField>)
+                .collect(),
             hint,
             &mut prover_transcript,
         )
@@ -1083,7 +1101,12 @@ mod tests {
             AkitaOneHotChunkProfile::Four,
             AkitaOneHotChunkProfile::Eight,
         ] {
-            one_hot_roundtrip(AKITA_ONE_HOT_K16, profile);
+            let family = OneHotFamily::from_parts(AKITA_ONE_HOT_K16, profile).unwrap();
+            for num_polys in [1, 2] {
+                for num_vars in family.num_vars_range(num_polys).0..=16 {
+                    one_hot_roundtrip(AKITA_ONE_HOT_K16, profile, num_vars, num_polys);
+                }
+            }
         }
     }
 
@@ -1095,7 +1118,12 @@ mod tests {
             AkitaOneHotChunkProfile::Four,
             AkitaOneHotChunkProfile::Eight,
         ] {
-            one_hot_roundtrip(AKITA_ONE_HOT_K256, profile);
+            let family = OneHotFamily::from_parts(AKITA_ONE_HOT_K256, profile).unwrap();
+            for num_polys in [1, 2] {
+                for num_vars in family.num_vars_range(num_polys).0..=16 {
+                    one_hot_roundtrip(AKITA_ONE_HOT_K256, profile, num_vars, num_polys);
+                }
+            }
         }
     }
 

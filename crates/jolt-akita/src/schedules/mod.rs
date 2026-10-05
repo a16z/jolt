@@ -21,7 +21,7 @@ pub mod emit {
         AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     };
 
-    use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull};
+    use crate::configs::{JoltDenseBounded, JoltDenseFull};
     use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
     use crate::planning::plan_schedule;
     use crate::AKITA_ONE_HOT_K16;
@@ -34,8 +34,6 @@ pub mod emit {
     pub const K16_NUM_VARS: (usize, usize) = (12, 40);
     /// K=256 adds five selector variables to column arity `8 + log_T`.
     pub const K256_NUM_VARS: (usize, usize) = (12, 43);
-    /// Multi-chunk profiles require enough witness geometry for two chunked fold levels.
-    pub const MULTI_CHUNK_MIN_NUM_VARS: usize = 16;
     /// Bounded-dense advice and committed-program byte objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
 
@@ -133,17 +131,7 @@ pub mod emit {
     pub fn family_specs(output_dir: PathBuf) -> Result<Vec<EmitSpec>, AkitaError> {
         let mut specs = Vec::with_capacity(OneHotFamily::ALL.len() + 2);
         for family in OneHotFamily::ALL.iter().copied() {
-            let family_num_vars = if family.k() == AKITA_ONE_HOT_K16 {
-                K16_NUM_VARS
-            } else {
-                K256_NUM_VARS
-            };
-            let num_vars = if family.profile() == AkitaOneHotChunkProfile::Single {
-                family_num_vars
-            } else {
-                (MULTI_CHUNK_MIN_NUM_VARS, family_num_vars.1)
-            };
-            specs.push(with_one_hot_family!(family, |Cfg, DirectCfg| {
+            let mut family_spec = with_one_hot_family!(family, |Cfg, DirectCfg| {
                 let regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> =
                     if family.k() == AKITA_ONE_HOT_K16 {
                         regen_one_hot_k16::<Cfg, DirectCfg>
@@ -153,11 +141,16 @@ pub mod emit {
                 spec::<Cfg>(
                     family.family_name(),
                     ONE_HOT_TRACE_NUM_POLYS,
-                    num_vars,
+                    family.num_vars_range(1),
                     regen,
                     output_dir.clone(),
                 )
-            })?);
+            })?;
+            family_spec.keys = ONE_HOT_TRACE_NUM_POLYS
+                .iter()
+                .flat_map(|&num_polys| keys(&[num_polys], family.num_vars_range(num_polys)))
+                .collect();
+            specs.push(family_spec);
         }
         specs.extend([
             spec::<JoltDenseBounded>(

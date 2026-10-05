@@ -39,8 +39,20 @@ resolve the exact admitted row and never choose a mode dynamically.
 
 Each K=16 and K=256 family has W2R2, W4R2, and W8R2 multi-chunk companion
 catalogs. The selected profile splits the root and first recursive fold into
-two, four, or eight chunks, while later folds remain single-chunk; their
-smallest admitted physical arity is 16 variables. The original one-hot
+two, four, or eight chunks, while later folds remain single-chunk. The pinned
+planner admits the following minimum physical arities for both K values:
+
+| Profile | One polynomial | Two polynomials |
+| --- | ---: | ---: |
+| Single | 12 | 12 |
+| Two (W2R2) | 12 | 12 |
+| Four (W4R2) | 13 | 12 |
+| Eight (W8R2) | 14 | 13 |
+
+The upper arity is 40 for K=16 and 43 for K=256. Setup and grouped provisioning
+check these profile-specific floors before constructing backend matrices;
+grouped trace rows contain one final polynomial. The smaller rejected shapes
+have no schedule in the pinned planner's audited fold domain. The original one-hot
 catalogs remain single-chunk. Dense standalone opening schedules use the fixed
 eight-chunk budget. Four-file directories with the current dense catalogs support `Single`;
 selecting a profile whose companion catalog is absent fails during setup.

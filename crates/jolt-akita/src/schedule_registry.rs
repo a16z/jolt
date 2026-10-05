@@ -25,8 +25,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
-use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
-use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
 /// Upper bound on rows planned by one preprocessing request.
 const MAX_PROVISIONED_ROWS: usize = 128;
@@ -117,7 +115,7 @@ impl GroupedScheduleParams {
                 full_dense_catalog,
                 one_hot_catalog,
                 self,
-                family.k(),
+                family,
             )?;
             extend_catalog::<Cfg>(one_hot_catalog, &rows)
         })
@@ -328,9 +326,10 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
     full_dense_catalog: &ValidatedScheduleCatalog,
     one_hot_catalog: &ValidatedScheduleCatalog,
     params: &GroupedScheduleParams,
-    one_hot_k: usize,
+    family: OneHotFamily,
 ) -> Result<RegisteredRows, AkitaError> {
     let final_num_vars = params.final_arity;
+    family.validate_num_vars(final_num_vars, 1)?;
     akita_config::validate_config_policy::<JoltDenseBounded>()?;
     dense_catalog.validate_binding(
         JoltDenseBounded::schedule_family_name(),
@@ -372,20 +371,6 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
             combinations.push(mandatory);
         }
     }
-    let (min, max) = match one_hot_k {
-        AKITA_ONE_HOT_K256 => K256_NUM_VARS,
-        AKITA_ONE_HOT_K16 => K16_NUM_VARS,
-        other => {
-            return Err(AkitaError::InvalidSetup(format!(
-                "unsupported one-hot K {other} for grouped schedule provisioning"
-            )))
-        }
-    };
-    if !(min..=max).contains(&final_num_vars) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "one-hot K={one_hot_k} final arity {final_num_vars} is outside the supported range {min}..={max}"
-        )));
-    }
     provision_producers::<Cfg>(one_hot_catalog, &combinations, final_num_vars)
 }
 
@@ -404,7 +389,7 @@ pub fn provision_groups_for_k(
             full_dense_catalog,
             one_hot_catalog,
             params,
-            family.k(),
+            family,
         )
     })
 }
@@ -414,6 +399,7 @@ pub fn provision_groups_for_k(
 mod tests {
     use super::*;
     use crate::adapters::AkitaScheduleArtifacts;
+    use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
     #[test]
     fn grouped_rows_preserve_chunk_independent_producer_profiles() {

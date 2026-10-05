@@ -4,6 +4,7 @@ use akita_types::AkitaVerifierSetup;
 
 use crate::adapters::AkitaScheduleArtifacts;
 use crate::configs::{AkitaOneHotChunkProfile, JoltOneHotK16};
+use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
@@ -65,6 +66,39 @@ macro_rules! define_family_types {
                 match self {
                     $(Self::$variant => AkitaOneHotChunkProfile::$profile),+
                 }
+            }
+
+            pub(crate) fn num_vars_range(self, num_polys: usize) -> (usize, usize) {
+                let (base_min, max) = if self.k() == AKITA_ONE_HOT_K16 {
+                    K16_NUM_VARS
+                } else {
+                    K256_NUM_VARS
+                };
+                // Two-polynomial rows provide more live blocks for the two
+                // chunked levels. These floors are admitted by the pinned planner.
+                let min = match (self.profile(), num_polys) {
+                    (AkitaOneHotChunkProfile::Single | AkitaOneHotChunkProfile::Two, _)
+                    | (AkitaOneHotChunkProfile::Four, 2) => base_min,
+                    (AkitaOneHotChunkProfile::Four, _)
+                    | (AkitaOneHotChunkProfile::Eight, 2) => base_min + 1,
+                    (AkitaOneHotChunkProfile::Eight, _) => base_min + 2,
+                };
+                (min, max)
+            }
+
+            pub(crate) fn validate_num_vars(
+                self,
+                num_vars: usize,
+                num_polys: usize,
+            ) -> Result<(), AkitaError> {
+                let (min, max) = self.num_vars_range(num_polys);
+                if !(min..=max).contains(&num_vars) {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "one-hot K={} profile {:?} final arity {num_vars} with {num_polys} polynomials is outside the supported range {min}..={max}",
+                        self.k(), self.profile(),
+                    )));
+                }
+                Ok(())
             }
 
             pub(crate) fn family_name(self) -> &'static str {

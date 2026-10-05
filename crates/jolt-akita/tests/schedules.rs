@@ -179,13 +179,18 @@ fn multi_chunk_catalogs_cover_every_supported_profile() {
             JoltOneHotK256W8R2::schedule_family_name(),
         ),
     ] {
-        for (one_hot_k, num_vars, family_name) in [
-            (AKITA_ONE_HOT_K16, (16, K16_NUM_VARS.1), k16_family),
-            (AKITA_ONE_HOT_K256, (16, K256_NUM_VARS.1), k256_family),
+        for (one_hot_k, family_name) in [
+            (AKITA_ONE_HOT_K16, k16_family),
+            (AKITA_ONE_HOT_K256, k256_family),
         ] {
             let catalog = one_hot_catalog(one_hot_k, profile);
             assert_eq!(catalog.family_name(), family_name);
-            let grid = keys(ONE_HOT_TRACE_NUM_POLYS, num_vars);
+            let grid = family_specs(PathBuf::new())
+                .expect("emit specs")
+                .into_iter()
+                .find(|spec| spec.family_name == family_name)
+                .expect("multi-chunk family spec")
+                .keys;
             for key in &grid {
                 let schedule = catalog
                     .resolve_key(&AkitaScheduleLookupKey::single(*key))
@@ -434,24 +439,42 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
 
 #[test]
 fn grouped_provisioning_rejects_out_of_family_final_arity() {
-    let final_num_vars = K16_NUM_VARS.0 - 1;
-    let request = GroupedScheduleParams::new(
-        None,
-        Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
-        Vec::new(),
-        final_num_vars,
-    );
-    let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
-        final_num_vars,
-        1,
-        2,
-        [3; 32],
-        AKITA_ONE_HOT_K16,
-        Some(request),
-        Arc::new(artifacts()),
-    ))
-    .expect_err("a declared reachable arity outside the family must fail setup");
-    assert!(error.to_string().contains("outside the supported range"));
+    for one_hot_k in [AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256] {
+        for (profile, final_num_vars) in [
+            (AkitaOneHotChunkProfile::Single, 11),
+            (AkitaOneHotChunkProfile::Two, 11),
+            (AkitaOneHotChunkProfile::Four, 12),
+            (AkitaOneHotChunkProfile::Eight, 13),
+        ] {
+            for grouped in [false, true] {
+                let request = grouped.then(|| {
+                    GroupedScheduleParams::new(
+                        None,
+                        Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+                        Vec::new(),
+                        final_num_vars,
+                    )
+                });
+                let error = AkitaScheme::setup(
+                    AkitaSetupParams::one_hot_only_grouped(
+                        final_num_vars,
+                        1,
+                        2,
+                        [3; 32],
+                        one_hot_k,
+                        request,
+                        Arc::new(artifacts()),
+                    )
+                    .with_one_hot_chunk_profile(profile),
+                )
+                .expect_err("an arity below the profile floor must fail setup");
+                let message = error.to_string();
+                assert!(message.contains("outside the supported range"));
+                assert!(message.contains(&format!("profile {profile:?}")));
+                assert!(message.contains(&format!("K={one_hot_k}")));
+            }
+        }
+    }
 }
 
 /// The emit specs are the single source of truth for what the generator

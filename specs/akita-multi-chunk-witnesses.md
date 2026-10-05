@@ -69,8 +69,10 @@ Fiat-Shamir inventory and setup round-trip tests.
 - [x] One trusted-advice commitment and hint created before trace-profile selection verify
   under all four profiles. Committed-bytecode proofs cover one and two bytecode objects
   under each profile.
-- [x] Six companion `.aks` artifacts cover one- and two-polynomial shapes from physical arity
-  16 through 40 for K=16 and through 43 for K=256.
+- [x] Six companion `.aks` artifacts cover the pinned planner's admitted one- and
+  two-polynomial shapes through arity 40 for K=16 and 43 for K=256. Minimum
+  arities are 12/12 for `Two`, 13/12 for `Four`, and 14/13 for `Eight`
+  (one/two polynomials).
 - [x] Every companion artifact applies its selected chunk geometry to the root and first
   recursive fold and uses single-chunk geometry thereafter.
 - [x] Streamed multi-chunk decomposition matches Akita's materialized one-hot decomposition
@@ -129,8 +131,11 @@ files and loads any of the six companion files that are present. A selected prof
 whose companion artifact is absent fails during setup. `AkitaScheduleArtifacts::new`
 accepts the four base catalogs for the default single-chunk trace path.
 
-The multi-chunk catalogs admit arities of at least 16. Their planner configurations use W2R2,
-W4R2, or W8R2 witness geometry. The single-chunk one-hot catalogs retain non-chunked
+The multi-chunk catalogs admit minimum arities 12/12 (`Two`), 13/12 (`Four`),
+and 14/13 (`Eight`) for one/two-polynomial shapes under the pinned planner.
+Setup validation and artifact generation share these shape-dependent bounds.
+Their planner configurations use W2R2, W4R2, or W8R2 witness geometry.
+The single-chunk one-hot catalogs retain non-chunked
 geometry. Both dense catalogs use W8R2, independently of the trace profile, to certify
 the maximum supported response envelope. Program-specific grouped rows are derived during setup
 from the selected base family, then the exact extended catalog is serialized into the verifier
