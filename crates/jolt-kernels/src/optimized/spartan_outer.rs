@@ -1630,6 +1630,7 @@ pub(crate) fn prepare_metal_instruction_read_raf_stage1_owner(
     let mut source = context
         .prepare_instruction_read_raf_stage1_storage(cycles)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
+    let _residency = source.prefetch_residency();
     with_stage1_owner_chunks(&mut source, None, None, None, None, |owner_chunks| {
         let fill_chunk = |chunk: usize,
                           owner: &mut Stage1OwnerChunkWriters<'_, '_, '_, '_, '_, '_>,
