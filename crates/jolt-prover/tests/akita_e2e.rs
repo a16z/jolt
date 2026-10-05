@@ -279,12 +279,27 @@ mod akita_tests {
 
     #[test]
     fn advice_e2e_akita_two_chunks() {
+        advice_chunk_roundtrip(AkitaOneHotChunkProfile::Two);
+    }
+
+    #[test]
+    fn advice_e2e_akita_four_chunks() {
+        advice_chunk_roundtrip(AkitaOneHotChunkProfile::Four);
+    }
+
+    #[test]
+    fn advice_e2e_akita_eight_chunks() {
+        advice_chunk_roundtrip(AkitaOneHotChunkProfile::Eight);
+    }
+
+    fn advice_chunk_roundtrip(profile: AkitaOneHotChunkProfile) {
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
-        let untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+        let mut untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+        untrusted.resize(DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE as usize, u8::MAX);
         let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
         let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
         let mut config = derive_config(&run);
-        config.one_hot_chunk_profile = AkitaOneHotChunkProfile::Two;
+        config.one_hot_chunk_profile = profile;
         let proved = prove_guest(run, config, true, &trusted);
         assert_eq!(
             proved
@@ -292,9 +307,9 @@ mod akita_tests {
                 .verifier
                 .pcs_setup
                 .one_hot_chunk_profile(),
-            AkitaOneHotChunkProfile::Two
+            profile
         );
-        verify(&proved).expect("two-chunk grouped advice proof must verify");
+        verify(&proved).expect("chunked grouped advice proof must verify");
     }
 
     #[test]

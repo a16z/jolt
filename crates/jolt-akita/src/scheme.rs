@@ -425,7 +425,7 @@ impl CommitmentScheme for AkitaScheme {
     type SetupParams = AkitaSetupParams;
 
     fn setup(
-        params: Self::SetupParams,
+        mut params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
         if params.flavor == AkitaSetupFlavor::Dense
             && params.one_hot_chunk_profile.num_chunks() != 1
@@ -442,6 +442,14 @@ impl CommitmentScheme for AkitaScheme {
             return Err(OpeningsError::InvalidSetup(
                 "the grouped schedule request final arity must equal setup max_num_vars".to_owned(),
             ));
+        }
+        if let Some(request) = &params.grouped_schedule {
+            params.schedule_artifacts = request
+                .provision_advice_artifacts(
+                    &params.schedule_artifacts,
+                    params.one_hot_chunk_profile,
+                )
+                .map_err(invalid_setup)?;
         }
         let artifacts = &params.schedule_artifacts;
         let dense_catalog = artifacts.dense_catalog().map_err(invalid_setup)?;

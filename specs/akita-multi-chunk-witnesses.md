@@ -32,8 +32,10 @@ grouped-opening statement.
 - The selected `(one_hot_k, chunk_profile)` determines one typed Akita configuration and one
   validated catalog. Setup-owned grouped rows for advice and committed-program precommits are
   adapted from that same catalog.
-- Dense advice and committed-program objects remain single-chunk. A dense-only setup rejects a
-  multi-chunk profile.
+- Checked-in dense catalogs remain single-chunk. Before creating commitments, chunked advice
+  preprocessing provisions setup-owned bounded-dense rows for its advice arities under the
+  selected response chunk budget. Advice and program objects of the same arity use those exact
+  producer rows. A dense-only setup rejects a one-hot profile selection.
 - Chunk ownership uses Akita's canonical dyadic live-block partition. The streamed kernel's
   witness for every chunk equals the corresponding witness from Akita's materialized one-hot
   kernel.
@@ -72,8 +74,10 @@ Fiat-Shamir inventory and setup round-trip tests.
   and compact rotation modes.
 - [x] A traversal-count test proves that chunked decomposition reads each trace row exactly
   once.
-- [x] Grouped schedule provisioning inherits the selected trace profile, while dense-only setup
-  rejects multi-chunk selection.
+- [x] Grouped schedule provisioning inherits the selected trace profile. Chunked advice producer
+  rows are provisioned before commitment; grouped search preserves their exact profiles and
+  may retry without the scalar guide for at most two bounded producers within the opening
+  assignment budget. Dense-only setup rejects a one-hot profile selection.
 - [x] Prover and verifier bind a labeled chunk count for nondefault one-hot profiles and use
   the same profile-specific catalog digest. `Single` and `Dense` retain the #1948 preamble.
 

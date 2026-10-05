@@ -44,8 +44,15 @@ pub fn preprocess_full_with_advice(
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     validate_trace_order(config)?;
-    let (pcs_setup, verifier_setup) = grouped_setup(
+    let schedule_artifacts = prepare_advice_artifacts(
         schedule_artifacts,
+        &program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+    )?;
+    let (pcs_setup, verifier_setup) = grouped_setup(
+        &schedule_artifacts,
         &program,
         config,
         untrusted_advice,
@@ -168,6 +175,13 @@ pub fn preprocess_committed_with_advice(
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     crate::preprocessing::validate_committed_mode()?;
     validate_trace_order(config)?;
+    let schedule_artifacts = prepare_advice_artifacts(
+        schedule_artifacts,
+        &program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+    )?;
     let metadata =
         program
             .metadata()
@@ -176,7 +190,7 @@ pub fn preprocess_committed_with_advice(
             })?;
     let trace_order = config.trace_polynomial_order;
     let direct_program = commit_direct_program::<AkitaScheme>(
-        schedule_artifacts,
+        &schedule_artifacts,
         &program,
         bytecode_chunk_count,
         trace_order,
@@ -202,7 +216,7 @@ pub fn preprocess_committed_with_advice(
         trace_order,
     };
     let (pcs_setup, verifier_setup) = grouped_setup(
-        schedule_artifacts,
+        &schedule_artifacts,
         &program,
         config,
         untrusted_advice,
@@ -248,6 +262,30 @@ pub fn commit_trusted_advice(
     .map_err(|error| PreprocessingError::InvalidAdvice {
         reason: error.to_string(),
     })
+}
+
+fn prepare_advice_artifacts(
+    artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: &JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+) -> Result<Arc<AkitaScheduleArtifacts>, PreprocessingError> {
+    let mut arities = Vec::with_capacity(2);
+    if untrusted_advice {
+        arities.push(advice_physical_num_vars(
+            program,
+            JoltAdviceKind::Untrusted,
+        )?);
+    }
+    if trusted_advice {
+        arities.push(advice_physical_num_vars(program, JoltAdviceKind::Trusted)?);
+    }
+    artifacts
+        .provision_advice(config.one_hot_chunk_profile, &arities)
+        .map_err(|error| PreprocessingError::InvalidConfiguration {
+            reason: error.to_string(),
+        })
 }
 
 /// The physical arity of an advice object sized to the program's advice capacity.

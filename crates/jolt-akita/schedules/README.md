@@ -60,15 +60,24 @@ table was not re-measured.
 
 Grouped planning first preserves the selected trace row's fold geometry,
 opening parameters, relation modes, and direct/offloaded topology, adapting
-only the auxiliary object profiles and the sizes they induce. Requests with
-only bounded dense objects fail if that fixed geometry is infeasible.
+only the auxiliary object profiles and the sizes they induce.
+
+Before creating commitments, chunked advice preprocessing plans setup-owned
+bounded-dense rows for the trusted and untrusted advice arities. Their inner
+decomposition and certified matrix bounds support the selected trace's response
+chunk count. These exact rows pass bounded-dense catalog admission and become
+the immutable producer context used by advice and any program objects of the
+same arity. The checked-in dense catalog and the `Single` path retain their
+existing rows.
 
 A full-width field increment can require different trace fold geometry. If
 guided planning returns `UnsupportedSchedule` for the supported field batch—
-exactly one full-width field increment and at most two bounded advice groups—
-preprocessing runs the full planner under the same audited policy. Larger
-batches and batches with multiple full-width objects retain the guided-planning
-rejection, including its opening-assignment budget. Every auxiliary commitment's
+exactly one full-width field increment and at most two bounded advice groups—or
+for a chunked trace with at most two bounded producers, preprocessing runs the
+full planner under the same audited policy. Before full search, the maximum
+opening-assignment product must fit the adapted planner's assignment budget.
+Larger batches and batches with multiple full-width objects retain the
+guided-planning rejection, including its opening-assignment budget. Every auxiliary commitment's
 profile stays fixed, and the resulting grouped row passes the usual schedule
 audit before entering the setup-owned catalog. Other errors propagate. The
 checked-in base catalogs are unchanged; proving and verification use the

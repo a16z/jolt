@@ -129,13 +129,17 @@ pub enum AkitaOneHotChunkProfile {
 }
 
 impl AkitaOneHotChunkProfile {
-    pub const fn num_chunks(self) -> usize {
+    pub(crate) const fn witness_cfg(self) -> ChunkedWitnessCfg {
         match self {
-            Self::Single => 1,
-            Self::Two => 2,
-            Self::Four => 4,
-            Self::Eight => 8,
+            Self::Single => ChunkedWitnessCfg::default_non_chunked(),
+            Self::Two => ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W2R2),
+            Self::Four => ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W4R2),
+            Self::Eight => ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2),
         }
+    }
+
+    pub const fn num_chunks(self) -> usize {
+        self.witness_cfg().num_chunks
     }
 }
 
@@ -153,7 +157,7 @@ macro_rules! chunked_one_hot_config {
             $direct,
             $base,
             $committed_source_class,
-            ChunkedWitnessCfg::from_profile($profile),
+            $profile.witness_cfg(),
             $direct_family
         );
 
@@ -172,7 +176,7 @@ chunked_one_hot_config!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    MultiChunkProfileId::W2R2,
+    AkitaOneHotChunkProfile::Two,
     "jolt-fp128-onehot-k16-w2r2-direct-planner",
     "jolt-fp128-onehot-k16-w2r2"
 );
@@ -182,7 +186,7 @@ chunked_one_hot_config!(
     JoltOneHotK256W2R2,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    MultiChunkProfileId::W2R2,
+    AkitaOneHotChunkProfile::Two,
     "jolt-fp128-onehot-k256-w2r2-direct-planner",
     "jolt-fp128-onehot-k256-w2r2"
 );
@@ -194,7 +198,7 @@ chunked_one_hot_config!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    MultiChunkProfileId::W4R2,
+    AkitaOneHotChunkProfile::Four,
     "jolt-fp128-onehot-k16-w4r2-direct-planner",
     "jolt-fp128-onehot-k16-w4r2"
 );
@@ -204,7 +208,7 @@ chunked_one_hot_config!(
     JoltOneHotK256W4R2,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    MultiChunkProfileId::W4R2,
+    AkitaOneHotChunkProfile::Four,
     "jolt-fp128-onehot-k256-w4r2-direct-planner",
     "jolt-fp128-onehot-k256-w4r2"
 );
@@ -216,7 +220,7 @@ delegate_preset!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    ChunkedWitnessCfg::d64_production(),
+    AkitaOneHotChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-onehot-k16-w8r2-direct-planner"
 );
 
@@ -225,7 +229,7 @@ delegate_preset!(
     JoltOneHotK256W8R2Direct,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    ChunkedWitnessCfg::d64_production(),
+    AkitaOneHotChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-onehot-k256-w8r2-direct-planner"
 );
 
