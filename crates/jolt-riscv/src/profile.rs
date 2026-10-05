@@ -40,7 +40,6 @@ pub enum InlineExtension {
     Secp256k1,
     Grumpkin,
     P256,
-    /// Inlines registered by a downstream host crate (custom-1 opcode 0x2B).
     External,
 }
 
@@ -363,15 +362,12 @@ mod tests {
     }
 
     #[test]
-    fn external_inline_extension_is_accepted_only_by_all_inlines_profile() {
-        assert!(RV64IMAC_JOLT_ALL_INLINES.supports_inline(InlineExtension::External));
-        assert!(!RV64IMAC_JOLT.supports_inline(InlineExtension::External));
-
-        let with_external = JoltInstructionProfile {
-            source_extensions: RV64IMAC_JOLT.source_extensions,
-            inline_extensions: &[InlineExtension::External],
-        };
-        assert_ne!(RV64IMAC_JOLT.fingerprint(), with_external.fingerprint());
+    fn inline_extension_codes_are_distinct_and_stable() {
+        let codes = RV64IMAC_JOLT_ALL_INLINES
+            .inline_extensions
+            .iter()
+            .map(|e| inline_extension_code(*e));
+        assert!(codes.eq(0..=8));
     }
 
     #[test]
