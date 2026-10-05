@@ -10,7 +10,7 @@ use std::sync::Arc;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_pcs::custom_source::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OneHotBatchView,
+    CommitInnerPlan, CpuFoldResponses, DecomposeFoldBatchPlan, DecomposeFoldPlan, OneHotBatchView,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyMeta,
     RootPolyShape, SourceCoefficients, SubringCoefficientPackingBatchKernel,
     SubringCoefficientPackingPlan,
@@ -413,44 +413,6 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     let view =
         <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap();
     let source = view.source();
-    let single_chunk = akita_types::dyadic_block_ranges(num_blocks, 1).unwrap();
-    let dense = decompose_fold_packed_with_mode::<D>(
-        source,
-        &challenges,
-        &single_chunk,
-        num_positions,
-        num_digits,
-        DecomposeRotationMode::Dense,
-    )
-    .unwrap()
-    .pop()
-    .unwrap();
-    let sparse = decompose_fold_packed_with_mode::<D>(
-        source,
-        &challenges,
-        &single_chunk,
-        num_positions,
-        num_digits,
-        DecomposeRotationMode::Sparse,
-    )
-    .unwrap()
-    .pop()
-    .unwrap();
-    let compact = decompose_fold_packed_with_mode::<D>(
-        source,
-        &challenges,
-        &single_chunk,
-        num_positions,
-        num_digits,
-        DecomposeRotationMode::Compact,
-    )
-    .unwrap()
-    .pop()
-    .unwrap();
-    assert_eq!(dense, materialized);
-    assert_eq!(sparse, materialized);
-    assert_eq!(compact, materialized);
-
     let trace_sources = [source];
     let materialized_sources = [&materialized_source];
     for num_chunks in [1, 2, 4, 8]
@@ -502,6 +464,30 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         )
         .unwrap();
         assert_eq!(streamed_chunks, materialized_chunks);
+        for mode in [
+            DecomposeRotationMode::Dense,
+            DecomposeRotationMode::Sparse,
+            DecomposeRotationMode::Compact,
+        ] {
+            let chunks = decompose_fold_packed_with_mode::<D>(
+                source,
+                &challenges,
+                &chunk_ranges,
+                num_positions,
+                num_digits,
+                mode,
+            )
+            .unwrap();
+            let response = if num_chunks == 1 {
+                CpuFoldResponses::sparse(chunks.into_iter().next().unwrap())
+            } else {
+                CpuFoldResponses::chunked::<D>(chunks).unwrap()
+            };
+            assert_eq!(
+                response, materialized_chunks,
+                "D={D}, chunks={num_chunks}, mode={mode:?}"
+            );
+        }
     }
 
     let source_num_vars = RootPolyMeta::<AkitaField>::num_vars(&source);
