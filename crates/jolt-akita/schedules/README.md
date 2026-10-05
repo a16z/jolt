@@ -66,6 +66,38 @@ eight-chunk budget. Four-file directories with the current dense catalogs suppor
 selecting a profile whose companion catalog is absent fails during setup.
 Grouped precommit setups inherit the selected trace profile.
 
+### Grouped provisioning diagnostic
+
+Audit the complete advice matrix without allocating backend matrices or proving
+traces:
+
+```text
+cargo run --release -p jolt-akita --bin check_grouped_schedules -- crates/jolt-akita/schedules /tmp/jolt-grouped-schedules.csv full
+```
+
+The diagnostic reads admitted one-polynomial final arities from each catalog,
+checks both K values and all four trace profiles, and crosses absent advice with
+physical producer arities 11 through 22 for both advice roles. It skips only the
+empty batch. `unsupported_producer` records arities missing from the dense
+catalog; `provisioning_failed` records failures for admitted producers and makes
+the command fail. `unsupported_grouped_shape` records an explicit capability
+rejection: grouped roots require a recursive child fold, while the smallest
+Single scalar guides reach their terminal immediately (K=16 arities 12–15 and
+K=256 arities 12–16). Guided planning cannot add that fold. Preprocessing derives
+this capability check from the selected row and rejects it before planner search,
+naming K, profile, final arity, and the requested groups. Scalar-only setups and
+full-width producer batches retain their existing paths.
+Successful rows are audited by the production provisioner and
+checked for unchanged producer profiles and the requested trace chunk count.
+The CSV is flushed after each final arity; this is an expensive offline check.
+Record the code revision and catalog checksums alongside the report when sharing
+results. This command never changes schedule artifacts.
+
+Use `boundary` instead of `full` for the 24 K=16 cutover cases: final arities
+31 and 32, both advice roles at 21 or 22, and Two/Four/Eight profiles. The same
+cases are covered by `grouped_advice_rows_cover_recursive_cutover` in the unit
+suite.
+
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:
 

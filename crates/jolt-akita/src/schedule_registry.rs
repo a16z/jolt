@@ -100,7 +100,9 @@ impl GroupedScheduleParams {
         self.final_arity
     }
 
-    pub(crate) fn extend_catalog(
+    /// Provision and audit the exact grouped rows before constructing backend matrices.
+    /// Used by preprocessing and the offline grouped-schedule diagnostic.
+    pub fn extend_catalog(
         &self,
         dense_catalog: &ValidatedScheduleCatalog,
         full_dense_catalog: &ValidatedScheduleCatalog,
@@ -371,6 +373,20 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
             combinations.push(mandatory);
         }
     }
+    if family.profile() == AkitaChunkProfile::Single && params.full_width_arities().next().is_none()
+    {
+        let main_row = one_hot_catalog.resolve_key(&AkitaScheduleLookupKey::single(
+            PolynomialGroupLayout::new(final_num_vars, 1),
+        ))?;
+        if main_row.schedule().recursive_folds.is_empty() {
+            // Akita's grouped root requires a child fold; its scalar guide
+            // reaches the terminal immediately and cannot acquire that fold.
+            return Err(AkitaError::UnsupportedSchedule(format!(
+                "one-hot K={} profile {:?} final arity {final_num_vars} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one; requested groups: {params:?}",
+                family.k(), family.profile()
+            )));
+        }
+    }
     provision_producers::<Cfg>(one_hot_catalog, &combinations, final_num_vars)
 }
 
@@ -400,6 +416,78 @@ mod tests {
     use super::*;
     use crate::adapters::AkitaScheduleArtifacts;
     use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+
+    #[test]
+    fn single_grouped_advice_rejects_small_scalar_arities() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let dense = artifacts.dense_catalog().unwrap();
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        for (k, last_scalar_arity) in [(AKITA_ONE_HOT_K16, 15), (AKITA_ONE_HOT_K256, 16)] {
+            let base = artifacts.one_hot_catalog(k).unwrap();
+            for final_arity in 12..=last_scalar_arity {
+                let params = GroupedScheduleParams::new(None, Some(14), Vec::new(), final_arity);
+                let error = params
+                    .extend_catalog(&dense, &full_dense, &base, k, AkitaChunkProfile::Single)
+                    .unwrap_err();
+                assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
+                let message = error.to_string();
+                assert!(
+                    message.contains(&format!("K={k} profile Single final arity {final_arity}"))
+                );
+                assert!(message.contains("trusted_physical_arity: Some(14)"));
+            }
+        }
+    }
+
+    #[test]
+    fn grouped_advice_rows_cover_recursive_cutover() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let dense = artifacts.dense_catalog().unwrap();
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        for profile in [
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
+        ] {
+            let base = artifacts
+                .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
+                .unwrap();
+            for final_num_vars in [31, 32] {
+                for untrusted in [21, 22] {
+                    for trusted in [21, 22] {
+                        let params = GroupedScheduleParams::new(
+                            Some(untrusted),
+                            Some(trusted),
+                            Vec::new(),
+                            final_num_vars,
+                        );
+                        let catalog = params
+                            .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
+                            .unwrap();
+                        let key = AkitaScheduleLookupKey {
+                            final_group: PolynomialGroupLayout::new(final_num_vars, 1),
+                            precommitteds: [untrusted, trusted]
+                                .into_iter()
+                                .map(|num_vars| {
+                                    dense_group_profile(
+                                        &dense,
+                                        PolynomialGroupLayout::new(num_vars, 1),
+                                    )
+                                    .unwrap()
+                                })
+                                .collect(),
+                        };
+                        let row = catalog.resolve_key(&key).unwrap();
+                        assert_eq!(row.profiles().precommitteds, key.precommitteds);
+                        assert_eq!(
+                            row.schedule().root.params.witness_chunk,
+                            profile.witness_cfg()
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn grouped_rows_preserve_chunk_independent_producer_profiles() {

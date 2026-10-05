@@ -329,11 +329,11 @@ mod tests {
         );
         assert_eq!(
             JoltDenseBounded::chunked_witness_cfg(),
-            ChunkedWitnessCfg::d64_production()
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
         );
         assert_eq!(
             JoltDenseFull::chunked_witness_cfg(),
-            ChunkedWitnessCfg::d64_production()
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
         );
     }
 }
