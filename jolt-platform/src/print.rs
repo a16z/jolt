@@ -52,6 +52,13 @@ pub fn putchar(c: u8) {
     emit_jolt_print(buf.as_ptr(), 1);
 }
 
+/// Write a byte buffer to stdout (riscv) with a single host call, so that
+/// multi-byte UTF-8 sequences reach the host intact.
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+pub fn write_bytes(buf: &[u8]) {
+    emit_jolt_print(buf.as_ptr(), buf.len());
+}
+
 /// Write a string to stdout (riscv)
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub fn puts(s: &str) {

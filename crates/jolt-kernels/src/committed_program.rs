@@ -26,6 +26,7 @@ use jolt_riscv::{
     Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction, JoltInstructionRow,
     CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
+use jolt_utils::unsafe_allocate_zero_vec;
 
 use crate::KernelError;
 
@@ -113,7 +114,7 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     let chunk_cycle_len = bytecode_len / chunk_count;
     let lane_capacity = COMMITTED_BYTECODE_LANE_CAPACITY;
     let mut chunk_coeffs: Vec<Vec<F>> = (0..chunk_count)
-        .map(|_| vec![F::zero(); lane_capacity * chunk_cycle_len])
+        .map(|_| unsafe_allocate_zero_vec(lane_capacity * chunk_cycle_len))
         .collect();
 
     for (cycle, instruction) in instructions.iter().enumerate() {
