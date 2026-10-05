@@ -174,7 +174,7 @@ fn digit_window_source<const D: usize>() -> CyclotomicRing<AkitaField, D> {
 }
 
 fn assert_digit_windows_match_shift_accumulation<const D: usize>() {
-    const COLUMNS: usize = 5;
+    const COLUMNS: usize = 6;
     let rows_per_ring = D / 16;
     let mut selected_rows = vec![NO_SELECTED_ROW; rows_per_ring * COLUMNS];
     let mut committed_zero_masks = vec![0u64; rows_per_ring];
@@ -216,6 +216,11 @@ fn assert_digit_windows_match_shift_accumulation<const D: usize>() {
         windows.accumulate(actual, &shifts);
     }
 
+    let empty_column = actual.last_mut().unwrap();
+    *empty_column = [Fp128x8i32([7; 8]); D];
+    windows.accumulate(empty_column, &[]);
+    assert_eq!(*empty_column, [Fp128x8i32([7; 8]); D]);
+    *empty_column = [Fp128x8i32([0; 8]); D];
     let mut reduced = vec![CyclotomicRing::zero(); COLUMNS];
     flush_digit_accumulators(&mut actual, &mut reduced);
     let expected = expected

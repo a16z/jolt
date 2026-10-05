@@ -265,8 +265,7 @@ impl Program {
             };
 
             // ELF is built to guest_target_dir with standard cargo layout.
-            // Note: output directory includes the selected cargo profile (default: "release").
-            let out_profile = self.profile.as_deref().unwrap_or("release");
+            let out_profile = profile_output_dir(self.profile.as_deref());
             let elf_path = PathBuf::from(&guest_target_dir)
                 .join(target_triple)
                 .join(out_profile)
@@ -498,6 +497,18 @@ impl Program {
     }
 }
 
+/// Directory name cargo writes artifacts to for `--profile <name>`.
+///
+/// The built-in `dev` and `test` profiles emit to `debug`, and `bench` emits to
+/// `release`; custom profiles use their own name.
+fn profile_output_dir(profile: Option<&str>) -> &str {
+    match profile {
+        None | Some("release" | "bench") => "release",
+        Some("dev" | "test") => "debug",
+        Some(custom) => custom,
+    }
+}
+
 fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -> String {
     fn has_ctrl(s: &str) -> bool {
         s.chars()
@@ -572,4 +583,19 @@ fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -
     }));
 
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::profile_output_dir;
+
+    #[test]
+    fn builtin_profiles_map_to_cargo_output_dirs() {
+        assert_eq!(profile_output_dir(None), "release");
+        assert_eq!(profile_output_dir(Some("release")), "release");
+        assert_eq!(profile_output_dir(Some("dev")), "debug");
+        assert_eq!(profile_output_dir(Some("test")), "debug");
+        assert_eq!(profile_output_dir(Some("bench")), "release");
+        assert_eq!(profile_output_dir(Some("guest")), "guest");
+    }
 }
