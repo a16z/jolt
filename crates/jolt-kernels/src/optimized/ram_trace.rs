@@ -404,11 +404,13 @@ mod tests {
                 Err(KernelError::Unsupported { .. })
             ));
             assert!(session.state::<SharedRamAddresses>().is_none());
+            // Admission range-checks addresses: under the sample's default
+            // memory layout its store remaps to `0x8000_1008 / 8`, just above 2^28.
             <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
                 &OptimizedBackend,
                 &mut session,
                 witness,
-                ReadWriteDimensions::new(2, 3, 2, 3),
+                ReadWriteDimensions::new(2, 29, 2, 29),
             )
             .unwrap();
             let admitted = SharedRamAddresses::shared::<Fr>(&mut session, witness, 2).unwrap();
