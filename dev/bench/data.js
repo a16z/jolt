@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791174268508,
+  "lastUpdate": 1791225902768,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -177562,6 +177562,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865664,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4b603edc44e84b876f6769dc19216b9eb9df4343",
+          "message": "perf(kernels): build RA product grids as a balanced tree and step factors incrementally (#1966)\n\n* perf(kernels): build RA product grids as a balanced tree and step factors incrementally\n\nThe RA cycle-round kernels evaluate a product of linear factors on the\nToom grid [1, …, n−1, ∞] per row. `accumulate_product_grid` multiplied\nevery factor at every point (n·(n−2) multiplications); above four factors\nit now builds the product as a balanced tree whose nodes multiply their\nhalves pointwise at exactly their degree, after extending both halves by\nfinite differences (additions only). InstructionReadRaf's nine-factor\ncycle rounds drop from 63 to ~27 multiplications plus the fused lanes.\n\nRamRaVirtualization moves from explicit d+2-point sampling with a full\nreduction per point to the shared grid with `e_in` folded into the first\nfactor and deferred-reduction lanes. BytecodeReadRafCycle advances each\nfactor by one addition per sample point instead of a `t · (hi − lo)`\nmultiplication, and gathers its RA pairs with one `lo_hi_all` call.\n\nField arithmetic is exact, so every round polynomial is byte-identical;\nthe kernels' parity tests against the reference tier pin this.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(kernels): check product grids and stepped bytecode groups against direct evaluation\n\nCompare accumulate_product_grid with the factors multiplied one by one at\nevery length from 2 to MAX_GRID_FACTORS, over dirty scratch and with\nall-zero values and slopes, on Fr and on the Akita field. Compare the\nbytecode read-RAF cycle phase's stepped group samples with each sample\nrecomputed from the bound tables.\n\n* fix(kernels): reject product-grid factor counts above the bound at kernel construction\n\naccumulate_product_grid checks its factor count only with a debug\nassertion; in release a count above 40 indexes past the factorial table.\nThe instruction and RAM RA-virtualization kernels take that count from the\none-hot chunk widths, which nothing else bounds, so they now return\nKernelError::Unsupported from construction. Instruction read-RAF already\ncaps its count at 17 through its chunk-width checks.\n\n* test(kernels): tighten product-grid regression coverage\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>",
+          "timestamp": "2026-10-05T13:57:37-04:00",
+          "tree_id": "48135764ee73489842c659b1ce1f3d904e41bc43",
+          "url": "https://github.com/a16z/jolt/commit/4b603edc44e84b876f6769dc19216b9eb9df4343"
+        },
+        "date": 1791225897668,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.6687,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.064,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 507216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 502808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6818,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 501212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5187,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 511252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.7759,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.1904,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 124680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.2384,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4991,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500444,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3761,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500020,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 15.7027,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498104,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.1942,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 499128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 25.4554,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1957028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.4091,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 632344,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 55.0901,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1099760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0924,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 497696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2375,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 11.7439,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861320,
             "unit": "KB",
             "extra": ""
           }
