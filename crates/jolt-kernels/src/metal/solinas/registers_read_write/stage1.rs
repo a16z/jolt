@@ -280,7 +280,7 @@ impl RegistersReadWriteStage1Source {
                 6 * view.cycles,
             )
         };
-        // SAFETY: the instruction Read-RAF owner contains four u64 columns.
+        // SAFETY: the instruction Read-RAF owner contains at least these first four u64 columns.
         let instruction_read_raf = unsafe {
             slice::from_raw_parts(
                 view.instruction_read_raf.contents().cast::<u64>(),

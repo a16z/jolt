@@ -34,9 +34,7 @@ inline uint bytecode_address_resident_pc(
     constant BytecodeAddressSparseParams& params,
     uint row)
 {
-    ulong metadata = booleanity_source_word(rows, params.physical_rows, 3u, row);
-    ulong plus_one =
-        (metadata >> BOOLEANITY_SOURCE_PC_SHIFT) & BOOLEANITY_SOURCE_PC_MASK;
+    ulong plus_one = booleanity_source_word(rows, params.physical_rows, 4u, row);
     return plus_one == 0ul ? 0u : (uint)(plus_one - 1ul);
 }
 

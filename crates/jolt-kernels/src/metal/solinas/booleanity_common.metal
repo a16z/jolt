@@ -7,8 +7,6 @@ struct BooleanityRow {
 };
 
 #define BOOLEANITY_SOURCE_RAM_MASK 0xfffffffful
-#define BOOLEANITY_SOURCE_PC_MASK 0x3ffful
-#define BOOLEANITY_SOURCE_PC_SHIFT 32u
 #define BOOLEANITY_SOURCE_RD_SHIFT 46u
 #define BOOLEANITY_SOURCE_RANK_SHIFT 54u
 #define BOOLEANITY_SOURCE_FUSED_SIGN_SHIFT 61u
@@ -39,8 +37,7 @@ inline ulong booleanity_row_word(
     if (word == 2u) {
         return metadata & BOOLEANITY_SOURCE_RAM_MASK;
     }
-    ulong pc_plus_one =
-        (metadata >> BOOLEANITY_SOURCE_PC_SHIFT) & BOOLEANITY_SOURCE_PC_MASK;
+    ulong pc_plus_one = booleanity_source_word(rows, row_count, 4u, row);
     ulong rank = (metadata >> BOOLEANITY_SOURCE_RANK_SHIFT) & 0x7ful;
     ulong fused_negative =
         (metadata >> BOOLEANITY_SOURCE_FUSED_SIGN_SHIFT) & 1ul;

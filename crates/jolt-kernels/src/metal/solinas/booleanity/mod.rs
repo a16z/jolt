@@ -24,8 +24,6 @@ const PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT: u32 = 56;
 const PACKED_BYTECODE_CHUNK_RANK_LOW_MASK: u64 = 0x7f << PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT;
 const PACKED_INC_SIGN_SHIFT: u32 = 63;
 const INSTRUCTION_SOURCE_RAM_MASK: u64 = u32::MAX as u64;
-const INSTRUCTION_SOURCE_PC_SHIFT: u32 = 32;
-const INSTRUCTION_SOURCE_PC_MASK: u64 = (1 << 14) - 1;
 const INSTRUCTION_SOURCE_RD_SHIFT: u32 = 46;
 const INSTRUCTION_SOURCE_RANK_SHIFT: u32 = 54;
 const INSTRUCTION_SOURCE_FUSED_SIGN_SHIFT: u32 = 61;
@@ -40,7 +38,8 @@ pub struct BooleanityRow {
     packed_pc_and_flags: u64,
 }
 
-pub(crate) const BOOLEANITY_SOURCE_WORDS: usize = 4;
+// Keep the full logical PC in its own column; packing it beside RAM limited guests to 14 bits.
+pub(crate) const BOOLEANITY_SOURCE_WORDS: usize = 5;
 pub(crate) const BOOLEANITY_SOURCE_ROW_BYTES: usize = BOOLEANITY_SOURCE_WORDS * size_of::<u64>();
 
 struct BooleanityRowsInner {
@@ -186,24 +185,24 @@ impl BooleanityRow {
     pub(crate) fn instruction_source_words(
         self,
         rd_write: Option<(u8, u64, u64)>,
-    ) -> Result<[u64; 4], MetalError> {
-        let [fused_inc_magnitude, packed_metadata] = self.instruction_source_aux_words(rd_write)?;
+    ) -> Result<[u64; BOOLEANITY_SOURCE_WORDS], MetalError> {
+        let [fused_inc_magnitude, packed_metadata, pc_plus_one] =
+            self.instruction_source_aux_words(rd_write)?;
         Ok([
             self.lookup_lo,
             self.lookup_hi,
             fused_inc_magnitude,
             packed_metadata,
+            pc_plus_one,
         ])
     }
 
     pub(crate) fn instruction_source_aux_words(
         self,
         rd_write: Option<(u8, u64, u64)>,
-    ) -> Result<[u64; 2], MetalError> {
+    ) -> Result<[u64; 3], MetalError> {
         let pc_plus_one = self.packed_pc_and_flags & PACKED_PC_MASK;
-        if pc_plus_one > INSTRUCTION_SOURCE_PC_MASK
-            || self.ram_address_plus_one > INSTRUCTION_SOURCE_RAM_MASK
-        {
+        if self.ram_address_plus_one > INSTRUCTION_SOURCE_RAM_MASK {
             return Err(MetalError::InvalidBooleanityRow);
         }
         let fused_negative = self.packed_pc_and_flags >> PACKED_INC_SIGN_SHIFT;
@@ -223,18 +222,19 @@ impl BooleanityRow {
         let rank = (self.packed_pc_and_flags & PACKED_BYTECODE_CHUNK_RANK_LOW_MASK)
             >> PACKED_BYTECODE_CHUNK_RANK_LOW_SHIFT;
         let metadata = self.ram_address_plus_one
-            | (pc_plus_one << INSTRUCTION_SOURCE_PC_SHIFT)
             | (rd_plus_one << INSTRUCTION_SOURCE_RD_SHIFT)
             | (rank << INSTRUCTION_SOURCE_RANK_SHIFT)
             | (fused_negative << INSTRUCTION_SOURCE_FUSED_SIGN_SHIFT)
             | (u64::from(rd_negative) << INSTRUCTION_SOURCE_RD_SIGN_SHIFT);
-        Ok([self.fused_inc_magnitude, metadata])
+        Ok([self.fused_inc_magnitude, metadata, pc_plus_one])
     }
 
     #[cfg(test)]
-    pub(crate) const fn from_instruction_source_words(words: [u64; 4]) -> Self {
+    pub(crate) const fn from_instruction_source_words(
+        words: [u64; BOOLEANITY_SOURCE_WORDS],
+    ) -> Self {
         let metadata = words[3];
-        let pc_plus_one = (metadata >> INSTRUCTION_SOURCE_PC_SHIFT) & INSTRUCTION_SOURCE_PC_MASK;
+        let pc_plus_one = words[4];
         let rank = (metadata >> INSTRUCTION_SOURCE_RANK_SHIFT) & 0x7f;
         let fused_negative = (metadata >> INSTRUCTION_SOURCE_FUSED_SIGN_SHIFT) & 1;
         Self {
@@ -1111,7 +1111,7 @@ fn instruction_source_byte_length(rows: usize) -> Result<u64, MetalError> {
 }
 
 const _: () = assert!(size_of::<BooleanityRow>() == 40);
-const _: () = assert!(BOOLEANITY_SOURCE_ROW_BYTES == 32);
+const _: () = assert!(BOOLEANITY_SOURCE_ROW_BYTES == 40);
 const _: () = assert!(size_of::<SelectorAbi>() == 8);
 const _: () = assert!(size_of::<Params>() == 48);
 const _: () = assert!(size_of::<BranchParams>() == 16);
@@ -1171,13 +1171,13 @@ mod tests {
 
     #[test]
     fn instruction_source_layout_round_trips_logical_row_and_derives_register_delta() {
-        let row = BooleanityRow::new(7, Some(8191), Some(u32::MAX as u64 - 1), -17)
+        let row = BooleanityRow::new(7, Some((1u64 << 55) + 9), Some(u32::MAX as u64 - 1), -17)
             .unwrap()
             .with_bytecode_chunk_rank_low7(0x7f);
         let words = row.instruction_source_words(Some((127, 17, 0))).unwrap();
 
         assert_eq!(BooleanityRow::from_instruction_source_words(words), row);
-        assert_eq!(words.len(), 4);
+        assert_eq!(words.len(), 5);
         assert_eq!(words[2], 17);
         assert_eq!((words[3] >> INSTRUCTION_SOURCE_RD_SHIFT) & 0xff, 128);
         assert_eq!((words[3] >> INSTRUCTION_SOURCE_RD_SIGN_SHIFT) & 1, 1);

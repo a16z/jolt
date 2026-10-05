@@ -632,6 +632,34 @@ mod tests {
     }
 
     #[test]
+    fn pushforward_preserves_all_bytecode_address_chunks() {
+        let rows = rows(1 << 12);
+        let selectors =
+            [48, 40, 32, 24, 16, 8, 0].map(|shift| BooleanitySelector::Bytecode { shift });
+        let e_in = fields(1 << 10, 41);
+        let e_out = fields(4, 67);
+        let expected = oracle(&rows, &selectors, &e_in, &e_out);
+        let context = SolinasMetal::for_akita().unwrap();
+        let resident = context.prepare_booleanity_rows(&rows).unwrap();
+        let invocation = context
+            .prepare_booleanity_address_pushforward_with_weights(
+                resident,
+                &selectors,
+                &e_in,
+                &e_out,
+                BooleanityAddressPushforwardConfig {
+                    inner_log2: 10,
+                    selectors_per_tile: 3,
+                    tile_threads_per_threadgroup: Some(256),
+                    finalize_threads_per_threadgroup: Some(256),
+                },
+            )
+            .unwrap();
+        invocation.execute().unwrap();
+        assert_eq!(invocation.read_masses().unwrap(), expected);
+    }
+
+    #[test]
     fn pushforward_reduces_adversarial_carry_bucket() {
         let rows = vec![BooleanityRow::new(0, Some(0), Some(0), 0).unwrap(); 1 << 12];
         let selectors = vec![BooleanitySelector::Lookup { shift: 0 }; 6];
@@ -683,7 +711,8 @@ mod tests {
                 state ^= state << 13;
                 state ^= state >> 17;
                 state ^= state << 43;
-                let pc = (!row.is_multiple_of(7)).then_some(((state >> 61) as u64) & 0x1ffe);
+                let pc = (!row.is_multiple_of(7))
+                    .then_some(((state >> 61) as u64) & 0x00ff_ffff_ffff_fffe);
                 let ram =
                     (!row.is_multiple_of(11)).then_some((state as u64) & (u32::MAX as u64 - 1));
                 let inc = match row % 4 {

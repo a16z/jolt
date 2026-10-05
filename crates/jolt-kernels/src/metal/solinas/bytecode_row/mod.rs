@@ -694,8 +694,8 @@ mod tests {
                 1 => Some(0),
                 2 => Some(255),
                 3 => Some(256),
-                4 => Some(8191),
-                _ => Some((37 * index % 8192) as u64),
+                4 => Some(262143),
+                _ => Some((37 * index % 262144) as u64),
             };
             let inc = inc_values[index % inc_values.len()];
             rows.push(BooleanityRow::new(index as u128, mapped_pc, None, inc).unwrap());

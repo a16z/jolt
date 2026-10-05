@@ -333,6 +333,7 @@ fn fused_stage1_scatter_rejects_rank_past_the_exact_chunk_cell() {
             *words.add(padded_rows),
             *words.add(2 * padded_rows),
             *words.add(3 * padded_rows),
+            *words.add(4 * padded_rows),
         ])
         .with_bytecode_chunk_rank_low7(corrupted_rank);
         let encoded = first.instruction_source_words(None).unwrap();

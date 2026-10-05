@@ -137,6 +137,7 @@ pub(crate) struct InstructionReadRafStage1ChunkWriter<'a> {
     lookup_hi: &'a mut [MaybeUninit<u64>],
     fused_inc_magnitude: &'a mut [MaybeUninit<u64>],
     packed_metadata: &'a mut [MaybeUninit<u64>],
+    pc_plus_one: &'a mut [MaybeUninit<u64>],
     claims: &'a mut [MaybeUninit<u8>],
     counts: &'a mut InstructionReadRafChunkCounts,
     ram_remap_compatible: &'a AtomicBool,
@@ -180,7 +181,7 @@ impl InstructionReadRafStage1Storage {
         fill: impl FnOnce(&mut [InstructionReadRafStage1ChunkWriter<'_>]) -> Result<R, MetalError>,
     ) -> Result<R, MetalError> {
         // SAFETY: storage is unpublished and exclusively borrowed. The row
-        // allocation contains four disjoint u64 columns of exactly self.rows.
+        // allocation contains five disjoint u64 columns of exactly self.rows.
         let row_words = unsafe {
             slice::from_raw_parts_mut(
                 self.row_buffer.contents().cast::<MaybeUninit<u64>>(),
@@ -189,7 +190,8 @@ impl InstructionReadRafStage1Storage {
         };
         let (lookup_lo, row_words) = row_words.split_at_mut(self.rows);
         let (lookup_hi, row_words) = row_words.split_at_mut(self.rows);
-        let (fused_inc_magnitude, packed_metadata) = row_words.split_at_mut(self.rows);
+        let (fused_inc_magnitude, row_words) = row_words.split_at_mut(self.rows);
+        let (packed_metadata, pc_plus_one) = row_words.split_at_mut(self.rows);
         // SAFETY: the unpublished claim allocation has exactly one byte per
         // row and is disjoint from the row allocation.
         let claims = unsafe {
@@ -203,17 +205,25 @@ impl InstructionReadRafStage1Storage {
             .zip(lookup_hi.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
             .zip(fused_inc_magnitude.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
             .zip(packed_metadata.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
+            .zip(pc_plus_one.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
             .zip(claims.chunks_mut(INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS))
             .zip(self.counts.iter_mut())
             .map(
                 |(
-                    ((((lookup_lo, lookup_hi), fused_inc_magnitude), packed_metadata), claims),
+                    (
+                        (
+                            (((lookup_lo, lookup_hi), fused_inc_magnitude), packed_metadata),
+                            pc_plus_one,
+                        ),
+                        claims,
+                    ),
                     counts,
                 )| InstructionReadRafStage1ChunkWriter {
                     lookup_lo,
                     lookup_hi,
                     fused_inc_magnitude,
                     packed_metadata,
+                    pc_plus_one,
                     claims,
                     counts,
                     ram_remap_compatible: &self.ram_remap_compatible,
@@ -340,6 +350,7 @@ impl InstructionReadRafStage1ChunkWriter<'_> {
         self.lookup_hi[self.written..end].fill(MaybeUninit::new(words[1]));
         self.fused_inc_magnitude[self.written..end].fill(MaybeUninit::new(words[2]));
         self.packed_metadata[self.written..end].fill(MaybeUninit::new(words[3]));
+        self.pc_plus_one[self.written..end].fill(MaybeUninit::new(words[4]));
         self.claims[self.written..end].fill(MaybeUninit::new(claim));
         let count = u32::try_from(count)
             .map_err(|_| invalid_source("Stage-1 repeated source count exceeds u32"))?;
@@ -372,6 +383,7 @@ impl InstructionReadRafStage1ChunkWriter<'_> {
         let _ = self.lookup_hi[self.written].write(words[1]);
         let _ = self.fused_inc_magnitude[self.written].write(words[2]);
         let _ = self.packed_metadata[self.written].write(words[3]);
+        let _ = self.pc_plus_one[self.written].write(words[4]);
         let _ = self.claims[self.written].write(claim);
         self.counts[count_rank] += 1;
         self.written += 1;
@@ -414,7 +426,7 @@ impl InstructionReadRafStage1Owner {
 
     pub(crate) fn packed_metadata(&self) -> &[u64] {
         let rows = self.0.receipt.rows;
-        // SAFETY: the immutable Stage-1 owner stores four complete SoA u64
+        // SAFETY: the immutable Stage-1 owner stores five complete SoA u64
         // columns; packed metadata is the fourth column and the owner keeps
         // the shared allocation alive for the returned slice.
         unsafe {

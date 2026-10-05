@@ -12,7 +12,7 @@ fn stage1_source_byte_ledgers_are_exact() {
     assert_eq!(INSTRUCTION_READ_RAF_TABLES, 55);
     assert_eq!(
         instruction_read_raf_stage1_row_bytes(1 << 26).unwrap(),
-        2_147_483_648
+        2_684_354_560
     );
     assert_eq!(
         instruction_read_raf_stage1_claim_bytes(1 << 26).unwrap(),
@@ -20,7 +20,7 @@ fn stage1_source_byte_ledgers_are_exact() {
     );
     assert_eq!(
         instruction_read_raf_stage1_device_bytes(1 << 26).unwrap(),
-        2_214_592_512
+        2_751_463_424
     );
     assert_eq!(
         instruction_read_raf_stage1_count_bytes(1 << 26).unwrap(),
@@ -28,7 +28,7 @@ fn stage1_source_byte_ledgers_are_exact() {
     );
     assert_eq!(
         instruction_read_raf_stage1_device_bytes(1 << 27).unwrap(),
-        4_429_185_024
+        5_502_926_848
     );
     assert_eq!(
         instruction_read_raf_stage1_count_bytes(1 << 27).unwrap(),
@@ -83,11 +83,12 @@ fn physical_count_rank_is_table_major_then_none() {
 
 #[test]
 fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
-    let row = BooleanityRow::new(9, Some(123), Some(7), -11).unwrap();
+    let row = BooleanityRow::new(9, Some(262143), Some(7), -11).unwrap();
     let mut lookup_lo = [MaybeUninit::uninit()];
     let mut lookup_hi = [MaybeUninit::uninit()];
     let mut fused_inc_magnitude = [MaybeUninit::uninit()];
     let mut packed_metadata = [MaybeUninit::uninit()];
+    let mut pc_plus_one = [MaybeUninit::uninit()];
     let mut claims = [MaybeUninit::uninit()];
     let mut counts = [0; INSTRUCTION_READ_RAF_SEGMENTS];
     let ram_remap_compatible = std::sync::atomic::AtomicBool::new(true);
@@ -96,6 +97,7 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
         lookup_hi: &mut lookup_hi,
         fused_inc_magnitude: &mut fused_inc_magnitude,
         packed_metadata: &mut packed_metadata,
+        pc_plus_one: &mut pc_plus_one,
         claims: &mut claims,
         counts: &mut counts,
         ram_remap_compatible: &ram_remap_compatible,
@@ -112,6 +114,7 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
             lookup_hi[0].assume_init(),
             fused_inc_magnitude[0].assume_init(),
             packed_metadata[0].assume_init(),
+            pc_plus_one[0].assume_init(),
         ]
     };
     let encoded_row = BooleanityRow::from_instruction_source_words(physical_words);
@@ -123,7 +126,7 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
         instruction_read_raf_bytecode_chunk_rank(encoded_row, encoded_claim),
         0xd5
     );
-    assert_eq!(encoded_row.mapped_pc(), Some(123));
+    assert_eq!(encoded_row.mapped_pc(), Some(262143));
     assert_eq!(encoded_row.words()[4] >> 63, 1);
     assert_eq!(counts[79], 1);
 }
@@ -131,13 +134,14 @@ fn bytecode_rank_uses_only_reserved_row_and_claim_bits() {
 #[test]
 fn repeated_stage1_fill_matches_scalar_pushes() {
     const ROWS: usize = 7;
-    let row = BooleanityRow::new(17, Some(321), Some(19), 32).unwrap();
+    let row = BooleanityRow::new(17, Some(262144), Some(19), 32).unwrap();
     let register_write = Some((6, 41, 73));
 
     let mut scalar_lookup_lo = [MaybeUninit::uninit(); ROWS];
     let mut scalar_lookup_hi = [MaybeUninit::uninit(); ROWS];
     let mut scalar_fused = [MaybeUninit::uninit(); ROWS];
     let mut scalar_metadata = [MaybeUninit::uninit(); ROWS];
+    let mut scalar_pc = [MaybeUninit::uninit(); ROWS];
     let mut scalar_claims = [MaybeUninit::uninit(); ROWS];
     let mut scalar_counts = [0; INSTRUCTION_READ_RAF_SEGMENTS];
     let scalar_ram_remap_compatible = std::sync::atomic::AtomicBool::new(true);
@@ -147,6 +151,7 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
             lookup_hi: &mut scalar_lookup_hi,
             fused_inc_magnitude: &mut scalar_fused,
             packed_metadata: &mut scalar_metadata,
+            pc_plus_one: &mut scalar_pc,
             claims: &mut scalar_claims,
             counts: &mut scalar_counts,
             ram_remap_compatible: &scalar_ram_remap_compatible,
@@ -164,6 +169,7 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
     let mut repeated_lookup_hi = [MaybeUninit::uninit(); ROWS];
     let mut repeated_fused = [MaybeUninit::uninit(); ROWS];
     let mut repeated_metadata = [MaybeUninit::uninit(); ROWS];
+    let mut repeated_pc = [MaybeUninit::uninit(); ROWS];
     let mut repeated_claims = [MaybeUninit::uninit(); ROWS];
     let mut repeated_counts = [0; INSTRUCTION_READ_RAF_SEGMENTS];
     let repeated_ram_remap_compatible = std::sync::atomic::AtomicBool::new(true);
@@ -173,6 +179,7 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
             lookup_hi: &mut repeated_lookup_hi,
             fused_inc_magnitude: &mut repeated_fused,
             packed_metadata: &mut repeated_metadata,
+            pc_plus_one: &mut repeated_pc,
             claims: &mut repeated_claims,
             counts: &mut repeated_counts,
             ram_remap_compatible: &repeated_ram_remap_compatible,
@@ -191,6 +198,8 @@ fn repeated_stage1_fill_matches_scalar_pushes() {
             .map(|value| unsafe { value.assume_init() })
             .collect::<Vec<_>>()
     };
+    assert_eq!(initialized_u64(&scalar_pc), vec![262145; ROWS]);
+    assert_eq!(initialized_u64(&repeated_pc), vec![262145; ROWS]);
     let initialized_u8 = |values: &[MaybeUninit<u8>]| {
         values
             .iter()
