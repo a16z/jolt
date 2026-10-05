@@ -88,7 +88,8 @@ Fiat-Shamir inventory and setup round-trip tests.
   may retry without the scalar guide for at most two bounded producers within the opening
   assignment budget. Dense-only setup rejects a one-hot profile selection.
 - [x] Prover and verifier bind a labeled chunk count for nondefault one-hot profiles and use
-  the same profile-specific catalog digest. `Single` and `Dense` retain the #1948 preamble.
+  the same profile-specific catalog digest. The label rename leaves `Single` and `Dense`
+  absorption unchanged; regenerating the dense catalogs changes their catalog binding.
 - [x] Chunk-profile APIs and named setup serialization use the Akita-specific names below,
   with no legacy aliases. Nondefault profiles bind the `akita_chunk_profile` transcript label.
 - [x] Proving rejects profile mismatches for both single-chunk and chunked preprocessing.

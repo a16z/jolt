@@ -81,10 +81,12 @@ physical producer arities 11 through 22 for both advice roles. It skips only the
 empty batch. `unsupported_producer` records arities missing from the dense
 catalog; `provisioning_failed` records failures for admitted producers and makes
 the command fail. `unsupported_grouped_shape` records an explicit capability
-rejection: grouped roots require a recursive child fold, while the smallest
-Single scalar guides reach their terminal immediately (K=16 arities 12–15 and
-K=256 arities 12–16). Guided planning cannot add that fold. Preprocessing derives
-this capability check from the selected row and rejects it before planner search,
+rejection matching the provisioner's Single-profile scalar-guide error for that
+K and final arity. Other schedule rejections count as `provisioning_failed`,
+including all chunked-profile rejections. Grouped roots require a recursive child
+fold, while the smallest Single scalar guides reach their terminal immediately
+(K=16 arities 12–15 and K=256 arities 12–16). Guided planning cannot add that fold.
+Preprocessing derives this capability check from the selected row and rejects it before planner search,
 naming K, profile, final arity, and the requested groups. Scalar-only setups and
 full-width producer batches retain their existing paths.
 Successful rows are audited by the production provisioner and

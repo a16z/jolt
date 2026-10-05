@@ -21,6 +21,28 @@ enum Outcome {
     Failed(AkitaError),
 }
 
+impl Outcome {
+    fn grouped(
+        result: Result<(), AkitaError>,
+        k: usize,
+        profile: AkitaChunkProfile,
+        final_arity: usize,
+    ) -> Self {
+        match result {
+            Ok(()) => Self::Admitted,
+            Err(AkitaError::UnsupportedSchedule(message))
+                if profile == AkitaChunkProfile::Single
+                    && message.starts_with(&format!(
+                        "one-hot K={k} profile Single final arity {final_arity} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one; requested groups: "
+                    )) =>
+            {
+                Self::UnsupportedGroupedShape(AkitaError::UnsupportedSchedule(message))
+            }
+            Err(error) => Self::Failed(error),
+        }
+    }
+}
+
 #[expect(clippy::print_stderr, reason = "offline diagnostic reports progress")]
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
@@ -127,13 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                         }
                                         Ok(())
                                     });
-                                match result {
-                                    Ok(()) => Outcome::Admitted,
-                                    Err(error @ AkitaError::UnsupportedSchedule(_)) => {
-                                        Outcome::UnsupportedGroupedShape(error)
-                                    }
-                                    Err(error) => Outcome::Failed(error),
-                                }
+                                Outcome::grouped(result, k, profile, final_arity)
                             }
                         };
                         Ok(Some((untrusted, trusted, outcome)))
@@ -178,4 +194,47 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_known_scalar_guide_rejection_is_expected() -> Result<(), Box<dyn Error>> {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let params = GroupedScheduleParams::new(None, Some(14), Vec::new(), 12);
+        let result = params
+            .extend_catalog(
+                &artifacts.dense_catalog()?,
+                &artifacts.full_dense_catalog()?,
+                &artifacts.one_hot_catalog(AKITA_ONE_HOT_K16)?,
+                AKITA_ONE_HOT_K16,
+                AkitaChunkProfile::Single,
+            )
+            .map(|_| ());
+        assert!(matches!(
+            Outcome::grouped(result, AKITA_ONE_HOT_K16, AkitaChunkProfile::Single, 12),
+            Outcome::UnsupportedGroupedShape(_)
+        ));
+        for profile in [
+            AkitaChunkProfile::Single,
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
+        ] {
+            assert!(matches!(
+                Outcome::grouped(
+                    Err(AkitaError::UnsupportedSchedule(
+                        "unexpected planner rejection".to_owned()
+                    )),
+                    AKITA_ONE_HOT_K16,
+                    profile,
+                    12,
+                ),
+                Outcome::Failed(_)
+            ));
+        }
+        Ok(())
+    }
 }

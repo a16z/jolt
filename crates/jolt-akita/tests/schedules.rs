@@ -174,7 +174,7 @@ fn multi_chunk_catalogs_cover_every_supported_profile() {
         ),
         (
             AkitaChunkProfile::Eight,
-            ChunkedWitnessCfg::d64_production(),
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2),
             JoltOneHotK16W8R2::schedule_family_name(),
             JoltOneHotK256W8R2::schedule_family_name(),
         ),
