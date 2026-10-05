@@ -24,6 +24,7 @@ pub mod emit {
     use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull};
     use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
     use crate::planning::plan_schedule;
+    use crate::AKITA_ONE_HOT_K16;
 
     /// Prefix packing produces one physical polynomial; two-polynomial rows
     /// cover adapter and tamper-test shapes.
@@ -132,7 +133,7 @@ pub mod emit {
     pub fn family_specs(output_dir: PathBuf) -> Result<Vec<EmitSpec>, AkitaError> {
         let mut specs = Vec::with_capacity(OneHotFamily::ALL.len() + 2);
         for family in OneHotFamily::ALL.iter().copied() {
-            let family_num_vars = if family.k() == crate::AKITA_ONE_HOT_K16 {
+            let family_num_vars = if family.k() == AKITA_ONE_HOT_K16 {
                 K16_NUM_VARS
             } else {
                 K256_NUM_VARS
@@ -144,7 +145,7 @@ pub mod emit {
             };
             specs.push(with_one_hot_family!(family, |Cfg, DirectCfg| {
                 let regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> =
-                    if family.k() == crate::AKITA_ONE_HOT_K16 {
+                    if family.k() == AKITA_ONE_HOT_K16 {
                         regen_one_hot_k16::<Cfg, DirectCfg>
                     } else {
                         regen_one_hot_k256::<Cfg, DirectCfg>
