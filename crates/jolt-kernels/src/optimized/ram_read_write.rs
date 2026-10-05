@@ -33,6 +33,8 @@
 //! O(T + K) storage, but with a larger peak constant than cycle-first.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use super::ram_trace::SharedRamAddresses;
+use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
@@ -407,6 +409,25 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
 }
 
 impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
+    fn preflight(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        dimensions: ReadWriteDimensions,
+    ) -> Result<(), KernelError<F>> {
+        if dimensions.log_t() > 32 || dimensions.log_k() > 32 {
+            return Err(KernelError::Unsupported {
+                reason: "optimized RAM read-write checking packs cycle and address indices as u32",
+            });
+        }
+        let _ = ReadWriteOrder::new::<F>(dimensions)?;
+        // Stage 2 consumes this same column; moving its extraction forward
+        // admits actual addresses without another trace walk or address copy.
+        let addresses = SharedRamAddresses::shared(session, witness, dimensions.log_t())?;
+        // Same range check `prepare` runs, so it cannot first fail after commitments.
+        super::ram_trace::validate_addresses(&addresses, 1usize << dimensions.log_k())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -737,6 +758,78 @@ mod tests {
             ));
         });
     }
+
+    /// An address beyond `ram_K` must fail admission with the error stage 2
+    /// would raise, before any commitment work; in-range addresses still pass.
+    #[test]
+    fn preflight_rejects_addresses_beyond_ram_k() {
+        const BEYOND_RAM_K: &str = "RAM access address remapped beyond ram_K";
+        let shape = FixtureShape {
+            log_t: 3,
+            ram_k: 16,
+        };
+        let ops = vec![
+            RamOp::Write { word: 3, post: 5 },
+            RamOp::Write { word: 12, post: 1 },
+            RamOp::Read { word: 12 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let preflight = |session: &mut ProofSession, log_k: usize| {
+                <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
+                    &OptimizedBackend,
+                    session,
+                    witness,
+                    ReadWriteDimensions::new(shape.log_t, log_k, shape.log_t, log_k),
+                )
+            };
+
+            // Word 12 lies outside a `ram_K = 8` domain.
+            let mut session = ProofSession::default();
+            let narrow_log_k = shape.log_k() - 1;
+            assert!(matches!(
+                preflight(&mut session, narrow_log_k),
+                Err(KernelError::InvariantViolation {
+                    reason: BEYOND_RAM_K
+                })
+            ));
+
+            // Stage 2 rejects the same input with the same error.
+            let relation = RamReadWriteChecking::<Fr>::new(
+                ReadWriteDimensions::new(shape.log_t, narrow_log_k, shape.log_t, narrow_log_k),
+                narrow_log_k,
+                random_scalars(shape.log_t, 17),
+            );
+            let claims = RamReadWriteInputClaims {
+                ram_read_value: Fr::from_u64(0),
+                ram_write_value: Fr::from_u64(0),
+            };
+            let points = RamReadWriteInputClaims::<Vec<Fr>>::default();
+            let challenges = RamReadWriteChallenges {
+                gamma: random_scalars(1, 23)[0],
+            };
+            let prepared = PrepareKernel::<Fr, _>::prepare(
+                &OptimizedBackend,
+                &mut ProofSession::default(),
+                witness,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                },
+            );
+            assert!(matches!(
+                prepared.map(|_| ()),
+                Err(KernelError::InvariantViolation {
+                    reason: BEYOND_RAM_K
+                })
+            ));
+
+            // The same trace is admitted against its real `ram_K = 16`.
+            preflight(&mut ProofSession::default(), shape.log_k()).unwrap();
+        });
+    }
+
     #[test]
     fn matches_reference_at_exceptional_cycle_points_in_both_orders() {
         let shape = FixtureShape {

@@ -55,6 +55,8 @@ where
     let mode = ProofMode::<VC>::new(None)?;
     let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
+        backend,
+        &mut session,
         preprocessing,
         config,
         trusted_advice,

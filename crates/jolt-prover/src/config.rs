@@ -114,7 +114,12 @@ impl ProverConfig {
         let trace_length = if rows.len() < MIN_PADDED_TRACE_LENGTH {
             MIN_PADDED_TRACE_LENGTH
         } else {
-            (rows.len() + 1).next_power_of_two()
+            rows.len()
+                .checked_add(1)
+                .and_then(usize::checked_next_power_of_two)
+                .ok_or(ProverError::Unsupported {
+                    reason: "padded trace length exceeds usize",
+                })?
         };
         if trace_length > max_padded_trace_length {
             return Err(ProverError::Unsupported {
@@ -140,10 +145,24 @@ impl ProverConfig {
             .filter_map(|row| remap_address(ram_address(row).unwrap_or(0), memory_layout))
             .max()
             .unwrap_or(0);
-        let image_end = remap_address(min_bytecode_address, memory_layout).unwrap_or(0)
-            + program_image_len_words as u64
-            + 1;
-        let ram_K = touched.max(image_end).next_power_of_two() as usize;
+        let image_words =
+            u64::try_from(program_image_len_words).map_err(|_| ProverError::Unsupported {
+                reason: "program image word count exceeds u64",
+            })?;
+        let image_end = remap_address(min_bytecode_address, memory_layout)
+            .unwrap_or(0)
+            .checked_add(image_words)
+            .and_then(|end| end.checked_add(1))
+            .ok_or(ProverError::Unsupported {
+                reason: "program image end exceeds the RAM address range",
+            })?;
+        let ram_K = touched
+            .max(image_end)
+            .checked_next_power_of_two()
+            .and_then(|size| usize::try_from(size).ok())
+            .ok_or(ProverError::Unsupported {
+                reason: "padded RAM domain exceeds usize",
+            })?;
 
         let log_T = trace_length.ilog2() as usize;
         Ok(Self {
