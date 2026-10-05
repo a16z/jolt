@@ -137,8 +137,7 @@ inline bool booleanity_row_hot_index(
     return true;
 }
 
-// Lazy h sums of one polynomial whose hot index is a chunk of a 32-bit source
-// half. An offset-by-one source (one = 1) adds nothing for a zero (cold) row.
+// An offset-by-one source (one = 1) adds nothing for a zero (cold) row.
 inline void booleanity_lazy_half_sums(
     device const uint* halves,
     device const SolinasFp128* table,

@@ -3,6 +3,7 @@ use std::{mem::size_of, slice};
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
+use super::residency::{self, ResidencyPrefetch};
 use super::{
     encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
     PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
@@ -123,6 +124,8 @@ struct Pipelines {
 }
 
 struct Buffers {
+    /// Declared before the tables it retains, so teardown joins the helper first.
+    table_residency: Option<ResidencyPrefetch>,
     tables_a: Vec<Buffer>,
     tables_b: Vec<Buffer>,
     /// Becomes `tables_a` at the first transition, which drops the
@@ -265,6 +268,7 @@ impl SolinasMetal {
             pipelines,
             reduction_limits,
             buffers: Buffers {
+                table_residency: None,
                 tables_a: self.new_bytecode_cycle_buffers(a_elements)?,
                 tables_b: self.new_bytecode_cycle_buffers(b_elements)?,
                 quarter_tables_a: Some(self.new_bytecode_cycle_buffers(quarter_elements)?),
@@ -414,6 +418,7 @@ impl BytecodeCycleSequence {
             self.current_elements /= 2;
             self.source_in_a = !self.source_in_a;
             if let Some(quarter) = self.buffers.quarter_tables_a.take() {
+                self.buffers.table_residency = None;
                 self.buffers.tables_a = quarter;
             }
         }
@@ -462,8 +467,18 @@ impl BytecodeCycleSequence {
         &self.buffers.tables_a
     }
 
-    pub(super) fn half_table_buffers(&self) -> &[Buffer] {
-        &self.buffers.tables_b
+    /// Warms the initial and half-length tables' residency while earlier rounds
+    /// run. The helper retains both, so the first transition joins it right
+    /// before releasing the initial tables.
+    pub(super) fn prefetch_tables(&mut self) {
+        self.buffers.table_residency = Some(residency::prefetch(
+            self.buffers
+                .tables_a
+                .iter()
+                .chain(&self.buffers.tables_b)
+                .cloned()
+                .collect(),
+        ));
     }
 
     pub(super) fn partial_buffer(&self) -> &Buffer {

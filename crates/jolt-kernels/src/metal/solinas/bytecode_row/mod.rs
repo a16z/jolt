@@ -6,7 +6,6 @@ use jolt_poly::EqPolynomial;
 use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
 
 use super::bytecode_cycle::bytecode_cycle_side_elements;
-use super::residency::{self, ResidencyPrefetch};
 #[cfg(test)]
 use super::PipelineLimits;
 use super::{
@@ -61,11 +60,6 @@ struct RowBuffers {
     weighted_eq_hi: Buffer,
     ra0: Buffer,
     ra1: Buffer,
-    /// The first bind and the first dense transition write the initial and
-    /// half-length tables; their residency is warmed while the row rounds run.
-    /// Joined with the row phase: the helper retains both tables, and the first
-    /// dense transition releases the initial ones.
-    _dense_residency: ResidencyPrefetch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -216,19 +210,12 @@ impl SolinasMetal {
             .map_err(|_| MetalError::InputTooLong(bound_root_elements))?;
         let bound_root_bytes = byte_length(bound_root_elements)?;
         self.validate_buffer_length(bound_root_bytes)?;
-        let dense = self.prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
+        let mut dense = self.prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
             elements / 2,
             config,
             hi_length,
         )?;
-        let dense_residency = residency::prefetch(
-            dense
-                .initial_table_buffers()
-                .iter()
-                .chain(dense.half_table_buffers())
-                .cloned()
-                .collect(),
-        );
+        dense.prefetch_tables();
         Ok(BytecodeCycleRowSequence {
             context: self.clone(),
             pipelines,
@@ -245,7 +232,6 @@ impl SolinasMetal {
                 weighted_eq_hi: buffer_from_slice(&self.device, &weighted_eq_hi),
                 ra0: buffer_from_slice(&self.device, &ra0),
                 ra1: buffer_from_slice(&self.device, &ra1),
-                _dense_residency: dense_residency,
             }),
             dense,
             params: Params {
