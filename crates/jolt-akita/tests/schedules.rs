@@ -8,11 +8,12 @@
 use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::path::PathBuf;
 
-use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
+use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    ChunkedWitnessCfg, FoldSchedule, MultiChunkProfileId, PolynomialGroupLayout,
+    ChunkedWitnessCfg, FoldSchedule, GroupOpenPhaseParams, MultiChunkProfileId,
+    PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
 };
 use jolt_akita::configs::{
     JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16W2R2, JoltOneHotK16W4R2,
@@ -46,6 +47,38 @@ fn full_dense_catalog() -> ValidatedScheduleCatalog {
     artifacts()
         .full_dense_catalog()
         .expect("full-width dense catalog")
+}
+
+#[test]
+fn dense_producer_certificates_cover_every_supported_chunk_count() {
+    for (catalog, policy) in [
+        (dense_catalog(), policy_of::<JoltDenseBounded>()),
+        (full_dense_catalog(), policy_of::<JoltDenseFull>()),
+    ] {
+        for row in catalog.rows() {
+            let root = &row.schedule().root.params;
+            assert_eq!(root.witness_chunk.num_chunks, 8);
+            let group = root.own_group();
+            for num_response_chunks in [1, 2, 4, 8] {
+                let admitted = GroupOpenPhaseParams::admit(
+                    row.profiles().final_group,
+                    group.opening.num_digits_fold,
+                    PrecommittedGroupAdmissionPolicy {
+                        decomposition: policy.decomposition,
+                        sis_security_policy: policy.sis_security_policy,
+                        sis_table_digest: policy.sis_table_digest,
+                        sis_modulus_profile: policy.sis_modulus_profile,
+                        num_response_chunks,
+                    },
+                    group.opening.opening_method,
+                    group.opening.fold_challenge_config,
+                    group.opening.log_basis_open,
+                )
+                .expect("fixed producer must cover every supported response chunk count");
+                assert_eq!(admitted.profile, row.profiles().final_group);
+            }
+        }
+    }
 }
 
 fn one_hot_catalog(one_hot_k: usize, profile: AkitaOneHotChunkProfile) -> ValidatedScheduleCatalog {

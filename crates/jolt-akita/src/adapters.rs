@@ -10,17 +10,15 @@ use std::{
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
 
-use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaProverSetup as BackendProverSetup,
     AkitaSerialize, AkitaVerifier, CommitmentHandle, CpuBackend, DensePoly, OneHotPoly,
 };
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
-    AkitaScheduleLookupKey, AkitaVerifierSetup as BackendVerifierSetup,
-    Commitment as AkitaBackendRingCommitment, CommittedGroup as AkitaBackendCommittedGroup,
-    CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningScheduleSelection,
-    PolynomialGroupLayout, ScheduleRowDigest,
+    AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
+    CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
@@ -34,7 +32,6 @@ use crate::one_hot_family::{
     with_one_hot_family, AkitaOneHotBackendScheme, AkitaOneHotBackendVerifier, OneHotFamily,
 };
 pub use crate::one_hot_family::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
-use crate::planning::plan_schedule_with_policy;
 use crate::schedule_registry::GroupedScheduleParams;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
@@ -183,76 +180,6 @@ impl AkitaScheduleArtifacts {
     pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
         TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(&self.dense)
             .map(|catalog| catalog.catalog().clone())
-    }
-
-    /// Provision up to two advice commitment rows for the trace's chunk budget.
-    /// Call before committing advice or program objects with these arities;
-    /// grouped planning then preserves the resulting producer profiles.
-    pub fn provision_advice(
-        self: &Arc<Self>,
-        profile: AkitaOneHotChunkProfile,
-        physical_arities: &[usize],
-    ) -> Result<Arc<Self>, AkitaError> {
-        if physical_arities.len() > 2 {
-            return Err(AkitaError::InvalidSetup(
-                "advice provisioning accepts at most two physical arities".to_owned(),
-            ));
-        }
-        if profile == AkitaOneHotChunkProfile::Single || physical_arities.is_empty() {
-            return Ok(Arc::clone(self));
-        }
-        let base = self.dense_catalog()?;
-        let mut arities = physical_arities.to_vec();
-        arities.sort_unstable();
-        arities.dedup();
-        let mut planned_rows = Vec::with_capacity(arities.len());
-        let admission_policy = policy_of::<JoltDenseBounded>();
-        let mut planning_policy = admission_policy;
-        planning_policy.witness_chunk = profile.witness_cfg();
-        for num_vars in arities {
-            let group = PolynomialGroupLayout::new(num_vars, 1);
-            let key = AkitaScheduleLookupKey::single(group);
-            if base.resolve_key(&key)?.schedule().root.params.witness_chunk == profile.witness_cfg()
-            {
-                continue;
-            }
-            let schedule =
-                plan_schedule_with_policy::<JoltDenseBounded>(&key, &[], &planning_policy)?;
-            let final_group =
-                GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)?;
-            planned_rows.push((
-                CommittedGroupBatchProfile {
-                    final_group,
-                    precommitteds: Vec::new(),
-                },
-                schedule,
-            ));
-        }
-        if planned_rows.is_empty() {
-            return Ok(Arc::clone(self));
-        }
-        let mut rows = base
-            .rows()
-            .filter(|row| {
-                !planned_rows.iter().any(|(profiles, _)| {
-                    profiles.final_group.group == row.profiles().final_group.group
-                        && row.profiles().precommitteds.is_empty()
-                })
-            })
-            .map(|row| (row.profiles().clone(), row.schedule().clone()))
-            .collect::<Vec<_>>();
-        rows.extend(planned_rows);
-        // The chunk budget guides planning; admission still audits every exact
-        // row against the unchanged bounded-dense security and source contract.
-        let catalog = ValidatedScheduleCatalog::try_new(
-            JoltDenseBounded::schedule_family_name(),
-            rows,
-            &admission_policy,
-            JoltDenseBounded::ring_challenge_config,
-        )?;
-        let mut artifacts = self.as_ref().clone();
-        artifacts.dense = catalog.to_artifact_bytes()?;
-        Ok(Arc::new(artifacts))
     }
 
     pub fn full_dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {

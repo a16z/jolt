@@ -10,7 +10,6 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 use akita_config::{policy_of, CommitmentConfig};
@@ -24,7 +23,6 @@ use akita_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::AkitaScheduleArtifacts;
 use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
@@ -77,18 +75,6 @@ pub struct GroupedScheduleParams {
 }
 
 impl GroupedScheduleParams {
-    pub(crate) fn provision_advice_artifacts(
-        &self,
-        artifacts: &Arc<AkitaScheduleArtifacts>,
-        profile: AkitaOneHotChunkProfile,
-    ) -> Result<Arc<AkitaScheduleArtifacts>, AkitaError> {
-        let arities = [self.untrusted_physical_arity, self.trusted_physical_arity]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        artifacts.provision_advice(profile, &arities)
-    }
-
     pub fn new(
         untrusted_physical_num_vars: Option<usize>,
         trusted_physical_num_vars: Option<usize>,
@@ -427,51 +413,55 @@ pub fn provision_groups_for_k(
 #[expect(clippy::unwrap_used, reason = "schedule tests should fail loudly")]
 mod tests {
     use super::*;
+    use crate::adapters::AkitaScheduleArtifacts;
 
     #[test]
-    fn chunked_advice_rows_preserve_provisioned_producer_profiles() {
+    fn grouped_rows_preserve_chunk_independent_producer_profiles() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let dense = artifacts.dense_catalog().unwrap();
+        let producers = [14, 22].map(|num_vars| {
+            dense_group_profile(&dense, PolynomialGroupLayout::new(num_vars, 1)).unwrap()
+        });
+        let full_dense = artifacts.full_dense_catalog().unwrap();
+        let full_producer =
+            dense_group_profile(&full_dense, PolynomialGroupLayout::new(14, 1)).unwrap();
         for profile in [
+            AkitaOneHotChunkProfile::Single,
             AkitaOneHotChunkProfile::Two,
             AkitaOneHotChunkProfile::Four,
             AkitaOneHotChunkProfile::Eight,
         ] {
-            let artifacts = AkitaScheduleArtifacts::shared_from_default_directory()
-                .provision_advice(profile, &[14, 22])
-                .unwrap();
-            assert!(Arc::ptr_eq(
-                &artifacts,
-                &artifacts.provision_advice(profile, &[14, 22]).unwrap(),
-            ));
-            let dense = artifacts.dense_catalog().unwrap();
-            let producers = [14, 22].map(|num_vars| {
-                dense_group_profile(&dense, PolynomialGroupLayout::new(num_vars, 1)).unwrap()
-            });
             for (one_hot_k, final_num_vars) in [(AKITA_ONE_HOT_K16, 22), (AKITA_ONE_HOT_K256, 20)] {
                 let base = artifacts
                     .one_hot_catalog_for_profile(one_hot_k, profile)
                     .unwrap();
-                let params =
-                    GroupedScheduleParams::new(Some(14), Some(22), Vec::new(), final_num_vars);
-                let catalog = params
-                    .extend_catalog(
-                        &dense,
-                        &artifacts.full_dense_catalog().unwrap(),
-                        &base,
-                        one_hot_k,
-                        profile,
-                    )
-                    .unwrap();
-                for precommitteds in [vec![producers[0]], vec![producers[1]], producers.to_vec()] {
-                    let key = AkitaScheduleLookupKey {
-                        final_group: PolynomialGroupLayout::new(final_num_vars, 1),
-                        precommitteds,
-                    };
-                    let row = catalog.resolve_key(&key).unwrap();
-                    assert_eq!(row.profiles().precommitteds, key.precommitteds);
-                    assert_eq!(
-                        row.schedule().root.params.witness_chunk,
-                        profile.witness_cfg()
-                    );
+                for mandatory in [
+                    Vec::new(),
+                    vec![DenseGroupLayout::FullWidth { num_vars: 14 }],
+                ] {
+                    let has_full_producer = !mandatory.is_empty();
+                    let params =
+                        GroupedScheduleParams::new(Some(14), Some(22), mandatory, final_num_vars);
+                    let catalog = params
+                        .extend_catalog(&dense, &full_dense, &base, one_hot_k, profile)
+                        .unwrap();
+                    for mut precommitteds in
+                        [vec![producers[0]], vec![producers[1]], producers.to_vec()]
+                    {
+                        if has_full_producer {
+                            precommitteds.push(full_producer);
+                        }
+                        let key = AkitaScheduleLookupKey {
+                            final_group: PolynomialGroupLayout::new(final_num_vars, 1),
+                            precommitteds,
+                        };
+                        let row = catalog.resolve_key(&key).unwrap();
+                        assert_eq!(row.profiles().precommitteds, key.precommitteds);
+                        assert_eq!(
+                            row.schedule().root.params.witness_chunk,
+                            profile.witness_cfg()
+                        );
+                    }
                 }
             }
         }

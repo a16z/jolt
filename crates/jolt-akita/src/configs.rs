@@ -244,21 +244,26 @@ impl RecursiveScheduleConfig for JoltOneHotK256W8R2Direct {
 pub type JoltOneHotK16W8R2 = RecursiveCommitmentConfig<JoltOneHotK16W8R2Direct>;
 pub type JoltOneHotK256W8R2 = RecursiveCommitmentConfig<JoltOneHotK256W8R2Direct>;
 
+// Dense honest sizing retains the unchunked response cap in every chunk, so
+// the largest supported count also gives the largest A collision envelope.
+// Freeze this producer policy independently of the consuming trace profile.
 delegate_preset!(
     /// Dense config for `u64`-bounded advice and committed-program objects.
+    /// Certifies producers for the maximum supported response chunk count.
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
-    ChunkedWitnessCfg::default_non_chunked(),
+    AkitaOneHotChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-dense-bounded"
 );
 
 delegate_preset!(
     /// Dense config for arbitrary field values, including field-register increments.
+    /// Certifies producers for the maximum supported response chunk count.
     JoltDenseFull,
     Dense,
     <Dense as CommitmentConfig>::committed_source_class(),
-    ChunkedWitnessCfg::default_non_chunked(),
+    AkitaOneHotChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-dense-full"
 );
 
@@ -324,7 +329,11 @@ mod tests {
         );
         assert_eq!(
             JoltDenseBounded::chunked_witness_cfg(),
-            ChunkedWitnessCfg::default_non_chunked()
+            ChunkedWitnessCfg::d64_production()
+        );
+        assert_eq!(
+            JoltDenseFull::chunked_witness_cfg(),
+            ChunkedWitnessCfg::d64_production()
         );
     }
 }

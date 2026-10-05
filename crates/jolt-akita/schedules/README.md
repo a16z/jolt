@@ -16,7 +16,11 @@ discover files or consult the environment.
 
 Advice and committed-program objects use the bounded dense catalog. Field-register
 increments use the full-width dense catalog, with each group's source contract
-preserved in the joint opening.
+preserved in the joint opening. Both dense catalogs are planned for eight response
+chunks, the maximum supported count. For fixed dense response geometry, A's
+collision envelope grows linearly with chunk count; eight therefore covers one,
+two, and four as well. B is certified for the selected opening geometry. These
+producer profiles are independent of the eventual trace chunk selection.
 
 During preprocessing, Jolt adapts rows whose shapes depend on advice, field
 increments, or direct committed-program sizes. Those rows are merged with the
@@ -37,8 +41,8 @@ Each K=16 and K=256 family has W2R2, W4R2, and W8R2 multi-chunk companion
 catalogs. The selected profile splits the root and first recursive fold into
 two, four, or eight chunks, while later folds remain single-chunk; their
 smallest admitted physical arity is 16 variables. The original one-hot
-catalogs and the dense advice and committed-program catalog remain
-single-chunk. Existing four-file directories continue to support `Single`;
+catalogs remain single-chunk. Dense standalone opening schedules use the fixed
+eight-chunk budget. Four-file directories with the current dense catalogs support `Single`;
 selecting a profile whose companion catalog is absent fails during setup.
 Grouped precommit setups inherit the selected trace profile.
 
@@ -62,13 +66,12 @@ Grouped planning first preserves the selected trace row's fold geometry,
 opening parameters, relation modes, and direct/offloaded topology, adapting
 only the auxiliary object profiles and the sizes they induce.
 
-Before creating commitments, chunked advice preprocessing plans setup-owned
-bounded-dense rows for the trusted and untrusted advice arities. Their inner
-decomposition and certified matrix bounds support the selected trace's response
-chunk count. These exact rows pass bounded-dense catalog admission and become
-the immutable producer context used by advice and any program objects of the
-same arity. The checked-in dense catalog and the `Single` path retain their
-existing rows.
+Advice, bytecode, and field-valued precommits resolve their producer rows directly
+from the dense catalogs. Commitment setup receives no trace chunk count and
+performs no producer replanning. Grouped planning preserves the exact producer
+profiles and audits their compatibility with the selected opening schedule.
+Deployment directories must regenerate both dense catalogs for the conservative
+policy; previous catalogs have a different policy digest and are rejected.
 
 A full-width field increment can require different trace fold geometry. If
 guided planning returns `UnsupportedSchedule` for the supported field batch—
@@ -80,7 +83,7 @@ Larger batches and batches with multiple full-width objects retain the
 guided-planning rejection, including its opening-assignment budget. Every auxiliary commitment's
 profile stays fixed, and the resulting grouped row passes the usual schedule
 audit before entering the setup-owned catalog. Other errors propagate. The
-checked-in base catalogs are unchanged; proving and verification use the
+one-hot base catalogs are unchanged; proving and verification use the
 resulting frozen grouped row.
 
 Regenerate all base catalogs from the planner with:
