@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790983984264,
+  "lastUpdate": 1791171862507,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -177034,6 +177034,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 865036,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fe81178d726ae440f16b49e17284ef05a1b22e09",
+          "message": "feat(metal): jolt::Fp128 field arithmetic (#1939)\n\n* spec(metal): define the shared Metal field arithmetic crate\n\nSpecify jolt-metal: generic MSL templates for jolt_field::solinas fields\nthat are bit-identical to the CPU implementation, lazy accumulators with\ntested capacities, and a typed non-panicking objc2-metal runtime. The\ncrate is prover-only and cannot enter a verifier dependency graph.\n\n* feat(metal): add the jolt-metal runtime\n\nExecution step 1 of specs/jolt-metal-field.md: a typed, non-panicking\nobjc2-metal runtime. LibrarySpec assembles sources and explicit template\ninstantiations; ShaderLibrary builds every pipeline at setup and records\neach kernel's reflected buffer arguments; Batch checks every dispatch\nagainst them before encoding; DeviceBuffer reads back through a checked\nbit-pattern conversion. Failures are MetalError values classed as\nUnavailable, Setup, Capacity, Transient, or Fault.\n\nOff macOS the backend is uninhabited and the crate has no Objective-C\ndependency. CI checks that jolt-verifier and jolt-field never depend on\njolt-metal or objc2, lints the macOS backend on a hosted runner, and runs\nthe GPU tests there when the runner has a supported device.\nscripts/metal-report.sh produces the local report, including a run under\nthe validation layers with MTL_SHADER_VALIDATION_ABORT_ON_FAULT=1.\n\nCo-authored-by: Markos Georghiades <53157953+markosg04@users.noreply.github.com>\n\n* refactor(metal): import backend handles by name\n\nRename the platform backend's types to RawDevice, RawLibrary, RawPipeline,\nRawBuffer, and RawCommandBatch so they import without clashing with the\npublic Device and Pipeline, and derive CommandBufferError's Display with\nthiserror. Fixes the nominal-imports style check.\n\nCo-authored-by: Markos Georghiades <53157953+markosg04@users.noreply.github.com>\n\n* feat(metal): add jolt::Fp128 field arithmetic\n\nPort the Solinas Fp128 arithmetic from #1848's fp128.metal into a generic\nMSL template, jolt::Fp128<C>, bit-exact with jolt_field::solinas::Fp128<P>.\n\n- fp128.h: add, sub, neg, mul, square, mul_u64, mul_i64, from_u64,\n  from_i64. Algorithm names and fold bounds follow jolt-field's fp128.rs,\n  with each bound argued next to the code. mul_u64 reduces through\n  fold2_canonicalize, which the CPU proof covers for any 64-bit high limb;\n  square takes 10 word multiplies instead of 16; signed magnitudes are\n  computed in unsigned arithmetic, so LONG_MIN has no undefined behaviour.\n- MetalField, and MslType for every Fp128<P>: the MSL spelling and host\n  suffix are generated from P at compile time, so no offset is written\n  by hand.\n- jolt-field: an optional `bytemuck` feature with Zeroable, NoUninit and\n  CheckedBitPattern for Fp128<P>; read-back admits only canonical limbs.\n- Conformance tests for both Fp128 aliases: all edge-vector pairs, inputs\n  constructed to reach every fold-2 branch (asserted by recomputing the\n  intermediates), and 2^20 random inputs per operation, compared with\n  jolt-field byte for byte.\n\nCo-authored-by: Markos Georghiades <53157953+markosg04@users.noreply.github.com>\n\n* feat(metal): time batches on the GPU and benchmark Fp128\n\n`Batch::commit_and_wait` returns the batch's GPU execution time from the\ncommand buffer's GPU start and end timestamps, which exclude host\nsubmission and wake-up. Benchmarks and consumer profiling read it; callers\nthat do not need it discard it.\n\n`benches/fp128.rs` measures `jolt::Fp128<0xffffa7f7u>` against\n`jolt_field` on all CPU cores with the `asm` multiply Akita uses:\ndependent add, mul, and square chains in registers (operations per\nsecond), elementwise add, mul, and square over 2^16 to 2^26 elements, and\nan inner product with a threadgroup reduction. Each kernel's output is\nchecked against the CPU before it is timed.\n\n* perf(metal): write out the Fp128 squaring\n\nThe triangular cross-product loop of `sqr_wide` ran at half the\nthroughput of a written-out sum on an Apple M4 Max, and slower than\n`a * a`. The written-out form also adds each square in one multiply-add\nstep. Dependent squarings: 27 → 55 G/s (paired ratio 0.485 against the\nloop; `a * a` measured 0.636). Nine mutants of the new code, covering each\ncarry, each shift bit, and each accumulator, all fail the conformance\nsuite.\n\n* docs(metal): record the Fp128 step and add benchmarks to the local report\n\nThe spec now describes step 2 as built: the `bytemuck` read-back, the\nconformance suite's asserted branch coverage and mutation testing in place\nof property tests, the benchmark set, the Fp128 compile time, and the\nlimb-layout A/B with its method, decision rule, and result (`uint4`\nkept; `ulong2` is 1.07-1.91x slower on ALU-bound cases and ties when\nbandwidth-bound).\n\n`scripts/metal-report.sh --bench` runs the benchmarks and appends a GPU\nand CPU throughput table (`scripts/metal-bench-table.py`), recording the\npower source and energy mode.\n\n* chore(metal): record load average in the benchmark report\n\nOther processes slow the CPU baseline and share the chip's power budget\nwith the GPU: a report run at load average 32-51 on 16 cores measured the\nGPU mul chain at 29 G/s instead of 45. The report now builds the benchmark\nfirst and prints the load average before and after the run, so a loaded\nrun is visible in the report itself.\n\nThe spec records that a second limb-layout A/B run, under that load,\nreproduced every paired ratio within 2%.\n\n* docs(metal): add a performance model and a per-machine direction to the spec\n\n- Performance model: a machine-limits benchmark (multiply,\n  multiply-accumulate, memory and threadgroup bandwidth, round trip);\n  kernel criteria from step 3 on (the bounding limit, the measured\n  fraction of it, knobs as template parameters or function constants\n  with small valid ranges, conformance at every knob value); measurement\n  hygiene (idle machine, recorded load, paired comparisons with a rule\n  fixed in advance); no runtime autotuning.\n- Direction: per-machine plans that never change the output or the proof\n  bytes. A device descriptor beyond GPU family, checked-in plan tables,\n  an offline tuner, a pipeline cache, fusion once three kernel families\n  exist, and CPU/GPU splits over unified memory.\n- Step 3 now also adds the machine-limits benchmark.\n- The CI question is resolved: the hosted runner's paravirtual device is\n  below Apple GPU family 7, so GPU evidence comes from the local report.\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix(metal): enforce raw dispatch and uncertain-completion safety\n\n* fix(metal): bound Fp128 benchmark iteration and report complete reductions\n\n* fix(metal): fail closed on graph errors and reject zero-sized buffers\n\n---------\n\nCo-authored-by: Markos Georghiades <53157953+markosg04@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-04T22:37:18-04:00",
+          "tree_id": "3ae327f0f9537aca6418e3c69a795a711043e4fb",
+          "url": "https://github.com/a16z/jolt/commit/fe81178d726ae440f16b49e17284ef05a1b22e09"
+        },
+        "date": 1791171854507,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 5.0609,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.9381,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 503068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0694,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.8705,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.2582,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 509368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.6421,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 137628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.2167,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8808,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 499400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6487,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 502804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 29.1875,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 511436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.701,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 46.9964,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1957948,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 20.9908,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 633804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 107.9104,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1166064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9954,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.3468,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 22.6049,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866328,
             "unit": "KB",
             "extra": ""
           }
