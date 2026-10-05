@@ -54,7 +54,7 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
+use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder};
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -70,7 +70,7 @@ use jolt_claims::{
     opening,
     protocols::jolt::{
         geometry::{
-            booleanity::{self, BooleanityDimensions},
+            booleanity::BooleanityDimensions,
             bytecode::{self, BytecodeReadRafEvaluationInputs},
             claim_reductions::{
                 advice,
@@ -78,10 +78,10 @@ use jolt_claims::{
                 hamming_weight, program_image,
             },
             dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
-            instruction, ram,
+            ram,
             spartan::{
-                outer_opening, outer_uniskip_opening, product_uniskip_opening,
-                SpartanOuterDimensions, SpartanProductDimensions,
+                outer_uniskip_opening, product_uniskip_opening, SpartanOuterDimensions,
+                SpartanProductDimensions,
             },
         },
         AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
@@ -92,16 +92,16 @@ use jolt_claims::{
         InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-        JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-        PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-        ProgramImageClaimReductionPublic, RamHammingBooleanityPublic, RamOutputCheckPublic,
-        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-        RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge,
-        RamValCheckPublic, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+        JoltDerivedId, JoltRelationId, PrecommittedReductionLayout,
+        ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
+        RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
+        RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
+        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic,
     },
-    Expr, OutputClaims, Source, SymbolicSumcheck, Term,
+    Expr, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -122,7 +122,6 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
-use num_traits::Zero;
 
 use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
 use crate::stages::{
@@ -250,10 +249,6 @@ where
     Ok(protocol)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "BlindFold stages are deliberately explicit."
-)]
 fn add_batched_stage<F, C>(
     builder: Builder<F, C>,
     name: &'static str,
@@ -262,8 +257,6 @@ fn add_batched_stage<F, C>(
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<ComposedOpeningId>,
-    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
     F: JoltField,
@@ -317,8 +310,6 @@ where
         consistency.consistency.clone(),
         output_claims,
         values,
-        opening_ids,
-        aliases,
         input_claim,
         output_claim,
     )
@@ -336,8 +327,6 @@ fn add_stage<F, C>(
     consistency: CommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<ComposedOpeningId>,
-    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
     input_claim: VerifierExpr<F>,
     output_claim: VerifierExpr<F>,
 ) -> Result<Builder<F, C>, VerifierError>
@@ -347,26 +336,17 @@ where
 {
     require_expr_sources(name, "input claim", &input_claim, values)?;
     require_expr_sources(name, "output claim", &output_claim, values)?;
-    if opening_ids.len() != output_claims.shape.output_claim_count {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "{name}: output opening id count mismatch: expected {}, got {}",
-                output_claims.shape.output_claim_count,
-                opening_ids.len()
-            ),
-        });
-    }
     builder
         .stage(name)
         .sumcheck(statement)
         .domain(domain)
         .consistency(consistency)
         .output_claim_rows(
-            opening_ids,
+            output_claims.shape.layout.ids.clone(),
             output_claims.shape.row_len,
             output_claims.commitments.clone(),
         )
-        .output_claim_aliases(aliases)
+        .output_claim_aliases(output_claims.shape.layout.aliases.clone())
         .input_claim(input_claim)
         .output_claim(output_claim)
         .finish_stage()
@@ -431,21 +411,6 @@ where
             })
             .collect(),
     }
-}
-
-/// Lift a jolt-typed opening-id list into the composite id space.
-fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<ComposedOpeningId> {
-    ids.into_iter().map(Into::into).collect()
-}
-
-/// Lift jolt-typed `(aliased, source)` pairs into composite [`OpeningAlias`] rows.
-fn composite_aliases<O: Into<ComposedOpeningId>>(
-    pairs: impl IntoIterator<Item = (O, O)>,
-) -> Vec<OpeningAlias<ComposedOpeningId>> {
-    pairs
-        .into_iter()
-        .map(|(aliased, source)| OpeningAlias::new(aliased.into(), source.into()))
-        .collect()
 }
 
 /// Evaluates the BlindFold form of a Jolt claim expression with the same
@@ -1457,7 +1422,7 @@ mod field_inline_relation_parity {
         FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
         FieldRegistersTraceDimensions,
     };
-    use jolt_claims::{InputClaims, SumcheckChallenges};
+    use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
     use jolt_field::{Fr, Ring};
     use jolt_sumcheck::VerifiedCommittedRound;
 

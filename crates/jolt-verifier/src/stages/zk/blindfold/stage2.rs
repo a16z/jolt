@@ -1,23 +1,11 @@
-#[cfg(feature = "field-inline")]
-use crate::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 #[cfg(all(test, feature = "field-inline"))]
 use jolt_claims::protocols::composed::ComposedClaims;
 #[cfg(all(test, feature = "field-inline"))]
 use jolt_claims::protocols::composed::FieldProductUniskipInputs;
 #[cfg(all(test, feature = "field-inline"))]
 use jolt_claims::protocols::composed::ProductInputs;
-use std::collections::BTreeSet;
 
 use super::*;
-
-use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
-use jolt_claims::protocols::jolt::relations::ram::{
-    RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
-};
-use jolt_claims::protocols::jolt::relations::spartan::ProductRemainderOutputClaims;
-
-use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage2::outputs::InstructionClaimReduction;
 
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
@@ -72,8 +60,6 @@ where
         input.stage2.product_uniskip_consistency.clone(),
         &input.stage2.product_uniskip_output_claims,
         values,
-        vec![product_uniskip_opening().into()],
-        Vec::new(),
         product_uniskip_input,
         opening(product_uniskip_opening()),
     )?;
@@ -218,8 +204,6 @@ where
         output_publics.2,
     )?;
 
-    let (output_ids, aliases) = stage2_output_ids_and_aliases::<PCS::Field>();
-
     // Member declaration order (= batching-coefficient draw order): the field-inline claim
     // reduction sits between the instruction reduction and RAM RAF evaluation, exactly as in
     // `Stage2BatchSumchecks`.
@@ -245,83 +229,7 @@ where
         &input.stage2.batch_consistency,
         &input.stage2.batch_output_claims,
         values,
-        output_ids,
-        aliases,
     )
-}
-
-/// The stage-2 committed output row order and alias rows.
-///
-/// With field-inline disabled: the jolt members' canonical orders with the instruction
-/// reduction's aliased ids elided (absorbed once via their product-remainder sources).
-/// Canonical output rows in member order, excluding aliased reduction claims.
-fn stage2_output_ids_and_aliases<F: JoltField>(
-) -> (Vec<ComposedOpeningId>, Vec<OpeningAlias<ComposedOpeningId>>) {
-    let product_order = ProductRemainderOutputClaims::<F> {
-        left_instruction_input: F::zero(),
-        right_instruction_input: F::zero(),
-        jump_flag: F::zero(),
-        write_lookup_output_to_rd: F::zero(),
-        lookup_output: F::zero(),
-        branch_flag: F::zero(),
-        next_is_noop: F::zero(),
-        virtual_instruction: F::zero(),
-    }
-    .canonical_order();
-    let instruction_outputs = InstructionClaimReductionOutputClaims::<F> {
-        lookup_output: F::zero(),
-        left_lookup_operand: F::zero(),
-        right_lookup_operand: F::zero(),
-        left_instruction_input: F::zero(),
-        right_instruction_input: F::zero(),
-    }
-    .canonical_order();
-
-    // Single-sourced from the reduction's declared alias pairs
-    // (`ConcreteSumcheck::aliased_output_openings`): the committed output rows
-    // absorb the reduction's canonical openings minus its aliased ids, and the
-    // `OpeningAlias` rows mirror the same `(aliased, source)` pairs — so
-    // BlindFold's row layout cannot drift from the clear path's generated absorb
-    // and `validate_aliases`.
-    let alias_pairs =
-        <InstructionClaimReduction<F> as ConcreteSumcheck<F>>::aliased_output_openings();
-    let aliased_targets: BTreeSet<_> = alias_pairs.iter().map(|(aliased, _)| *aliased).collect();
-
-    let mut output_ids: Vec<ComposedOpeningId> = composite_ids(
-        RamReadWriteOutputClaims::<F> {
-            val: F::zero(),
-            ra: F::zero(),
-            inc: F::zero(),
-        }
-        .canonical_order(),
-    );
-    output_ids.extend(composite_ids(product_order));
-    #[cfg(feature = "field-inline")]
-    output_ids.extend(super::field_inline::stage2_product_opening_ids());
-    output_ids.extend(
-        instruction_outputs
-            .into_iter()
-            .filter(|id| !aliased_targets.contains(id))
-            .map(ComposedOpeningId::from),
-    );
-    output_ids.extend(composite_ids(
-        RamRafEvaluationOutputClaims::<F> { ram_ra: F::zero() }.canonical_order(),
-    ));
-    output_ids.extend(composite_ids(
-        RamOutputCheckOutputClaims::<F> {
-            val_final: F::zero(),
-        }
-        .canonical_order(),
-    ));
-    let aliases = composite_aliases(alias_pairs);
-    #[cfg(feature = "field-inline")]
-    let aliases = aliases
-        .into_iter()
-        .chain(composite_aliases(
-            FieldRegistersClaimReduction::<F>::aliased_output_openings(),
-        ))
-        .collect();
-    (output_ids, aliases)
 }
 
 fn selected_product_uniskip_input_expr<F: JoltField>(
@@ -385,22 +293,11 @@ fn bake_product_weights<F: JoltField>(
     Ok(expr)
 }
 
-#[cfg(test)]
-#[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
-#[cfg_attr(
-    not(feature = "field-inline"),
-    expect(
-        clippy::useless_conversion,
-        reason = "field-inline selects composed claim and opening types"
-    )
-)]
+#[cfg(all(test, feature = "field-inline"))]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    #[cfg(feature = "field-inline")]
-    use crate::stages::stage2::outputs::{
-        FieldRegistersClaimReductionOutputClaims, FieldRegistersProductOutputClaims,
-    };
-    #[cfg(feature = "field-inline")]
+    use crate::stages::stage2::outputs::FieldRegistersProductOutputClaims;
     use jolt_claims::protocols::jolt::geometry::spartan::{
         product_outer_opening, product_should_branch_outer_opening,
         product_should_jump_outer_opening,
@@ -409,110 +306,6 @@ mod tests {
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
-    }
-
-    /// The stage-2 committed row order is the clear curated absorb order,
-    /// locked entry-for-entry: build sentinel-valued claim structs, run the
-    /// batch's `opening_values` curation, and check every lowered id resolves
-    /// to the value at its row position.
-    #[test]
-    fn stage2_output_ids_match_the_clear_absorb_order() {
-        use crate::stages::stage2::outputs::{
-            InstructionClaimReductionOutputClaims, ProductRemainderOutputClaims,
-            RamOutputCheckOutputClaims, RamRafEvaluationOutputClaims, RamReadWriteOutputClaims,
-            Stage2BatchOutputClaims,
-        };
-        use jolt_claims::OutputClaims as _;
-
-        let claims = Stage2BatchOutputClaims::<Fr> {
-            ram_read_write: RamReadWriteOutputClaims {
-                val: fr(1),
-                ra: fr(2),
-                inc: fr(3),
-            },
-            product_remainder: ProductRemainderOutputClaims {
-                left_instruction_input: fr(4),
-                right_instruction_input: fr(5),
-                jump_flag: fr(6),
-                write_lookup_output_to_rd: fr(7),
-                lookup_output: fr(8),
-                branch_flag: fr(9),
-                next_is_noop: fr(10),
-                virtual_instruction: fr(11),
-            }
-            .into(),
-            instruction_claim_reduction: InstructionClaimReductionOutputClaims {
-                lookup_output: fr(8),
-                left_lookup_operand: fr(12),
-                right_lookup_operand: fr(13),
-                left_instruction_input: fr(4),
-                right_instruction_input: fr(5),
-            },
-            #[cfg(feature = "field-inline")]
-            field_registers_claim_reduction: FieldRegistersClaimReductionOutputClaims {
-                rd_value: fr(16),
-                rs1_value: fr(17),
-                rs2_value: fr(18),
-            },
-            ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
-            ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
-        };
-
-        // Resolve a lowered composite id against the claim structs (the field-inline appendage
-        // rides beside the batch, so it has its own resolver).
-        #[cfg(feature = "field-inline")]
-        let appendage = FieldRegistersProductOutputClaims::<Fr> {
-            rs1_value: fr(201),
-            rs2_value: fr(202),
-            rd_value: fr(203),
-        };
-        let resolve = |id: &ComposedOpeningId| -> Option<Fr> {
-            match id {
-                ComposedOpeningId::Jolt(id) => claims
-                    .ram_read_write
-                    .resolve_output(id)
-                    .or_else(|| claims.product_remainder.resolve_output(&(*id).into()))
-                    .or_else(|| claims.instruction_claim_reduction.resolve_output(id))
-                    .or_else(|| claims.ram_raf_evaluation.resolve_output(id))
-                    .or_else(|| claims.ram_output_check.resolve_output(id)),
-                #[cfg(feature = "field-inline")]
-                ComposedOpeningId::FieldInline(id) => claims
-                    .field_registers_claim_reduction
-                    .resolve_output(id)
-                    .or_else(|| appendage.resolve_output(id)),
-                #[cfg(not(feature = "field-inline"))]
-                ComposedOpeningId::FieldInline(_) => None,
-            }
-        };
-
-        // The clear curated order over the same sentinels.
-        #[cfg(not(feature = "field-inline"))]
-        let expected_values: Vec<Fr> = (1..=15).map(fr).collect();
-        #[cfg(feature = "field-inline")]
-        let expected_values: Vec<Fr> = (1..=11)
-            .map(fr)
-            .chain([fr(201), fr(202), fr(203)])
-            .chain([fr(12), fr(13)])
-            .chain([fr(14), fr(15)])
-            .collect();
-
-        let (output_ids, aliases) = stage2_output_ids_and_aliases::<Fr>();
-        assert_eq!(output_ids.len(), expected_values.len());
-        #[cfg(not(feature = "field-inline"))]
-        assert_eq!(output_ids.len(), 15);
-        #[cfg(feature = "field-inline")]
-        assert_eq!(output_ids.len(), 18);
-        for (id, expected) in output_ids.iter().zip(expected_values) {
-            assert_eq!(
-                resolve(id),
-                Some(expected),
-                "row {id:?} must sit at the clear absorb position of value {expected:?}",
-            );
-        }
-        assert_eq!(
-            aliases.len(),
-            if cfg!(feature = "field-inline") { 6 } else { 3 }
-        );
     }
 
     /// The lowered composed uni-skip input expression evaluates identically to the clear

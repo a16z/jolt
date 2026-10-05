@@ -170,6 +170,7 @@ impl<F: JoltField, C> Stage5Output<F, C> {
 mod tests {
     use super::*;
     use crate::stages::relations::test_transcript::assert_same_draws;
+    use crate::stages::relations::ClaimRoutes;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -226,12 +227,15 @@ mod tests {
     /// own per-field order from its `OutputClaims` derive. A wrong batch order here silently
     /// breaks soundness, so it is pinned with distinct sentinels.
     #[test]
-    fn opening_values_follow_canonical_order() {
+    fn wire_claims_follow_canonical_order() {
         #[cfg(not(feature = "field-inline"))]
         let expected = (1..=8).map(fr).collect::<Vec<_>>();
         #[cfg(feature = "field-inline")]
         let expected = (1..=10).map(fr).collect::<Vec<_>>();
-        assert_eq!(sumchecks().opening_values(&claims()), expected);
+        assert_eq!(
+            Stage5Sumchecks::wire_claim_values(&claims(), &ClaimRoutes::default()),
+            expected
+        );
     }
 
     /// The batch draws the instruction gamma, then the RAM-RA gamma, each one
@@ -253,32 +257,5 @@ mod tests {
             ],
             gammas
         );
-    }
-
-    /// The field-register value-evaluation member's wire set is exactly the two spec outputs
-    /// (`FieldRdInc`, `FieldRdWa` at `FieldRegistersValEvaluation`), so composing it grows the
-    /// stage-5 absorbed/committed opening count by two.
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn field_registers_val_evaluation_wire_set_is_the_two_spec_outputs() {
-        use crate::stages::relations::ConcreteSumcheck as _;
-        use jolt_claims::protocols::field_inline::geometry::registers::val_evaluation_output_openings;
-
-        let sumchecks = sumchecks();
-        let wire = sumchecks
-            .field_registers_val_evaluation
-            .wire_output_openings();
-        assert_eq!(wire, val_evaluation_output_openings().into_iter().collect());
-
-        let others = sumchecks.instruction_read_raf.wire_output_openings().len()
-            + sumchecks
-                .ram_ra_claim_reduction
-                .wire_output_openings()
-                .len()
-            + sumchecks
-                .registers_val_evaluation
-                .wire_output_openings()
-                .len();
-        assert_eq!(sumchecks.output_claim_count(), others + 2);
     }
 }

@@ -60,18 +60,6 @@ mod stage4 {
 
     use crate::driver::impl_stage_prover;
 
-    // A clear proof sent the staged openings before the batch, so only the
-    // post-round openings follow the rounds.
-    #[cfg(not(feature = "zk"))]
-    jolt_verifier::stage4_sumchecks_members!(impl_stage_prover
-        curate = |batch, claims, _points| {
-            Ok(batch.post_round_opening_values(claims))
-        },
-    );
-    // A committed proof commits every opening in the claims aggregate's
-    // canonical order (the `no_opening_values` replacement keeps the generated
-    // signature, so the driver's default curation serves it).
-    #[cfg(feature = "zk")]
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }
 
@@ -105,7 +93,6 @@ mod stage6a {
 }
 
 mod stage6b {
-    use jolt_claims::protocols::jolt::JoltRelationId;
     use jolt_verifier::stages::stage6b::booleanity::Booleanity;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
@@ -128,30 +115,10 @@ mod stage6b {
     };
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
     use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
-    use jolt_verifier::stages::stage6b::stage6b_opening_values;
-    use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
-    // The stage's `no_opening_values` curation: the promoted verifier
-    // helper's canonical order, including the runtime dedup of booleanity's
-    // `BytecodeRa` claims against the bytecode read-RAF points.
-    jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover
-        curate = |_batch, claims, points| {
-            let booleanity_opening_point =
-                points.booleanity_opening_point().ok_or_else(|| {
-                    VerifierError::StageClaimPublicInputFailed {
-                        stage: JoltRelationId::Booleanity,
-                        reason: "stage-6b booleanity produced no opening point".to_string(),
-                    }
-                })?;
-            Ok(stage6b_opening_values(
-                claims,
-                &points.bytecode_read_raf.bytecode_ra,
-                booleanity_opening_point,
-            ))
-        },
-    );
+    jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover);
 }
 
 mod stage7 {

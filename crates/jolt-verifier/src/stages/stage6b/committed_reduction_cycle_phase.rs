@@ -16,8 +16,6 @@
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
 
-use std::collections::BTreeSet;
-
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     lane_weights, BytecodeLaneWeightInputs,
@@ -35,10 +33,10 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::program_image
     ProgramImageReductionCyclePhaseInputClaims, ProgramImageReductionCyclePhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltOpeningId,
-    JoltRelationId, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltRelationId,
+    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
-use jolt_claims::{NoChallenges, OutputClaims, SymbolicSumcheck};
+use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 
 use super::outputs::BytecodeReductionWeights;
@@ -136,18 +134,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
         &self.symbolic
     }
 
-    /// The claims struct carries the completing opening under the cycle-phase
-    /// relation whether or not an address phase follows (`expected_output`
-    /// applies the final scale), but the symbolic output expression names the
-    /// final-reduction opening when none follows, so the default would omit the
-    /// cell the prover sends.
-    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId> {
-        TrustedAdviceCyclePhaseOutputClaims { trusted: F::zero() }
-            .canonical_order()
-            .into_iter()
-            .collect()
-    }
-
     /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
     /// the batch challenge vector, not the front-loaded suffix.
     fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
@@ -235,20 +221,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    /// The claims struct carries the completing opening under the cycle-phase
-    /// relation whether or not an address phase follows (`expected_output`
-    /// applies the final scale), but the symbolic output expression names the
-    /// final-reduction opening when none follows, so the default would omit the
-    /// cell the prover sends.
-    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId> {
-        UntrustedAdviceCyclePhaseOutputClaims {
-            untrusted: F::zero(),
-        }
-        .canonical_order()
-        .into_iter()
-        .collect()
     }
 
     fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
@@ -356,20 +328,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    /// The claims struct carries the completing opening under the cycle-phase
-    /// relation whether or not an address phase follows (`expected_output`
-    /// applies the final scale), but the symbolic output expression names the
-    /// final-reduction opening when none follows, so the default would omit the
-    /// cell the prover sends.
-    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId> {
-        ProgramImageReductionCyclePhaseOutputClaims {
-            program_image: F::zero(),
-        }
-        .canonical_order()
-        .into_iter()
-        .collect()
     }
 
     /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
@@ -483,26 +441,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    /// The claims struct carries the completing opening under the cycle-phase
-    /// relation whether or not an address phase follows (`expected_output`
-    /// applies the final scale), but the symbolic output expression names the
-    /// final-reduction opening when none follows, so the default would omit the
-    /// cell the prover sends.
-    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId> {
-        let claims = if self.layout.dimensions().has_address_phase() {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: Some(F::zero()),
-                chunks: Vec::new(),
-            }
-        } else {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: None,
-                chunks: vec![F::zero(); self.chunk_count],
-            }
-        };
-        claims.canonical_order().into_iter().collect()
     }
 
     /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of

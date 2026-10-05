@@ -290,7 +290,7 @@ mod field_inline_zk {
     use crate::stages::stage1::prove_stage1;
 
     #[test]
-    fn committed_stage2_witness_carries_the_curated_rows_and_verifies() {
+    fn committed_stage2_witness_carries_the_declared_rows_and_verifies() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();

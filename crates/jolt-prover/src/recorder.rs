@@ -15,7 +15,8 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 #[cfg(not(feature = "zk"))]
-use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder};
+use jolt_sumcheck::prove_uniskip_clear;
+use jolt_sumcheck::ClearSumcheckRecorder;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::{prove_uniskip_committed, CommittedSumcheckRecorder, CommittedSumcheckWitness};
 use jolt_transcript::{ProverTranscript, Sponge};
@@ -28,6 +29,29 @@ pub type ModeRecorder<'a, VC> =
     CommittedSumcheckRecorder<'a, <VC as VectorCommitment>::Field, VC, rand_core::OsRng>;
 #[cfg(not(feature = "zk"))]
 pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::Field>;
+
+/// Which output-claim cells a recorder records after a batch's rounds.
+/// A clear recorder sends the `Sent` cells; the `Staged` cells went on the
+/// wire before the batch. A committed recorder commits every non-alias cell,
+/// staged ones included, because nothing was revealed earlier.
+pub trait ClaimRecorder {
+    const RECORDS_STAGED: bool;
+}
+
+impl<F> ClaimRecorder for ClearSumcheckRecorder<F> {
+    const RECORDS_STAGED: bool = false;
+}
+
+// The driver's twin tests run a committed recorder in clear builds too.
+#[cfg(any(feature = "zk", test))]
+impl<F, VC, R> ClaimRecorder for jolt_sumcheck::CommittedSumcheckRecorder<'_, F, VC, R>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+    R: rand_core::RngCore,
+{
+    const RECORDS_STAGED: bool = true;
+}
 
 /// A proved uni-skip round in the compiled mode: the reduction challenge and
 /// the output claim (sent by the clear arm, committed and retained by the ZK

@@ -262,6 +262,7 @@ mod tests {
     use super::*;
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
+    use jolt_verifier::stages::stage4::ram_val_check::RamValCheckStagedOpenings;
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
         with_ram_fixture(shape, ops, |witness| {
@@ -272,6 +273,7 @@ mod tests {
                 TraceDimensions::new(shape.log_t),
                 shape.log_k(),
                 RamValCheckInit::full(Fr::from_u64(0)),
+                RamValCheckStagedOpenings::default(),
             );
             let claims = RamValCheckInputClaims {
                 ram_val: Fr::from_u64(0),

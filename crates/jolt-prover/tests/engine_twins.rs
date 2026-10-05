@@ -115,6 +115,9 @@ impl ProveRounds<Fr> for DenseMember {
     }
 }
 
+/// The ZK twin's vector-commitment capacity: one output-claim row.
+const ROW_LEN: usize = 8;
+
 fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
     let generator = Bn254::g1_generator();
     let generators = (2..2 + capacity)
@@ -234,7 +237,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
 #[test]
 fn committed_engine_twin_matches_generated_verify_zk() {
     type VC = Pedersen<Bn254G1>;
-    let setup = pedersen_setup(8);
+    let setup = pedersen_setup(ROW_LEN as u64);
 
     // Prover: draw → sums → begin_batch(committed; claim absorbs no-op) →
     // prove_batch → finish (output-claim row commitments absorbed).
@@ -285,17 +288,34 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         &mut prover_transcript,
     )
     .unwrap();
+    // Synthetic values in the shape the verifier commits: one per committed
+    // cell of the points derived at the batch point.
+    // The registers member reads its read-write point: the 7 register
+    // address bits then the 3 cycle bits.
+    let mut input_points = sumchecks.empty_input_points();
+    input_points.registers_val_evaluation.registers_val = (0..10).map(Fr::from_u64).collect();
+    let points = sumchecks
+        .derive_opening_points(&proved.challenges, &input_points)
+        .unwrap();
+    let layout = TwinFixtureSumchecks::committed_claim_layout(
+        &points,
+        &TwinFixtureSumchecks::claim_routes(&points).unwrap(),
+    );
+    let output_values: Vec<Fr> = (0..layout.ids.len() as u64).map(Fr::from_u64).collect();
     let witness = recorder
-        .finish(&synthetic_output_values(), &mut prover_transcript)
+        .finish(&output_values, &mut prover_transcript)
         .unwrap();
 
     // Verifier: draw → generated verify_zk (coefficient draws, committed
-    // rounds, output-claim row commitments).
+    // rounds, derived points, output-claim row commitments).
     let mut verifier_transcript = verifier_transcript("engine-zk-twin", prover_transcript.narg());
     let _verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-    let (consistency, output_commitments) = sumchecks
-        .verify_zk::<Bn254G1, _>(witness.output_claim_rows.len(), &mut verifier_transcript)
+    let verified = sumchecks
+        .verify_zk::<Bn254G1, _>(ROW_LEN, &input_points, &mut verifier_transcript)
         .unwrap();
+    assert_eq!(verified.output_points, points);
+    let (consistency, output_commitments) =
+        (verified.consistency, verified.output_claims.commitments);
 
     assert_eq!(consistency.challenges(), proved.challenges);
     assert_eq!(

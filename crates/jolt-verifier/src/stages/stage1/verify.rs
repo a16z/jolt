@@ -9,11 +9,7 @@ use super::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1Challenges, Stage1ClearOutput,
     Stage1Output, Stage1ZkOutput,
 };
-use crate::{
-    stages::{uniskip, zk::committed, zk::outputs::CommittedOutputClaimOutput},
-    verifier::CheckedInputs,
-    VerifierError,
-};
+use crate::{stages::uniskip, verifier::CheckedInputs, VerifierError};
 
 pub fn verify<F, C, H>(
     checked: &CheckedInputs,
@@ -81,12 +77,7 @@ where
         };
         let input_points = sumchecks.empty_input_points();
 
-        // Clear and committed proofs share the composed member's canonical order.
-        let shape = committed::output_claim_shape(checked, sumchecks.output_claim_count())?;
-        let (remainder_consistency, commitments) =
-            sumchecks.verify_zk(shape.row_count(), transcript)?;
-        let output_points =
-            sumchecks.derive_opening_points(&remainder_consistency.challenges(), &input_points)?;
+        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
 
         Ok(Stage1Output::Zk(Stage1ZkOutput {
             challenges: Stage1Challenges {
@@ -95,9 +86,9 @@ where
             },
             uniskip_consistency: uniskip.consistency,
             uniskip_output_claims: uniskip.output_claims,
-            remainder_consistency,
-            remainder_output_claims: CommittedOutputClaimOutput { shape, commitments },
-            output_points,
+            remainder_consistency: batch.consistency,
+            remainder_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }))
     }
 }

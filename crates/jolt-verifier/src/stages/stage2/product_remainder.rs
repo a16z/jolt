@@ -10,7 +10,6 @@
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
-use std::collections::BTreeSet;
 
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
@@ -29,7 +28,7 @@ pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductRemainderInputClaims, ProductRemainderOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::spartan, geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltRelationId,
+    geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltRelationId,
     SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
@@ -106,26 +105,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    #[cfg_attr(
-        not(feature = "field-inline"),
-        expect(
-            clippy::useless_conversion,
-            reason = "field-inline selects a composed claim or opening id"
-        )
-    )]
-    fn wire_output_openings(&self) -> BTreeSet<<SelectedSymbolic as SymbolicSumcheck>::OpeningId> {
-        // Two wire openings beyond the output-`Expr`-referenced set:
-        // `write_lookup_output_to_rd` and `virtual_instruction` are absorbed here
-        // but their constraining fold happens downstream, in stage 6a's bytecode
-        // read-RAF input claim.
-        let mut openings = self.symbolic().expected_output_openings::<F>();
-        openings.extend::<[<SelectedSymbolic as SymbolicSumcheck>::OpeningId; 2]>([
-            spartan::write_lookup_output_to_rd_product().into(),
-            spartan::virtual_instruction_product().into(),
-        ]);
-        openings
     }
 
     fn derive_opening_points(

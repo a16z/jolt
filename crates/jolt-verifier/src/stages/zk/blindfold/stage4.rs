@@ -1,8 +1,5 @@
 use super::*;
 
-use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
-use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
-
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
@@ -131,12 +128,6 @@ where
             + input.stage4.challenges.ram_val_check.gamma,
     )?;
 
-    let output_ids = stage4_output_ids::<PCS::Field>(
-        input.checked.untrusted_advice_commitment_present,
-        input.checked.trusted_advice_commitment_present,
-        input.checked.precommitted.program_image.is_some(),
-    );
-
     // Member declaration order (= batching-coefficient draw order): the field-inline
     // read/write member sits between the registers and the RAM value-check, exactly as in
     // `Stage4Sumchecks`.
@@ -153,134 +144,5 @@ where
         &input.stage4.batch_consistency,
         &input.stage4.batch_output_claims,
         values,
-        output_ids,
-        Vec::new(),
     )
-}
-
-/// The stage-4 committed output row order: the staged `Val_init` advice / program-image
-/// openings first, the register read/write openings, then (under `field-inline`) the five
-/// field-register read/write rows, then `ram_ra`/`ram_inc` — the clear absorb order
-/// (`Stage4OutputClaims::opening_values`) exactly.
-fn stage4_output_ids<F: JoltField>(
-    untrusted_advice: bool,
-    trusted_advice: bool,
-    program_image: bool,
-) -> Vec<ComposedOpeningId> {
-    let mut output_ids: Vec<ComposedOpeningId> = Vec::new();
-    if untrusted_advice {
-        output_ids.push(ram::val_check_advice_opening(JoltAdviceKind::Untrusted).into());
-    }
-    if trusted_advice {
-        output_ids.push(ram::val_check_advice_opening(JoltAdviceKind::Trusted).into());
-    }
-    if program_image {
-        output_ids.push(program_image::ram_val_check_contribution_opening().into());
-    }
-    output_ids.extend(composite_ids(
-        RegistersReadWriteOutputClaims::<F> {
-            registers_val: F::zero(),
-            rs1_ra: F::zero(),
-            rs2_ra: F::zero(),
-            rd_wa: F::zero(),
-            rd_inc: F::zero(),
-        }
-        .canonical_order(),
-    ));
-    // The five field-register read/write rows, spliced after the register openings and before
-    // `ram_ra`/`ram_inc` — the clear absorb order.
-    #[cfg(feature = "field-inline")]
-    output_ids.extend(super::field_inline::stage4_output_ids());
-    // The advice / program-image openings are produced by the RAM value-check
-    // instance, but the stage-4 commit (flush) order appends them *first* (above),
-    // before the registers; so here, at the tail, only the main `ram_ra`/`ram_inc`
-    // canonical order is emitted (advice / program-image leaves left `None`),
-    // preserving the prover's per-stage opening-id block order.
-    output_ids.extend(composite_ids(
-        RamValCheckOutputClaims::<F> {
-            untrusted_advice: None,
-            trusted_advice: None,
-            program_image: None,
-            ram_ra: F::zero(),
-            ram_inc: F::zero(),
-        }
-        .canonical_order(),
-    ));
-    output_ids
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(feature = "field-inline")]
-    use crate::stages::stage4::outputs::FieldRegistersReadWriteOutputClaims;
-    use jolt_field::{Fr, Ring};
-
-    fn fr(value: u64) -> Fr {
-        Fr::from_u64(value)
-    }
-
-    /// The stage-4 committed row order is the clear curated absorb order
-    /// (`Stage4OutputClaims::opening_values`), locked entry-for-entry over sentinel-valued
-    /// claims: every lowered id resolves to the value at its row position (with field-inline
-    /// enabled: the five field-inline rows spliced after the registers, before
-    /// `ram_ra`/`ram_inc`).
-    #[test]
-    fn stage4_output_ids_match_the_clear_absorb_order() {
-        use crate::stages::stage4::outputs::Stage4OutputClaims;
-        use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
-        use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
-
-        let claims = Stage4OutputClaims::<Fr> {
-            registers_read_write: RegistersReadWriteOutputClaims {
-                registers_val: fr(1),
-                rs1_ra: fr(2),
-                rs2_ra: fr(3),
-                rd_wa: fr(4),
-                rd_inc: fr(5),
-            },
-            #[cfg(feature = "field-inline")]
-            field_registers_read_write: FieldRegistersReadWriteOutputClaims {
-                registers_val: fr(11),
-                rs1_ra: fr(12),
-                rs2_ra: fr(13),
-                rd_wa: fr(14),
-                rd_inc: fr(15),
-            },
-            ram_val_check: RamValCheckOutputClaims {
-                untrusted_advice: None,
-                trusted_advice: None,
-                program_image: None,
-                ram_ra: fr(6),
-                ram_inc: fr(7),
-            },
-        };
-        let clear_values = claims.opening_values();
-        let output_ids = stage4_output_ids::<Fr>(false, false, false);
-        assert_eq!(output_ids.len(), clear_values.len());
-        #[cfg(not(feature = "field-inline"))]
-        assert_eq!(output_ids.len(), 7);
-        #[cfg(feature = "field-inline")]
-        assert_eq!(output_ids.len(), 12);
-
-        for (id, expected) in output_ids.iter().zip(clear_values) {
-            let resolved = match id {
-                ComposedOpeningId::Jolt(id) => claims
-                    .registers_read_write
-                    .resolve_output(id)
-                    .or_else(|| claims.ram_val_check.resolve_output(id)),
-                #[cfg(feature = "field-inline")]
-                ComposedOpeningId::FieldInline(id) => {
-                    claims.field_registers_read_write.resolve_output(id)
-                }
-                #[cfg(not(feature = "field-inline"))]
-                ComposedOpeningId::FieldInline(_) => None,
-            };
-            assert_eq!(
-                resolved,
-                Some(expected),
-                "row {id:?} must sit at the clear absorb position of value {expected:?}",
-            );
-        }
-    }
 }

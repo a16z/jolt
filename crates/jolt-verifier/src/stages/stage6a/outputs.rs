@@ -27,10 +27,9 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 /// `intermediate` then `val_stages`, then booleanity's `intermediate`) is the
 /// canonical Fiat-Shamir order.
 ///
-/// The bytecode read-RAF member's wire set extends its output `Expr` with the
-/// committed-program-only staged `BytecodeValClaim` openings (see its
-/// `wire_output_openings` override), so the generated output-shape
-/// count/validator cover the val-stage presence and count.
+/// The bytecode read-RAF member's claims carry the committed-program-only
+/// `BytecodeValClaim` openings beyond its output `Expr`; their points (and so
+/// their presence and count) come from its `derive_opening_points`.
 ///
 /// The generated `draw_challenges` draws each member in declaration order —
 /// the bytecode member's six gammas (its default per-field draw), then the

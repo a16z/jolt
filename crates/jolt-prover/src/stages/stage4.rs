@@ -6,10 +6,10 @@
 //! with the verifier's own promoted helpers; the private opening VALUES
 //! are evaluated through the backend as one batch (program image and advice,
 //! staged transcript-silently before the RAM
-//! value-check gamma draw). The stage's one curated behavior: a clear proof
-//! sends the staged advice/program-image openings after the gamma draws and
-//! the register and RAM openings after the rounds, while a committed proof
-//! commits all of them in the claims struct's canonical order.
+//! value-check gamma draw). The advice/program-image openings are routed
+//! `Staged`: a clear proof sends them after the gamma draws and the register
+//! and RAM openings after the rounds, while a committed proof commits all of
+//! them in the claims struct's declaration order.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
@@ -39,7 +39,7 @@ use jolt_verifier::stages::stage4::{
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::JoltWitnessPlane;
 
-use crate::recorder::ProofMode;
+use crate::recorder::{ClaimRecorder, ModeRecorder, ProofMode};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
 /// Stage 4's outputs: the verifier-typed cross-stage carrier downstream stages consume.
@@ -178,7 +178,12 @@ where
                 .field_inline
                 .read_write_dimensions(log_t),
         ),
-        ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
+        ram_val_check: RamValCheck::new(
+            trace_dimensions,
+            log_k,
+            init_structure.decomposition(),
+            init_structure.staged_points(),
+        ),
     };
     // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
     // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
@@ -187,8 +192,9 @@ where
     // The RAM value-check input claim consumes the staged openings, so a clear
     // proof sends them before the batch; a committed proof carries them in its
     // output-claim rows instead.
-    #[cfg(not(feature = "zk"))]
-    transcript.send_all(&ram_val_check_init.staged_openings().values());
+    if !<ModeRecorder<'_, VC> as ClaimRecorder>::RECORDS_STAGED {
+        ram_val_check_init.staged_openings().send(transcript);
+    }
 
     let inputs = stage4_input_values_from_upstream(
         &stage2.output_values,
@@ -203,8 +209,7 @@ where
 
     // The staged advice/program-image openings ride in from the RAM
     // value-check kernel (captured off its own consumed input claims at
-    // prepare). The driver's curation sends the post-round openings in a clear
-    // build and commits the full canonical order in a ZK build.
+    // prepare); the driver records them on the stage's `Staged` routes.
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
@@ -449,7 +454,7 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the stage-4 committed witness carries the curated row count — the
+/// ZK with field-inline enabled: the stage-4 committed witness carries the declared row count — the
 /// 5 ordinary register openings, the 5 spliced field-register read-write openings, and
 /// the 2 RAM value-check openings (no advice / program-image rows at the
 /// fixture's scale) — and the production stage-1..4 zk verifiers consume the
@@ -471,7 +476,7 @@ mod field_inline_zk {
     };
 
     #[test]
-    fn committed_stage4_witness_carries_the_curated_rows_and_verifies() {
+    fn committed_stage4_witness_carries_the_declared_rows_and_verifies() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();

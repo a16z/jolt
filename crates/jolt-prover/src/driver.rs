@@ -12,10 +12,10 @@
 //! `validate_derived_tables` → typed extraction into the stage's
 //! `OutputClaims` aggregate → per-member `park_residue` (cross-batch residues
 //! into the session; consumes the kernels, so it follows the borrowing
-//! extraction) → [`curate_opening_values`](StageProver::curate_opening_values)
-//! (default: the derive-generated canonical absorb order; curated stages
-//! override at the invocation site) → shape validation → the
-//! `expected_final_claim` hard self-check → `recorder.finish`. The recorder
+//! extraction) → the generated `validate_output_shape` against the derived
+//! points → the `expected_final_claim` hard self-check → `recorder.finish`
+//! over the generated claim values on the stage's `claim_routes` (the cells a
+//! [`ClaimRecorder`](crate::recorder::ClaimRecorder) records). The recorder
 //! is the clear/ZK seam, exactly as in `begin_batch`: no `prove_clear`/
 //! `prove_zk` split exists to drift.
 //!
@@ -38,6 +38,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
+use crate::recorder::ClaimRecorder;
 use crate::ProverError;
 
 /// The generated per-stage driver: implemented for each batch struct by
@@ -76,19 +77,8 @@ pub trait StageProver<F: JoltField>: Sized {
     ) -> Result<Proved<F, Self, Rec::Witness>, ProverError<F>>
     where
         B: KernelSource<F, Self> + ?Sized,
-        Rec: SumcheckRecorder<F>,
+        Rec: SumcheckRecorder<F> + ClaimRecorder,
         H: Sponge;
-
-    /// The stage's sent (clear) or committed (ZK) opening scalars, in the stage's curated order
-    /// (stage 6b's runtime point dedup reorders the returned values). The
-    /// default emitted by `impl_stage_prover!` returns the derive-generated
-    /// canonical order (`opening_values`); curated stages supply an override
-    /// block at the macro invocation site.
-    fn curate_opening_values(
-        &self,
-        claims: &Self::OutputClaims,
-        points: &Self::OutputPoints,
-    ) -> Result<Vec<F>, ProverError<F>>;
 }
 
 /// The per-stage kernel-source bound collector: `impl_stage_prover!` emits
@@ -418,17 +408,6 @@ macro_rules! __stage_member {
     };
 }
 
-/// The output-shape leg of the generated driver, keyed by the derive-emitted
-/// flag: `checked` runs the generated `validate_output_claims`; `unchecked`
-/// (a `no_output_shape` stage, whose wire shape is runtime-curated) has no
-/// validator to run.
-macro_rules! __stage_shape_check {
-    (checked, $self:expr, $claims:expr) => {
-        $self.validate_output_claims(&$claims)?;
-    };
-    (unchecked, $self:expr, $claims:expr) => {};
-}
-
 /// Expand one stage's [`StageProver`] and [`KernelSource`] impls from its
 /// derive-emitted member-list macro. Invoke as the member-list macro's
 /// callback, at a site where the batch's relation and aggregate names
@@ -436,25 +415,9 @@ macro_rules! __stage_shape_check {
 ///
 /// ```ignore
 /// jolt_verifier::stage3_sumchecks_members!(impl_stage_prover);
-/// // a curated stage passes its absorb-order override ahead of the list
-/// // (the first closure parameter binds the batch, i.e. `&self`):
-/// jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover curate = |batch, claims, points| { .. },);
 /// ```
 macro_rules! impl_stage_prover {
-    // Uncurated stage: default to the derive-generated canonical absorb order.
-    // The batch receiver is an explicit closure parameter (not `self`) because
-    // macro hygiene separates a `self` written in this arm from the `&self`
-    // the main arm's method signature introduces.
-    (batch = $($rest:tt)*) => {
-        $crate::driver::impl_stage_prover! {
-            curate = |__batch, __claims, __points| {
-                ::core::result::Result::Ok(__batch.opening_values(__claims))
-            },
-            batch = $($rest)*
-        }
-    };
     (
-        curate = |$curate_batch:ident, $curate_claims:ident, $curate_points:ident| $curate_body:block,
         batch = $batch:ident,
         label = $label:literal,
         aggregates = {
@@ -464,7 +427,6 @@ macro_rules! impl_stage_prover {
             output_points = $output_points:ident,
             challenges = $challenges_ty:ident,
         },
-        shape = $shape:ident,
         members = [
             $({ name: $member:ident, relation: $relation:ident, presence: $presence:ident },)+
         ]
@@ -494,7 +456,7 @@ macro_rules! impl_stage_prover {
             >
             where
                 B: $crate::driver::KernelSource<F, Self> + ?Sized,
-                Rec: ::jolt_sumcheck::SumcheckRecorder<F>,
+                Rec: ::jolt_sumcheck::SumcheckRecorder<F> + $crate::recorder::ClaimRecorder,
                 H: ::jolt_transcript::Sponge,
             {
                 let __stage_span =
@@ -549,9 +511,13 @@ macro_rules! impl_stage_prover {
                 };
                 $($crate::driver::__stage_member!(park $presence $member, session);)+
 
-                let __opening_values =
-                    self.curate_opening_values(&__output_claims, &__output_points)?;
-                $crate::driver::__stage_shape_check!($shape, self, __output_claims);
+                self.validate_output_shape(&__output_claims, &__output_points)?;
+                let __routes = Self::claim_routes(&__output_points)?;
+                let __claim_values = if Rec::RECORDS_STAGED {
+                    Self::committed_claim_values(&__output_claims, &__routes)
+                } else {
+                    Self::wire_claim_values(&__output_claims, &__routes)
+                };
 
                 let __expected = self.expected_final_claim(
                     &__coefficients,
@@ -574,7 +540,7 @@ macro_rules! impl_stage_prover {
                     );
                 }
 
-                let __witness = recorder.finish(&__opening_values, transcript)?;
+                let __witness = recorder.finish(&__claim_values, transcript)?;
                 ::core::result::Result::Ok($crate::driver::Proved {
                     witness: __witness,
                     output_claims: __output_claims,
@@ -582,18 +548,6 @@ macro_rules! impl_stage_prover {
                     final_claim: __proved.final_claim,
                 })
             }
-
-            fn curate_opening_values(
-                &self,
-                $curate_claims: &Self::OutputClaims,
-                $curate_points: &Self::OutputPoints,
-            ) -> ::core::result::Result<::std::vec::Vec<F>, $crate::ProverError<F>> {
-                let $curate_batch = self;
-                let _ = ($curate_batch, $curate_points);
-                $curate_body
-            }
-
-
         }
 
         impl<F: ::jolt_field::JoltField, B> $crate::driver::KernelSource<F, $batch<F>> for B
@@ -623,4 +577,4 @@ macro_rules! impl_stage_prover {
     };
 }
 
-pub(crate) use {__stage_member, __stage_shape_check, impl_stage_prover};
+pub(crate) use {__stage_member, impl_stage_prover};

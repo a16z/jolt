@@ -18,6 +18,20 @@ use crate::{config::JoltProtocolConfig, jolt_protocol_id, num, VerifierError, JO
 /// under so a build mismatch is reported as such instead of as a transcript
 /// failure. The verifier binds its own configuration into the transcript, so
 /// `protocol` carries no soundness weight.
+///
+/// The argument string's regions, in order, each opened by its
+/// [`sites`](crate::sites) label:
+///
+/// 1. [`ProofHeader`], then [`ProofCommitments`].
+/// 2. Stages 1–7: per batch, any uni-skip round, the rounds, then the output
+///    claims in the shape of the verifier-derived output points. A clear proof
+///    sends the generated `wire_claim_values`; a committed proof sends row
+///    commitments over the generated `committed_claim_layout`. A clear stage 4
+///    sends its
+///    [`RamValCheckStagedOpenings`](crate::stages::stage4::ram_val_check::RamValCheckStagedOpenings)
+///    before its batch.
+/// 3. Stage 8: the joint opening.
+/// 4. BlindFold, in committed proofs only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltProof {
     pub protocol: JoltProtocolConfig,

@@ -98,17 +98,6 @@ where
         add_program_image_reduction_cycle_publics(input, values, layout)?;
     }
 
-    let mut address_phase_output_ids: Vec<ComposedOpeningId> =
-        vec![bytecode::bytecode_read_raf_address_phase_opening().into()];
-    if bytecode_reduction_layout.is_some() {
-        address_phase_output_ids.extend(
-            (0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES)
-                .map(bytecode_reduction::bytecode_val_stage_opening)
-                .map(ComposedOpeningId::from),
-        );
-    }
-    address_phase_output_ids.push(booleanity::booleanity_address_phase_opening().into());
-
     // Field op flags use the ordinary stage-1 circuit-flag fold. The composed
     // claim adds field-register access terms at the extended stage-4/5 powers,
     // referencing the same committed opening rows as the clear relation.
@@ -122,8 +111,6 @@ where
         &input.stage6a.consistency,
         &input.stage6a.output_claims,
         values,
-        address_phase_output_ids,
-        Vec::new(),
     )
 }
 

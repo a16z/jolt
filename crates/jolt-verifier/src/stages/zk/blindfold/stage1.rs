@@ -27,8 +27,6 @@ where
         input.stage1.uniskip_consistency.clone(),
         &input.stage1.uniskip_output_claims,
         values,
-        vec![outer_uniskip_opening().into()],
-        Vec::new(),
         VerifierExpr::zero(),
         opening(outer_uniskip_opening()),
     )?;
@@ -52,11 +50,6 @@ where
     for (id, value) in remainder_formula.public_coefficients() {
         values.public(VerifierPublicId::SpartanOuter(id), value)?;
     }
-
-    // The composed opening row order: the common value/flag openings in canonical order, then (under
-    // `field-inline`) the five field value/product columns in appended-column order — the clear path's
-    // absorb order exactly.
-    let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
 
     #[expect(
         clippy::arithmetic_side_effects,
@@ -104,30 +97,9 @@ where
         input.stage1.remainder_consistency.consistency.clone(),
         &input.stage1.remainder_output_claims,
         values,
-        opening_ids,
-        Vec::new(),
         input_claim,
         output_claim,
     )
-}
-
-/// The composed stage-1 committed opening row order: the common Spartan-outer openings in
-/// canonical (`dimensions.variables()`) order, then — under `field-inline` — the five
-/// field value/product openings in appended-column order. This is exactly `stage1::verify`'s
-/// absorb/commit order.
-pub(super) fn stage1_spartan_outer_opening_ids(
-    dimensions: &SpartanOuterDimensions,
-) -> Vec<ComposedOpeningId> {
-    #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-    let mut opening_ids: Vec<ComposedOpeningId> = dimensions
-        .variables()
-        .iter()
-        .copied()
-        .map(|variable| outer_opening(variable).into())
-        .collect();
-    #[cfg(feature = "field-inline")]
-    opening_ids.extend(super::field_inline::stage1_appended_opening_ids());
-    opening_ids
 }
 
 fn stage1_spartan_outer_output_expr<F: JoltField>(
@@ -146,8 +118,27 @@ fn stage1_spartan_outer_output_expr<F: JoltField>(
 )]
 mod tests {
     use super::*;
+    use crate::stages::relations::ClaimRoutes;
+    use crate::stages::stage1::outer_remainder::OuterRemainder;
+    use crate::stages::stage1::outputs::Stage1BatchSumchecks;
+    use jolt_claims::protocols::jolt::geometry::spartan::outer_opening;
     use jolt_field::{Fr, Ring};
+    use num_traits::Zero;
     use std::collections::BTreeMap;
+
+    /// The stage-1 committed row ids, from the stage's generated layout.
+    fn stage1_committed_ids(log_t: usize) -> Vec<ComposedOpeningId> {
+        let dimensions = SpartanOuterDimensions::rv64(log_t);
+        let tau = vec![Fr::from_u64(2); log_t.saturating_add(2)];
+        let sumchecks = Stage1BatchSumchecks {
+            outer_remainder: OuterRemainder::new(dimensions, tau, Fr::from_u64(17)),
+        };
+        let challenges: Vec<Fr> = (0..=(log_t as u64)).map(Fr::from_u64).collect();
+        let points = sumchecks
+            .derive_opening_points(&challenges, &sumchecks.empty_input_points())
+            .unwrap();
+        Stage1BatchSumchecks::committed_claim_layout(&points, &ClaimRoutes::default()).ids
+    }
 
     /// Resolve one of the coefficient-table publics from its `(id, value)`
     /// list; ids outside the SpartanOuter family resolve to zero (the stage-1
@@ -166,13 +157,14 @@ mod tests {
         }
     }
 
-    /// The composed opening row order is the clear absorb order: the common value/flag openings in
-    /// canonical order, then (with field-inline enabled) the five field value/product openings in
-    /// appended-column order, matching the composed jolt-r1cs column count.
+    /// The committed row order is the composed R1CS column order the factored
+    /// output formula consumes: the common value/flag openings in canonical
+    /// order, then (with field-inline enabled) the five field value/product
+    /// openings in appended-column order.
     #[test]
     fn stage1_opening_ids_follow_the_composed_column_order() {
         let dimensions = SpartanOuterDimensions::rv64(3);
-        let ids = stage1_spartan_outer_opening_ids(&dimensions);
+        let ids = stage1_committed_ids(3);
 
         let expected_len = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
         assert_eq!(ids.len(), expected_len);
@@ -219,7 +211,7 @@ mod tests {
             remainder: &remainder,
         })
         .unwrap();
-        let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
+        let opening_ids = stage1_committed_ids(log_t);
         let openings: Vec<Fr> = (0..opening_ids.len() as u64)
             .map(|i| Fr::from_u64(1_000 + i))
             .collect();

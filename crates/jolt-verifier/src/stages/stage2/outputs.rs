@@ -164,6 +164,10 @@ pub struct Stage2ZkOutput<F: JoltField, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one stage output per proof, built once and never stored in bulk"
+)]
 pub enum Stage2Output<F: JoltField, C> {
     Clear(Stage2ClearOutput<F>),
     Zk(Stage2ZkOutput<F, C>),
@@ -212,7 +216,7 @@ impl<F: JoltField, C> Stage2Output<F, C> {
 mod tests {
     use super::*;
     use crate::stages::relations::test_transcript::assert_same_draws;
-    use crate::stages::relations::ConcreteSumcheck;
+    use crate::stages::relations::{ClaimRoutes, ConcreteSumcheck};
     use common::jolt_device::{JoltDevice, MemoryConfig};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
@@ -373,14 +377,14 @@ mod tests {
     /// distinct sentinels here to prove the skip is id-driven, not value-driven.
     #[cfg(not(feature = "field-inline"))]
     #[test]
-    fn opening_values_follow_canonical_order() {
+    fn wire_claims_follow_canonical_order() {
         let mut claims = consistent_values();
         claims.instruction_claim_reduction.lookup_output = fr(101);
         claims.instruction_claim_reduction.left_instruction_input = fr(102);
         claims.instruction_claim_reduction.right_instruction_input = fr(103);
 
         assert_eq!(
-            sumchecks().opening_values(&claims),
+            Stage2BatchSumchecks::wire_claim_values(&claims, &ClaimRoutes::default()),
             (1..=15).map(fr).collect::<Vec<_>>()
         );
     }
@@ -392,7 +396,7 @@ mod tests {
     /// distinct sentinels to prove the id-driven skip still applies.
     #[cfg(feature = "field-inline")]
     #[test]
-    fn opening_values_follow_canonical_field_inline_order() {
+    fn wire_claims_follow_canonical_field_inline_order() {
         let mut claims = consistent_values();
         claims.instruction_claim_reduction.lookup_output = fr(101);
         claims.instruction_claim_reduction.left_instruction_input = fr(102);
@@ -412,27 +416,9 @@ mod tests {
             // RAM RAF evaluation, RAM output check.
             .chain([fr(14), fr(15)])
             .collect::<Vec<_>>();
-        assert_eq!(sumchecks().opening_values(&claims), expected);
-    }
-
-    /// The generated `output_claim_count` sums the members' wire sets: 16
-    /// expression-referenced openings, minus the reduction's 3 aliases, plus the product
-    /// remainder's 2 staged openings — plus, under `field-inline`, the product member's 3
-    /// field-inline openings (the field-inline reduction aliases them).
-    #[test]
-    fn output_claim_count_matches_absorbed_openings() {
-        let sumchecks = sumchecks();
         assert_eq!(
-            sumchecks.opening_values(&consistent_values()).len(),
-            sumchecks.output_claim_count()
-        );
-        assert_eq!(
-            sumchecks.output_claim_count(),
-            if cfg!(feature = "field-inline") {
-                18
-            } else {
-                15
-            }
+            Stage2BatchSumchecks::wire_claim_values(&claims, &ClaimRoutes::default()),
+            expected
         );
     }
 
@@ -451,7 +437,7 @@ mod tests {
         )
     )]
     fn alias_declarations_are_valid() {
-        use jolt_claims::SymbolicSumcheck as _;
+        use jolt_claims::{OutputClaims as _, SymbolicSumcheck as _};
         use std::collections::BTreeSet;
 
         let sumchecks = sumchecks();
@@ -459,7 +445,11 @@ mod tests {
             .instruction_claim_reduction
             .symbolic()
             .expected_output_openings::<Fr>();
-        let source_wire_openings = sumchecks.product_remainder.wire_output_openings();
+        let source_wire_openings: BTreeSet<_> = consistent_values()
+            .product_remainder
+            .canonical_order()
+            .into_iter()
+            .collect();
 
         let pairs = InstructionClaimReduction::<Fr>::aliased_output_openings();
         assert_eq!(pairs.len(), 3);

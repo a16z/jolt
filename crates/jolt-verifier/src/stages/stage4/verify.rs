@@ -42,7 +42,6 @@ use crate::{
     stages::{
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
-        zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -149,6 +148,7 @@ where
         r_address,
         ram_val_check_public_eval,
     )?;
+    let staged_points = init_structure.staged_points();
 
     // Field-register dimensions use the compile-time config's phase split, so they need
     // no validation of a proof-supplied split like the ordinary register dimensions above.
@@ -160,7 +160,12 @@ where
                 .field_inline
                 .read_write_dimensions(log_t),
         ),
-        ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
+        ram_val_check: RamValCheck::new(
+            trace_dimensions,
+            log_k,
+            init_structure.decomposition(),
+            staged_points.clone(),
+        ),
     };
 
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
@@ -174,7 +179,7 @@ where
         // The staged advice / program-image openings feed the RAM value-check input
         // claim, so they arrive before the batch; attaching them also carries them
         // downstream for the stage-6/7 address-phase reductions.
-        let staged = RamValCheckStagedOpenings::receive(&init_structure, transcript)?;
+        let staged = RamValCheckStagedOpenings::receive(&staged_points, transcript)?;
         let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, &staged)?;
 
         let input_values = stage4_input_values_from_upstream(
@@ -194,7 +199,14 @@ where
             &challenges,
             transcript,
             4,
-            |sumchecks, _, transcript| sumchecks.receive_output_claims(staged, transcript),
+            |points, transcript| {
+                Stage4Sumchecks::receive_output_claims(
+                    points,
+                    &Stage4Sumchecks::claim_routes(points)?,
+                    staged.by_id(),
+                    transcript,
+                )
+            },
         )?;
 
         return Ok(Stage4Output::Clear(Stage4ClearOutput {
@@ -205,28 +217,22 @@ where
     }
 
     {
-        let shape = committed::output_claim_shape(checked, sumchecks.output_claim_count())?;
-        let (consistency, commitments) = sumchecks.verify_zk(shape.row_count(), transcript)?;
-        let batch_output_claims = CommittedOutputClaimOutput { shape, commitments };
-
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points and init structure. Advice / program-image openings live in
-        // BlindFold for ZK proofs, so `derive_opening_points` leaves those leaves
-        // absent in the produced points.
+        // output points and init structure. The staged cells are committed rows
+        // like the rest of the stage's claims.
         let input_points = stage4_input_points_from_upstream(
             stage2.batch_output_points(),
             stage3.output_points(),
             &init_structure,
         );
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
 
         Ok(Stage4Output::Zk(Stage4ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
+            batch_consistency: batch.consistency,
+            batch_output_claims: batch.output_claims,
             ram_val_check_public_eval,
-            output_points,
+            output_points: batch.output_points,
         }))
     }
 }

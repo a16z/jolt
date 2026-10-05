@@ -23,12 +23,8 @@ use super::{
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     stages::{
-        stage1::Stage1Output,
-        stage2::Stage2Output,
-        stage3::Stage3Output,
-        stage4::Stage4Output,
+        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
         stage5::Stage5Output,
-        zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -94,17 +90,16 @@ where
     let address_input_points = address_sumchecks.empty_input_points();
 
     if checked.zk {
-        let shape = committed::output_claim_shape(checked, address_sumchecks.output_claim_count())?;
-        let (consistency, commitments) =
-            address_sumchecks.verify_zk(shape.row_count(), transcript)?;
-        let output_claims = CommittedOutputClaimOutput { shape, commitments };
-        let output_points = address_sumchecks
-            .derive_opening_points(&consistency.challenges(), &address_input_points)?;
+        let batch = address_sumchecks.verify_zk(
+            checked.committed_row_len()?,
+            &address_input_points,
+            transcript,
+        )?;
         return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
             challenges: carried,
-            consistency,
-            output_claims,
-            output_points,
+            consistency: batch.consistency,
+            output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }));
     }
 
@@ -180,6 +175,7 @@ mod tests {
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
     use crate::stages::relations::test_transcript::{assert_same_draws, fresh};
+    use crate::stages::relations::ClaimRoutes;
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
@@ -304,13 +300,12 @@ mod tests {
     /// Locks the stage-6a address-phase opening order: bytecode read-RAF
     /// `intermediate`, each `val_stages` entry, then booleanity `intermediate`.
     #[test]
-    fn stage6a_opening_values_follow_canonical_order() {
-        let sumchecks = sumchecks(Vec::new(), Vec::new());
+    fn stage6a_wire_claims_follow_canonical_order() {
         let mut claims = sample_claims();
         claims.bytecode_read_raf.val_stages = (903..908).map(fr).collect();
 
         assert_eq!(
-            sumchecks.opening_values(&claims),
+            Stage6aSumchecks::wire_claim_values(&claims, &ClaimRoutes::default()),
             [901, 903, 904, 905, 906, 907, 902].map(fr).to_vec()
         );
     }

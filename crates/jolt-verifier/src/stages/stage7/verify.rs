@@ -36,7 +36,6 @@ use crate::{
     stages::{
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
-        zk::{committed, outputs::CommittedOutputClaimOutput},
         PrecommittedSchedule,
     },
     verifier::CheckedInputs,
@@ -96,23 +95,18 @@ where
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk {
-        let shape = committed::output_claim_shape(checked, sumchecks.output_claim_count())?;
-        let (consistency, commitments) = sumchecks.verify_zk(shape.row_count(), transcript)?;
-        let batch_output_claims = CommittedOutputClaimOutput { shape, commitments };
-
         // The produced opening points, derived off the committed batch consistency;
         // stage 8 reads the hamming point and resolves the precommitted finals off
         // them. BlindFold recomputes each relation's sumcheck point and publics
         // independently from `batch_consistency`.
         let input_points = sumchecks.empty_input_points();
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_consistency: batch.consistency,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }));
     }
 

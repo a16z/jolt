@@ -365,6 +365,16 @@ pub struct CheckedInputs {
     pub precommitted: PrecommittedSchedule,
 }
 
+impl CheckedInputs {
+    /// The committed output-claim row length: the vector-commitment capacity.
+    /// `validate_zk_vector_commitment_setup` has already checked it is at
+    /// least `MAX_BLINDFOLD_GENERATORS`, so it is nonzero.
+    pub fn committed_row_len(&self) -> Result<usize, VerifierError> {
+        self.vc_capacity
+            .ok_or(VerifierError::MissingVectorCommitmentSetup)
+    }
+}
+
 /// Absorbs the public preamble: the verifier's protocol axes, the
 /// preprocessing digest, the public I/O, and the entry address. Both sides run
 /// it right after the proof header.

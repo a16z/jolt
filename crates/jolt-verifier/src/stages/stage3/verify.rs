@@ -20,7 +20,6 @@ use crate::{
     stages::{
         stage1::{Stage1BatchOutputClaims, Stage1Output},
         stage2::{Stage2BatchOutputClaims, Stage2Output},
-        zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -95,17 +94,17 @@ where
     }
 
     {
-        let shape = committed::output_claim_shape(checked, sumchecks.output_claim_count())?;
-        let (consistency, commitments) = sumchecks.verify_zk(shape.row_count(), transcript)?;
-        let batch_output_claims = CommittedOutputClaimOutput { shape, commitments };
-        let output_points = sumchecks
-            .derive_opening_points(&consistency.challenges(), &sumchecks.empty_input_points())?;
+        let batch = sumchecks.verify_zk(
+            checked.committed_row_len()?,
+            &sumchecks.empty_input_points(),
+            transcript,
+        )?;
 
         Ok(Stage3Output::Zk(Stage3ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_consistency: batch.consistency,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }))
     }
 }

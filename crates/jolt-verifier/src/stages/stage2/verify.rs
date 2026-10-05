@@ -37,7 +37,6 @@ use crate::{
         relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
         uniskip,
-        zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -179,11 +178,7 @@ where
             });
         };
         // Both modes omit aliases from the canonical member output rows.
-        let shape = committed::output_claim_shape(checked, sumchecks.output_claim_count())?;
-        let (consistency, commitments) = sumchecks.verify_zk(shape.row_count(), transcript)?;
-        let batch_output_claims = CommittedOutputClaimOutput { shape, commitments };
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
 
         return Ok(Stage2Output::Zk(Stage2ZkOutput {
             challenges,
@@ -192,9 +187,9 @@ where
             product_tau_high: uniskip.tau_high,
             product_uniskip_consistency: product_uniskip.consistency,
             product_uniskip_output_claims: product_uniskip.output_claims,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_consistency: batch.consistency,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }));
     }
 

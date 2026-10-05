@@ -14,11 +14,10 @@
 //! and `cycle_challenges` helpers (the batch suppresses the generated draw),
 //! the batch is built by the verifier's own promoted
 //! `Stage6bSumchecks::build_from_parts` over the clear
-//! carriers, and the driver's curation hook supplies
-//! the verifier's promoted `stage6b_opening_values` — the curated order with
-//! the runtime dedup of booleanity's `BytecodeRa` claims against the
-//! bytecode read-RAF points (which fires when the bytecode address width is
-//! a multiple of the committed chunk width).
+//! carriers, and the driver records the claims on the batch's generated
+//! routes — including the runtime alias of booleanity's `BytecodeRa` claims
+//! to the bytecode read-RAF points (which fires when the bytecode address
+//! width is a multiple of the committed chunk width).
 
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
@@ -384,10 +383,9 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the stage-6b committed witness carries the curated row count — the
-/// alias-deduped cycle-point cell total, whose field-inline share is exactly the one
-/// spliced reduced `FieldRdInc` row — and the production stage-1..6b zk
-/// verifiers consume the prover's argument string.
+/// ZK with field-inline enabled: the stage-6b committed witness carries the generated layout's
+/// row count, whose field-inline share is exactly the one reduced `FieldRdInc` row, and the
+/// production stage-1..6b zk verifiers consume the prover's argument string.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
@@ -405,7 +403,7 @@ mod field_inline_zk {
     };
 
     #[test]
-    fn committed_stage6b_witness_carries_the_curated_rows_and_verifies() {
+    fn committed_stage6b_witness_carries_the_layout_rows_and_verifies() {
         let witness = addi_only_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
@@ -447,10 +445,9 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The committed row total is the verifier's expectation: the derived
-        // output-point cell count minus the runtime booleanity-vs-bytecode
-        // aliases. The field-inline reduction contributes exactly one of those cells —
-        // its single reduced `FieldRdInc` opening.
+        // The committed row total is the verifier's generated layout over the
+        // derived points and the batch's routes (the booleanity-vs-bytecode
+        // aliases dropped).
         let values: Vec<Fr> = out
             .committed_witness
             .output_claim_rows
@@ -459,17 +456,11 @@ mod field_inline_zk {
             .copied()
             .collect();
         let cycle_points = &out.clear_output.output_points;
-        let booleanity_point = cycle_points.booleanity_opening_point().unwrap().to_vec();
-        let aliased = cycle_points
-            .bytecode_read_raf
-            .bytecode_ra
-            .iter()
-            .filter(|point| point.as_slice() == booleanity_point)
-            .count();
-        assert_eq!(
-            values.len(),
-            cycle_points.point_count().saturating_sub(aliased)
+        let layout = Stage6bSumchecks::committed_claim_layout(
+            cycle_points,
+            &Stage6bSumchecks::claim_routes(cycle_points).unwrap(),
         );
+        assert_eq!(values.len(), layout.ids.len());
         assert_eq!(
             OutputClaims::opening_values(
                 &out.clear_output

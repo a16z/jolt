@@ -12,7 +12,10 @@
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::geometry::spartan::{
+    outer_uniskip_opening, product_uniskip_opening,
+};
+use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_field::CanonicalDecode;
 use jolt_field::JoltField;
 use jolt_r1cs::constraints::jolt::{
@@ -24,7 +27,8 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
-use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
+use crate::stages::relations::CommittedClaimLayout;
+use crate::stages::zk::outputs::{CommittedOutputClaimOutput, CommittedOutputClaimShape};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
@@ -38,6 +42,8 @@ const UNISKIP_ROUNDS: usize = 1;
 /// two constructors are the only instances.
 pub struct UniskipParams {
     stage: JoltRelationId,
+    /// The round's single output opening.
+    output_opening: JoltOpeningId,
     /// The stage number reported by `StageClaimOutputMismatch`.
     stage_number: usize,
     degree: usize,
@@ -49,6 +55,7 @@ impl UniskipParams {
     pub fn spartan_outer() -> Self {
         Self {
             stage: JoltRelationId::SpartanOuter,
+            output_opening: outer_uniskip_opening(),
             stage_number: 1,
             degree: SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
@@ -59,6 +66,7 @@ impl UniskipParams {
     pub fn spartan_product() -> Self {
         Self {
             stage: JoltRelationId::SpartanProductVirtualization,
+            output_opening: product_uniskip_opening(),
             stage_number: 2,
             degree: SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
@@ -180,7 +188,13 @@ where
     C: CanonicalDecode,
     H: Sponge,
 {
-    let shape = committed::output_claim_shape(checked, 1)?;
+    let shape = CommittedOutputClaimShape::new(
+        checked.committed_row_len()?,
+        CommittedClaimLayout {
+            ids: vec![params.output_opening.into()],
+            aliases: Vec::new(),
+        },
+    );
     let (consistency, commitments) = SumcheckVerifier::verify_committed(
         SumcheckStatement::new(UNISKIP_ROUNDS, params.degree),
         shape.row_count(),

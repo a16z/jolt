@@ -16,10 +16,8 @@ use crate::VerifierError;
 /// `#[derive(SumcheckBatch)]` generates the `Stage1BatchInputClaims<F>` /
 /// `Stage1BatchInputPoints<F>`, `Stage1BatchOutputClaims<F>` /
 /// `Stage1BatchOutputPoints<F>`, and `Stage1BatchChallenges<F>` aggregates — one
-/// field per instance, in this declaration order. With a single instance and no
-/// cross-relation aliasing there is no `no_opening_values` opt-out: the
-/// generated absorb (`opening_values` / `append_output_claims` on this struct)
-/// delegates to the member's typed output claims: base columns followed by
+/// field per instance, in this declaration order. The generated claim
+/// plumbing walks the member's typed output claims: base columns followed by
 /// field-inline columns when enabled.
 ///
 /// The member's `SpartanOuterPublic` coefficient table depends on the batch's own
@@ -143,6 +141,10 @@ pub struct Stage1ZkOutput<F: JoltField, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one stage output per proof, built once and never stored in bulk"
+)]
 pub enum Stage1Output<F: JoltField, C> {
     Clear(Stage1ClearOutput<F>),
     Zk(Stage1ZkOutput<F, C>),

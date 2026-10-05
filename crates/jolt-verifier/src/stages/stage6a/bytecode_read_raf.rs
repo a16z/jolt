@@ -17,7 +17,6 @@ use jolt_claims::protocols::composed::ComposedClaims;
 use jolt_claims::protocols::composed::ReadRafAddressPhase as ComposedReadRafAddressPhase;
 #[cfg(not(feature = "akita"))]
 use relations::bytecode::ReadRafAddressPhase as BaseAddressPhaseSymbolic;
-use std::collections::BTreeSet;
 
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
@@ -358,21 +357,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    fn wire_output_openings(
-        &self,
-    ) -> BTreeSet<<AddressPhaseSymbolic as SymbolicSumcheck>::OpeningId> {
-        // Committed-program mode absorbs the staged `BytecodeValClaim` columns
-        // beyond the output-`Expr` set (the address-phase intermediate); their
-        // constraining fold happens in stage 6b's bytecode claim reduction.
-        let mut openings = self.symbolic().expected_output_openings::<F>();
-        openings.extend((0..self.num_val_stages()).map(|i| {
-            <AddressPhaseSymbolic as SymbolicSumcheck>::OpeningId::from(
-                bytecode_reduction::bytecode_val_stage_opening(i),
-            )
-        }));
-        openings
     }
 
     #[cfg_attr(

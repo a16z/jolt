@@ -245,8 +245,8 @@ mod field_inline_zk {
 
         // The committed witness carries the composed 50 output-claim values
         // (45 common openings + five field value/product openings), row-committed in
-        // capacity-sized chunks — the shape the verifier's
-        // `composed_output_claim_count` check derives.
+        // capacity-sized chunks — the layout the verifier's generated
+        // `committed_claim_layout` derives.
         let row_lens: Vec<usize> = out
             .committed_witness
             .output_claim_rows

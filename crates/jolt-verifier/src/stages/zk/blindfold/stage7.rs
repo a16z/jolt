@@ -121,31 +121,21 @@ where
         add_program_image_reduction_address_publics(input, values, layout, &point)?;
     }
 
-    let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
-    let mut output_ids = composite_ids(output_openings.all());
     let mut claims = vec![relation_claim(&hamming_claims)];
     if let Some(claim) = trusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted).into());
     }
     if let Some(claim) = untrusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted).into());
     }
-    if let (Some(layout), Some(claim)) = (
+    if let (Some(_), Some(claim)) = (
         bytecode_reduction_layout.as_ref(),
         bytecode_reduction_claims,
     ) {
         claims.push(relation_claim(&claim));
-        output_ids.extend(
-            (0..layout.chunk_count())
-                .map(bytecode_reduction::final_bytecode_chunk_opening)
-                .map(ComposedOpeningId::from),
-        );
     }
     if let Some(claim) = program_image_reduction_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(program_image::final_program_image_opening().into());
     }
     add_batched_stage(
         builder,
@@ -155,7 +145,5 @@ where
         &input.stage7.batch_consistency,
         &input.stage7.batch_output_claims,
         values,
-        output_ids,
-        Vec::new(),
     )
 }

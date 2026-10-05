@@ -33,7 +33,6 @@ use crate::{
     stages::{
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
-        zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -137,24 +136,19 @@ where
     {
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
-        let shape = committed::output_claim_shape(checked, sumchecks.output_claim_count())?;
-        let (consistency, commitments) = sumchecks.verify_zk(shape.row_count(), transcript)?;
-        let batch_output_claims = CommittedOutputClaimOutput { shape, commitments };
-
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
         // output points; `derive_opening_points` ignores the instruction relation's
         // input points, so carrying the real claim-reduction point here is harmless.
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
-        let instruction_r_address = output_points.instruction_r_address();
+        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
+        let instruction_r_address = batch.output_points.instruction_r_address();
 
         Ok(Stage5Output::Zk(Stage5ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_consistency: batch.consistency,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
             instruction_r_address,
         }))
     }
