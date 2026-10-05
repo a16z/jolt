@@ -15,7 +15,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, PrepareKernel, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 #[cfg(feature = "zk")]
@@ -34,6 +34,7 @@ use jolt_verifier::stages::stage4::{
     stage4_input_values_from_upstream, RamValCheckInitialEvaluation,
     VerifiedRamValCheckAdviceContribution,
 };
+use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::JoltWitnessPlane;
 
@@ -185,6 +186,21 @@ where
         &stage3.output_points,
         &init_structure,
     );
+
+    let instruction_read_raf = InstructionReadRaf::new(
+        super::formula_dimensions(
+            checked,
+            config,
+            preprocessing.verifier.program.bytecode_len(),
+            JoltRelationId::InstructionReadRaf,
+        )?
+        .instruction_read_raf,
+    );
+    <JoltBackend<F, PCS> as PrepareKernel<F, InstructionReadRaf<F>>>::prefetch_relation(
+        backend,
+        session,
+        &instruction_read_raf,
+    )?;
 
     // No curation hook: the staged advice/program-image openings ride in from
     // the RAM value-check kernel (captured off its own consumed input claims

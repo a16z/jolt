@@ -72,9 +72,9 @@ use jolt_witness::witnesses::{
     RamReadValue as Stage1RamReadValue, RamWriteValue as Stage1RamWriteValue, RemappedRamAddress,
     TableIndex, WitnessEnv,
 };
-#[cfg(all(feature = "metal", target_os = "macos"))]
-use jolt_witness::WitnessBundle;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_witness::{RandomAccessRows, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -460,7 +460,7 @@ struct Stage1PaddingRows {
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl Stage1PaddingRows {
     fn new(
-        access: &jolt_witness::RandomAccessRows,
+        access: &RandomAccessRows,
         explicit_rows: usize,
         cycles: usize,
     ) -> Result<Self, MetalError> {
@@ -506,7 +506,7 @@ fn stage1_chunk_parts(
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 fn pack_stage1_padding_row(
-    access: &jolt_witness::RandomAccessRows,
+    access: &RandomAccessRows,
     row_index: usize,
 ) -> Result<PackedStage1PaddingRow, MetalError> {
     let projected: Stage1ProjectionRow =
@@ -1607,19 +1607,18 @@ impl WitnessBundle for Stage1OwnerSourceRow {
 #[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) fn prepare_metal_instruction_read_raf_stage1_owner(
     context: &SolinasMetal,
-    witness: &dyn JoltWitnessPlane<AkitaField>,
+    access: &RandomAccessRows,
     cycles: usize,
 ) -> Result<InstructionReadRafStage1Owner, MetalSpartanDenseRowsError> {
-    let access = witness
-        .owned_rows()
-        .filter(|rows| cycles <= rows.cycles())
-        .ok_or(MetalSpartanDenseRowsError::Kernel(
+    if cycles > access.cycles() {
+        return Err(MetalSpartanDenseRowsError::Kernel(
             KernelError::InvariantViolation {
-                reason: "InstructionReadRAF Stage-1 ownership requires a random-access witness",
+                reason: "InstructionReadRAF Stage-1 ownership requires rows covering its cycles",
             },
-        ))?;
+        ));
+    }
     let explicit_rows = access.physical_rows().min(cycles);
-    let padding = Stage1PaddingRows::new(&access, explicit_rows, cycles)
+    let padding = Stage1PaddingRows::new(access, explicit_rows, cycles)
         .map_err(MetalSpartanDenseRowsError::Metal)?;
     let span = tracing::info_span!(
         "MetalInstructionReadRaf::stage1_owner_prepare",

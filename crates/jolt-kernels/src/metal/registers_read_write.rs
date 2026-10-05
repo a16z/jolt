@@ -581,6 +581,7 @@ impl PrepareKernel<AkitaField, RegistersReadWriteChecking<AkitaField>> for Metal
             finished: false,
         });
         super::instruction_read_raf::start_instruction_read_raf_scatter(session)?;
+        self.start_stage5_owner_build(session, witness)?;
         Ok(kernel)
     }
 }
