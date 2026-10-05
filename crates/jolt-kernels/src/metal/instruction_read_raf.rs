@@ -69,6 +69,11 @@ impl Default for InstructionReadRafMetalConfig {
 
 const SOURCE_PRIMER_CUTOFF_ELEMENTS: usize = 1 << 28;
 const INITIAL_ADDRESS_SUFFIX_BITS: u32 = 120;
+/// The resident cycle route binds its first two cycle challenges before its
+/// handoff consumes them in the third cycle round (`prove_round`), so it runs
+/// only on traces of eight rows or more; `MetalBackend::validate_config`
+/// holds the address cutoff to this.
+pub(super) const MIN_ADDRESS_CUTOFF_ELEMENTS: usize = 8;
 
 struct PrefetchedInstructionReadRafScatter {
     sequence: Box<AddressPhaseSequence>,
@@ -876,6 +881,9 @@ pub(crate) struct MetalInstructionReadRafKernel {
     address_sequence: Option<Box<AddressPhaseSequence>>,
     resident_lookup_plane: Option<ResidentLookupIndexPlane>,
     sequence: Option<Product5Sequence>,
+    /// The cycle challenge bound on the fly by the second resident cycle
+    /// round, until the handoff binds the next one into product5 tables.
+    bound_cycle_challenge: Option<AkitaField>,
     host_tail: Option<[Vec<AkitaField>; PRODUCT5_FACTORS]>,
     metal_rounds: usize,
     metal_address_phases: usize,
@@ -905,6 +913,7 @@ impl MetalInstructionReadRafKernel {
             address_sequence: None,
             resident_lookup_plane: None,
             sequence: None,
+            bound_cycle_challenge: None,
             host_tail: Some(std::array::from_fn(|_| {
                 vec![AkitaField::zero(); config.cutoff_elements]
             })),
@@ -1045,6 +1054,22 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
 
         if self.address_sequence.is_some() {
             if let Some(challenge) = bind.take() {
+                let Some(first_challenge) = self.bound_cycle_challenge.take() else {
+                    let _span =
+                        tracing::info_span!("MetalInstructionReadRaf::resident_bound_message")
+                            .entered();
+                    let (cpu, address_sequence) = (&mut self.cpu, self.address_sequence.as_mut());
+                    let address_sequence = address_sequence
+                        .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
+                    let poly = cpu.metal_resident_bound_message(
+                        challenge,
+                        address_sequence,
+                        previous_claim,
+                    )?;
+                    self.bound_cycle_challenge = Some(challenge);
+                    self.metal_rounds += 1;
+                    return Ok(poly);
+                };
                 let _span =
                     tracing::info_span!("MetalInstructionReadRaf::resident_handoff").entered();
                 let address_sequence = self
@@ -1052,6 +1077,7 @@ impl ProveRounds<AkitaField> for MetalInstructionReadRafKernel {
                     .take()
                     .ok_or_else(|| backend_error("resident address sequence disappeared"))?;
                 let (sequence, q_evals) = self.cpu.metal_offload_resident_bind(
+                    first_challenge,
                     challenge,
                     *address_sequence,
                     self.config.dispatch,
@@ -1283,7 +1309,7 @@ mod tests {
     use jolt_witness::JoltWitnessOracle;
 
     use super::*;
-    use crate::metal::solinas::INSTRUCTION_READ_RAF_SEGMENTS;
+    use crate::metal::solinas::{MetalError, INSTRUCTION_READ_RAF_SEGMENTS};
     use crate::metal::{
         MetalConfig, RegistersValEvaluationMetalConfig, RegistersValEvaluationSource,
     };
@@ -1411,14 +1437,15 @@ mod tests {
     fn stage5_lockstep(
         backend: &MetalBackend,
         witness: &dyn JoltWitnessPlane<AkitaField>,
+        log_t: usize,
         stage4_owner_build: bool,
     ) -> (bool, Stage5Outputs) {
         let instruction_relation = InstructionReadRaf::new(InstructionReadRafDimensions::new(
-            LOG_T,
+            log_t,
             2 * RISCV_XLEN,
             NonZeroUsize::new(4).unwrap(),
         ));
-        let reduction_point = point(LOG_T, 151);
+        let reduction_point = point(log_t, 151);
         let opening = |polynomial| {
             let table = JoltWitnessOracle::<AkitaField>::oracle_table(
                 witness,
@@ -1447,8 +1474,8 @@ mod tests {
             challenges: &instruction_challenges,
         };
 
-        let registers_relation = RegistersValEvaluation::new(TraceDimensions::new(LOG_T));
-        let registers_point = point(REGISTER_ADDRESS_BITS + LOG_T, 19);
+        let registers_relation = RegistersValEvaluation::new(TraceDimensions::new(log_t));
+        let registers_point = point(REGISTER_ADDRESS_BITS + log_t, 19);
         let registers_table = JoltWitnessOracle::<AkitaField>::oracle_table(
             witness,
             JoltPolynomialId::Virtual(JoltVirtualPolynomial::RegistersVal),
@@ -1530,7 +1557,7 @@ mod tests {
         let mut registers_expected = OptimizedRegistersValEvaluation
             .prepare(&mut ProofSession::default(), witness, registers_inputs())
             .unwrap();
-        let challenges = point(LOG_T, 223);
+        let challenges = point(log_t, 223);
         run_lockstep(
             registers_expected.as_mut(),
             registers_actual.as_mut(),
@@ -1549,7 +1576,7 @@ mod tests {
     fn stage5_owner_is_leased_to_registers_val_before_its_prepare() {
         with_sample_backend_at_log_t(LOG_T, 8, |witness| {
             let backend = stage5_backend();
-            let (leased, _) = stage5_lockstep(&backend, witness, false);
+            let (leased, _) = stage5_lockstep(&backend, witness, LOG_T, false);
             assert!(leased);
             assert_eq!(backend.registers_val_sequences(), 1);
         });
@@ -1559,7 +1586,7 @@ mod tests {
     fn stage4_built_owner_is_joined_and_leased_by_stage5() {
         with_sample_backend_at_log_t(LOG_T, 8, |witness| {
             let backend = stage5_backend();
-            let (leased, _) = stage5_lockstep(&backend, witness, true);
+            let (leased, _) = stage5_lockstep(&backend, witness, LOG_T, true);
             assert!(leased);
             assert_eq!(backend.registers_val_sequences(), 1);
         });
@@ -1568,13 +1595,36 @@ mod tests {
     #[test]
     fn declined_stage5_owner_keeps_both_cpu_routes() {
         with_sample_backend_at_log_t(LOG_T, 8, |witness| {
-            let (_, admitted) = stage5_lockstep(&stage5_backend(), witness, false);
+            let (_, admitted) = stage5_lockstep(&stage5_backend(), witness, LOG_T, false);
             let mut backend = stage5_backend();
             backend.working_set_limit = Some(0);
-            let (leased, declined) = stage5_lockstep(&backend, witness, false);
+            let (leased, declined) = stage5_lockstep(&backend, witness, LOG_T, false);
             assert!(!leased);
             assert_eq!(backend.registers_val_sequences(), 0);
             assert_eq!(declined, admitted);
+        });
+    }
+
+    fn resident_cycle_backend(address_cutoff_elements: usize) -> Result<MetalBackend, MetalError> {
+        MetalBackend::new(MetalConfig {
+            instruction_read_raf: InstructionReadRafMetalConfig {
+                address_cutoff_elements,
+                cutoff_elements: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn resident_cycle_route_starts_at_eight_rows() {
+        assert!(matches!(
+            resident_cycle_backend(4),
+            Err(MetalError::InvalidHybridCutoff(4))
+        ));
+        let backend = resident_cycle_backend(8).unwrap();
+        with_sample_backend_at_log_t(3, 8, |witness| {
+            let _ = stage5_lockstep(&backend, witness, 3, false);
         });
     }
 

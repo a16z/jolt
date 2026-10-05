@@ -626,7 +626,7 @@ pub(crate) fn instruction_read_raf_stage5_main_plane_bytes(
     [
         instruction_read_raf_stage1_device_bytes(rows)?,
         scatter::compatibility_scatter_cycle_plane_bytes(rows)?,
-        super::product5::product5_table_bytes(rows / 2)?,
+        super::product5::product5_table_bytes(rows / 4)?,
         registers_val,
     ]
     .into_iter()

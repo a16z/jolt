@@ -1876,8 +1876,46 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
         self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
     }
 
+    /// Binds the first cycle challenge into the split eq only: the device
+    /// derives the bound factors from the address-phase planes on the fly.
+    pub(crate) fn metal_resident_bound_message(
+        &mut self,
+        challenge: AkitaField,
+        sequence: &mut AddressPhaseSequence,
+        previous_claim: AkitaField,
+    ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
+        let cycle = self
+            .cycle
+            .as_mut()
+            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
+        let CycleTables::Pending(pending) = &cycle.tables else {
+            return Err(metal_state_error(
+                "resident bound cycle message requires pending tables",
+            ));
+        };
+        cycle.gruen.bind(challenge);
+        let q_evals = sequence
+            .cycle_bound_message(
+                &self.v_tables,
+                &pending.table_values,
+                pending.raf_interleaved,
+                pending.raf_identity,
+                challenge,
+                cycle.gruen.e_in_current(),
+                cycle.gruen.e_out_current(),
+            )
+            .map_err(metal_sumcheck_error)?;
+        let poly = cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim);
+        self.cycle_challenges.push(challenge);
+        self.progress.advance();
+        Ok(poly)
+    }
+
+    /// `first_challenge` is the cycle challenge
+    /// [`Self::metal_resident_bound_message`] already bound.
     pub(crate) fn metal_offload_resident_bind(
         &mut self,
+        first_challenge: AkitaField,
         challenge: AkitaField,
         sequence: AddressPhaseSequence,
         config: Product5SequenceConfig,
@@ -1908,7 +1946,7 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
                 &pending.table_values,
                 pending.raf_interleaved,
                 pending.raf_identity,
-                challenge,
+                [first_challenge, challenge],
                 cycle.gruen.e_in_current(),
                 cycle.gruen.e_out_current(),
                 config,

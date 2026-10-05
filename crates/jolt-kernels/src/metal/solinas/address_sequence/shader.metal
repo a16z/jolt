@@ -143,7 +143,7 @@ kernel void solinas_address_cycle_message(
         threads_per_threadgroup / 32);
 }
 
-kernel void solinas_address_cycle_bind(
+kernel void solinas_address_cycle_double_bind(
     device const uchar* packed_rows [[buffer(0)]],
     device const AddressCycleLookup* lookups [[buffer(1)]],
     device const uint* cycle_to_table_major [[buffer(2)]],
@@ -152,57 +152,67 @@ kernel void solinas_address_cycle_bind(
     device SolinasFp128* bound [[buffer(5)]],
     constant SolinasFp128& raf_interleaved [[buffer(6)]],
     constant SolinasFp128& raf_identity [[buffer(7)]],
-    constant SolinasFp128& challenge [[buffer(8)]],
-    constant AddressCycleParams& params [[buffer(9)]],
+    constant SolinasFp128& first_challenge [[buffer(8)]],
+    constant SolinasFp128& second_challenge [[buffer(9)]],
+    constant AddressCycleParams& params [[buffer(10)]],
     uint position [[thread_position_in_grid]])
 {
-    uint bound_elements = params.rows / 2u;
+    uint bound_elements = params.rows / 4u;
     if (position >= bound_elements) {
         return;
     }
+    SolinasFp128 low[PRODUCT5_FACTORS];
     SolinasFp128 lo[PRODUCT5_FACTORS];
     SolinasFp128 hi[PRODUCT5_FACTORS];
-    address_cycle_factors(
-        2u * position,
-        packed_rows,
-        lookups,
-        cycle_to_table_major,
-        phase_tables,
-        table_values,
-        raf_interleaved,
-        raf_identity,
-        lo);
-    address_cycle_factors(
-        2u * position + 1u,
-        packed_rows,
-        lookups,
-        cycle_to_table_major,
-        phase_tables,
-        table_values,
-        raf_interleaved,
-        raf_identity,
-        hi);
-    for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
-        bound[factor * bound_elements + position] = solinas_add(
-            lo[factor],
-            solinas_mul_wide(challenge, solinas_sub(hi[factor], lo[factor])));
+    for (uint half_pair = 0; half_pair < 2; half_pair++) {
+        address_cycle_factors(
+            4u * position + 2u * half_pair,
+            packed_rows,
+            lookups,
+            cycle_to_table_major,
+            phase_tables,
+            table_values,
+            raf_interleaved,
+            raf_identity,
+            lo);
+        address_cycle_factors(
+            4u * position + 2u * half_pair + 1u,
+            packed_rows,
+            lookups,
+            cycle_to_table_major,
+            phase_tables,
+            table_values,
+            raf_interleaved,
+            raf_identity,
+            hi);
+        for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+            SolinasFp128 once = solinas_add(
+                lo[factor],
+                solinas_mul_wide(first_challenge, solinas_sub(hi[factor], lo[factor])));
+            if (half_pair == 0) {
+                low[factor] = once;
+            } else {
+                bound[factor * bound_elements + position] = solinas_add(
+                    low[factor],
+                    solinas_mul_wide(second_challenge, solinas_sub(once, low[factor])));
+            }
+        }
     }
 }
 
-kernel void solinas_address_cycle_fused_transition(
+kernel void solinas_address_cycle_bound_message(
     device const uchar* packed_rows [[buffer(0)]],
     device const AddressCycleLookup* lookups [[buffer(1)]],
     device const uint* cycle_to_table_major [[buffer(2)]],
     device const SolinasFp128* phase_tables [[buffer(3)]],
     device const SolinasFp128* table_values [[buffer(4)]],
-    device SolinasFp128* bound [[buffer(5)]],
-    device const SolinasFp128* e_in [[buffer(6)]],
-    device const SolinasFp128* e_out [[buffer(7)]],
-    device SolinasFp128* partials [[buffer(8)]],
-    constant SolinasFp128& raf_interleaved [[buffer(9)]],
-    constant SolinasFp128& raf_identity [[buffer(10)]],
-    constant SolinasFp128& challenge [[buffer(11)]],
-    constant AddressCycleParams& params [[buffer(12)]],
+    device const SolinasFp128* e_in [[buffer(5)]],
+    device const SolinasFp128* e_out [[buffer(6)]],
+    device SolinasFp128* partials [[buffer(7)]],
+    constant SolinasFp128& raf_interleaved [[buffer(8)]],
+    constant SolinasFp128& raf_identity [[buffer(9)]],
+    constant SolinasFp128& challenge [[buffer(10)]],
+    constant AddressCycleParams& params [[buffer(11)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_in_thread [[thread_index_in_threadgroup]],
     uint x_out [[threadgroup_position_in_grid]],
@@ -214,7 +224,6 @@ kernel void solinas_address_cycle_fused_transition(
     for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
         lanes[sample] = solinas_zero();
     }
-    uint bound_elements = params.rows / 2u;
 
     for (uint x_in = x_in_thread; x_in < params.e_in_length;
          x_in += threads_per_threadgroup) {
@@ -246,9 +255,6 @@ kernel void solinas_address_cycle_fused_transition(
                 solinas_mul_wide(
                     challenge,
                     solinas_sub(rows[3][factor], rows[2][factor])));
-            uint destination = factor * bound_elements + 2u * pair;
-            bound[destination] = bound_0;
-            bound[destination + 1u] = bound_1;
             if (factor == 0) {
                 bound_0 = solinas_mul_wide(e_in[x_in], bound_0);
                 bound_1 = solinas_mul_wide(e_in[x_in], bound_1);

@@ -15,7 +15,7 @@ use super::hamming_weight_claim_reduction::HammingWeightMetalConfig;
 use super::instruction_claim_reduction::InstructionClaimReductionMetalConfig;
 use super::instruction_input::InstructionInputMetalConfig;
 use super::instruction_ra_virtualization::InstructionRaVirtualizationMetalConfig;
-use super::instruction_read_raf::InstructionReadRafMetalConfig;
+use super::instruction_read_raf::{InstructionReadRafMetalConfig, MIN_ADDRESS_CUTOFF_ELEMENTS};
 use super::ram_hamming_booleanity::RamHammingBooleanityMetalConfig;
 use super::ram_ra_claim_reduction::RamRaClaimReductionMetalConfig;
 use super::ram_ra_virtualization::RamRaVirtualizationMetalConfig;
@@ -266,7 +266,7 @@ impl MetalBackend {
             return Err(MetalError::InvalidHybridCutoff(cutoff));
         }
         let address_cutoff = config.instruction_read_raf.address_cutoff_elements;
-        if address_cutoff < 2 || !address_cutoff.is_power_of_two() {
+        if address_cutoff < MIN_ADDRESS_CUTOFF_ELEMENTS || !address_cutoff.is_power_of_two() {
             return Err(MetalError::InvalidHybridCutoff(address_cutoff));
         }
         for cutoff in [
