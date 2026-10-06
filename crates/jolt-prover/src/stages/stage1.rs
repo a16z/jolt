@@ -76,7 +76,6 @@ where
                 .spartan_outer_uniskip
                 .first_round_poly(session, &[], &())
         })?;
-    // The selected R1CS shape includes the field-inline rows when enabled.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
