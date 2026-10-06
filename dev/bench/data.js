@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791306235735,
+  "lastUpdate": 1791308717213,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -178882,6 +178882,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861400,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "65b599c82feaae7af1d0d205870a6536885681cb",
+          "message": "perf(kernels): integer Spartan outer uni-skip with unreduced i128 fmadds (#1967)\n\n* perf(kernels): integer Spartan outer uni-skip with unreduced i128 fmadds\n\nThe stage-1 uni-skip prepare evaluated `Az·Bz` at the nine extended nodes\nwith branchy sign-magnitude S192/S256 arithmetic (19 `fmadd_trunc` per\nnode plus two wide products per cycle), then fed each product through\n`fmadd_s256`, which on Fp128 multiplies and fully Solinas-reduces every\nterm. The pass was field-independent and as slow on Akita as on Dory.\n\n- Row values are plain `i128`s. First-group B values fit `|b| <= 2^64`;\n  the second group's +-2^130 values (right lookup operand, product,\n  immediate) are carried as `hi*2^64 + lo` with both halves below 2^66,\n  so every extension and `Az*Bz` product stays exact in `i128`\n  (products below 2^108) with no branches.\n- The nine extended-node values come from finite differences over the\n  ten-node base window (one difference table, then nine additions per\n  node) instead of nine Lagrange dot products; a test pins the extension\n  of every basis vector to the field Lagrange basis.\n- `Accumulator::fmadd_i128` (default routes through `fmadd_s256`) gets\n  unreduced impls. Fp128's signed accumulator keeps its three slots and\n  folds the product's top limb through `2^192 = C*2^64 (mod p)`; Fr's\n  adds a two-limb magnitude product. Both fold the sign into the\n  multiplicand so terms land in `pos` without a data-dependent branch.\n- The remainder's round-0 fold consumes the same row values with the\n  same accumulator calls as before: `fmadd_signed_u64` for values below\n  2^64 in magnitude, `fmadd_s256` otherwise.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(kernels): route i128-range Spartan product and instruction-input terms through fmadd_i128\n\nInstructionInput's first cycle round and SpartanProduct's remainder fold\nand opening walk pushed i128/u64 values through `fmadd_s256`, which on\nFp128 multiplies and fully reduces every term. They now use the\nunreduced `fmadd_i128` / `fmadd_u64` paths.\n\nThe instruction-input round drops its sign-magnitude S192/S256\narithmetic: immediates split as `high·2^64 + low` with `low ∈ [0, 2^64)`,\nso the operand sums stay below 2^70 and the immediate high parts below\n2^67 — exact in `i128` for any `Imm`, not only the sub-2^64 immediates a\ntrace row can hold. The high parts accumulate in their own lane (skipped\nwhen zero) and recombine once per block through `mul_pow_2(64)`.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(kernels): extend active Spartan outer rows with finite differences\n\n* refactor(kernels): trim narration comments and fix fp128 headroom docs\n\n* refactor(kernels): pin Spartan outer i128 extension range at compile time\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-10-06T12:53:12-04:00",
+          "tree_id": "d7fa48a698efa4f68968b701bcb3ea93267786b2",
+          "url": "https://github.com/a16z/jolt/commit/65b599c82feaae7af1d0d205870a6536885681cb"
+        },
+        "date": 1791308710506,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.0872,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.1246,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 497200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 500804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 511200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6592,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5379,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.1751,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.2288,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 140008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4018,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5534,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500804,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4749,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 18.0144,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.7812,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.0083,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1952552,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 12.8987,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 640744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 65.1696,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1105704,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2252,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4183,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 14.5556,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861232,
             "unit": "KB",
             "extra": ""
           }
