@@ -57,6 +57,13 @@ pub enum ProverError<F: JoltField> {
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
 
+    /// The trace's last row is not a jump. Padding no-ops follow the last
+    /// row, and only a jump's next-PC constraint is waived for a no-op
+    /// successor, so any other final row (a taken self-branch, or the row
+    /// before a trap that emitted none) makes the honest witness fail R1CS.
+    #[error("trace does not end in a jump; only a jump to itself terminates a provable trace")]
+    TraceDoesNotEndInJump,
+
     /// A cross-stage carry or kernel contract the prover itself must uphold
     /// was violated — a prover bug, never a capability gap, so never worth
     /// retrying with different inputs or another backend.
