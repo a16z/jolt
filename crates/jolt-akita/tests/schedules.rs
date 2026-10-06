@@ -6,13 +6,17 @@
 use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::path::PathBuf;
 
-use akita_config::{SetupRequirements, TrustedScheduleCatalog};
+use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    FoldSchedule, PolynomialGroupLayout,
+    ChunkedWitnessCfg, FoldSchedule, GroupOpenPhaseParams, MultiChunkProfileId,
+    PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
 };
-use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
+use jolt_akita::configs::{
+    JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16W2R2, JoltOneHotK16W4R2,
+    JoltOneHotK16W8R2, JoltOneHotK256, JoltOneHotK256W2R2, JoltOneHotK256W4R2, JoltOneHotK256W8R2,
+};
 use jolt_akita::schedule_registry::{
     dense_group_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
 };
@@ -20,7 +24,13 @@ use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS, K256_PACKING_VARIABLES,
     ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
 };
-use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+use jolt_akita::{
+    AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
+    AKITA_ONE_HOT_K256,
+};
+use jolt_openings::{CommitmentScheme, OpeningsError};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn artifacts() -> AkitaScheduleArtifacts {
     AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
@@ -37,17 +47,94 @@ fn full_dense_catalog() -> ValidatedScheduleCatalog {
         .expect("full-width dense catalog")
 }
 
-fn one_hot_catalog(one_hot_k: usize) -> ValidatedScheduleCatalog {
+#[test]
+fn dense_producer_certificates_cover_every_supported_chunk_count() {
+    for (catalog, policy) in [
+        (dense_catalog(), policy_of::<JoltDenseBounded>()),
+        (full_dense_catalog(), policy_of::<JoltDenseFull>()),
+    ] {
+        for row in catalog.rows() {
+            let root = &row.schedule().root.params;
+            assert_eq!(root.witness_chunk.num_chunks, 8);
+            let group = root.own_group();
+            for num_response_chunks in [1, 2, 4, 8] {
+                let admitted = GroupOpenPhaseParams::admit(
+                    row.profiles().final_group,
+                    group.opening.num_digits_fold,
+                    PrecommittedGroupAdmissionPolicy {
+                        decomposition: policy.decomposition,
+                        sis_security_policy: policy.sis_security_policy,
+                        sis_table_digest: policy.sis_table_digest,
+                        sis_modulus_profile: policy.sis_modulus_profile,
+                        num_response_chunks,
+                    },
+                    group.opening.opening_method,
+                    group.opening.fold_challenge_config,
+                    group.opening.log_basis_open,
+                )
+                .expect("fixed producer must cover every supported response chunk count");
+                assert_eq!(admitted.profile, row.profiles().final_group);
+            }
+        }
+    }
+}
+
+fn one_hot_catalog(one_hot_k: usize, profile: AkitaChunkProfile) -> ValidatedScheduleCatalog {
     artifacts()
-        .one_hot_catalog(one_hot_k)
+        .one_hot_catalog_for_profile(one_hot_k, profile)
         .expect("one-hot catalog")
+}
+
+#[test]
+fn four_file_directory_supports_single_profile() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time after Unix epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "jolt-akita-four-artifacts-{}-{suffix}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("temporary artifact directory");
+    for family in [
+        JoltDenseBounded::schedule_family_name(),
+        JoltDenseFull::schedule_family_name(),
+        JoltOneHotK16::schedule_family_name(),
+        JoltOneHotK256::schedule_family_name(),
+    ] {
+        let name = format!("{family}.aks");
+        let _ = std::fs::copy(
+            AkitaScheduleArtifacts::packaged_directory().join(&name),
+            directory.join(&name),
+        )
+        .expect("copy original schedule artifact");
+    }
+
+    let loaded = AkitaScheduleArtifacts::from_directory(&directory)
+        .expect("base four-file directory must load");
+    let _ = loaded
+        .one_hot_catalog(AKITA_ONE_HOT_K16)
+        .expect("Single catalog must remain available");
+    let error = AkitaScheme::setup(
+        AkitaSetupParams::one_hot_only(16, 1, [3; 32], AKITA_ONE_HOT_K16, Arc::new(loaded))
+            .with_akita_chunk_profile(AkitaChunkProfile::Two),
+    )
+    .expect_err("selecting a missing companion catalog must fail setup");
+    assert!(matches!(error, OpeningsError::InvalidSetup(_)));
+    std::fs::remove_dir_all(directory).expect("remove temporary artifact directory");
 }
 
 #[test]
 fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (catalog, num_vars) in [
-        (one_hot_catalog(AKITA_ONE_HOT_K16), K16_NUM_VARS),
-        (one_hot_catalog(AKITA_ONE_HOT_K256), K256_NUM_VARS),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single),
+            K16_NUM_VARS,
+        ),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single),
+            K256_NUM_VARS,
+        ),
     ] {
         let grid = keys(ONE_HOT_TRACE_NUM_POLYS, num_vars);
         assert!(!grid.is_empty());
@@ -56,8 +143,73 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
                 .resolve_key(&AkitaScheduleLookupKey::single(*key))
                 .expect("reachable scalar shape must resolve");
             assert!(resolved.profiles().precommitteds.is_empty());
+            assert_eq!(
+                resolved.schedule().root.params.witness_chunk,
+                ChunkedWitnessCfg::default_non_chunked()
+            );
+            assert!(resolved.schedule().recursive_folds.iter().all(|level| {
+                level.params.witness_chunk == ChunkedWitnessCfg::default_non_chunked()
+            }));
         }
         assert_eq!(catalog.len(), grid.len());
+    }
+}
+
+#[test]
+fn multi_chunk_catalogs_cover_every_supported_profile() {
+    for (profile, chunk_cfg, k16_family, k256_family) in [
+        (
+            AkitaChunkProfile::Two,
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W2R2),
+            JoltOneHotK16W2R2::schedule_family_name(),
+            JoltOneHotK256W2R2::schedule_family_name(),
+        ),
+        (
+            AkitaChunkProfile::Four,
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W4R2),
+            JoltOneHotK16W4R2::schedule_family_name(),
+            JoltOneHotK256W4R2::schedule_family_name(),
+        ),
+        (
+            AkitaChunkProfile::Eight,
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2),
+            JoltOneHotK16W8R2::schedule_family_name(),
+            JoltOneHotK256W8R2::schedule_family_name(),
+        ),
+    ] {
+        for (one_hot_k, family_name) in [
+            (AKITA_ONE_HOT_K16, k16_family),
+            (AKITA_ONE_HOT_K256, k256_family),
+        ] {
+            let catalog = one_hot_catalog(one_hot_k, profile);
+            assert_eq!(catalog.family_name(), family_name);
+            let grid = family_specs(PathBuf::new())
+                .expect("emit specs")
+                .into_iter()
+                .find(|spec| spec.family_name == family_name)
+                .expect("multi-chunk family spec")
+                .keys;
+            for key in &grid {
+                let schedule = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(*key))
+                    .expect("reachable multi-chunk shape must resolve")
+                    .schedule();
+                assert_eq!(schedule.root.params.witness_chunk, chunk_cfg);
+                assert_eq!(
+                    schedule
+                        .recursive_folds
+                        .first()
+                        .expect("multi-chunk schedule must recursively fold")
+                        .params
+                        .witness_chunk,
+                    chunk_cfg
+                );
+                assert!(schedule.recursive_folds.iter().skip(1).all(|fold| {
+                    fold.params.witness_chunk == ChunkedWitnessCfg::default_non_chunked()
+                }));
+            }
+            assert_eq!(catalog.len(), grid.len());
+        }
     }
 }
 
@@ -81,8 +233,14 @@ fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
 #[test]
 fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
     for (catalog, packing_variables) in [
-        (one_hot_catalog(AKITA_ONE_HOT_K16), K16_PACKING_VARIABLES),
-        (one_hot_catalog(AKITA_ONE_HOT_K256), K256_PACKING_VARIABLES),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single),
+            K16_PACKING_VARIABLES,
+        ),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single),
+            K256_PACKING_VARIABLES,
+        ),
     ] {
         let cutover_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + packing_variables;
         assert!(!uses_setup_offloading(&scalar_schedule(
@@ -140,7 +298,7 @@ fn assert_adaptation_preserves_main_skeleton(
 #[test]
 fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K256);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single);
     let key = trusted_advice_grouped_key(&dense);
     assert!(base.resolve_key(&key).is_err());
 
@@ -179,7 +337,7 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
 #[test]
 fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single);
     let precommit =
         dense_group_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP).expect("trusted advice profile");
     for final_num_vars in [
@@ -216,7 +374,7 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
 #[test]
 fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K256);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single);
     let key = trusted_advice_grouped_key(&dense);
     let rows = jolt_akita::schedule_registry::provision_groups_for_k(
         &dense,
@@ -256,7 +414,7 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
 #[test]
 fn base_catalogs_contain_no_grouped_advice_rows() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single);
     assert!(base
         .rows()
         .all(|row| row.profiles().precommitteds.is_empty()));
@@ -279,22 +437,42 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
 
 #[test]
 fn grouped_provisioning_rejects_out_of_family_final_arity() {
-    let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16);
-    let error = jolt_akita::schedule_registry::provision_groups_for_k(
-        &dense,
-        &full_dense_catalog(),
-        &base,
-        &GroupedScheduleParams::new(
-            None,
-            Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
-            Vec::new(),
-            K16_NUM_VARS.0 - 1,
-        ),
-        AKITA_ONE_HOT_K16,
-    )
-    .expect_err("a declared reachable arity outside the family must fail setup");
-    assert!(error.to_string().contains("outside the supported range"));
+    for one_hot_k in [AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256] {
+        for (profile, final_num_vars) in [
+            (AkitaChunkProfile::Single, 11),
+            (AkitaChunkProfile::Two, 11),
+            (AkitaChunkProfile::Four, 12),
+            (AkitaChunkProfile::Eight, 13),
+        ] {
+            for grouped in [false, true] {
+                let request = grouped.then(|| {
+                    GroupedScheduleParams::new(
+                        None,
+                        Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+                        Vec::new(),
+                        final_num_vars,
+                    )
+                });
+                let error = AkitaScheme::setup(
+                    AkitaSetupParams::one_hot_only_grouped(
+                        final_num_vars,
+                        1,
+                        2,
+                        [3; 32],
+                        one_hot_k,
+                        request,
+                        Arc::new(artifacts()),
+                    )
+                    .with_akita_chunk_profile(profile),
+                )
+                .expect_err("an arity below the profile floor must fail setup");
+                let message = error.to_string();
+                assert!(message.contains("outside the supported range"));
+                assert!(message.contains(&format!("profile {profile:?}")));
+                assert!(message.contains(&format!("K={one_hot_k}")));
+            }
+        }
+    }
 }
 
 /// The emit specs are the single source of truth for what the generator
@@ -303,27 +481,52 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
 /// reverse-inclusion sweep rules out stale or duplicated entries.
 #[test]
 fn emit_specs_and_checked_in_catalogs_agree_exactly() {
-    let [k16_spec, k256_spec, dense_spec, full_dense_spec] =
-        family_specs(PathBuf::new()).expect("emit specs");
+    let specs = family_specs(PathBuf::new()).expect("emit specs");
     let cases = [
         (
-            k16_spec,
             "jolt-fp128-onehot-k16",
-            one_hot_catalog(AKITA_ONE_HOT_K16),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single),
         ),
         (
-            k256_spec,
             "jolt-fp128-onehot-k256",
-            one_hot_catalog(AKITA_ONE_HOT_K256),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single),
         ),
-        (dense_spec, "jolt-fp128-dense-bounded", dense_catalog()),
         (
-            full_dense_spec,
-            "jolt-fp128-dense-full",
-            full_dense_catalog(),
+            "jolt-fp128-onehot-k16-w2r2",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Two),
         ),
+        (
+            "jolt-fp128-onehot-k256-w2r2",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Two),
+        ),
+        (
+            "jolt-fp128-onehot-k16-w4r2",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Four),
+        ),
+        (
+            "jolt-fp128-onehot-k256-w4r2",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Four),
+        ),
+        (
+            "jolt-fp128-onehot-k16-w8r2",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Eight),
+        ),
+        (
+            "jolt-fp128-onehot-k256-w8r2",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Eight),
+        ),
+        ("jolt-fp128-dense-bounded", dense_catalog()),
+        ("jolt-fp128-dense-full", full_dense_catalog()),
     ];
-    for (spec, family_name, catalog) in cases {
+    assert_eq!(specs.len(), cases.len());
+    assert_eq!(
+        specs
+            .get(specs.len() - 2)
+            .expect("dense emit spec")
+            .family_name,
+        JoltDenseBounded::schedule_family_name()
+    );
+    for (spec, (family_name, catalog)) in specs.iter().zip(cases) {
         assert_eq!(spec.family_name, family_name, "spec order regressed");
         assert!(
             spec.grouped_requests.is_empty(),
@@ -363,6 +566,7 @@ mod field_inc {
 
     use akita_config::CommitmentConfig;
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+    use jolt_akita::configs::AkitaChunkProfile;
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::GroupedScheduleParams;
     use jolt_akita::schedule_registry::{
@@ -393,7 +597,7 @@ mod field_inc {
     ) {
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
-        let base = one_hot_catalog(one_hot_k);
+        let base = one_hot_catalog(one_hot_k, AkitaChunkProfile::Single);
         let overhead = trace_arity_overhead(one_hot_k);
         let reachable_min = (overhead + PROVER_MIN_LOG_T).max(declared_min);
         for final_num_vars in reachable_min..=ceiling {
@@ -449,7 +653,7 @@ mod field_inc {
         let full = DenseGroupLayout::FullWidth { num_vars: 30 };
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
-        let base = one_hot_catalog(AKITA_ONE_HOT_K256);
+        let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single);
         for layouts in [
             vec![
                 DenseGroupLayout::Bounded { num_vars: 14 },
@@ -477,7 +681,7 @@ mod field_inc {
     fn field_inline_rows_append_the_inc_group_to_every_advice_combination() {
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
-        let base = one_hot_catalog(AKITA_ONE_HOT_K16);
+        let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single);
         let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.1;
         let layout = FieldIncLayout::new(final_num_vars - trace_arity_overhead(AKITA_ONE_HOT_K16));
         let trusted = FIXTURE_TRUSTED_ADVICE_GROUP.num_vars();

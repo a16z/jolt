@@ -4,7 +4,8 @@ This directory contains Jolt's base Akita schedule catalogs as canonical
 `.aks` files. They are runtime data, not generated Rust modules and not
 embedded into the executable.
 
-Application preprocessing loads the four files once, wraps the resulting
+Application preprocessing loads the four original files and any present
+multi-chunk companions once, wraps the resulting
 `AkitaScheduleArtifacts` in `Arc`, and passes that immutable bundle explicitly
 to every `AkitaSetupParams` constructor. Production deployments should call
 `AkitaScheduleArtifacts::from_directory` with a versioned, deployment-owned
@@ -15,7 +16,11 @@ discover files or consult the environment.
 
 Advice and committed-program objects use the bounded dense catalog. Field-register
 increments use the full-width dense catalog, with each group's source contract
-preserved in the joint opening.
+preserved in the joint opening. Both dense catalogs are planned for eight response
+chunks, the maximum supported count. For fixed dense response geometry, A's
+collision envelope grows linearly with chunk count; eight therefore covers one,
+two, and four as well. B is certified for the selected opening geometry. These
+producer profiles are independent of the eventual trace chunk selection.
 
 During preprocessing, Jolt adapts rows whose shapes depend on advice, field
 increments, or direct committed-program sizes. Those rows are merged with the
@@ -24,6 +29,14 @@ The resulting exact catalog is serialized inside `AkitaVerifierSetup`, so a
 transported verifier setup does not depend on process-global state or on these
 source-tree files.
 
+Serialized `AkitaSetupParams` and `AkitaScheduleArtifacts` are regenerable
+preprocessing inputs whose bincode format is tied to the implementation version.
+The multi-chunk fields intentionally break compatibility with older serialized
+values. Discard those caches, reload compatible `.aks` catalogs, and rerun
+preprocessing with the current code. Serde defaults do not provide bincode
+backward compatibility. Compatible catalogs can be reused without regeneration.
+The legacy `Single` verifier-setup encoding remains unchanged.
+
 The one-hot artifacts are hybrid catalogs. A logical trace shorter than
 `2^21` uses a direct schedule. A trace of `2^21` cycles or longer uses a
 setup-offloaded schedule. Akita uses K=16 committed chunks at every trace
@@ -31,6 +44,61 @@ length, with catalog coverage through `2^30`. Virtual lookup chunks are 16 bits
 below `2^25` and 32 bits at or above it. The K=256 catalog remains available
 for explicitly configured layouts. This is an offline catalog policy: proving and verification simply
 resolve the exact admitted row and never choose a mode dynamically.
+
+Each K=16 and K=256 family has W2R2, W4R2, and W8R2 multi-chunk companion
+catalogs. The selected profile splits the root and first recursive fold into
+two, four, or eight chunks, while later folds remain single-chunk. The pinned
+planner admits the following minimum physical arities for both K values:
+
+| Profile | One polynomial | Two polynomials |
+| --- | ---: | ---: |
+| Single | 12 | 12 |
+| Two (W2R2) | 12 | 12 |
+| Four (W4R2) | 13 | 12 |
+| Eight (W8R2) | 14 | 13 |
+
+The upper arity is 40 for K=16 and 43 for K=256. Setup and grouped provisioning
+check these profile-specific floors before constructing backend matrices;
+grouped trace rows contain one final polynomial. The smaller rejected shapes
+have no schedule in the pinned planner's audited fold domain. The original one-hot
+catalogs remain single-chunk. Dense standalone opening schedules use the fixed
+eight-chunk budget. Four-file directories with the current dense catalogs support `Single`;
+selecting a profile whose companion catalog is absent fails during setup.
+Grouped precommit setups inherit the selected trace profile.
+
+### Grouped provisioning diagnostic
+
+Audit the complete advice matrix without allocating backend matrices or proving
+traces:
+
+```text
+cargo run --release -p jolt-akita --bin check_grouped_schedules -- crates/jolt-akita/schedules /tmp/jolt-grouped-schedules.csv full
+```
+
+The diagnostic reads admitted one-polynomial final arities from each catalog,
+checks both K values and all four trace profiles, and crosses absent advice with
+physical producer arities 11 through 22 for both advice roles. It skips only the
+empty batch. `unsupported_producer` records arities missing from the dense
+catalog; `provisioning_failed` records failures for admitted producers and makes
+the command fail. `unsupported_grouped_shape` records an explicit capability
+rejection matching the provisioner's Single-profile scalar-guide error for that
+K and final arity. Other schedule rejections count as `provisioning_failed`,
+including all chunked-profile rejections. Grouped roots require a recursive child
+fold, while the smallest Single scalar guides reach their terminal immediately
+(K=16 arities 12–15 and K=256 arities 12–16). Guided planning cannot add that fold.
+Preprocessing derives this capability check from the selected row and rejects it before planner search,
+naming K, profile, final arity, and the requested groups. Scalar-only setups and
+full-width producer batches retain their existing paths.
+Successful rows are audited by the production provisioner and
+checked for unchanged producer profiles and the requested trace chunk count.
+The CSV is flushed after each final arity; this is an expensive offline check.
+Record the code revision and catalog checksums alongside the report when sharing
+results. This command never changes schedule artifacts.
+
+Use `boundary` instead of `full` for the 24 K=16 cutover cases: final arities
+31 and 32, both advice roles at 21 or 22, and Two/Four/Eight profiles. The same
+cases are covered by `grouped_advice_rows_cover_recursive_cutover` in the unit
+suite.
 
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:
@@ -50,18 +118,26 @@ table was not re-measured.
 
 Grouped planning first preserves the selected trace row's fold geometry,
 opening parameters, relation modes, and direct/offloaded topology, adapting
-only the auxiliary object profiles and the sizes they induce. Requests with
-only bounded dense objects fail if that fixed geometry is infeasible.
+only the auxiliary object profiles and the sizes they induce.
+
+Advice, bytecode, and field-valued precommits resolve their producer rows directly
+from the dense catalogs. Commitment setup receives no trace chunk count and
+performs no producer replanning. Grouped planning preserves the exact producer
+profiles and audits their compatibility with the selected opening schedule.
+Deployment directories must regenerate both dense catalogs for the conservative
+policy; previous catalogs have a different policy digest and are rejected.
 
 A full-width field increment can require different trace fold geometry. If
 guided planning returns `UnsupportedSchedule` for the supported field batch—
-exactly one full-width field increment and at most two bounded advice groups—
-preprocessing runs the full planner under the same audited policy. Larger
-batches and batches with multiple full-width objects retain the guided-planning
-rejection, including its opening-assignment budget. Every auxiliary commitment's
+exactly one full-width field increment and at most two bounded advice groups—or
+for a chunked trace with at most two bounded producers, preprocessing runs the
+full planner under the same audited policy. Before full search, the maximum
+opening-assignment product must fit the adapted planner's assignment budget.
+Larger batches and batches with multiple full-width objects retain the
+guided-planning rejection, including its opening-assignment budget. Every auxiliary commitment's
 profile stays fixed, and the resulting grouped row passes the usual schedule
 audit before entering the setup-owned catalog. Other errors propagate. The
-checked-in base catalogs are unchanged; proving and verification use the
+one-hot base catalogs are unchanged; proving and verification use the
 resulting frozen grouped row.
 
 Regenerate all base catalogs from the planner with:
@@ -70,5 +146,6 @@ Regenerate all base catalogs from the planner with:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Pass `k16`, `k256`, `dense-bounded`, or `dense-full` as a final argument to
-regenerate one family. `dense` selects both dense families.
+Pass `k16`, `k256`, `w2r2`, `w4r2`, `w8r2`, `dense-bounded`, `dense-full`, or `dense` as a final
+argument to narrow regeneration to matching families. `k16-single` and
+`k256-single` select only the corresponding standard single-chunk catalog.

@@ -411,6 +411,8 @@ pub(crate) fn test_prover_config() -> ProverConfig {
         rw_config: crate::config::read_write_config(LOG_T, RAM_LOG_K),
         one_hot_config: crate::config::one_hot_config(LOG_T),
         trace_polynomial_order: Default::default(),
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: Default::default(),
     }
 }
 
