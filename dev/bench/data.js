@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791320372452,
+  "lastUpdate": 1791323624597,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -180466,6 +180466,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 868276,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "03330745300a5e05c9bd32f9723423bcd3177911",
+          "message": "refactor(r1cs): move protocol constraints into jolt-claims (#1878)\n\n* Move protocol-owned constraints out of jolt-r1cs\n\nKeep the existing jolt-r1cs as the generic builder and sparse-matrix crate.\nMove claim lowering and Jolt ISA/composed constraints to jolt-claims behind\nits r1cs feature, migrate BlindFold/kernels/verifier consumers, and remove\nreverse dependencies on jolt-poly and jolt-claims. Move the existing lint\npolicy with the modules and enable their tests explicitly in CI.\n\nRemove unused R1csKey, R1csSource, R1csColumn and SpartanChallenges: repository\nsearch found only self-tests and no documented external production contract.\nThis intentionally removes their public API and the old protocol import paths.\nBuilder/matrix code, serialized representations, errors and all retained\nconstraint formulas are unchanged. There is no new core crate or gadget.\n\nValidation at this revision:\n- cargo nextest run -p jolt-r1cs -p jolt-claims -p jolt-sumcheck -p jolt-blindfold --features jolt-claims/r1cs,jolt-sumcheck/r1cs --cargo-quiet --status-level fail --final-status-level fail: 394 passed (without field-inline).\n- cargo nextest run -p jolt-claims -p jolt-blindfold --features jolt-claims/r1cs,jolt-claims/field-inline --cargo-quiet --status-level fail --final-status-level fail: 286 passed.\n- cargo clippy -p jolt-r1cs -p jolt-claims -p jolt-sumcheck -p jolt-blindfold -p jolt-kernels --all-targets --features jolt-claims/r1cs,jolt-sumcheck/r1cs -q -- -D warnings: passed.\n- cargo clippy -p jolt-r1cs -p jolt-claims -p jolt-sumcheck -p jolt-blindfold -p jolt-kernels -p jolt-verifier --all-targets --features jolt-claims/r1cs,jolt-claims/field-inline,jolt-sumcheck/r1cs -q -- -D warnings: passed.\n- cargo fmt -q and git diff --check: passed.\n- cargo tree -p jolt-r1cs --edges normal --no-default-features --offline: only field/serde/thiserror direct dependencies.\n\nFull modular prover acceptance and workspace host/zk lint checks are pending\nat commit creation; no performance claim is made.\n\n* Update constraint ownership references in active specs\n\n* fix(verifier): track relocated claim challenge site\n\nThe Fiat-Shamir source inventory still named jolt-r1cs::lowering after claim lowering moved to jolt-claims::r1cs. Update that one identity; the challenge call and its order are unchanged. Reproduced the CI failure locally, reviewed the generated one-entry relocation, and reran fs_obligations without JOLT_FS_BLESS: passed.\n\n* fix(r1cs): enable serde allocation support explicitly\n\nThe isolated modular CI shard could not derive Serialize/Deserialize for\nConstraintMatrices' nested Vec fields after dependency pruning removed\nincidental serde/alloc feature unification. Enable alloc in the crate that\nowns those fields. No constraint formulas or serialization formats change.\n\nReproduction at parent f00fdfc8c, rustc 1.95.0, aarch64-apple-darwin:\n- cargo nextest run -p jolt-r1cs --cargo-quiet: failed with eight E0277\n  errors for Vec<Vec<(usize, F)>> serialization/deserialization.\n- cargo tree -p jolt-r1cs -e features --offline: serde had derive/rc,\n  but neither alloc nor std; after this patch serde and serde_core show alloc.\n\nValidation of this one-line patch:\n- cargo nextest run -p jolt-r1cs --cargo-quiet: 21 passed, 0 skipped.\n- cargo nextest run -p jolt-r1cs --no-default-features --cargo-quiet:\n  21 passed, 0 skipped.\n- cargo clippy -p jolt-r1cs --all-targets --no-default-features -q -- -D warnings: passed.\n- cargo fmt -q --check and git diff --check: passed.\n\nExisting isolated-package CI provides the regression signal; no redundant\nunit test added. Broader workspace/host/ZK checks were not rerun for this\nmanifest-only fix. The earlier ownership reviewer produced this repair;\nindependent approval of this delta remains with the integrator.\n\n* refactor(claims): place the selected R1CS under protocols::composed\n\nMain's protocol boundary tests (protocol_modules_are_import_disjoint and\nfield_inline_feature_gates_are_confined_to_flag_carriers_and_composition)\nkeep field-inline names, composed imports, and field-inline feature gates\nout of protocols::jolt. The selected R1CS composes the RV64 rows with the\nfield-inline rows, so it moves next to the other composition in\nprotocols::composed. Module contents are unchanged; consumers and specs\nfollow the new path.\n\n* test(claims): allow jolt-claims to depend on jolt-r1cs\n\nsymbolic_relations_stay_in_claims (added on main) forbids jolt-r1cs in the\njolt-claims manifest, encoding the old jolt-r1cs -> jolt-claims direction.\nThis branch inverts it: jolt-r1cs is the generic builder/matrix layer below\njolt-claims, and the r1cs feature depends on it. The check keeps the\njolt-verifier boundary.\n\n* refactor(claims): make jolt-r1cs a plain dependency\n\nEvery production dependent enabled the r1cs feature, jolt-r1cs adds no dependency jolt-claims lacks, and the external sumcheck consumer never reaches jolt-claims. The constrained-claim tests now run in the ordinary jolt-claims shard.\n\n* refactor(fuzz): move claim-lowering fuzz target to jolt-claims\n\nThe claim lowering lives in jolt_claims::r1cs, so its differential fuzz target moves with it; the jolt-r1cs fuzz workspace requested a feature that no longer exists.\n\n* docs: update R1CS ownership after the move\n\n* chore(claims): keep only the control-plane lints on the R1CS modules\n\nThe other eight denies are already set at the jolt-claims crate root.\n\n* chore(prover): drop a comment that restates the uni-skip domain derivation\n\n* chore: drop dead field-inline entries and self-crate paths after the R1CS move\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-10-06T16:47:56-04:00",
+          "tree_id": "5d03a019104cb27fb4dc5aa2806532874ff0d84d",
+          "url": "https://github.com/a16z/jolt/commit/03330745300a5e05c9bd32f9723423bcd3177911"
+        },
+        "date": 1791323616122,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.4845,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.8537,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 501176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 509132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0809,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 502692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.8706,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 502864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 6.1744,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.28,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 138776,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.2541,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8754,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 511160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.648,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 507228,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 28.8774,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502948,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.0617,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 46.5736,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1963356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 20.7921,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 649236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 104.9682,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1170652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 2.0381,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 502508,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.3415,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 22.2809,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 863024,
             "unit": "KB",
             "extra": ""
           }
