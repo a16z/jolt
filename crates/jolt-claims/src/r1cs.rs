@@ -255,7 +255,7 @@ fn lower_product<F: JoltField>(
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_claims::{challenge, constant, derived, opening, Expr};
+    use crate::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

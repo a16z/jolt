@@ -359,11 +359,11 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use super::rv64::{flag_column, V_CONST, V_IMM, V_RD_WRITE_VALUE, V_RS1_VALUE};
     use super::*;
-    use jolt_claims::protocols::composed::geometry::{
+    use crate::protocols::composed::geometry::{
         SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
     };
     #[cfg(feature = "field-inline")]
-    use jolt_claims::protocols::field_inline::{
+    use crate::protocols::field_inline::{
         geometry::spartan::{
             outer_output_openings, FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS,
             FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn composed_lane_helpers_match_field_product_constraint_rows() {
-        use jolt_claims::protocols::field_inline::geometry::product::{
+        use crate::protocols::field_inline::geometry::product::{
             composed_remainder_factor_contributions, composed_uniskip_input_contribution,
             selected_product_lanes, FieldProductLaneFactors, FieldProductLaneInputs,
         };

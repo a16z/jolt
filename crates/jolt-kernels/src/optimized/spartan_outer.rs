@@ -1787,7 +1787,7 @@ mod tests {
 
     /// The remainder's true input claim
     /// `Σ_{t,s} kernel · eq(τ_low, (t,s)) · Az(t,s) · Bz(t,s)`, computed
-    /// through the public `jolt-r1cs` column-weight path over the COMPOSED
+    /// through the public `jolt-claims` column-weight path over the COMPOSED
     /// opening selection (independent of both kernels' row-value pipelines).
     fn true_input_claim(
         rows: &[SpartanOuterRow],

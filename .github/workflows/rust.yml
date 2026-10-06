@@ -151,7 +151,6 @@ jobs:
           -p jolt-claims
           -p jolt-verifier
           -p jolt-witness
-          -p jolt-r1cs
           -p tracer
           -p jolt-program
           -p jolt-riscv
@@ -774,7 +773,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo nextest run -p jolt-claims -p jolt-r1cs \
+          cargo nextest run -p jolt-claims \
             -p jolt-verifier -p jolt-witness -p jolt-kernels \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
