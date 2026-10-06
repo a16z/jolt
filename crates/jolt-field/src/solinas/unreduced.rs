@@ -148,13 +148,14 @@ product_accum! {
     /// `2^64` terms.
     Fp64ProductAccum: 2;
     /// Accumulator for `Fp128 × u64` products (3 result limbs of
-    /// `mul_wide_u64`, one per slot). Each slot grows by `< 2^64` per term;
-    /// headroom `2^64 − 1` terms (the reduction's carry chain needs
-    /// `sᵢ + carry < 2^128`, see `Fp128::reduce_small_product`).
+    /// `mul_wide_u64`, one per slot). Slot 0 grows by `< 2^64` per term and
+    /// slots 1–2 by `< 2^65` (`Fp128SignedAccumulator::fmadd_i128` folds its
+    /// top limb into them); headroom `2^62` terms (the reduction's carry
+    /// chain needs `sᵢ + carry < 2^128`, see `Fp128::reduce_small_product`).
     Fp128MulU64Accum: 3;
     /// Accumulator for `Fp128 × Fp128` products (4 result limbs of
-    /// `mul_wide`, one per slot). Headroom `2^64 − 1` terms, as for
-    /// [`Fp128MulU64Accum`].
+    /// `mul_wide`, one per slot). Each slot grows by `< 2^64` per term;
+    /// headroom `2^64 − 1` terms (see `Fp128::reduce_product`).
     Fp128ProductAccum: 4;
     /// Accumulator for `FpExt4<Fp32>` products with delayed reduction: one
     /// slot per ring-subfield coefficient. The φ(X) ring reduction is fused
@@ -341,8 +342,10 @@ impl<const P: u128> Unreduced for Fp128<P> {
         ])
     }
 
-    /// Same carry chain and headroom as
-    /// [`reduce_product`](Self::reduce_product), one limb shorter.
+    /// Same carry chain as [`reduce_product`](Self::reduce_product), one
+    /// limb shorter. With `k ≤ 2^62` terms slot 0 is `< k·2^64`, slots 1–2
+    /// are `< k·2^65 ≤ 2^127` and each carry is `< 2^64`, so
+    /// `sᵢ + carry < 2^128`.
     #[inline]
     fn reduce_small_product(accum: Fp128MulU64Accum) -> Self {
         let [s0, s1, s2] = accum.0;
