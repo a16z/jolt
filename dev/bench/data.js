@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791318893033,
+  "lastUpdate": 1791320372452,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -180202,6 +180202,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861868,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0e63605b051a860a044a29fce4b4090fd939effc",
+          "message": "feat(spartan): add PCS-generic proving with a HyperKZG backend (#1880)\n\nAdd a standalone clear Spartan prover/verifier for checked sparse R1CS, generic over `jolt_openings::CommitmentScheme`, plus a binary HyperKZG backend over BN254. This is the reusable SNARK layer for the Akita wrapper; the Akita acceptance circuit and on-chain verifier are separate work.\n\nChanges\n- `jolt-spartan-verifier`: `SpartanKey` validates the relation through `ConstraintMatrices::validate` (one owner in `jolt-r1cs`), computes a Blake2b-256 relation digest once at construction (domain tag, dimensions, A/B/C rows), and binds digest, policy id, public inputs and witness commitment before drawing tau; outer evaluations precede the matrix weights and the witness evaluation precedes the PCS opening. `outer_relation`/`inner_relation` are the single owners of the sumcheck relations for prover kernels and verifier checks.\n- `jolt-spartan-prover`: PCS-generic proving over the shared key methods; Dory and HyperKZG exercise the same relation in tests.\n- `jolt-hyperkzg`: binary HyperKZG with checked SRS import (`setup_id` identifies the ceremony; no separate degree knob). `OpeningHint = Bn254G1` so `open` reuses the commit-time commitment for statement binding instead of repeating the MSM; `None` recomputes it.\n- `jolt-r1cs`: sparse column-range projection used by the prover; `ConstraintMatrices::validate`.\n- Fiat-Shamir census (`fs_obligations`) seeds `jolt-spartan-verifier` and `jolt-hyperkzg`; inventories re-blessed (+18 absorb, +8 challenge sites).\n- Both new verifier-runtime crates carry the verifier-closure lint tier (`specs/verifier-closure-lints.md` addendum: 20 crates, 15 with `forbid(unsafe_code)`).\n\nRemoved from the original branch: the opt-in BN254 wide Blake2b transcript (no production caller) and `max_public_degree`.\n\nTesting\n- Component suites for jolt-r1cs, jolt-transcript, jolt-hyperkzg, jolt-spartan-verifier, jolt-spartan-prover (both PCS backends, per-field proof tampering, encoding-equivalent key rejection, wrong opening hint rejection, shape errors); `fs_obligations` with `fs-audit`; clippy `-D warnings` on the touched crates; PR CI green.\n\nSecurity\nClear protocol, no zero-knowledge. The relation digest is verifier-computed from the key's own matrices (the key is not deserializable). The verifier evaluates sparse matrices directly; this is not a succinct EVM verifier. Online extraction under the full public SRS and the Fiat–Shamir composition remain documented conditional assumptions.\n\nReviews: 0xAndoroid (6 threads, all addressed); independent review passes (Astra ×2, Fable ×2) with no soundness defect found.",
+          "timestamp": "2026-10-06T15:50:45-04:00",
+          "tree_id": "56ce7aaa97e3264932fd7581145ca0c037715314",
+          "url": "https://github.com/a16z/jolt/commit/0e63605b051a860a044a29fce4b4090fd939effc"
+        },
+        "date": 1791320364868,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.5915,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 867644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7176,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 503428,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 506940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0068,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 511276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.8209,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8678,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 508976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.1278,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 134108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0677,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8439,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6172,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.4663,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 511728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.3003,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 511368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 42.4629,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1952216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.2232,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 635964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 94.4841,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1104472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9163,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 503108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1546,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 501356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 20.0627,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 868276,
             "unit": "KB",
             "extra": ""
           }
