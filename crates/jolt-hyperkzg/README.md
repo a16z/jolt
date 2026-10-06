@@ -13,9 +13,8 @@ entries with `ell >= 1`; constant polynomials must be represented by a
 two-entry constant table. Queries have exactly `ell` coordinates.
 
 `CommitmentScheme::setup(HyperKZGSetupParams)` imports typed BN254 G1 powers,
-G2, beta-G2, an authenticated setup-policy ID, and `max_public_degree`.
-It checks the imported capacity, nonidentity powers, and that the declared
-public degree covers the imported powers. It **does not** validate progression
+G2, beta-G2, and an authenticated setup-policy ID. It checks the imported
+capacity and nonidentity powers. It **does not** validate progression
 of the powers, ceremony provenance, or secrecy of the trapdoor. Those are
 trusted importer preconditions. Production applications must authenticate
 both key material and policy; setup must not be taken from the proof.
@@ -27,17 +26,17 @@ container decoding and rejection of trailing serialized container bytes.
 Identity proof points are allowed because zero polynomials are legitimate;
 identity setup powers are rejected.
 
-Imported capacity is an honest-prover/API bound. `max_public_degree` is the
-authenticated bound on **all** public powers under the same trapdoor, not
-only the imported slice. Local truncation does not lower this adversarial
-bound. It is transcript-bound policy, not a claim verified by a pairing.
+Imported capacity is an honest-prover/API bound, not an adversarial degree
+bound: **all** public powers under the same trapdoor count, not only the
+imported slice, and local truncation does not lower that bound. The
+authenticated `setup_id` identifies the ceremony and its full published degree.
 
 The conditional extraction contract needed by a consumer is: a polynomial
-of degree at most the full public bound is fixed when its commitment is
-made; later valid openings refer to that same polynomial. Its first `2^ell`
-coefficients determine the extracted multilinear vector. Do not infer the
-stronger equality between the original commitment and a commitment to the
-truncated vector. For example, with powers through degree three, the
+of degree at most the ceremony's full published degree is fixed when its
+commitment is made; later valid openings refer to that same polynomial. Its
+first `2^ell` coefficients determine the extracted multilinear vector. Do not
+infer the stronger equality between the original commitment and a commitment
+to the truncated vector. For example, with powers through degree three, the
 polynomial `X^3` can pass an arity-one opening at zero with value zero while
 its projected vector is `[0,0]`.
 
@@ -63,9 +62,8 @@ The clear binary construction is adapted from Jolt donor
 | Commitment/query/claim fixed before opening challenges | `append_statement` | Statement/key-policy tampering and final transcript agreement |
 | Global-degree extraction and complete FS reduction | Consumer security contract above | **Not established by these tests** |
 
-The scheme owns a versioned prefix binding setup policy, full public degree,
-imported capacity, G1/G2/beta-G2, commitment, query length/coordinates, and
-claimed value. The subsequent order preserves the donor: fold commitments,
+The scheme owns a versioned prefix binding setup policy, imported capacity,
+G1/G2/beta-G2, commitment, query length/coordinates, and claimed value. The subsequent order preserves the donor: fold commitments,
 challenge `r`, evaluations at `[r,-r,r²]`, polynomial batching challenge,
 three witnesses, pairing batching challenge. Zero `r` rejects without retries.
 Distinct point checks are unnecessary for separate single-point KZG openings.

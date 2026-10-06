@@ -32,7 +32,6 @@ impl HyperKZGScheme {
         let verifier = HyperKZGVerifierSetup {
             num_powers,
             setup_id: params.setup_id,
-            max_public_degree: params.max_public_degree,
             g1,
             g2: params.g2,
             beta_g2: params.beta_g2,

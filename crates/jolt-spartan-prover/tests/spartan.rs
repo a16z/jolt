@@ -59,7 +59,6 @@ fn hyperkzg_setup() -> (
         g2: Bn254::g2_generator(),
         beta_g2: Bn254::g2_generator().scalar_mul(&beta),
         setup_id: [9; 32],
-        max_public_degree: 3,
     })
     .unwrap()
 }

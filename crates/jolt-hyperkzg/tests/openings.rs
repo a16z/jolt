@@ -18,7 +18,6 @@ fn setup_params(beta: u64, capacity: usize) -> HyperKZGSetupParams {
     let beta = Fr::from_u64(beta);
     HyperKZGSetupParams {
         setup_id: [42; 32],
-        max_public_degree: capacity.saturating_sub(1) as u64,
         g1_powers: std::iter::successors(Some(Fr::one()), |power| Some(*power * beta))
             .take(capacity)
             .map(|power| Bn254::g1_generator().scalar_mul(&power))
@@ -175,10 +174,6 @@ fn statement_changes_reject() {
     params.setup_id = [43; 32];
     f.vk = HyperKZGScheme::setup(params).unwrap().1;
     assert!(f.verify(&f.proof).is_err());
-    let mut params = setup_params(7, 16);
-    params.max_public_degree = 31;
-    f.vk = HyperKZGScheme::setup(params).unwrap().1;
-    assert!(f.verify(&f.proof).is_err());
 }
 
 #[test]
@@ -225,9 +220,6 @@ fn bad_imports_and_false_prover_claims_reject() {
     assert!(HyperKZGScheme::setup(params).is_err());
     let mut params = setup_params(7, 4);
     params.beta_g2 = JoltGroup::identity();
-    assert!(HyperKZGScheme::setup(params).is_err());
-    let mut params = setup_params(7, 4);
-    params.max_public_degree = 2;
     assert!(HyperKZGScheme::setup(params).is_err());
     let (pk, _) = setup(7, 4);
     let poly = Polynomial::new(vec![Fr::one(); 4]);

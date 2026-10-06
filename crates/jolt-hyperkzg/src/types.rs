@@ -15,9 +15,6 @@ pub struct HyperKZGSetupParams {
     pub g1_powers: Vec<Bn254G1>,
     /// Authenticated application/ceremony policy identifier.
     pub setup_id: [u8; 32],
-    /// Largest degree supported by all public powers under this trapdoor,
-    /// including powers not imported here. This is a trusted policy assertion.
-    pub max_public_degree: u64,
     pub g2: Bn254G2,
     pub beta_g2: Bn254G2,
 }
@@ -34,7 +31,6 @@ pub struct HyperKZGProverSetup {
 pub struct HyperKZGVerifierSetup {
     pub(crate) num_powers: u64,
     pub(crate) setup_id: [u8; 32],
-    pub(crate) max_public_degree: u64,
     pub(crate) g1: Bn254G1,
     pub(crate) g2: Bn254G2,
     pub(crate) beta_g2: Bn254G2,
@@ -44,7 +40,6 @@ impl HyperKZGVerifierSetup {
     pub(crate) fn validate(&self) -> Result<usize, HyperKZGError> {
         let capacity = usize::try_from(self.num_powers).map_err(|_| HyperKZGError::InvalidSetup)?;
         if capacity < 2
-            || self.max_public_degree < self.num_powers.saturating_sub(1)
             || self.g1.is_identity()
             || self.g2.is_identity()
             || self.beta_g2.is_identity()
@@ -75,7 +70,6 @@ impl HyperKZGVerifierSetup {
     ) {
         transcript.append_labeled(b"hyperkzg-binary-bn254-v1", &U64Word(self.num_powers));
         transcript.append_bytes(&self.setup_id);
-        transcript.append(&U64Word(self.max_public_degree));
         transcript.append(&self.g1);
         transcript.append(&self.g2);
         transcript.append(&self.beta_g2);
@@ -130,7 +124,6 @@ mod tests {
     fn decoded_verifier_metadata_is_rechecked() {
         let valid = HyperKZGVerifierSetup {
             num_powers: 4,
-            max_public_degree: 3,
             setup_id: [1; 32],
             g1: Bn254::g1_generator(),
             g2: Bn254::g2_generator(),
@@ -152,10 +145,9 @@ mod tests {
             )
         };
         verify(&valid).unwrap();
-        let mut invalid = std::array::from_fn::<_, 5, _>(|_| valid.clone());
-        let [capacity, degree, g1, g2, beta_g2] = &mut invalid;
+        let mut invalid = std::array::from_fn::<_, 4, _>(|_| valid.clone());
+        let [capacity, g1, g2, beta_g2] = &mut invalid;
         capacity.num_powers = 0;
-        degree.max_public_degree = 2;
         g1.g1 = Bn254G1::identity();
         g2.g2 = Bn254G2::identity();
         beta_g2.beta_g2 = Bn254G2::identity();
