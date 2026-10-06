@@ -1,5 +1,5 @@
 use std::env::VarError;
-use std::ops::Range;
+use std::ops::{AddAssign, Range};
 
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
@@ -10,7 +10,7 @@ use tracing::field::Empty;
 use super::source::TraceOneHotColumn;
 use super::traversal::{
     row_is_committed, validate_block_geometry, visit_segment_ring_range,
-    visit_segment_ring_row_range,
+    visit_segment_ring_row_batches, visit_segment_ring_row_range,
 };
 use super::{
     DECOMPOSE_POSITION_WORKING_SET_TARGET, ROTATED_CHALLENGE_TABLE_BUDGET, TASKS_PER_RAYON_WORKER,
@@ -107,6 +107,174 @@ impl<const D: usize> PreparedRotations<D> {
     fn is_dense(&self) -> bool {
         matches!(self, Self::Dense(_))
     }
+
+    #[inline(always)]
+    fn accumulate_rows(
+        &self,
+        source: &TraceOneHotColumn,
+        rings: Range<usize>,
+        destination: &mut [[i32; D]],
+        block_index: impl Fn(usize) -> usize,
+    ) -> Result<(), AkitaError> {
+        match self {
+            Self::Dense(rotated) => {
+                accumulate_dense_row_range(source, rings, destination, rotated, block_index)
+            }
+            Self::Compact(challenges) => accumulate_row_range::<D>(source, rings, destination, {
+                #[inline(always)]
+                |dst, column, coefficients| {
+                    let challenge = &challenges[block_index(column)];
+                    for &coefficient in coefficients {
+                        add_rotated_compact(dst, challenge, coefficient);
+                    }
+                }
+            }),
+            Self::Sparse(challenges) => accumulate_row_range::<D>(source, rings, destination, {
+                #[inline(always)]
+                |dst, column, coefficients| {
+                    let challenge = &challenges[block_index(column)];
+                    for &coefficient in coefficients {
+                        add_rotated_sparse(dst, challenge, coefficient);
+                    }
+                }
+            }),
+        }
+    }
+
+    #[inline(always)]
+    fn accumulate_contributions(
+        &self,
+        source: &TraceOneHotColumn,
+        rings: Range<usize>,
+        destination: &mut [[i32; D]],
+        trace_block: usize,
+    ) -> Result<(), AkitaError> {
+        let first = trace_block * source.num_columns;
+        match self {
+            Self::Dense(rotated) => accumulate_dense_ring_rows(
+                source,
+                rings,
+                destination,
+                &rotated[first * D..][..source.num_columns * D],
+            ),
+            Self::Compact(challenges) => {
+                let ring_start = rings.start;
+                visit_segment_ring_range::<D>(source, rings.start, rings.end, {
+                    #[inline(always)]
+                    |ring, contributions| {
+                        for &(column, coefficient) in contributions {
+                            add_rotated_compact(
+                                &mut destination[ring - ring_start],
+                                &challenges[first + column],
+                                coefficient,
+                            );
+                        }
+                    }
+                })
+            }
+            Self::Sparse(challenges) => {
+                let ring_start = rings.start;
+                let ring_end = rings.end;
+                let rings_per_row = source.one_hot_k / D;
+                visit_segment_ring_row_batches::<D>(
+                    source,
+                    ring_start,
+                    ring_end,
+                    |batch_start, selected_rows, committed_zero_masks| {
+                        for (row_offset, (selected_rows, &committed_zero_mask)) in selected_rows
+                            .chunks_exact(source.num_columns)
+                            .zip(committed_zero_masks)
+                            .enumerate()
+                        {
+                            let row_ring = (batch_start + row_offset) * rings_per_row;
+                            for (column, &hot) in selected_rows.iter().enumerate() {
+                                if row_is_committed(hot, committed_zero_mask, column) {
+                                    let hot = usize::from(hot);
+                                    let ring = row_ring + hot / D;
+                                    if ring_start <= ring && ring < ring_end {
+                                        add_rotated_sparse(
+                                            &mut destination[ring - ring_start],
+                                            &challenges[first + column],
+                                            hot % D,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+enum DensePositionTask<'a, const D: usize> {
+    Wide(&'a mut [[i32; D]]),
+    Narrow {
+        destination: &'a mut [[i32; D]],
+        partials: Vec<[i16; D]>,
+    },
+}
+
+impl<'a, const D: usize> DensePositionTask<'a, D> {
+    fn new(destination: &'a mut [[i32; D]], narrow: bool) -> Self {
+        if narrow {
+            let partials = vec![[0i16; D]; destination.len()];
+            Self::Narrow {
+                destination,
+                partials,
+            }
+        } else {
+            Self::Wide(destination)
+        }
+    }
+
+    fn accumulate_batch(
+        &mut self,
+        source: &TraceOneHotColumn,
+        first_ring: usize,
+        num_positions: usize,
+        rotated: &[[i16; D]],
+    ) -> Result<(), AkitaError> {
+        let positions = match self {
+            Self::Wide(destination) | Self::Narrow { destination, .. } => destination.len(),
+        };
+        match self {
+            Self::Wide(destination) => {
+                for (offset, tables) in rotated.chunks_exact(source.num_columns * D).enumerate() {
+                    let start = first_ring + offset * num_positions;
+                    accumulate_dense_ring_rows(
+                        source,
+                        start..start + positions,
+                        destination,
+                        tables,
+                    )?;
+                }
+            }
+            Self::Narrow { partials, .. } => {
+                for (offset, tables) in rotated.chunks_exact(source.num_columns * D).enumerate() {
+                    let start = first_ring + offset * num_positions;
+                    accumulate_dense_ring_rows(source, start..start + positions, partials, tables)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) {
+        if let Self::Narrow {
+            destination,
+            partials,
+        } = self
+        {
+            for (destination, partial) in destination.iter_mut().zip(partials) {
+                if partial.iter().any(|&coefficient| coefficient != 0) {
+                    add_rotated_dense(destination, partial);
+                    partial.fill(0);
+                }
+            }
+        }
+    }
 }
 
 fn active_challenge_index(
@@ -136,7 +304,14 @@ pub(super) fn prepare_rotations<const D: usize>(
         .ok_or_else(|| {
             AkitaError::InvalidInput("dense rotation table size overflow".to_string())
         })?;
-    if mode == DecomposeRotationMode::Compact || (mode == DecomposeRotationMode::Auto && D == 128) {
+    let use_compact = mode == DecomposeRotationMode::Compact
+        || (mode == DecomposeRotationMode::Auto
+            && (D == 128
+                || ((D >= 256 || (D == 64 && dense_bytes > ROTATED_CHALLENGE_TABLE_BUDGET))
+                    && challenges
+                        .iter()
+                        .all(|challenge| challenge.positions.len() >= D / 4))));
+    if use_compact {
         let compact = (0..prepared_blocks)
             .into_par_iter()
             .map(|prepared_block| {
@@ -209,9 +384,12 @@ fn add_rotated_sparse<const D: usize>(
 }
 
 #[inline(always)]
-fn add_rotated_dense<const D: usize>(dst: &mut [i32; D], rotated: &[i16; D]) {
+fn add_rotated_dense<const D: usize, Accumulator: From<i16> + AddAssign>(
+    dst: &mut [Accumulator; D],
+    rotated: &[i16; D],
+) {
     for (dst, &value) in dst.iter_mut().zip(rotated) {
-        *dst += i32::from(value);
+        *dst += Accumulator::from(value);
     }
 }
 
@@ -227,218 +405,246 @@ fn add_rotated_compact<const D: usize>(dst: &mut [i32; D], dense: &[i8; D], shif
 }
 
 #[inline(always)]
-fn add_rotated_dense_tables<const D: usize, const N: usize>(
-    dst: &mut [i32; D],
+fn add_rotated_dense_tables<const D: usize, const N: usize, Accumulator: From<i16> + AddAssign>(
+    dst: &mut [Accumulator; D],
     tables: [&[i16; D]; N],
 ) {
+    const { assert!(N <= 8) };
+    // Rotated i8 challenges have magnitude <=128. Eight entries fit in i16,
+    // letting SIMD sum narrow lanes before widening once for accumulation.
     for coefficient in 0..D {
-        let mut sum = 0i32;
+        let mut sum = 0i16;
         for table in tables {
-            sum += i32::from(table[coefficient]);
+            sum += table[coefficient];
         }
-        dst[coefficient] += sum;
+        dst[coefficient] += Accumulator::from(sum);
     }
 }
 
 #[inline(always)]
-fn add_rotated<const D: usize>(
-    dst: &mut [i32; D],
-    rotations: &PreparedRotations<D>,
-    prepared_block: usize,
-    coefficient: usize,
+fn add_rotated_dense_tail<const D: usize, Accumulator: From<i16> + AddAssign>(
+    dst: &mut [Accumulator; D],
+    tables: &[&[i16; D]],
 ) {
-    match rotations {
-        PreparedRotations::Compact(challenges) => {
-            add_rotated_compact(dst, &challenges[prepared_block], coefficient);
-        }
-        PreparedRotations::Dense(rotated) => {
-            add_rotated_dense(dst, &rotated[prepared_block * D + coefficient]);
-        }
-        PreparedRotations::Sparse(challenges) => {
-            add_rotated_sparse(dst, &challenges[prepared_block], coefficient);
-        }
-    }
-}
-
-#[inline(always)]
-fn add_rotated_dense_rows<const D: usize>(
-    dst: &mut [i32; D],
-    rotated: &[[i16; D]],
-    prepared_block: usize,
-    coefficients: &[usize],
-) {
-    let table = |coefficient| &rotated[prepared_block * D + coefficient];
-    let mut remaining = coefficients;
-    while remaining.len() >= 8 {
-        add_rotated_dense_tables(
-            dst,
-            [
-                table(remaining[0]),
-                table(remaining[1]),
-                table(remaining[2]),
-                table(remaining[3]),
-                table(remaining[4]),
-                table(remaining[5]),
-                table(remaining[6]),
-                table(remaining[7]),
-            ],
-        );
-        remaining = &remaining[8..];
-    }
-    match remaining {
+    match tables {
         [] => {}
-        [c0] => add_rotated_dense(dst, table(*c0)),
-        [c0, c1] => add_rotated_dense_tables(dst, [table(*c0), table(*c1)]),
-        [c0, c1, c2] => {
-            add_rotated_dense_tables(dst, [table(*c0), table(*c1), table(*c2)]);
+        [t0] => add_rotated_dense(dst, t0),
+        [t0, t1] => add_rotated_dense_tables(dst, [*t0, *t1]),
+        [t0, t1, t2] => add_rotated_dense_tables(dst, [*t0, *t1, *t2]),
+        [t0, t1, t2, t3] => {
+            add_rotated_dense_tables(dst, [*t0, *t1, *t2, *t3]);
         }
-        [c0, c1, c2, c3] => {
-            add_rotated_dense_tables(dst, [table(*c0), table(*c1), table(*c2), table(*c3)]);
+        [t0, t1, t2, t3, t4] => {
+            add_rotated_dense_tables(dst, [*t0, *t1, *t2, *t3, *t4]);
         }
-        [c0, c1, c2, c3, c4] => add_rotated_dense_tables(
-            dst,
-            [table(*c0), table(*c1), table(*c2), table(*c3), table(*c4)],
-        ),
-        [c0, c1, c2, c3, c4, c5] => add_rotated_dense_tables(
-            dst,
-            [
-                table(*c0),
-                table(*c1),
-                table(*c2),
-                table(*c3),
-                table(*c4),
-                table(*c5),
-            ],
-        ),
-        [c0, c1, c2, c3, c4, c5, c6] => add_rotated_dense_tables(
-            dst,
-            [
-                table(*c0),
-                table(*c1),
-                table(*c2),
-                table(*c3),
-                table(*c4),
-                table(*c5),
-                table(*c6),
-            ],
-        ),
-        _ => unreachable!("eight-entry batches leave at most seven contributions"),
-    }
-}
-
-#[inline(always)]
-fn add_rotated_dense_contributions<const D: usize>(
-    dst: &mut [i32; D],
-    rotated: &[[i16; D]],
-    contributions: &[(usize, usize)],
-    table_index: impl Fn(usize, usize) -> usize + Copy,
-) {
-    let table =
-        |&(column, coefficient): &(usize, usize)| &rotated[table_index(column, coefficient)];
-    let mut remaining = contributions;
-    while remaining.len() >= 8 {
-        add_rotated_dense_tables(
-            dst,
-            [
-                table(&remaining[0]),
-                table(&remaining[1]),
-                table(&remaining[2]),
-                table(&remaining[3]),
-                table(&remaining[4]),
-                table(&remaining[5]),
-                table(&remaining[6]),
-                table(&remaining[7]),
-            ],
-        );
-        remaining = &remaining[8..];
-    }
-    match remaining {
-        [] => {}
-        [entry0] => add_rotated_dense(dst, table(entry0)),
-        [entry0, entry1] => {
-            add_rotated_dense_tables(dst, [table(entry0), table(entry1)]);
-        }
-        [entry0, entry1, entry2] => {
-            add_rotated_dense_tables(dst, [table(entry0), table(entry1), table(entry2)]);
-        }
-        [entry0, entry1, entry2, entry3] => add_rotated_dense_tables(
-            dst,
-            [table(entry0), table(entry1), table(entry2), table(entry3)],
-        ),
-        [entry0, entry1, entry2, entry3, entry4] => add_rotated_dense_tables(
-            dst,
-            [
-                table(entry0),
-                table(entry1),
-                table(entry2),
-                table(entry3),
-                table(entry4),
-            ],
-        ),
-        [entry0, entry1, entry2, entry3, entry4, entry5] => add_rotated_dense_tables(
-            dst,
-            [
-                table(entry0),
-                table(entry1),
-                table(entry2),
-                table(entry3),
-                table(entry4),
-                table(entry5),
-            ],
-        ),
-        [entry0, entry1, entry2, entry3, entry4, entry5, entry6] => {
-            add_rotated_dense_tables(
-                dst,
-                [
-                    table(entry0),
-                    table(entry1),
-                    table(entry2),
-                    table(entry3),
-                    table(entry4),
-                    table(entry5),
-                    table(entry6),
-                ],
-            );
+        [t0, t1, t2, t3, t4, t5] => add_rotated_dense_tables(dst, [*t0, *t1, *t2, *t3, *t4, *t5]),
+        [t0, t1, t2, t3, t4, t5, t6] => {
+            add_rotated_dense_tables(dst, [*t0, *t1, *t2, *t3, *t4, *t5, *t6]);
         }
         _ => unreachable!("eight-entry batches leave at most seven contributions"),
     }
 }
 
 #[inline(always)]
-fn add_rotated_dense_chunked_contributions<const D: usize>(
-    dst: &mut [[i32; D]],
+fn accumulate_dense_ring_rows<const D: usize, Accumulator: From<i16> + AddAssign>(
+    source: &TraceOneHotColumn,
+    rings: Range<usize>,
+    destination: &mut [[Accumulator; D]],
     rotated: &[[i16; D]],
-    contributions: &[(usize, usize)],
-    chunk: usize,
-    table_index: impl Fn(usize, usize) -> usize + Copy,
-) {
-    add_rotated_dense_contributions(&mut dst[chunk], rotated, contributions, table_index);
+) -> Result<(), AkitaError> {
+    // Byte row indices bound the number of rings per row. Keep the common
+    // D>=64 bucket buffers on the stack with a compile-time capacity.
+    if D >= 64 {
+        accumulate_dense_ring_rows_with_capacity::<D, 4, Accumulator>(
+            source,
+            rings,
+            destination,
+            rotated,
+        )
+    } else {
+        accumulate_dense_ring_rows_with_capacity::<D, 256, Accumulator>(
+            source,
+            rings,
+            destination,
+            rotated,
+        )
+    }
 }
 
 #[inline(always)]
-fn add_rotated_rows<const D: usize>(
-    dst: &mut [i32; D],
-    rotations: &PreparedRotations<D>,
-    prepared_block: usize,
-    coefficients: &[usize],
-) {
-    match rotations {
-        PreparedRotations::Compact(challenges) => {
-            let challenge = &challenges[prepared_block];
-            for &coefficient in coefficients {
-                add_rotated_compact(dst, challenge, coefficient);
+fn accumulate_dense_ring_rows_with_capacity<
+    const D: usize,
+    const C: usize,
+    Accumulator: From<i16> + AddAssign,
+>(
+    source: &TraceOneHotColumn,
+    rings: Range<usize>,
+    destination: &mut [[Accumulator; D]],
+    rotated: &[[i16; D]],
+) -> Result<(), AkitaError> {
+    let ring_start = rings.start;
+    let ring_end = rings.end;
+    let rings_per_row = source.one_hot_k / D;
+    let (column_rotations, remainder) = rotated.as_chunks::<D>();
+    debug_assert!(remainder.is_empty());
+    let mut tables = [[&rotated[0]; 8]; C];
+    let mut counts = [0usize; C];
+    visit_segment_ring_row_batches::<D>(
+        source,
+        ring_start,
+        ring_end,
+        |batch_start, selected_rows, committed_zero_masks| {
+            let rotations = column_rotations;
+            for (row_offset, (selected_rows, &committed_zero_mask)) in selected_rows
+                .chunks_exact(source.num_columns)
+                .zip(committed_zero_masks)
+                .enumerate()
+            {
+                counts[..rings_per_row].fill(0);
+                let row_ring = (batch_start + row_offset) * rings_per_row;
+                for (column_offset, (&hot, rotations)) in
+                    selected_rows.iter().zip(rotations).enumerate()
+                {
+                    let column = column_offset;
+                    if !row_is_committed(hot, committed_zero_mask, column) {
+                        continue;
+                    }
+                    let hot = usize::from(hot);
+                    let offset = hot / D;
+                    let ring = row_ring + offset;
+                    if ring < ring_start || ring >= ring_end {
+                        continue;
+                    }
+                    let count = &mut counts[offset];
+                    let batch = &mut tables[offset];
+                    batch[*count] = &rotations[hot % D];
+                    *count += 1;
+                    if *count == batch.len() {
+                        add_rotated_dense_tables(&mut destination[ring - ring_start], *batch);
+                        *count = 0;
+                    }
+                }
+                for (offset, (&count, batch)) in
+                    counts[..rings_per_row].iter().zip(&tables).enumerate()
+                {
+                    if count != 0 {
+                        add_rotated_dense_tail(
+                            &mut destination[row_ring + offset - ring_start],
+                            &batch[..count],
+                        );
+                    }
+                }
             }
-        }
-        PreparedRotations::Dense(rotated) => {
-            add_rotated_dense_rows(dst, rotated, prepared_block, coefficients);
-        }
-        PreparedRotations::Sparse(challenges) => {
-            let challenge = &challenges[prepared_block];
-            for &coefficient in coefficients {
-                add_rotated_sparse(dst, challenge, coefficient);
+        },
+    )
+}
+
+#[inline(always)]
+fn accumulate_dense_row_range<const D: usize>(
+    source: &TraceOneHotColumn,
+    rings: Range<usize>,
+    destination: &mut [[i32; D]],
+    rotations: &[[i16; D]],
+    block_index: impl Fn(usize) -> usize,
+) -> Result<(), AkitaError> {
+    let num_columns = source.num_columns;
+    let ring_start = rings.start;
+    let first_rotation = rotations
+        .first()
+        .ok_or_else(|| AkitaError::InvalidInput("empty dense decompose rotation table".into()))?;
+    visit_segment_ring_row_range::<D>(source, rings.start, rings.end, {
+        #[inline(always)]
+        |ring, selected_rows, committed_zero_masks| {
+            let position = ring - ring_start;
+            let dst = &mut destination[position];
+            // Combine columns sharing a destination to fill eight-way additions.
+            let mut tables = [first_rotation; 8];
+            let mut count = 0;
+            for column in 0..num_columns {
+                let base = block_index(column) * D;
+                let column_rotations = &rotations[base..][..D];
+                for (row_offset, &mask) in committed_zero_masks.iter().enumerate() {
+                    let hot = selected_rows[row_offset * num_columns + column];
+                    if row_is_committed(hot, mask, column) {
+                        tables[count] =
+                            &column_rotations[row_offset * source.one_hot_k + usize::from(hot)];
+                        count += 1;
+                        if count == tables.len() {
+                            add_rotated_dense_tables(dst, tables);
+                            count = 0;
+                        }
+                    }
+                }
             }
+            add_rotated_dense_tail(dst, &tables[..count]);
         }
+    })
+}
+
+#[inline(always)]
+fn accumulate_row_range<const D: usize>(
+    source: &TraceOneHotColumn,
+    rings: Range<usize>,
+    destination: &mut [[i32; D]],
+    add_rows: impl Fn(&mut [i32; D], usize, &[usize]),
+) -> Result<(), AkitaError> {
+    // Preserve a compile-time bound for small row batches, uniformly across chunk counts.
+    if D / source.one_hot_k <= 4 {
+        accumulate_row_range_with_capacity::<D, 4>(source, rings, destination, add_rows)
+    } else {
+        accumulate_row_range_with_capacity::<D, D>(source, rings, destination, add_rows)
     }
+}
+
+#[inline(always)]
+fn accumulate_row_range_with_capacity<const D: usize, const C: usize>(
+    source: &TraceOneHotColumn,
+    rings: Range<usize>,
+    destination: &mut [[i32; D]],
+    add_rows: impl Fn(&mut [i32; D], usize, &[usize]),
+) -> Result<(), AkitaError> {
+    let num_columns = source.num_columns;
+    let mut coefficients = [0usize; C];
+    let ring_start = rings.start;
+    visit_segment_ring_row_range::<D>(
+        source,
+        rings.start,
+        rings.end,
+        |ring, selected_rows, committed_zero_masks| {
+            let position = ring - ring_start;
+            let dst = &mut destination[position];
+            for column in 0..num_columns {
+                let mut count = 0;
+                for (row_offset, &committed_zero_mask) in committed_zero_masks.iter().enumerate() {
+                    let hot = selected_rows[row_offset * num_columns + column];
+                    if row_is_committed(hot, committed_zero_mask, column) {
+                        coefficients[count] = row_offset * source.one_hot_k + usize::from(hot);
+                        count += 1;
+                    }
+                }
+                add_rows(dst, column, &coefficients[..count]);
+            }
+        },
+    )
+}
+
+fn positions_per_task<const D: usize>(
+    positions: usize,
+    row_alignment: usize,
+    working_set_target: usize,
+) -> usize {
+    let target_tasks = rayon::current_num_threads()
+        .saturating_mul(TASKS_PER_RAYON_WORKER)
+        .min(positions)
+        .max(1);
+    let thread_balanced_chunk = positions
+        .div_ceil(target_tasks)
+        .next_multiple_of(row_alignment);
+    let bytes_per_position = std::mem::size_of::<[i32; D]>();
+    let cache_sized_chunk = (working_set_target / bytes_per_position)
+        .max(row_alignment)
+        .next_multiple_of(row_alignment);
+    thread_balanced_chunk.min(cache_sized_chunk).min(positions)
 }
 
 fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[i8; D]) {
@@ -466,8 +672,8 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
     let _span = tracing::info_span!(
         "TraceOneHotColumn::decompose_fold_batch",
         ring_dimension = D,
-        rows = source.rows.num_rows(),
-        columns = source.rows.num_columns(),
+        rows = source.num_rows,
+        columns = source.num_columns,
         num_chunks,
         num_positions,
         num_digits,
@@ -497,17 +703,8 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
             "noncanonical fold chunk ranges".into(),
         ));
     }
-    let mut block_chunks = vec![0usize; blocks_per_poly];
-    for (chunk, range) in chunk_ranges.iter().enumerate() {
-        for block_chunk in &mut block_chunks[range.clone()] {
-            *block_chunk = chunk;
-        }
-    }
     let blocks_per_column = (segment_rings >= num_positions).then(|| segment_rings / num_positions);
-    let rotation_blocks = blocks_per_column.map_or(challenges.len(), |blocks_per_column| {
-        blocks_per_column * source.rows.num_columns()
-    });
-    let rotation_table_bytes = rotation_blocks
+    let rotation_table_bytes = num_blocks
         .saturating_mul(D)
         .saturating_mul(std::mem::size_of::<[i16; D]>());
     let rotation_span = tracing::info_span!(
@@ -522,42 +719,26 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
     let rotations = prepare_rotations::<D>(
         challenges,
         blocks_per_column,
-        source.rows.num_columns(),
+        source.num_columns,
         rotation_mode,
-    );
-    let rotations = rotations?;
+    )?;
     let _ = rotation_span.record("dense", rotations.is_dense());
     drop(rotation_guard);
-    let compressed = if segment_rings >= num_positions {
+    let mut compressed = (0..num_chunks)
+        .map(|_| vec![[0i32; D]; num_positions])
+        .collect::<Vec<_>>();
+    if segment_rings >= num_positions {
         let blocks_per_column = segment_rings / num_positions;
         debug_assert_eq!(blocks_per_column * num_positions, segment_rings);
-        let row_alignment = (source.one_hot_k / D).max(1);
-        let target_tasks = rayon::current_num_threads()
-            .saturating_mul(TASKS_PER_RAYON_WORKER)
-            .min(num_positions)
-            .max(1);
-        let thread_balanced_chunk = num_positions
-            .div_ceil(target_tasks)
-            .next_multiple_of(row_alignment);
-        let bytes_per_position = std::mem::size_of::<[i32; D]>().saturating_mul(num_chunks);
-        let cache_sized_chunk = (DECOMPOSE_POSITION_WORKING_SET_TARGET / bytes_per_position)
-            .max(row_alignment)
-            .next_multiple_of(row_alignment);
-        let position_chunk = thread_balanced_chunk
-            .min(cache_sized_chunk)
-            .min(num_positions);
+        let position_chunk = positions_per_task::<D>(
+            num_positions,
+            (source.one_hot_k / D).max(1),
+            DECOMPOSE_POSITION_WORKING_SET_TARGET,
+        );
         let position_tasks = num_positions.div_ceil(position_chunk);
-        let use_local_dense_rotations = D == 128
+        let use_block_dense_rotations = D == 128
             && source.one_hot_k == 256
             && matches!(&rotations, PreparedRotations::Compact(_));
-        let local_rotation_rows = if use_local_dense_rotations {
-            source.rows.num_columns().checked_mul(D).ok_or_else(|| {
-                AkitaError::InvalidInput("local decompose rotation table size overflow".to_string())
-            })?
-        } else {
-            0
-        };
-        let local_rotation_bytes = local_rotation_rows * std::mem::size_of::<[i16; D]>();
         let _compress_span = tracing::info_span!(
             "trace_onehot_decompose_accumulate",
             mode = "position_parallel",
@@ -565,207 +746,206 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
             blocks_per_column,
             position_tasks,
             position_chunk,
-            position_working_set_bytes = position_chunk * bytes_per_position,
+            position_working_set_bytes = position_chunk * std::mem::size_of::<[i32; D]>(),
             dense_rotations = rotations.is_dense(),
-            local_dense_rotations = use_local_dense_rotations,
-            local_rotation_bytes,
+            local_dense_rotations = use_block_dense_rotations,
         )
         .entered();
-        let compressed_len = num_positions.checked_mul(num_chunks).ok_or_else(|| {
-            AkitaError::InvalidInput("chunked decompose fold size overflow".to_string())
-        })?;
-        let mut compressed = vec![[0i32; D]; compressed_len];
-        compressed
-            .par_chunks_mut(position_chunk * num_chunks)
-            .enumerate()
-            .try_for_each(|(position_task, compressed)| {
-                let position_start = position_task * position_chunk;
-                let positions = compressed.len() / num_chunks;
-                let position_end = position_start + positions;
-                let mut local_rotations =
-                    use_local_dense_rotations.then(|| vec![[0i16; D]; local_rotation_rows]);
-                for (trace_block, &chunk) in block_chunks.iter().enumerate() {
-                    if let Some(local_rotations) = local_rotations.as_mut() {
-                        let PreparedRotations::Compact(challenges) = &rotations else {
-                            unreachable!("local dense rotations require compact challenges");
-                        };
-                        for column in 0..source.rows.num_columns() {
-                            let prepared_block = trace_block * source.rows.num_columns() + column;
-                            fill_compact_rotation_table(
-                                &mut local_rotations[column * D..][..D],
-                                &challenges[prepared_block],
-                            );
-                        }
+        if use_block_dense_rotations {
+            let PreparedRotations::Compact(challenges) = &rotations else {
+                unreachable!("block dense rotations require compact challenges");
+            };
+            const BLOCK_ROTATION_WORKING_SET_TARGET: usize = 1 << 22;
+            let block_rotation_rows = source.num_columns * D;
+            let block_rotation_bytes = block_rotation_rows * std::mem::size_of::<[i16; D]>();
+            // K>=D contributes at most one rotated i8 value per column to a position.
+            let coefficient_bound = source.num_columns * usize::from(i8::MIN.unsigned_abs());
+            let blocks_per_batch = (BLOCK_ROTATION_WORKING_SET_TARGET / block_rotation_bytes)
+                .max(1)
+                .min(i16::MAX as usize / coefficient_bound)
+                .min(blocks_per_column);
+            let mut tasks = compressed
+                .iter_mut()
+                .zip(chunk_ranges)
+                .flat_map(|(destination, blocks)| {
+                    destination.chunks_mut(position_chunk).map(|destination| {
+                        // Narrow partials require enough repeated updates to amortize widening.
+                        DensePositionTask::new(destination, blocks.len() >= 4)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut partial_bounds = vec![0usize; num_chunks];
+            let mut block_rotations = vec![[0i16; D]; block_rotation_rows * blocks_per_batch];
+            for batch_start in (0..blocks_per_column).step_by(blocks_per_batch) {
+                let batch_end = (batch_start + blocks_per_batch).min(blocks_per_column);
+                let block_rotations =
+                    &mut block_rotations[..block_rotation_rows * (batch_end - batch_start)];
+                block_rotations
+                    .par_chunks_mut(D)
+                    .enumerate()
+                    .for_each(|(index, table)| {
+                        fill_compact_rotation_table(
+                            table,
+                            &challenges[batch_start * source.num_columns + index],
+                        );
+                    });
+                let batch_bounds = chunk_ranges
+                    .iter()
+                    .map(|blocks| {
+                        let first = blocks.start.max(batch_start);
+                        let end = blocks.end.min(batch_end);
+                        (first..end)
+                            .map(|block| {
+                                challenges[block * source.num_columns..][..source.num_columns]
+                                    .iter()
+                                    .map(|challenge| {
+                                        challenge
+                                            .iter()
+                                            .map(|value| usize::from(value.unsigned_abs()))
+                                            .max()
+                                            .unwrap_or(0)
+                                    })
+                                    .sum::<usize>()
+                            })
+                            .sum::<usize>()
+                    })
+                    .collect::<Vec<_>>();
+                for (chunk, (partial, batch)) in
+                    partial_bounds.iter_mut().zip(batch_bounds).enumerate()
+                {
+                    if *partial + batch > i16::MAX as usize {
+                        tasks[chunk * position_tasks..(chunk + 1) * position_tasks]
+                            .par_iter_mut()
+                            .for_each(DensePositionTask::flush);
+                        *partial = 0;
                     }
-                    let ring_start = trace_block * num_positions + position_start;
-                    let ring_end = trace_block * num_positions + position_end;
-                    if source.one_hot_k < D {
-                        let num_columns = source.rows.num_columns();
-                        let rows_per_ring = D / source.one_hot_k;
-                        let mut coefficients = Vec::with_capacity(rows_per_ring);
-                        visit_segment_ring_row_range::<D>(
-                            source,
-                            ring_start,
-                            ring_end,
-                            |ring, selected_rows, committed_zero_masks| {
-                                let position = ring - trace_block * num_positions;
-                                if rows_per_ring <= 4 {
-                                    for column in 0..num_columns {
-                                        let dst = &mut compressed
-                                            [(position - position_start) * num_chunks + chunk];
-                                        let mut fixed_coefficients = [0usize; 4];
-                                        let mut count = 0;
-                                        for (row_offset, (row_indices, &committed_zero_mask)) in
-                                            selected_rows
-                                                .chunks_exact(num_columns)
-                                                .zip(committed_zero_masks)
-                                                .enumerate()
-                                        {
-                                            let hot = row_indices[column];
-                                            if row_is_committed(hot, committed_zero_mask, column) {
-                                                fixed_coefficients[count] = row_offset
-                                                    * source.one_hot_k
-                                                    + usize::from(hot);
-                                                count += 1;
-                                            }
-                                        }
-                                        let prepared_block = trace_block * num_columns + column;
-                                        add_rotated_rows(
-                                            dst,
-                                            &rotations,
-                                            prepared_block,
-                                            &fixed_coefficients[..count],
-                                        );
-                                    }
-                                } else {
-                                    for column in 0..num_columns {
-                                        let dst = &mut compressed
-                                            [(position - position_start) * num_chunks + chunk];
-                                        coefficients.clear();
-                                        for (row_offset, (row_indices, &committed_zero_mask)) in
-                                            selected_rows
-                                                .chunks_exact(num_columns)
-                                                .zip(committed_zero_masks)
-                                                .enumerate()
-                                        {
-                                            let hot = row_indices[column];
-                                            if row_is_committed(hot, committed_zero_mask, column) {
-                                                coefficients.push(
-                                                    row_offset * source.one_hot_k
-                                                        + usize::from(hot),
-                                                );
-                                            }
-                                        }
-                                        let prepared_block = trace_block * num_columns + column;
-                                        add_rotated_rows(
-                                            dst,
-                                            &rotations,
-                                            prepared_block,
-                                            &coefficients,
-                                        );
-                                    }
-                                }
-                            },
-                        )?;
-                    } else if let Some(local_rotations) = local_rotations.as_ref() {
-                        visit_segment_ring_range::<D>(
-                            source,
-                            ring_start,
-                            ring_end,
-                            |ring, contributions| {
-                                let position = ring - trace_block * num_positions;
-                                let dst_start = (position - position_start) * num_chunks;
-                                add_rotated_dense_chunked_contributions(
-                                    &mut compressed[dst_start..][..num_chunks],
-                                    local_rotations,
-                                    contributions,
-                                    chunk,
-                                    |column, coefficient| column * D + coefficient,
-                                );
-                            },
-                        )?;
-                    } else {
-                        visit_segment_ring_range::<D>(
-                            source,
-                            ring_start,
-                            ring_end,
-                            |ring, contributions| {
-                                let position = ring - trace_block * num_positions;
-                                let dst_start = (position - position_start) * num_chunks;
-                                if let PreparedRotations::Dense(rotated) = &rotations {
-                                    add_rotated_dense_chunked_contributions(
-                                        &mut compressed[dst_start..][..num_chunks],
-                                        rotated,
-                                        contributions,
-                                        chunk,
-                                        |column, coefficient| {
-                                            ((trace_block * source.rows.num_columns() + column) * D)
-                                                + coefficient
-                                        },
-                                    );
-                                } else {
-                                    for &(column, coefficient) in contributions {
-                                        add_rotated(
-                                            &mut compressed[dst_start + chunk],
-                                            &rotations,
-                                            trace_block * source.rows.num_columns() + column,
-                                            coefficient,
-                                        );
-                                    }
-                                }
-                            },
-                        )?;
-                    }
+                    *partial += batch;
                 }
-                Ok::<_, AkitaError>(())
-            })?;
-        compressed
+                // Canonical ranges are ordered. Dispatch only the chunk tasks
+                // intersecting this table batch, including across a chunk boundary.
+                let first_chunk = chunk_ranges.partition_point(|blocks| blocks.end <= batch_start);
+                let end_chunk = chunk_ranges.partition_point(|blocks| blocks.start < batch_end);
+                let first_task = first_chunk * position_tasks;
+                tasks[first_task..end_chunk * position_tasks]
+                    .par_iter_mut()
+                    .enumerate()
+                    .try_for_each(|(offset, task)| {
+                        let index = first_task + offset;
+                        let blocks = &chunk_ranges[index / position_tasks];
+                        let first = blocks.start.max(batch_start);
+                        let end = blocks.end.min(batch_end);
+                        if first < end {
+                            let first_ring =
+                                first * num_positions + index % position_tasks * position_chunk;
+                            task.accumulate_batch(
+                                source,
+                                first_ring,
+                                num_positions,
+                                &block_rotations[(first - batch_start) * block_rotation_rows
+                                    ..(end - batch_start) * block_rotation_rows],
+                            )?;
+                        }
+                        Ok::<_, AkitaError>(())
+                    })?;
+            }
+            tasks.par_iter_mut().for_each(DensePositionTask::flush);
+        } else {
+            // Each chunk owns the same block range of every column. Tasks touch one
+            // contiguous output buffer and read only that range of shared trace rows.
+            compressed
+                .par_iter_mut()
+                .zip(chunk_ranges)
+                .try_for_each(|(destination, blocks)| {
+                    destination
+                        .par_chunks_mut(position_chunk)
+                        .enumerate()
+                        .try_for_each(|(task, destination)| {
+                            let position_start = task * position_chunk;
+                            let position_end = position_start + destination.len();
+                            for trace_block in blocks.clone() {
+                                let rings = trace_block * num_positions + position_start
+                                    ..trace_block * num_positions + position_end;
+                                if source.one_hot_k < D {
+                                    let first = trace_block * source.num_columns;
+                                    rotations.accumulate_rows(
+                                        source,
+                                        rings,
+                                        destination,
+                                        |column| first + column,
+                                    )?;
+                                } else {
+                                    rotations.accumulate_contributions(
+                                        source,
+                                        rings,
+                                        destination,
+                                        trace_block,
+                                    )?;
+                                }
+                            }
+                            Ok::<_, AkitaError>(())
+                        })
+                })?;
+        }
     } else {
+        let position_chunk = positions_per_task::<D>(
+            segment_rings,
+            (source.one_hot_k / D).max(1),
+            DECOMPOSE_POSITION_WORKING_SET_TARGET,
+        );
         let _compress_span = tracing::info_span!(
             "trace_onehot_decompose_accumulate",
-            mode = "flat",
+            mode = "flat_position_parallel",
             num_blocks,
             segment_rings,
+            position_chunk,
             dense_rotations = rotations.is_dense(),
         )
         .entered();
-        let compressed_len = num_positions.checked_mul(num_chunks).ok_or_else(|| {
-            AkitaError::InvalidInput("chunked decompose fold size overflow".to_string())
-        })?;
-        let mut compressed = vec![[0i32; D]; compressed_len];
-        visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
-            for &(column, coefficient) in contributions {
-                let block = column;
-                let chunk = block_chunks[0];
-                add_rotated(
-                    &mut compressed[ring * num_chunks + chunk],
-                    &rotations,
-                    block,
-                    coefficient,
-                );
-            }
-        })?;
+        // A short native polynomial has one live block; the dyadic partition
+        // may leave other chunks empty. No selector slots are part of this layout.
         compressed
-    };
+            .par_iter_mut()
+            .zip(chunk_ranges)
+            .try_for_each(|(destination, blocks)| {
+                if blocks.is_empty() {
+                    return Ok(());
+                }
+                destination[..segment_rings]
+                    .par_chunks_mut(position_chunk)
+                    .enumerate()
+                    .try_for_each(|(task, destination)| {
+                        let ring_start = task * position_chunk;
+                        let rings = ring_start..ring_start + destination.len();
+                        if source.one_hot_k < D {
+                            rotations
+                                .accumulate_rows(source, rings, destination, |column| column)?;
+                        } else {
+                            rotations.accumulate_contributions(source, rings, destination, 0)?;
+                        }
+                        Ok::<_, AkitaError>(())
+                    })
+            })?;
+    }
     let _expand_span = tracing::info_span!(
         "trace_onehot_decompose_expand_digits",
         num_positions,
         num_digits,
     )
     .entered();
-    let expanded = if num_chunks == 1 && num_digits == 1 {
-        vec![compressed]
+    let expanded = if num_digits == 1 {
+        compressed
     } else {
-        let mut expanded = (0..num_chunks)
-            .map(|_| Vec::with_capacity(num_positions.saturating_mul(num_digits)))
-            .collect::<Vec<_>>();
-        for position in compressed.chunks_exact(num_chunks) {
-            for (expanded, &coeffs) in expanded.iter_mut().zip(position) {
-                expanded.push(coeffs);
-                expanded.extend((1..num_digits).map(|_| [0i32; D]));
-            }
-        }
-        expanded
+        compressed
+            .into_par_iter()
+            .map(|compressed| {
+                let mut expanded = Vec::with_capacity(num_positions.saturating_mul(num_digits));
+                for coeffs in compressed {
+                    expanded.push(coeffs);
+                    expanded.extend((1..num_digits).map(|_| [0i32; D]));
+                }
+                expanded
+            })
+            .collect()
     };
     drop(_expand_span);
     let _witness_span = tracing::info_span!(
@@ -775,7 +955,7 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
     )
     .entered();
     Ok(expanded
-        .into_iter()
+        .into_par_iter()
         .map(DecomposeFoldWitness::from_centered_rows::<D>)
         .collect())
 }
