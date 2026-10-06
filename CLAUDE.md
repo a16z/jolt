@@ -205,13 +205,15 @@ clear, ZK, and verifier-fixture tests.
 - State enforcement honestly in docs: never describe a property as constraint-enforced when it holds only for the honest encoder or under a `debug_assert`; name the mechanism and location that pins each invariant. If reviewers independently misread a deliberate gap, the missing argument belongs in a comment.
 - Make names track current semantics: rename vocabulary when an encoding changes (`UnsignedIncMsb` → `BalancedIncCarry`); keep no compatibility names.
 - Add `cfg`/`cfg_attr` gates only where the build requires them.
-- Before PR handoff, audit every added test and helper. Remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters or histograms, and one-off fuzz or parity scaffolding. Keep permanent tests only when they add a distinct failure signal beyond existing tests, golden fixtures, or CI. Make a worthwhile manual diagnostic an intentional tool or benchmark with a documented command.
 
-### Testing Guidelines
+### Tests
 
-- Match verification to the changed behavior and complete the applicable checks above and in the invoked workflow. After they pass, repeat or broaden checks only for further changes, failures, or unresolved concerns.
-- Add tests for distinct failure signals, not to mirror the implementation or require new tests for every low-impact edit.
-- Do not add old-vs-new equivalence tests that reimplement the pre-change logic as the oracle. Transition-validation belongs in the PR process, not the permanent suite. Permanent tests must assert against independent ground truth: spec vectors, frozen wire digests, verifier fixtures, `jolt-kernels`' reference tier, or algebraic properties. If the old code is deleted, its reimplementation in a test is dead weight — delete the test rather than keep the old logic alive inside it. A `#[cfg(test)]` copy of superseded production code "kept as the oracle" is the same anti-pattern.
+- Commit a test only when it adds a distinct failure signal beyond existing tests, golden fixtures, verifier fixtures, or CI. One focused test per stated behavior.
+- Permanent tests assert against independent ground truth: spec vectors, frozen wire digests, verifier fixtures, `jolt-kernels`' reference tier, or algebraic properties. Never a second implementation of the rule under test.
+- No old-vs-new equivalence tests and no `#[cfg(test)]` copy of superseded code kept as the oracle; transition validation belongs in the PR, not the suite.
+- Before PR handoff, remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters, and parity or fuzz scaffolding. A worthwhile manual diagnostic becomes a tool or benchmark with a documented command.
+- Locally, run only the touched crates' tests (`cargo nextest run -p <crate> -E 'test(<name>)'`); the full suite is CI's job. Broaden only after further changes or failures.
+- Cleanup pass on a diff: `.claude/skills/test-policy/SKILL.md`.
 
 ### Lint Policy
 
@@ -222,5 +224,11 @@ clear, ZK, and verifier-fixture tests.
 
 ### Comments
 
-Match the codebase's low comment density. Worth writing: WHY comments, WARNING for non-obvious gotchas, SAFETY on unsafe blocks, algorithm explanations (link to paper if applicable), public API docs stating behavior or invariants.
-Do not narrate code or test assertions. If a comment only restates an expression, make the code self-documenting instead.
+A comment survives only if it carries what the code cannot:
+- invariants or contracts the types cannot express, naming where each is enforced;
+- why-not notes that stop a known bug or soundness regression from returning;
+- pointers to non-local coupling (keep-in-sync with another crate, file, or wire format);
+- soundness or security reasoning; behavior forced by an external dependency, platform, or protocol;
+- public API docs, paper/spec links, `TODO(#issue)`, `SAFETY:` on `unsafe`.
+
+Delete narration, section banners, commented-out code, and history or migration notes. Lint suppressions only for style/pedantic rules or a stated real justification (see Lint Policy). Cleanup pass on a diff: `.claude/skills/comment-policy/SKILL.md`.
