@@ -188,7 +188,10 @@ field-inline proofs, including advice and committed programs. Catalog freshness
 is checked separately with `gen_jolt_schedules --check`.
 
 The performance requirements are to retain fused streaming and avoid selector
-overhead. Full chunk locality across recursive folds also needs
+overhead. The [base/head performance comparison](akita-native-trace-batching-performance.md)
+records proving, verification, proof size, setup, and process memory for Single,
+W2R2, W4R2, and W8R2, including the level-3 witness growth at `log_T=24`.
+Full chunk locality across recursive folds also needs
 [Akita #175](https://github.com/LayerZero-Labs/akita/pull/175) and regeneration of
 the affected Jolt multi-chunk catalogs after upgrading the pin.
 
