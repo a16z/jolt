@@ -152,13 +152,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
             stage4_gammas: &stage_gammas[3],
             stage5_gammas: &stage_gammas[4],
         });
-        // The PC pushforward source: the per-cycle bytecode indices,
-        // collected as typed bundles off the witness plane's row source.
         let rows: Vec<BytecodeReadRafWitness> =
             collect_bundles(witness, 1 << relation.dimensions().log_t())?;
         let bytecode_indices: Vec<usize> = rows.iter().map(|row| row.bytecode_pc.0).collect();
-        // The packed fused stages' cycle factor: the per-cycle fused deltas,
-        // fetched exactly when the relation carries the consumer points.
         let fused_values: Vec<F> = if relation.fused_inc_cycle_points().is_empty() {
             Vec::new()
         } else {
@@ -185,27 +181,19 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     rounds: usize,
     /// Committed-program mode stages the raw bound `Val_s` wire claims.
     committed_program: bool,
-    /// `γ^s` batching weights for the stage products, then `γ^{S+2}` for the
-    /// entry product.
     stage_weights: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     entry_weight: F,
-    /// The per-stage `Int` weights inside `Val'_s = Val_s + raf_weight_s·Int`.
     raf_weights: Vec<F>,
-    /// The per-stage cycle-eq pushforwards `F_s` (the fused stages weighted
-    /// by the fused deltas).
     pushforwards: Vec<Polynomial<F>>,
     /// The RAW distinct value tables (no RAF fold — see the module doc); the
     /// staged `BytecodeValClaim` wire set on the packed shape includes the
     /// store column the fused stages read.
     values: Vec<Polynomial<F>>,
-    /// Each stage's raw-value source over `values`.
     stage_vals: Vec<StageVal>,
-    /// The RAF address identity `Int(k) = k`, bound alongside.
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
-    /// The field-register extension's two (pushforward, row-table) legs.
     #[cfg(feature = "field-inline")]
     field_inline: FieldInlineAddressLegs<F>,
     rounds_bound: usize,
@@ -237,8 +225,6 @@ impl<F: JoltField> FieldInlineAddressLegs<F> {
         }
     }
 
-    /// The legs' contribution to one round-message sample at `point`, summed
-    /// over pair `y`.
     fn round_term(&self, y: usize, point: F) -> F {
         let ext = |table: &Polynomial<F>| {
             table.sumcheck_round_eval_with_order(y, point, BindingOrder::LowToHigh)
@@ -250,7 +236,6 @@ impl<F: JoltField> FieldInlineAddressLegs<F> {
             .sum()
     }
 
-    /// The legs' contribution to the fully bound intermediate.
     fn bound_term(&self) -> F {
         self.weights
             .iter()
@@ -279,8 +264,6 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
         entry_bytecode_index: usize,
         challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
     ) -> Result<Self, KernelError<F>> {
-        // The packed (lattice) shape appends one store val stage and four
-        // fused-inc consumer stages; anything else is an unknown shape.
         let (num_stages, lattice) = match (NUM_BYTECODE_VAL_STAGES, fused_cycle_points.len()) {
             (5, 0) => (BASE_STAGES, false),
             (6, LATTICE_FUSED_INC_STAGES) => (BASE_STAGES + LATTICE_FUSED_INC_STAGES, true),
@@ -334,8 +317,6 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
             gamma_powers[i] = gamma_powers[i - 1] * gamma;
         }
 
-        // F_s pushforwards: one trace scan per stage; the fused stages weight
-        // each cycle's eq contribution by its fused delta.
         let pushforward = |point: &[F], fused: bool| {
             let eq_cycle = eq_table(point);
             let mut table = vec![F::zero(); addresses];
@@ -467,7 +448,6 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
         self.rounds_bound += 1;
     }
 
-    /// Stage `s`'s raw value at a fully bound table (`evals()[0]`).
     fn bound_stage_val(&self, stage: usize) -> F {
         match self.stage_vals[stage] {
             StageVal::Table(index) => self.values[index].evals()[0],
@@ -624,9 +604,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
         #[cfg(not(feature = "field-inline"))]
         let entry_scalar = eq_table(r_address)[entry_bytecode_index];
 
-        // rv64: the naive prover over the anchor committed expression — every
-        // stage value a constant table, every eq/RAF/entry public a derived
-        // multilinear.
         #[cfg(not(feature = "field-inline"))]
         {
             let mut opening_tables = BTreeMap::new();
@@ -661,7 +638,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
             let scaled_eq = |point: &[F], scalar: F| -> Vec<F> {
                 eq_table(point).into_iter().map(|eq| scalar * eq).collect()
             };
-            // eq(zero cycle, ·): the cycle-0 boundary selector.
             let mut entry_cycle = vec![F::zero(); cycles];
             entry_cycle[0] = entry_scalar;
             let mut derived_tables = BTreeMap::new();

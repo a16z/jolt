@@ -39,7 +39,8 @@ use std::sync::Arc;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
-    accumulate_product_grid, map_indices, pin_derived_term, GruenRoundMessage, RoundProgress,
+    accumulate_product_grid, map_indices, pin_derived_term, product_grid_scratch_len,
+    GruenRoundMessage, RoundProgress, MAX_GRID_FACTORS,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -57,8 +58,6 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
-/// Optimized [`PrepareKernel`] implementor for the
-/// `instruction_ra_virtualization` slot.
 pub struct OptimizedInstructionRaVirtualization;
 
 impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
@@ -156,6 +155,12 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 reason: "committed RA chunk width outside the supported one-hot range",
             });
         }
+        if num_committed_per_virtual > MAX_GRID_FACTORS {
+            return Err(KernelError::Unsupported {
+                reason: "more committed RA chunks per virtual polynomial than the product grid \
+                         supports",
+            });
+        }
         if rows.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "stage-6b instruction rows".to_owned(),
@@ -242,13 +247,12 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         let folded_ra = &self.folded_ra;
 
         struct Scratch<F: JoltField> {
-            /// Cross-row lanes for `q(1), …, q(N−1), q(∞)`.
             lanes: Vec<F::Accumulator>,
-            /// Per-row product lanes (reduced and folded by `e_in` each row).
             row_lanes: Vec<F::Accumulator>,
             pairs: Vec<(F, F)>,
             evals: Vec<F>,
             steps: Vec<F>,
+            grid: Vec<F>,
         }
 
         let block_lanes = self.gruen.par_fold_out_in(
@@ -258,6 +262,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 pairs: vec![(F::zero(), F::zero()); num_committed],
                 evals: vec![F::zero(); n],
                 steps: vec![F::zero(); n],
+                grid: vec![F::zero(); product_grid_scratch_len(n)],
             },
             |scratch, row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, &mut scratch.pairs);
@@ -274,9 +279,10 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                         *step = pair.1 - pair.0;
                     }
                     accumulate_product_grid(
-                        &mut scratch.evals,
+                        &scratch.evals,
                         &scratch.steps,
                         &mut scratch.row_lanes,
+                        &mut scratch.grid,
                     );
                 }
                 for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
@@ -473,16 +479,17 @@ mod tests {
 
     use crate::reference::instruction_read_raf::InstructionReadRafWitness;
     use crate::reference::views::{address_fold, eq_table};
-    use crate::{NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+    use crate::{
+        KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
+    };
 
     use super::super::instruction_read_raf::{
         InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
     };
+    use super::super::support::MAX_GRID_FACTORS;
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
 
-    /// Packs reference-typed fixture rows into the optimized kernels' shared
-    /// row form (this kernel reads only the lookup index).
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
             .map(|row| {
@@ -638,8 +645,6 @@ mod tests {
             chunk_bits,
         );
 
-        // The reference tier, assembled exactly as its `prepare` does: one-hot
-        // grids behind a fixed oracle, address-folded per committed chunk.
         let mut backend = FixedBackend::new();
         for index in 0..num_committed {
             let grid = one_hot_grid(&rows, index, num_committed, chunk_bits);
@@ -729,7 +734,6 @@ mod tests {
                 )
             };
 
-        // True input claim: the full hypercube sum of the output summand.
         let eq_cycle = eq_table(&r_cycle);
         let mut claim = fr(0);
         for j in 0..rows.len() {
@@ -781,8 +785,6 @@ mod tests {
                 .any(|value| *value != fr(0)));
         }
 
-        // The optimized eq scalar passes the same derived-table cross-check
-        // the naive tier's materialized table does.
         let sumcheck_point: Vec<Fr> = (0..rounds).map(challenge).collect();
         let output_points = relation
             .derive_opening_points(&sumcheck_point, &input_points)
@@ -807,7 +809,34 @@ mod tests {
         assert_parity(6, 4, 8, 4, 43, false);
     }
 
-    /// Odd geometry: 3 virtuals × 2 committed, 2-bit chunks, odd log_t.
+    /// The product grid's factor bound is a construction error in every
+    /// build profile, not a debug assertion in the round loop.
+    #[test]
+    fn rejects_more_factors_than_the_product_grid_supports() {
+        for (per_virtual, supported) in [(MAX_GRID_FACTORS, true), (MAX_GRID_FACTORS + 1, false)] {
+            let log_t = 2;
+            let instruction_address: Vec<Fr> = (0..per_virtual as u64).map(fr).collect();
+            let kernel = OptimizedInstructionRaVirtualizationKernel::new(
+                log_t,
+                1,
+                per_virtual,
+                &instruction_address,
+                &[fr(3), fr(5)],
+                1,
+                Arc::new(pack(&fixture_rows(log_t, 47))),
+                fr(7),
+            );
+            if supported {
+                assert!(
+                    kernel.is_ok(),
+                    "{per_virtual} committed chunks per virtual polynomial"
+                );
+            } else {
+                assert!(matches!(kernel, Err(KernelError::Unsupported { .. })));
+            }
+        }
+    }
+
     #[test]
     fn parity_small_odd_geometry() {
         assert_parity(3, 3, 2, 2, 1337, false);

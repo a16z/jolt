@@ -42,8 +42,6 @@ pub(in crate::expand) fn expand_csrrs(
         return asm.finalize();
     }
 
-    // General case: rd receives the old CSR value, then the CSR accumulates
-    // the source bits.
     asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
     asm.emit_r(
         Kind::OR,

@@ -279,8 +279,6 @@ fn r_cycle_suffix<F: JoltField>(log_t: usize, opening_point: &[F]) -> Result<&[F
         .ok_or_else(|| public_input_failed("bytecode cycle opening point shorter than log_t"))
 }
 
-/// Evaluate the full-program bytecode read-RAF output expression at the produced
-/// `BytecodeRa` openings and public values.
 #[cfg(not(feature = "akita"))]
 #[expect(
     clippy::wildcard_enum_match_arm,

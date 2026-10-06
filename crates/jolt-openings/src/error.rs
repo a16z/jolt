@@ -1,5 +1,3 @@
-//! PCS error types.
-
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum OpeningsError {
     #[error("opening proof verification failed")]

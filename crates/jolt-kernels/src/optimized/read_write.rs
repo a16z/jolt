@@ -1,5 +1,3 @@
-//! Supported sparse read/write orders and inactive RAM address rounds.
-
 use jolt_claims::protocols::jolt::ReadWriteDimensions;
 use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;

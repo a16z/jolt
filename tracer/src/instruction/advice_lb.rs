@@ -20,9 +20,7 @@ declare_riscv_instr!(
 
 impl AdviceLB {
     fn exec(&self, cpu: &mut Cpu, _: &mut <AdviceLB as RISCVInstruction>::RAMAccess) {
-        // Read 1 byte from the advice tape
         let advice_value = advice_tape_read(cpu, 1).expect("Failed to read from advice tape");
-        // Store the sign extended advice value to register rd
         cpu.write_register(self.operands.rd as usize, advice_value as i8 as i64);
     }
 }

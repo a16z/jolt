@@ -434,7 +434,6 @@ where
     }
 }
 
-/// Lift a jolt-typed opening-id list into the composite id space.
 fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<ComposedOpeningId> {
     ids.into_iter().map(Into::into).collect()
 }
@@ -1412,7 +1411,6 @@ fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
     }
 }
 
-/// The first `prefix_len` variables of an `address ++ cycle` opening point.
 fn point_prefix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -1429,8 +1427,6 @@ fn point_prefix<F: JoltField>(
     })
 }
 
-/// The variables past the first `prefix_len` of an `address ++ cycle` opening
-/// point (the cycle sub-point).
 fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,

@@ -1,6 +1,3 @@
-//! Trait-surface tests for `AkitaScheme`: setup parameter validation,
-//! hint-free openings, and the flavor-restricted `one_hot_only` setup.
-
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 #[expect(
@@ -67,8 +64,6 @@ fn setup_rejects_unsupported_one_hot_chunk_sizes() {
     }
 }
 
-/// A `one_hot_only` setup skips the dense-flavor backend entirely, so a
-/// dense polynomial cannot be committed through it.
 #[test]
 fn one_hot_only_setup_rejects_dense_commits() {
     let (prover_setup, _) = k16_setup();
@@ -124,8 +119,6 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
-/// Without a commit-time hint, `open` re-commits internally; the resulting
-/// proof must still verify against the original commitment.
 #[test]
 fn open_without_hint_recommits_deterministically() {
     let (prover_setup, verifier_setup) = setup_for(DENSE_VARS, 1, layout(7));
@@ -158,8 +151,6 @@ fn open_without_hint_recommits_deterministically() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
-/// The hiding commitment binds the committed evaluation bytes into the
-/// transcript: equal evaluations bind identically, distinct ones diverge.
 #[test]
 fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
     let (prover_setup, _) = setup_for(DENSE_VARS, 1, layout(7));

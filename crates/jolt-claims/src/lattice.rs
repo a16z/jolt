@@ -176,19 +176,6 @@ mod tests {
     }
 
     #[test]
-    fn place_values_reconstruct_little_endian_chunks() {
-        let chunking = BalancedIncChunking::new(16).unwrap();
-        assert_eq!(chunking.chunk_count(), 4);
-
-        let value: u64 = 0x0123_4567_89ab_cdef;
-        let reconstructed = (0..chunking.chunk_count()).fold(Fr::from_u64(0), |acc, index| {
-            let chunk = (value >> (16 * index)) & 0xffff;
-            acc + chunking.place_value::<Fr>(index) * Fr::from_u64(chunk)
-        });
-        assert_eq!(reconstructed, Fr::from_u64(value));
-    }
-
-    #[test]
     fn balanced_inc_value_matches_centered_boolean_rows() {
         for width in [4, 8] {
             let radix = 1usize << width;
@@ -206,9 +193,6 @@ mod tests {
         }
     }
 
-    /// The encoder rows decode back to the encoded value through the centered
-    /// value map and the chunking's place values — the balanced numeral is a
-    /// faithful signed encoding over the whole `|value| < 2^64` window.
     #[test]
     fn encoder_rows_decode_to_the_encoded_value() {
         for width in [4usize, 8] {

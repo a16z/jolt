@@ -21,7 +21,6 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::signed::S256;
 
-/// Minimal additive group shared by fields, rings, and wide accumulators.
 pub trait AdditiveGroup:
     Sized
     + Clone
@@ -102,13 +101,11 @@ pub trait Ring:
         Self::from_i64(v as i64)
     }
 
-    /// Returns `self * self`.
     #[inline]
     fn square(&self) -> Self {
         *self * *self
     }
 
-    /// Returns the ring element `2^exponent`.
     #[inline]
     fn pow2(exponent: usize) -> Self {
         let mut result = Self::one();
@@ -126,31 +123,26 @@ pub trait Ring:
         result
     }
 
-    /// Multiplies by a `u64`.
     #[inline(always)]
     fn mul_u64(&self, n: u64) -> Self {
         *self * Self::from_u64(n)
     }
 
-    /// Multiplies by an `i64`.
     #[inline(always)]
     fn mul_i64(&self, n: i64) -> Self {
         *self * Self::from_i64(n)
     }
 
-    /// Multiplies by a `u128`.
     #[inline(always)]
     fn mul_u128(&self, n: u128) -> Self {
         *self * Self::from_u128(n)
     }
 
-    /// Multiplies by an `i128`.
     #[inline(always)]
     fn mul_i128(&self, n: i128) -> Self {
         *self * Self::from_i128(n)
     }
 
-    /// Multiplies this ring element by the integer `2^pow`.
     #[inline]
     fn mul_pow_2(&self, pow: usize) -> Self {
         assert!(pow <= 255, "pow > 255");
@@ -188,7 +180,6 @@ pub(crate) fn sum_of_products4_fold<F: Ring>(terms: &[[F; 4]]) -> F {
     })
 }
 
-/// Algebraic field: ring arithmetic plus inversion, sampling, and halving.
 pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
@@ -255,7 +246,6 @@ pub trait Field: Ring {
             .expect("field has characteristic two")
     }
 
-    /// Divides this element by two.
     #[inline]
     fn half(self) -> Self {
         self * Self::two_inv()
@@ -425,7 +415,6 @@ pub trait CanonicalEncoding:
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
 
-    /// Constructs a Fiat-Shamir challenge from squeezed transcript bytes.
     #[inline]
     fn from_challenge_bytes(bytes: &[u8]) -> Self {
         Self::from_bytes_le_reduced(bytes)
@@ -454,7 +443,6 @@ pub trait Accumulator: Default + Copy + Send + Sync {
     /// The element type this accumulator reduces to.
     type Element: Ring;
 
-    /// Adds one element into the accumulator.
     fn add(&mut self, value: Self::Element);
 
     /// Merges another accumulator's partial sum into this one.
@@ -490,7 +478,6 @@ pub trait Accumulator: Default + Copy + Send + Sync {
         self.fmadd(a, Self::Element::from_i64(b));
     }
 
-    /// Fused multiply-add with a sign-and-magnitude `u64` scalar.
     #[inline]
     fn fmadd_signed_u64(&mut self, value: Self::Element, magnitude: u64, is_positive: bool) {
         if is_positive {
@@ -527,7 +514,6 @@ pub trait Accumulator: Default + Copy + Send + Sync {
     }
 }
 
-/// Associates a deferred-reduction accumulator with an element type.
 pub trait WithAccumulator: Ring {
     /// General field-product accumulator.
     type Accumulator: Accumulator<Element = Self>;

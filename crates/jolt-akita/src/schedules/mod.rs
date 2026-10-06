@@ -52,7 +52,6 @@ pub mod emit {
     /// Physical one-hot arity added to the logical trace exponent for K=256.
     pub const K256_PACKING_VARIABLES: usize = 13;
 
-    /// Pure DP regeneration for `Cfg`; never consults an artifact.
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {

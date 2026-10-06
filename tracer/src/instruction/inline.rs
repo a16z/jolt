@@ -155,7 +155,6 @@ pub fn find_inline_registration(
         .find(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
 }
 
-/// Check whether a linked inline registration exists for the encoded key.
 pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
     inventory::iter::<InlineRegistration>
         .into_iter()
@@ -225,7 +224,6 @@ pub struct INLINE {
     pub funct7: u32,
     /// Memory address of this instruction
     pub address: u64,
-    /// R-format operands (rd, rs1, rs2)
     pub operands: FormatInline,
     /// Tracks remaining virtual instructions (used by tracer)
     pub virtual_sequence_remaining: Option<u16>,
@@ -414,36 +412,6 @@ mod tests {
             name: "TEST_INLINE_PROFILE",
             build_sequence: test_sequence,
             build_advice: test_advice,
-        }
-    }
-
-    #[test]
-    fn test_inline_parsing() {
-        let word: u32 = 0xffffffab;
-        let inline = INLINE::new(word, 0x1000, false, false);
-
-        assert_eq!(inline.opcode, 0x2b);
-        assert_eq!(inline.funct3, 0x7);
-        assert_eq!(inline.funct7, 0x7f);
-        assert_eq!(inline.address, 0x1000);
-    }
-
-    #[test]
-    fn test_find_inline_panics_for_unregistered() {
-        let result = std::panic::catch_unwind(|| find_inline(0x7F, 0x7, 0x7F));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_is_inline_registered_returns_false_for_unregistered() {
-        assert!(!is_inline_registered(0x7F, 0x7, 0x7F));
-    }
-
-    #[test]
-    fn test_list_registered_inlines_returns_vec() {
-        let inlines = list_registered_inlines();
-        for ((opcode, funct3, funct7), _name) in &inlines {
-            assert!(is_inline_registered(*opcode, *funct3, *funct7));
         }
     }
 

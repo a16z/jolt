@@ -98,7 +98,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for SpartanShift<F> {
         let JoltDerivedId::SpartanShift(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
-        // Every shift output shares the one shift opening point.
         let opening_point = output_points.unexpanded_pc();
         match public_id {
             SpartanShiftPublic::EqPlusOneOuter => Ok(EqPlusOnePolynomial::new(

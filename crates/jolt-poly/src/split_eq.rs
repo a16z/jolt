@@ -1,5 +1,3 @@
-//! Split equality tables for sqrt-memory sumcheck kernels.
-
 use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -911,7 +909,6 @@ mod tests {
 
     #[test]
     fn e_out_in_for_window_factors_naive_head_eq_table() {
-        // Odd length exercises the asymmetric out/in split (split = 4, in = 4).
         let point = random_point(9, 1601);
         let challenges = random_point(9, 1607);
         let mut split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
@@ -938,8 +935,6 @@ mod tests {
                     }
                 }
             }
-            // Oversized windows clamp to the unbound variable count: no head
-            // variables remain, so both factors collapse to the trivial table.
             let (e_out, e_in) = split.e_out_in_for_window(current + 3);
             assert_eq!((e_out, e_in), (&[Fr::one()][..], &[Fr::one()][..]));
             split.bind(challenge);
@@ -971,7 +966,6 @@ mod tests {
                 "stage {stage}"
             );
 
-            // Trivial windows: a single active table entry.
             assert_eq!(split.e_active_for_window(0), vec![Fr::one()]);
             assert_eq!(split.e_active_for_window(1), vec![Fr::one()]);
             assert_eq!(split.e_active_for_window(current + 1), vec![Fr::one()]);
@@ -982,8 +976,6 @@ mod tests {
                 let active = split.e_active_for_window(window);
                 assert_eq!(active.len(), 1 << (window - 1), "stage {stage}");
                 let in_bits = e_in.len().trailing_zeros() as usize;
-                // eq(point[..current], x) must factor into head x active x
-                // current-variable pieces at every hypercube index.
                 for head_index in 0..e_out.len() * e_in.len() {
                     let head =
                         e_out[head_index >> in_bits] * e_in[head_index & ((1usize << in_bits) - 1)];

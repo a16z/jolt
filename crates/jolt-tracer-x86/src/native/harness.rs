@@ -22,7 +22,6 @@ pub const TEST_ADDR: u64 = RAM_START_ADDRESS + 0x1000;
 /// RAM scratch region seeded identically on both sides for memory-op rows.
 pub const SCRATCH_START: u64 = RAM_START_ADDRESS + 0x2000;
 pub const SCRATCH_DWORDS: usize = 512;
-/// Plane/interpreter memory capacity for harness runs.
 pub const MEM_CAPACITY: u64 = 1 << 20;
 
 pub fn memory_config() -> MemoryConfig {
@@ -90,7 +89,6 @@ pub fn straight_line_program(mut row: JoltInstructionRow, count: usize) -> JoltP
     )
 }
 
-/// Compile without running (fail-fast coverage checks).
 pub fn compile_only(program: &JoltProgram) -> Result<(), TraceError> {
     CompiledProgram::compile(program).map(|_| ())
 }

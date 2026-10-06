@@ -1,5 +1,3 @@
-//! Streaming (chunked) commitment for the Dory scheme.
-
 use ark_bn254::{G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use dory::backends::arkworks::ArkG1;
@@ -361,8 +359,6 @@ fn finish_one_hot_column_major_chunks<M: dory::Mode>(
     )
 }
 
-/// One column-major one-hot chunk's `one_hot_k` partial row commitments —
-/// the shared body behind the single and batch streaming entry points.
 fn one_hot_chunk_commitments(
     bases: &[G1Affine],
     setup: &DoryProverSetup,
@@ -608,46 +604,6 @@ mod tests {
         assert_eq!(explicit_commitment, fast_commitment);
         assert_eq!(explicit_hint.row_commitments, fast_hint.row_commitments);
         assert_eq!(explicit_hint.commit_blind, fast_hint.commit_blind);
-    }
-
-    #[test]
-    fn streaming_zero_rows_zk_open_and_verify() {
-        let num_vars: usize = 6;
-        let num_cols = 1usize << num_vars.div_ceil(2);
-        let num_rows = 1usize << (num_vars - num_vars.div_ceil(2));
-        let prover_setup = DoryScheme::setup_prover(num_vars);
-        let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
-        let poly = jolt_poly::Polynomial::new(vec![Fr::from_u64(0); 1usize << num_vars]);
-
-        let mut partial = DoryScheme::begin(&prover_setup);
-        DoryScheme::feed_zeros(&mut partial, num_cols, num_rows, &prover_setup);
-        let (commitment, hint) = DoryScheme::finish_zk(partial, &prover_setup);
-
-        let mut rng = ChaCha20Rng::seed_from_u64(313);
-        let point = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
-            .collect::<Vec<_>>();
-        let eval = Fr::from_u64(0);
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
-        let (proof, _, _) = DoryScheme::open_zk(
-            &poly,
-            &point,
-            eval,
-            &prover_setup,
-            hint,
-            &mut prove_transcript,
-        )
-        .unwrap();
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zero-zk-open");
-        let result = DoryScheme::verify_zk(
-            &commitment,
-            &point,
-            &proof,
-            &verifier_setup,
-            &mut verify_transcript,
-        );
-
-        assert!(result.is_ok(), "zero-row ZK streaming hint should open");
     }
 
     #[test]

@@ -651,7 +651,6 @@ mod tests {
 
     #[test]
     fn advice_layout_extracts_address_phase_point_without_dory_globals() {
-        // 2048 bytes = 256 words: an 8-variable advice polynomial with shape (4, 4).
         let layout = advice_layout(TracePolynomialOrder::CycleMajor, 8, 4, 2048);
         let cycle_challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
         let cycle_vars = layout
@@ -720,7 +719,6 @@ mod tests {
     fn advice_final_output_scale_includes_cycle_phase_skip_rounds() {
         let layout = advice_layout(TracePolynomialOrder::CycleMajor, 8, 4, 64);
         let challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
-        // Permutation order for the active cycle rounds is [6, 1, 0].
         let permuted_point = [Fr::from_u64(7), Fr::from_u64(2), Fr::from_u64(1)];
         let reference_point = [Fr::from_u64(101), Fr::from_u64(102), Fr::from_u64(103)];
         let two_inv = Fr::from_u64(2).inv_or_zero();

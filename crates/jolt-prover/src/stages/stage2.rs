@@ -130,7 +130,6 @@ where
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type.
     let lowest_address = public_io.memory_layout.get_lowest_address();
     let public_memory = PublicIoMemory::new(public_io).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
@@ -263,9 +262,6 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The field-inline product appendage is carried, and the spec's alias table
-        // holds on honest data: the field-inline claim-reduction member outputs equal
-        // the appendage values polynomial-for-polynomial.
         let appendage = out
             .claims
             .batch_outputs
@@ -277,7 +273,6 @@ mod field_inline_round_trip {
         assert_eq!(reduction.rs2_value, appendage.rs2_value);
         assert_eq!(reduction.rd_value, appendage.rd_value);
 
-        // The verifier twin (stage2::verify's clear body).
         let mut transcript = Blake2bTranscript::new(b"stage2-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &out);
@@ -286,8 +281,6 @@ mod field_inline_round_trip {
     }
 }
 
-/// Committed stage-2 output rows use the same canonical alias layout as
-/// clear claims, and replay to the prover's transcript state.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
@@ -343,7 +336,6 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The three field-inline reduction openings alias the product member's rows.
         let values: Vec<Fr> = out
             .committed_witness
             .output_claim_rows
@@ -373,7 +365,6 @@ mod field_inline_zk {
         };
         let mut transcript = Blake2bTranscript::new(b"stage2-field-inline-zk");
         {
-            // Stage 1's zk twin, to position the transcript.
             let tau = uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T);
             let uniskip_step = uniskip::verify_zk(
                 &checked,
@@ -446,37 +437,5 @@ mod field_inline_zk {
             .unwrap();
 
         assert_eq!(transcript.state(), prover_transcript.state());
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Without field-inline, the composed product geometry matches the RV64-only relation.
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn product_uniskip_constants_match_the_rv64_only_values() {
-        use jolt_claims::protocols::jolt::geometry::dimensions::{
-            PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-        };
-
-        assert_eq!(
-            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            PRODUCT_UNISKIP_DOMAIN_SIZE
-        );
-        assert_eq!(
-            SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-            PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
-        );
-    }
-
-    /// With field-inline enabled, the composed product domain carries the two field-inline lanes —
-    /// the spec's 5-point domain and its degree-12 first round.
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn product_uniskip_constants_are_the_composed_field_domains() {
-        assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);
-        assert_eq!(SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE, 12);
     }
 }

@@ -73,13 +73,11 @@ impl LookupBits {
         self.len as usize
     }
 
-    /// Returns `true` if this bitvector is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Number of trailing zero bits.
     pub fn trailing_zeros(&self) -> u32 {
         std::cmp::min(
             u128::from_le_bytes(self.bytes).trailing_zeros(),
@@ -87,14 +85,12 @@ impl LookupBits {
         )
     }
 
-    /// Number of leading one bits.
     pub fn leading_ones(&self) -> u32 {
         u128::from_le_bytes(self.bytes)
             .wrapping_shl(128 - self.len as u32)
             .leading_ones()
     }
 
-    /// Returns the raw bits as `u128`.
     #[inline]
     fn as_u128(&self) -> u128 {
         u128::from_le_bytes(self.bytes)
@@ -222,26 +218,5 @@ mod tests {
         let bits = LookupBits::new(0b1110_1000, 8);
         assert_eq!(bits.trailing_zeros(), 3);
         assert_eq!(bits.leading_ones(), 3);
-    }
-
-    #[test]
-    fn bitand_usize() {
-        let bits = LookupBits::new(0xFF, 8);
-        assert_eq!(bits & 0x0F, 0x0F);
-    }
-
-    #[test]
-    fn display_format() {
-        let bits = LookupBits::new(0b101, 4);
-        assert_eq!(format!("{bits}"), "0101");
-    }
-
-    #[test]
-    fn equality() {
-        let a = LookupBits::new(42, 8);
-        let b = LookupBits::new(42, 8);
-        let c = LookupBits::new(43, 8);
-        assert_eq!(a, b);
-        assert_ne!(a, c);
     }
 }

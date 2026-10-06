@@ -169,9 +169,7 @@ impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {
 pub enum Ext2NonResidueKind {
     /// Any non-residue without a dedicated arithmetic formula.
     Generic,
-    /// The non-residue is exactly `-1`.
     NegOne,
-    /// The non-residue is exactly `2`.
     Two,
 }
 
@@ -235,7 +233,6 @@ impl<F: Ring> Ext2Config<F> for TwoNr {
         F::from_u64(2)
     }
 
-    /// Multiplication by 2 is a doubling: one add, no multiply.
     #[inline]
     fn mul_non_residue<A, B>(x: A, _from_base: B) -> A
     where

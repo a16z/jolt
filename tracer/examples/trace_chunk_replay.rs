@@ -50,11 +50,9 @@ fn golden_cases() -> Vec<(&'static str, Vec<u8>, usize)> {
 fn run_case(guest: &str, input: &[u8], chunk_ticks: usize) -> Result<(usize, usize), String> {
     let (elf, _, memory_config) = support::build_guest(guest);
 
-    // Serial reference.
     let (_, serial_rows, serial_memory, serial_device, _) =
         tracer::trace(&elf, None, input, &[], &[], &memory_config, None);
 
-    // Pass-1 + interleaved single-worker replay.
     let mut pass1 = PassOne::new(tracer::create_emulator(
         &elf,
         None,

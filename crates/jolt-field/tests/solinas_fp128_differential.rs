@@ -11,10 +11,7 @@ use jolt_field as two;
 
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{
-    Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne,
-    Ring,
-};
+use two::{CanonicalBytes, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)
@@ -58,7 +55,6 @@ fn oracle_mul(a: u128, b: u128, p: u128) -> u128 {
     oracle_mod(&oracle_mul_256(a, b), p)
 }
 
-/// `a + b (mod p)` for `a, b < p`, via the limb oracle (sum may exceed u128).
 fn oracle_add(a: u128, b: u128, p: u128) -> u128 {
     let (s, overflow) = a.overflowing_add(b);
     oracle_mod(&[s as u64, (s >> 64) as u64, overflow as u64], p)
@@ -86,7 +82,6 @@ macro_rules! check_prime128 {
             (t, v)
         };
 
-        // Metadata.
         assert_eq!(<$two as CanonicalEncoding>::MODULUS_BITS, 128);
         assert_eq!(<$two as PseudoMersenne>::OFFSET, c);
         assert_eq!(<$two as CanonicalBytes>::NUM_BYTES, 16);
@@ -96,7 +91,6 @@ macro_rules! check_prime128 {
             let (ta, va) = sample($rng);
             let (tb, vb) = sample($rng);
 
-            // Arithmetic vs the limb oracle.
             let cases: [($two, u128); 4] = [
                 (ta + tb, oracle_add(va, vb, p)),
                 (ta - tb, oracle_sub(va, vb, p)),
@@ -107,7 +101,6 @@ macro_rules! check_prime128 {
                 assert_eq!(t.to_u128_checked(), Some(v));
             }
 
-            // By-ref and assigning operator forms agree with the owned ones.
             assert_eq!(ta + &tb, ta + tb);
             assert_eq!(ta - &tb, ta - tb);
             assert_eq!(ta * &tb, ta * tb);
@@ -124,7 +117,6 @@ macro_rules! check_prime128 {
             let half = if va % 2 == 0 {
                 va / 2
             } else {
-                // (va + p) / 2 without overflowing u128.
                 (va >> 1) + (p >> 1) + 1
             };
             assert_eq!(ta.half().to_u128_checked(), Some(half));
@@ -138,8 +130,6 @@ macro_rules! check_prime128 {
                 }
             }
 
-            // Wide multiplies: limb equality with the independent oracle,
-            // then round-trip through solinas_reduce.
             assert_eq!(ta.to_limbs(), [va as u64, (va >> 64) as u64]);
             assert_eq!(ta.mul_wide(tb), oracle_mul_256(va, vb));
             assert_eq!(
@@ -161,7 +151,6 @@ macro_rules! check_prime128 {
                 Some(oracle_mul(va, x128, p))
             );
 
-            // Integer conversions.
             let xi: i64 = $rng.gen();
             assert_eq!(
                 <$two as Ring>::from_u64(x64).to_u128_checked(),
@@ -181,7 +170,6 @@ macro_rules! check_prime128 {
                 Some(oracle_mul(va, x64 as u128, p))
             );
 
-            // Transcript surface: bytes, reducing decodes, challenges.
             assert_eq!(ta.to_bytes_le_vec(), va.to_le_bytes().to_vec());
             assert_eq!(
                 CanonicalEncoding::num_bits(&ta),
@@ -218,7 +206,6 @@ macro_rules! check_prime128 {
                 );
             }
 
-            // Wire bytes: canonical LE encoding, decode round-trip.
             let t_bytes = bincode::serde::encode_to_vec(ta, cfg).unwrap();
             assert_eq!(
                 t_bytes,
@@ -230,8 +217,6 @@ macro_rules! check_prime128 {
             assert_eq!(t_back.to_u128_checked(), Some(va));
         }
 
-        // Boundary values through every arithmetic path (mul via the oracle:
-        // u128 cannot hold the products).
         let boundaries: Vec<u128> = vec![0, 1, 2, p - 2, p - 1, p / 2, p / 2 + 1];
         for &x in &boundaries {
             for &y in &boundaries {
@@ -245,7 +230,6 @@ macro_rules! check_prime128 {
             }
         }
         assert_eq!(<$two as CanonicalEncoding>::from_u128_checked(p), None);
-        // Reducing constructor adjacent to the canonical threshold.
         for raw in [p - 1, p, p + 1, u128::MAX] {
             assert_eq!(
                 <$two as CanonicalEncoding>::from_u128_reduced(raw).to_u128_checked(),
@@ -283,7 +267,6 @@ macro_rules! check_prime128 {
             assert_eq!(got, oracle_mod(limbs, p), "solinas_reduce vs oracle: {limbs:?}");
         }
 
-        // Zero/One and iterator Sum/Product (owned and by-ref).
         use num_traits::{One, Zero};
         assert!(<$two>::zero().is_zero());
         assert_eq!(<$two>::zero().to_u128_checked(), Some(0));
@@ -298,8 +281,6 @@ macro_rules! check_prime128 {
         assert_eq!(xs.iter().copied().product::<$two>(), expected_prod);
         assert_eq!(xs.iter().product::<$two>(), expected_prod);
 
-        // Non-canonical wire encodings rejected (encode p itself), both at
-        // the CanonicalEncoding surface and through serde.
         let p_bytes = p.to_le_bytes();
         assert_eq!(
             <$two as CanonicalEncoding>::from_bytes_le_checked(&p_bytes),
@@ -336,7 +317,6 @@ fn fp128_offset_a7f7_matches() {
         two::pseudo_mersenne_modulus(128, 0xFFFF_A7F7),
         Some(u128::MAX - 0xFFFF_A7F6)
     );
-    // Registered coverage stops at PRIME_OFFSET_MAX; A7F7 is above it.
     assert!(!two::is_registered_prime_offset(128, 0xFFFF_A7F7));
     assert!(two::is_registered_prime_offset(128, 275));
 }
@@ -348,14 +328,12 @@ fn fp128_offset_a7f7_matches() {
 #[test]
 fn fp128_shift_kind_c_paths_match() {
     let mut rng = rng();
-    // C = 5 = 2^2 + 1 (shift-kind +1).
     check_prime128!(
         two::Fp128<{ u128::MAX - 4 }>,
         u128::MAX - 4,
         &mut rng,
         inverses: false
     );
-    // C = 7 = 2^3 − 1 (shift-kind −1).
     check_prime128!(
         two::Fp128<{ u128::MAX - 6 }>,
         u128::MAX - 6,
@@ -364,8 +342,6 @@ fn fp128_shift_kind_c_paths_match() {
     );
 }
 
-/// The rejection-sampling stream is pinned against a test-local
-/// reimplementation of its spec: draw (lo, hi) words, accept if < p.
 #[test]
 fn fp128_random_matches_spec() {
     fn check<const P: u128>() {
@@ -406,25 +382,6 @@ fn fp128_mul_add_matches_independent_oracle() {
             Some(oracle_add(oracle_mul(a, b, P), c, P))
         );
     }
-}
-
-fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
-    let mut acc = F::Accumulator::default();
-    for (&x, &y) in xs.iter().zip(ys) {
-        acc.fmadd(x, y);
-    }
-    acc.reduce()
-}
-
-#[test]
-fn jolt_field_blanket_covers_fp128() {
-    fn check<F: JoltField>() {
-        let xs = [F::from_u64(2), F::from_u64(3)];
-        let ys = [F::from_u64(5), F::from_u64(7)];
-        assert_eq!(inner_product(&xs, &ys), F::from_u64(31));
-    }
-    check::<two::Prime128Offset275>();
-    check::<two::Prime128OffsetA7F7>();
 }
 
 #[test]

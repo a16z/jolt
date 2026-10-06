@@ -14,9 +14,9 @@ pub struct FormatAMO {
 impl InstructionFormat for FormatAMO {
     fn parse(word: u32) -> Self {
         FormatAMO {
-            rd: ((word >> 7) & 0x1f) as u8,   // [11:7]
-            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
+            rd: ((word >> 7) & 0x1f) as u8,
+            rs1: ((word >> 15) & 0x1f) as u8,
+            rs2: ((word >> 20) & 0x1f) as u8,
         }
     }
 

@@ -56,8 +56,6 @@ impl InstructionOperandRow {
     }
 }
 
-/// Optimized [`PrepareKernel`] implementor for the
-/// `instruction_claim_reduction` slot.
 pub struct OptimizedInstructionClaimReduction;
 
 impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
@@ -79,7 +77,6 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     }
 }
 
-/// Coefficients for combining native scalar limbs in one wide accumulation.
 struct CombineCoefficients<F> {
     gamma_powers: [F; NUM_TABLES],
     right_lookup_hi: F,
@@ -139,7 +136,6 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
     /// table (the summand is linear in the five operands).
     combined: Polynomial<F>,
-    /// Native rows used to recover individual output claims.
     rows: BundleStore<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     bound_challenges: Vec<F>,
@@ -162,7 +158,6 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             }
         }
         let coefficients = CombineCoefficients::new(gamma);
-        // Build once; rounds only bind this table.
         let combined: Vec<F> = {
             let access = rows.access();
             let coefficients = &coefficients;
@@ -189,8 +184,6 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         })
     }
 
-    /// The five individual bound operand values: multilinear evaluations of
-    /// the native rows at the bound point, one split-eq-weighted walk.
     fn operand_claims(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         let reversed: Vec<F> = self.bound_challenges.iter().rev().copied().collect();
         let split = reversed.len() / 2;
@@ -403,9 +396,6 @@ mod tests {
 
     fn assert_parity(log_t: usize, seed: u64) {
         let mut state = seed;
-        // Native operand rows (the production shape), including negative
-        // right instruction inputs; the reference tables are their exact
-        // field images.
         let rows: Vec<InstructionOperandRow> = (0..1usize << log_t)
             .map(|_| InstructionOperandRow {
                 lookup_output: LookupOutput(splitmix(&mut state)),
@@ -479,7 +469,6 @@ mod tests {
         )
         .unwrap();
 
-        // True input claim: the full hypercube sum of the summand.
         let eq = eq_table(&tau_low);
         let gamma_powers = [
             fr(1),

@@ -132,8 +132,6 @@ fn parity_address_first_across_chunk_boundaries_and_padding() {
 
 #[test]
 fn parity_minimal_padded_trace() {
-    // Three real cycles padded to four: exercises the padding rows and
-    // registers that are never touched.
     let mut fixture = TraceFixture::new();
     fixture.op(Some(3), Some(1), Some(2));
     fixture.op(Some(3), Some(3), None);

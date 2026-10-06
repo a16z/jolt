@@ -87,11 +87,6 @@ where
         JoltRelationId::BytecodeReadRaf,
     )?;
 
-    // The batch, through the verifier's own promoted constructor: the relation
-    // carries the upstream cycle/register points and the entry index (full
-    // geometry at construction) — the kernel's read path. Committed-program
-    // mode stages the five raw bound `Val_s` values as extra wire claims; the
-    // sumcheck itself is unchanged.
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
     let entry_bytecode_index = preprocessing
         .verifier
@@ -108,7 +103,6 @@ where
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
     })?;
-    // The field-register access terms use their own upstream opening points.
     #[cfg(feature = "field-inline")]
     let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_geometry(
         sumchecks,
@@ -263,8 +257,6 @@ mod field_inline_round_trip {
         let zero = Fr::from_u64(0);
         assert!(appendage.rd_wa_read_write != zero);
 
-        // The verifier twin (stage6a::verify's clear body), positioned by the
-        // upstream replays.
         let mut transcript = Blake2bTranscript::new(b"stage6a-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);

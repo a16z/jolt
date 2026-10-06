@@ -100,7 +100,6 @@ impl<F: JoltField> FieldIncKernel<F> {
         self.progress.advance();
     }
 
-    /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
         let (inc_lo, inc_hi) = self.inc.pair(y);
@@ -158,7 +157,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
         })
     }
 
-    /// Remove the second derived leaf from the fused scalar before pinning the first.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -190,9 +188,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent field-inline traces,
-/// plus the degenerate case without field-inline activity (an all-zero increment
-/// column).
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

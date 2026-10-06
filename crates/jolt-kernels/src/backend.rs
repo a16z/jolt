@@ -236,8 +236,6 @@ impl Carry {
     }
 }
 
-/// Visits one carry's concrete value, keyed by its type name (the frame
-/// label in the rendered flamegraph).
 #[cfg(feature = "allocative")]
 fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) {
     if let Some(value) = value.downcast_ref::<T>() {

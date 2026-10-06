@@ -1,7 +1,6 @@
 use crate::protocols::field_inline::FieldInlineOpeningId;
 use crate::protocols::jolt::JoltOpeningId;
 
-/// An opening id from either protocol family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ComposedOpeningId {
     Jolt(JoltOpeningId),

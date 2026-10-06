@@ -1,5 +1,3 @@
-// #![cfg_attr(feature = "guest", no_std)]
-
 use jolt_sdk::{self as jolt};
 
 extern crate alloc;

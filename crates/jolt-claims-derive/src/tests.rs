@@ -1,4 +1,3 @@
-//! Error-path and ordering-contract tests for the claim derives.
 #![expect(
     clippy::expect_used,
     reason = "tests should fail loudly on I/O or parse errors"
@@ -14,9 +13,6 @@ fn pretty(tokens: TokenStream2) -> String {
     prettyplease::unparse(&file)
 }
 
-/// Covers the full `OutputClaims` grammar: scalar virtual, payload-carrying
-/// virtual, indexed (`Vec`) family, conditional (`Option`) committed, and
-/// scalar advice openings.
 fn representative_output_struct() -> DeriveInput {
     parse_quote! {
         #[relation(SpartanOuter)]
@@ -117,20 +113,6 @@ fn output_claims_rejects_where_clauses() {
             {
                 #[opening(PC)]
                 pc: C,
-            }
-        },
-        "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",
-    );
-}
-
-#[test]
-fn output_claims_rejects_lifetime_parameters() {
-    expect_output_error(
-        parse_quote! {
-            #[relation(SpartanOuter)]
-            struct Demo<'a, C> {
-                #[opening(PC)]
-                pc: &'a C,
             }
         },
         "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",

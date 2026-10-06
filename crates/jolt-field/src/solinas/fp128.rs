@@ -51,19 +51,16 @@ const X86_64_BMI2_ADX_BACKEND: u8 = 2;
 #[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
 static LAST_X86_64_MUL_BACKEND: AtomicU8 = AtomicU8::new(0);
 
-/// Pack two `u64` limbs into little-endian `[lo, hi]`.
 #[inline(always)]
 const fn pack(lo: u64, hi: u64) -> [u64; 2] {
     [lo, hi]
 }
 
-/// Split a `u128` into little-endian `[u64; 2]` limbs.
 #[inline(always)]
 const fn split(x: u128) -> [u64; 2] {
     [x as u64, (x >> 64) as u64]
 }
 
-/// Join little-endian `[u64; 2]` limbs into a `u128`.
 #[inline(always)]
 const fn join(x: [u64; 2]) -> u128 {
     x[0] as u128 | (x[1] as u128) << 64
@@ -197,7 +194,6 @@ impl<const P: u128> Fp128<P> {
         Self::fold2_canonicalize(t0, t1, t2)
     }
 
-    /// Adds a canonical 128-bit value to a 256-bit product.
     #[cfg(any(
         test,
         feature = "fuzzing",
@@ -340,9 +336,6 @@ impl<const P: u128> Fp128<P> {
         Self::reduce_4(r0, r1, r2, r3)
     }
 
-    /// x86-64 multiplication dispatch. Builds that enable both BMI2 and ADX
-    /// use the matching A7F7 specialization. Every other case uses the
-    /// parameterized baseline assembly sequence.
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
@@ -558,7 +551,6 @@ impl<const P: u128> Fp128<P> {
         // the same `C < 2^32` fold-2 invariant as the multiplication kernel.
         unsafe {
             asm!(
-                // Squaring schoolbook: 3 widening muls
                 "mul     {p00l}, {a0}, {a0}",
                 "umulh   {p00h}, {a0}, {a0}",
                 "mul     {p01l}, {a0}, {a1}",
@@ -578,7 +570,6 @@ impl<const P: u128> Fp128<P> {
 
                 // At this point: r0=p00l, r1=p00h, r2=p01h, r3=p11h
 
-                // Fold-1: [t0,t1,t2] = [r0,r1] + C·[r2,r3]
                 "mul    {t0}, {p01h}, {c}",
                 "umulh  {t1}, {p01h}, {c}",
                 "mul    {p01l}, {p11h}, {c}",
@@ -1366,8 +1357,6 @@ mod bytemuck_tests {
     }
 }
 
-// Cross-check the inline-asm kernels against the portable arithmetic on every
-// supported architecture.
 #[cfg(all(
     test,
     feature = "asm",
@@ -1428,7 +1417,7 @@ mod tests {
     #[test]
     fn fp128_asm_matches_portable() {
         check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
-        check::<{ u128::MAX - 274 }>(); // C = 275
+        check::<{ u128::MAX - 274 }>();
         check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
     }
 }

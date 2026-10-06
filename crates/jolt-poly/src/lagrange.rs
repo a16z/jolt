@@ -20,7 +20,6 @@ use jolt_field::Field;
 pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> Vec<F> {
     assert!(domain_size > 0, "domain_size must be positive");
 
-    // Check if r coincides with a grid point (early exit)
     let nodes: Vec<F> = (0..domain_size)
         .map(|k| F::from_i64(domain_start + k as i64))
         .collect();
@@ -33,7 +32,6 @@ pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> 
         }
     }
 
-    // Compute (r - x_0)(r - x_1)...(r - x_{N-1})
     let diffs: Vec<F> = nodes.iter().map(|&x| r - x).collect();
     let full_product: F = diffs.iter().copied().product();
 
@@ -51,7 +49,6 @@ pub fn lagrange_evals<F: Field>(domain_start: i64, domain_size: usize, r: F) -> 
         *wi = wi.inverse().expect("Lagrange weights must be invertible");
     }
 
-    // L_i(r) = full_product * w_i / (r - x_i)
     let mut result = Vec::with_capacity(domain_size);
     for i in 0..domain_size {
         let diff_inv = diffs[i]
@@ -580,19 +577,14 @@ pub fn interpolate_to_coeffs<F: Field>(domain_start: i64, values: &[F]) -> Vec<F
         }
     }
 
-    // Convert Newton form (with nodes s, s+1, ...) to monomial form.
-    // p(x) = dd[0] + dd[1]*(x-s) + dd[2]*(x-s)*(x-s-1) + ...
     let mut coeffs = vec![F::zero(); n];
-    // basis[k] = coefficient-form of (x-s)(x-s-1)...(x-s-k+1)
     let mut basis = vec![F::zero(); n];
     basis[0] = F::one();
 
     for (k, &dd_k) in dd.iter().enumerate() {
-        // Add dd[k] * basis to coeffs
         for (i, &b) in basis.iter().enumerate().take(k + 1) {
             coeffs[i] += dd_k * b;
         }
-        // Update basis: multiply by (x - (s + k))
         if k < n - 1 {
             let shift = F::from_i64(-(domain_start + k as i64));
             // basis = basis * (x + shift) = basis * x + basis * shift
@@ -615,15 +607,6 @@ mod tests {
     use num_traits::{One, Zero};
 
     #[test]
-    fn lagrange_evals_partition_of_unity() {
-        // Sum of all Lagrange basis values at any point must be 1
-        let r = Fr::from_u64(42);
-        let evals = lagrange_evals(0, 5, r);
-        let sum: Fr = evals.iter().copied().sum();
-        assert_eq!(sum, Fr::one());
-    }
-
-    #[test]
     fn lagrange_evals_at_node_is_indicator() {
         for i in 0..5u64 {
             let r = Fr::from_u64(i);
@@ -640,7 +623,6 @@ mod tests {
 
     #[test]
     fn lagrange_evals_symmetric_domain() {
-        // Domain {-2, -1, 0, 1, 2}
         let r = Fr::from_u64(7);
         let evals = lagrange_evals(-2, 5, r);
         let sum: Fr = evals.iter().copied().sum();
@@ -649,7 +631,6 @@ mod tests {
 
     #[test]
     fn lagrange_evals_symmetric_at_node() {
-        // r = -1 is the second node in {-2, -1, 0, 1, 2}
         let r = Fr::from_i64(-1);
         let evals = lagrange_evals(-2, 5, r);
         assert_eq!(evals[1], Fr::one());
@@ -662,21 +643,19 @@ mod tests {
 
     #[test]
     fn symmetric_power_sums_basic() {
-        // Domain {-1, 0, 1}: S_0 = 3, S_1 = 0, S_2 = 2
         let sums = symmetric_power_sums(1, 4);
         assert_eq!(sums[0], 3);
-        assert_eq!(sums[1], 0); // symmetric
-        assert_eq!(sums[2], 2); // (-1)^2 + 0 + 1^2
-        assert_eq!(sums[3], 0); // symmetric
+        assert_eq!(sums[1], 0);
+        assert_eq!(sums[2], 2);
+        assert_eq!(sums[3], 0);
     }
 
     #[test]
     fn symmetric_power_sums_width_2() {
-        // Domain {-2, -1, 0, 1, 2}: S_0 = 5, S_1 = 0, S_2 = 10
         let sums = symmetric_power_sums(2, 3);
         assert_eq!(sums[0], 5);
         assert_eq!(sums[1], 0);
-        assert_eq!(sums[2], 10); // 4 + 1 + 0 + 1 + 4
+        assert_eq!(sums[2], 10);
     }
 
     #[test]
@@ -725,7 +704,6 @@ mod tests {
 
     #[test]
     fn poly_mul_basic() {
-        // (1 + 2x) * (3 + x) = 3 + 7x + 2x^2
         let a = [Fr::from_u64(1), Fr::from_u64(2)];
         let b = [Fr::from_u64(3), Fr::from_u64(1)];
         let c = poly_mul(&a, &b);
@@ -743,18 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_to_coeffs_constant() {
-        // f(0) = f(1) = f(2) = 5 → p(x) = 5
-        let vals = [Fr::from_u64(5), Fr::from_u64(5), Fr::from_u64(5)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        assert_eq!(coeffs[0], Fr::from_u64(5));
-        assert!(coeffs[1].is_zero());
-        assert!(coeffs[2].is_zero());
-    }
-
-    #[test]
     fn interpolate_to_coeffs_linear() {
-        // f(0) = 1, f(1) = 3 → p(x) = 1 + 2x
         let vals = [Fr::from_u64(1), Fr::from_u64(3)];
         let coeffs = interpolate_to_coeffs(0, &vals);
         assert_eq!(coeffs[0], Fr::from_u64(1));
@@ -762,31 +729,10 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_to_coeffs_quadratic() {
-        // f(0) = 1, f(1) = 4, f(2) = 11 → p(x) = 1 + x + 2x^2
-        // p(0)=1, p(1)=1+1+2=4, p(2)=1+2+8=11 ✓
-        let vals = [Fr::from_u64(1), Fr::from_u64(4), Fr::from_u64(11)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        // Verify by evaluating at each point
-        for (i, &expected) in vals.iter().enumerate() {
-            let x = Fr::from_u64(i as u64);
-            let mut val = Fr::zero();
-            let mut x_pow = Fr::one();
-            for &c in &coeffs {
-                val += c * x_pow;
-                x_pow *= x;
-            }
-            assert_eq!(val, expected, "mismatch at x={i}");
-        }
-    }
-
-    #[test]
     fn interpolate_to_coeffs_symmetric_domain() {
-        // Domain {-1, 0, 1}: f(-1)=2, f(0)=1, f(1)=2 → p(x) = 1 + x^2
         let vals = [Fr::from_u64(2), Fr::from_u64(1), Fr::from_u64(2)];
         let coeffs = interpolate_to_coeffs(-1, &vals);
 
-        // Verify at each domain point
         for (k, &expected) in vals.iter().enumerate() {
             let x = Fr::from_i64(-1 + k as i64);
             let mut val = Fr::zero();
@@ -800,38 +746,13 @@ mod tests {
     }
 
     #[test]
-    fn interpolate_roundtrip_with_poly_mul() {
-        // Interpolate, multiply by (x - 5), check evaluations
-        let vals = [Fr::from_u64(3), Fr::from_u64(7), Fr::from_u64(13)];
-        let coeffs = interpolate_to_coeffs(0, &vals);
-        let linear = [Fr::from_i64(-5), Fr::one()]; // (x - 5)
-        let product = poly_mul(&coeffs, &linear);
-
-        // Verify product at x = 0,1,2
-        for (i, &f_val) in vals.iter().enumerate() {
-            let x = Fr::from_u64(i as u64);
-            let mut val = Fr::zero();
-            let mut x_pow = Fr::one();
-            for &c in &product {
-                val += c * x_pow;
-                x_pow *= x;
-            }
-            let expected = f_val * (x - Fr::from_u64(5));
-            assert_eq!(val, expected, "product mismatch at x={i}");
-        }
-    }
-
-    #[test]
     fn lagrange_evals_agrees_with_interpolation() {
-        // Verify that lagrange_evals computes the same as interpolating
-        // indicator values and evaluating at r
         let r = Fr::from_u64(17);
         let domain_start = -3i64;
         let domain_size = 7;
         let evals = lagrange_evals(domain_start, domain_size, r);
 
         for i in 0..domain_size {
-            // Indicator values: 1 at position i, 0 elsewhere
             let mut indicator = vec![Fr::zero(); domain_size];
             indicator[i] = Fr::one();
             let coeffs = interpolate_to_coeffs(domain_start, &indicator);

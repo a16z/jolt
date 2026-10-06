@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 4 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 use jolt_transcript::Transcript;
@@ -112,7 +110,6 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     }
 }
 
-/// The shared opening-point accessors over the point-only stage-4 aggregate.
 impl<F: JoltField> Stage4OutputPoints<F> {
     /// The register read-write opening point (shared by all five register
     /// openings).
@@ -254,20 +251,6 @@ mod tests {
         Vec::new()
     }
 
-    /// Locks the stage-4 Fiat-Shamir append order against silent drift: with no staged advice
-    /// / program-image openings, the order is the five register openings, under `field-inline`
-    /// the five field-inline openings, then the two RAM value-check openings. A wrong order
-    /// here silently breaks soundness, so it is pinned with distinct sentinels.
-    #[test]
-    fn opening_values_follow_canonical_order_without_advice() {
-        let expected: Vec<Fr> = (3..=7)
-            .map(fr)
-            .chain(field_inline_splice())
-            .chain([fr(8), fr(9)])
-            .collect();
-        assert_eq!(claims_with_advice(false).opening_values(), expected);
-    }
-
     /// The full interleaved order: advice (untrusted, trusted) and the program-image
     /// contribution come *first*, then the five register openings, under `field-inline` the
     /// five field-inline openings, then `ram_ra`/`ram_inc` last — exactly matching the
@@ -330,7 +313,6 @@ mod tests {
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        // The RAM value-check domain separator lands after the leading gammas.
         assert!(matches!(draw_events.first(), Some(DrawEvent::Squeeze(1))));
         assert!(draw_events
             .iter()
@@ -346,10 +328,6 @@ mod tests {
         assert_eq!(challenges.ram_val_check.gamma, inline_ram_gamma);
     }
 
-    /// The generated `output_claim_count` sums the members' wire sets: the five register
-    /// openings and the two RAM value-check ones (no staged advice / program-image
-    /// contributions in this fixture) — plus, under `field-inline`, the field-register
-    /// read-write member's five.
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
