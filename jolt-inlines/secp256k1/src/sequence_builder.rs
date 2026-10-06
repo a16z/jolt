@@ -8,7 +8,6 @@ use jolt_inlines_sdk::host::{
 };
 use jolt_inlines_sdk::jolt_asm;
 
-/// inline constructor for GLV decomposition in secp256k1 scalar field
 struct GlvrAdvBuilder {
     asm: InlineExpansionBuilder,
     vr: InlineRegister,

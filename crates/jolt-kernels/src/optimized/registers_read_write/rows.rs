@@ -1,5 +1,3 @@
-//! Typed per-cycle register rows and the one-pass sparse-entry collection.
-
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::JoltField;
@@ -74,7 +72,6 @@ impl WitnessBundle for RegisterCycleRow {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
 
-/// Row-window size for streaming collection.
 const COLLECT_CHUNK: usize = 1 << 16;
 
 /// Signed rd write delta, or zero without an rd operand.
@@ -86,7 +83,6 @@ pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
     }
 }
 
-/// Builds entries, operand indices, and `rd_inc` in one trace pass.
 pub(super) struct CollectRegisterEntries {
     pub(super) entries: Vec<SeedEntry>,
     pub(super) rs1_indices: Vec<Option<u8>>,
@@ -112,12 +108,10 @@ impl StreamConsumer for CollectRegisterEntries {
 }
 
 impl CollectRegisterEntries {
-    /// Collects in parallel when random access is available; streams otherwise.
     pub(super) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
-        // Seed rows are packed as u32.
         if u32::try_from(cycles.saturating_sub(1)).is_err() {
             return Err(KernelError::InvariantViolation {
                 reason: "cycle count exceeds the seed entries' packed u32 row domain",
@@ -148,7 +142,6 @@ impl CollectRegisterEntries {
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         use core::mem::MaybeUninit;
-        /// Scatter grain at about three entries per cycle.
         const CHUNK: usize = 1 << 14;
         let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
@@ -156,7 +149,6 @@ impl CollectRegisterEntries {
         let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
         let chunk_count = cycles.div_ceil(CHUNK);
-        // Pass 1: count entries per chunk and fill the index + rd_inc columns.
         let mut counts: Vec<usize> = Vec::new();
         (
             rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
@@ -199,7 +191,6 @@ impl CollectRegisterEntries {
             rd_inc.set_len(cycles);
         }
 
-        // Scan counts, then scatter into exclusive windows.
         let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
         let mut total = 0usize;
         for &count in &counts {
@@ -225,7 +216,6 @@ impl CollectRegisterEntries {
                     let top = ((chunk_index + 1) * CHUNK).min(cycles);
                     let mut written = 0usize;
                     for row in base..top {
-                        // Latch unexpected second-pass extraction failures.
                         match access.window::<RegisterCycleRow>(row) {
                             Ok(cycle) => {
                                 let (cells, len) = cycle.entries(row as u32);

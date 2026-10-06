@@ -22,7 +22,6 @@ impl JAL {
     fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RAMAccess) {
         if self.operands.rd != 0 {
             if self.operands.rd == 1 {
-                // Track function call if we're saving a return address (rd != 0)
                 cpu.track_call(self.address);
             }
             cpu.write_register(self.operands.rd as usize, cpu.sign_extend(cpu.pc as i64));

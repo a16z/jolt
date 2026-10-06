@@ -72,8 +72,3 @@ fn stage8_final_opening_ids(base: &verifier_fixtures::VerifierFixtureCase) -> Ve
     .map(final_opening_id)
     .collect()
 }
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[ignore = "opening verification is not wired yet"]
-fn tampered_opening_value_reject() {}

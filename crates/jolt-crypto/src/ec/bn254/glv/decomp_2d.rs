@@ -14,7 +14,6 @@ use std::ops::AddAssign;
 const ENDO_COEFF: Fq =
     MontFp!("21888242871839275220042445260109153167277707414472061641714758635765020556616");
 
-/// Lattice coefficients for the BN254 GLV decomposition
 const SCALAR_DECOMP_COEFFS: [(bool, <Fr as PrimeField>::BigInt); 4] = [
     (false, ArkBigInt!("147946756881789319000765030803803410728")),
     (true, ArkBigInt!("9931322734385697763")),
@@ -40,7 +39,6 @@ pub fn decompose_scalar_2d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 2], [boo
     let r_bytes = Fr::MODULUS.to_bytes_be();
     let r = BigInt::from_bytes_be(Sign::Plus, &r_bytes);
 
-    // β = (k·n22, -k·n12) / r
     let beta_1 = {
         let (mut div, rem) = (&scalar_bigint * &n22).div_rem(&r);
         if (&rem + &rem) > r {
@@ -56,7 +54,6 @@ pub fn decompose_scalar_2d(scalar: Fr) -> ([<Fr as PrimeField>::BigInt; 2], [boo
         div
     };
 
-    // b = β · N
     let b1 = &beta_1 * &n11 + &beta_2 * &n21;
     let b2 = &beta_1 * &n12 + &beta_2 * &n22;
 
@@ -174,14 +171,13 @@ mod tests {
         scalars.extend([
             Fr::from(0u64),
             Fr::from(1u64),
-            -Fr::from(1u64), // r - 1
+            -Fr::from(1u64),
             lambda,
             lambda - Fr::from(1u64),
             lambda + Fr::from(1u64),
             -lambda,
             Fr::from(BigUint::one() << 127),
             Fr::from(BigUint::one() << 128),
-            // scalars sitting on lattice basis magnitudes
             Fr::from(n11_abs),
             Fr::from(n22_abs.clone()),
             Fr::from(n22_abs) + Fr::from(1u64),

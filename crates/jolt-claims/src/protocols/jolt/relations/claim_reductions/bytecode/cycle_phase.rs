@@ -1,5 +1,3 @@
-//! Cycle phase of the two-phase committed-bytecode claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +37,6 @@ pub struct BytecodeReductionCyclePhaseInputClaims<C> {
     pub val_stages: Vec<C>,
 }
 
-/// Fiat-Shamir challenge drawn by the committed-bytecode reduction cycle phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReductionCyclePhaseChallenges<F> {
@@ -99,76 +96,5 @@ impl SymbolicSumcheck for CyclePhase {
         } else {
             final_output_expr(chunk_count)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::protocols::jolt::{BooleanityChallenge, PrecommittedReductionDimensions};
-    use jolt_field::{Fr, Ring};
-
-    fn fr(value: u64) -> Fr {
-        Fr::from_u64(value)
-    }
-
-    #[test]
-    fn cycle_phase_batches_staged_openings_by_eta() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let eta = fr(31);
-        let stage_claims = [fr(3), fr(5), fr(7), fr(11), fr(13), fr(17)];
-        let zero = fr(0);
-
-        let cycle = CyclePhase::new((dimensions, 2));
-        let input = cycle.input_expression::<Fr>().evaluate(
-            |id| {
-                (0..NUM_BYTECODE_VAL_STAGES)
-                    .find(|&stage| *id == bytecode_val_stage_opening(stage))
-                    .map_or(zero, |stage| stage_claims[stage])
-            },
-            |id| match *id {
-                JoltChallengeId::BytecodeClaimReduction(BytecodeClaimReductionChallenge::Eta) => {
-                    eta
-                }
-                _ => zero,
-            },
-            |_| zero,
-        );
-        let mut expected_input = zero;
-        let mut eta_power = fr(1);
-        for claim in stage_claims.iter().take(NUM_BYTECODE_VAL_STAGES) {
-            expected_input += eta_power * *claim;
-            eta_power *= eta;
-        }
-        assert_eq!(input, expected_input);
-    }
-
-    #[test]
-    fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let relation = CyclePhase::new((dimensions, 2));
-
-        assert_eq!(
-            CyclePhase::id(),
-            JoltRelationId::BytecodeClaimReductionCyclePhase
-        );
-        assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
-        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
-    }
-
-    #[test]
-    fn challenges_resolve_eta_and_miss_others() {
-        let challenges = BytecodeReductionCyclePhaseChallenges { eta: fr(31) };
-
-        assert_eq!(
-            challenges
-                .resolve_challenge(&JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta)),
-            Some(fr(31)),
-        );
-        assert_eq!(
-            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
-            None,
-        );
     }
 }

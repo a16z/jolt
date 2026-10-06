@@ -181,8 +181,6 @@ pub struct NoOutputs<C>(::core::marker::PhantomData<C>);
 #[expect(clippy::unwrap_used)]
 mod sumcheck_challenges_tests {
     use crate::protocols::jolt::{BooleanityChallenge, JoltChallengeId, RamReadWriteChallenge};
-    // The `SumcheckChallenges` re-export from the crate root covers both the trait
-    // (type namespace) and the derive macro (macro namespace).
     use crate::{ChallengeDrawError, SumcheckChallenges};
     use jolt_field::{Fr, Ring};
 
@@ -204,7 +202,6 @@ mod sumcheck_challenges_tests {
             challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
             Some(fr(7)),
         );
-        // An unrelated id (different sub-enum) resolves to `None`.
         assert_eq!(
             challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
             None,
@@ -226,7 +223,6 @@ mod sumcheck_challenges_tests {
             booleanity: fr(2),
         };
 
-        // Same `Gamma` leaf name, different sub-enum → resolves to the right field.
         assert_eq!(
             challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
             Some(fr(1)),
@@ -239,8 +235,6 @@ mod sumcheck_challenges_tests {
 
     #[test]
     fn from_transcript_values_fills_fields_in_declaration_order() {
-        // Two values populate `ram` then `booleanity` (declaration order); extra
-        // stream values are ignored.
         let challenges: MultiChallenge<Fr> =
             MultiChallenge::from_transcript_values([fr(1), fr(2), fr(3)].into_iter()).unwrap();
         assert_eq!(
@@ -255,7 +249,6 @@ mod sumcheck_challenges_tests {
 
     #[test]
     fn from_transcript_values_errors_when_stream_runs_dry() {
-        // One value cannot fill the two scalar fields; the error reports progress.
         let result = MultiChallenge::<Fr>::from_transcript_values([fr(1)].into_iter());
         assert_eq!(
             result.err(),

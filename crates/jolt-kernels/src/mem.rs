@@ -25,7 +25,6 @@ fn pump_large_cache() {
     }
 }
 
-/// Minimum cycle-domain size for allocator purges.
 const PURGE_MIN_LOG_T: usize = 22;
 
 /// Purge after a large allocation generation dies.

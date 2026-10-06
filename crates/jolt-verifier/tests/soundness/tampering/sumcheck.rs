@@ -298,46 +298,6 @@ fn tampered_stage7_advice_claims_reject() {
     }
 }
 
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage1_sumcheck_payload_reject() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage2_uniskip_payload_reject() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage2_sumcheck_payload_reject() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage3_sumcheck_payload_reject() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage4_sumcheck_payload_reject() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage5_sumcheck_payload_reject() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage6_sumcheck_payload_reject() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
-fn tampered_stage7_sumcheck_payload_reject() {}
-
 /// Legacy advice fixture: only when field-inline is disabled (see `tampering/mod.rs`).
 #[cfg(all(
     feature = "prover-fixtures",

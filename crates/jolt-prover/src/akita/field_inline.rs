@@ -1,5 +1,3 @@
-//! Akita commitment of the field-inline register increment polynomial.
-
 use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
@@ -17,7 +15,6 @@ fn commit_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     })
 }
 
-/// The field increment commitment and its retained PCS opening hint.
 pub struct FieldIncObject<PCS: CommitmentScheme> {
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,

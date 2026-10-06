@@ -40,8 +40,6 @@ fn to_challenges(vals: &[u128]) -> Vec<Challenge> {
     vals.iter().copied().map(Challenge::from).collect()
 }
 
-// ── LowToHigh ────────────────────────────────────────────────────────
-
 #[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
 #[derive(Default)]
 pub struct SplitEqBindLowHighInvariant;
@@ -114,8 +112,6 @@ impl Invariant for SplitEqBindLowHighInvariant {
         ]
     }
 }
-
-// ── HighToLow ────────────────────────────────────────────────────────
 
 #[jolt_eval_macros::invariant(Test, Fuzz)]
 #[derive(Default)]

@@ -118,7 +118,6 @@ pub trait Fold: Field {
     /// Precomputed context for folding by a fixed challenge `r`.
     type Ctx: Copy + Send + Sync;
 
-    /// Builds the fold context from the challenge `r`.
     fn precompute(r: Self) -> Self::Ctx;
 
     /// Folds one pair: `even + r·(odd − even)`.

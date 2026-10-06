@@ -93,7 +93,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
             let missing = chunk_bits.saturating_sub(reference_address.len());
             reference_address.extend(transcript.challenge_vector(missing));
         } else {
-            // Keep the trailing `chunk_bits` entries.
             let excess = reference_address.len().saturating_sub(chunk_bits);
             reference_address = reference_address.split_off(excess);
         }

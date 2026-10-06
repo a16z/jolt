@@ -20,14 +20,12 @@ impl AMOMIND {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let compare_value = cpu.x[self.operands.rs2 as usize];
 
-        // Load the original doubleword from memory
         let load_result = cpu.mmu.load_doubleword(address);
         let original_value = match load_result {
             Ok((doubleword, _)) => doubleword as i64,
             Err(_) => panic!("MMU load error"),
         };
 
-        // Find the minimum and store back to memory
         let new_value = if original_value <= compare_value {
             original_value
         } else {
@@ -37,7 +35,6 @@ impl AMOMIND {
             .store_doubleword(address, new_value as u64)
             .expect("MMU store error");
 
-        // Return the original value
         cpu.write_register(self.operands.rd as usize, original_value);
     }
 }

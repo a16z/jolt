@@ -1,5 +1,3 @@
-//! Virtual instruction that asserts unsigned multiplication of two operands does not overflow.
-
 use crate::instruction::registers::b::RegisterStateB;
 
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};

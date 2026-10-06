@@ -1,5 +1,3 @@
-//! Inner univariate polynomial with its constant coefficient omitted.
-
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +30,6 @@ impl<F: Field> OmittedConstantPoly<F> {
         &self.coefficients
     }
 
-    /// Consumes the representation and returns its stored coefficients.
     pub fn into_coefficients(self) -> Vec<F> {
         self.coefficients
     }

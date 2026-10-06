@@ -120,14 +120,12 @@ fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
     PedersenSetup::new(generators, generator.scalar_mul(&Fr::from_u64(99)))
 }
 
-/// Synthetic stand-ins for a stage's flattened output-claim values.
 fn synthetic_output_values() -> Vec<Fr> {
     vec![Fr::from_u64(11), Fr::from_u64(22), Fr::from_u64(33)]
 }
 
 #[test]
 fn clear_engine_twin_matches_generated_verify_clear() {
-    // Prover: draw → sums → begin_batch(clear) → prove_batch → finish.
     let sumchecks = fixture();
     let inputs = inputs();
     let mut prover_transcript = Blake2bTranscript::new(b"engine-twin");
@@ -270,8 +268,6 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         .unwrap();
     assert!(recorded.committed_witness.is_some());
 
-    // Verifier: draw → generated verify_zk (coefficient draws, committed
-    // round consistency, output-claim commitment absorbs).
     let mut verifier_transcript = Blake2bTranscript::new(b"engine-zk-twin");
     let _verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
     let consistency = sumchecks

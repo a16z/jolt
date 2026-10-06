@@ -2,7 +2,6 @@ use common::jolt_device::MemoryConfig;
 
 use super::GuestConfig;
 
-/// Secp256k1 ECDSA signature verification guest.
 pub struct Secp256k1EcdsaVerify {
     pub z: [u64; 4],
     pub r: [u64; 4],

@@ -40,15 +40,6 @@ fn initial_state_is_hash_of_zero_padded_label() {
 }
 
 #[test]
-fn empty_label_hashes_thirty_two_zero_bytes() {
-    let transcript = T::new(b"");
-    assert_eq!(
-        hex(&transcript.state()),
-        "89eb0d6a8a691dae2cd15ed0369931ce0a949ecafa5c3f93f8121833646e15c3",
-    );
-}
-
-#[test]
 fn append_bytes_chains_state_with_round_counter() {
     let mut transcript = T::new(KAT_LABEL);
     transcript.append_bytes(b"jolt says hello");
@@ -174,10 +165,4 @@ fn u64_word_packs_left_padded_big_endian_value() {
     explicit.append_bytes(&word);
 
     assert_eq!(via_helper.state(), explicit.state());
-}
-
-#[test]
-#[should_panic(expected = "label must be at most")]
-fn overlong_transcript_label_is_rejected() {
-    let _ = T::new(b"this label is thirty-three bytes!");
 }

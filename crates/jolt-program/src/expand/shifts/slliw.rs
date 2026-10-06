@@ -1,6 +1,5 @@
 use super::*;
 
-/// Lowers `SLLIW` to word multiplication by its encoded power of two.
 pub(in crate::expand) fn expand_slliw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

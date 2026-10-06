@@ -47,8 +47,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Referenc
     }
 }
 
-/// The committed-bytecode reduction's cycle-phase kernel — see the module doc
-/// for the value/eq/aux table construction.
 fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,

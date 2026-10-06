@@ -1,5 +1,3 @@
-//! Stateless claim types for PCS operations.
-
 use jolt_field::JoltField;
 use jolt_poly::EvaluationClaim;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
@@ -37,7 +35,6 @@ where
     }
 }
 
-/// Verifier-side opening claim: commitment, point, and claimed value.
 #[derive(Clone, Debug)]
 pub struct VerifierOpeningClaim<F: JoltField, C> {
     pub commitment: C,

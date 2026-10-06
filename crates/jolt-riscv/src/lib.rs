@@ -468,7 +468,6 @@ macro_rules! jolt_instruction {
         $crate::jolt_instruction!(@jolt_instruction_impl $name);
     };
 
-    // Internal: emit the struct definition.
     (@struct $(#[$attr:meta])* $name:ident) => {
         $(#[$attr])*
         #[derive(
@@ -487,8 +486,6 @@ macro_rules! jolt_instruction {
         pub struct $name<T = ()>(pub T);
     };
 
-    // Internal: make the wrapper newtype participate in Jolt instruction-row
-    // conversion marker by delegating through its payload.
     (@jolt_instruction_impl $name:ident) => {
         impl<T: $crate::JoltInstructionRowData> From<$name<T>> for $crate::JoltInstructionRow {
             #[inline]

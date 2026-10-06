@@ -1,21 +1,18 @@
 #![allow(clippy::upper_case_acronyms)]
 
-// Opcode constants
-pub const CUSTOM_OPCODE: u8 = 0x5B; // Custom instructions (virtual sequences, advice, etc.)
-pub const INLINE_OPCODE: u8 = 0x2B; // Inline instructions
+pub const CUSTOM_OPCODE: u8 = 0x5B;
+pub const INLINE_OPCODE: u8 = 0x2B;
 
-// funct3 values for CUSTOM_OPCODE (0x5B)
-pub const FUNCT3_VIRTUAL_R: u8 = 0b000; // funct3 for format R virtual instructions
+pub const FUNCT3_VIRTUAL_R: u8 = 0b000;
 pub const FUNCT3_VIRTUAL_ASSERT_EQ: u8 = 0b001;
 pub const FUNCT3_VIRTUAL_HOST_IO: u8 = 0b010;
 
-// funct7 values for format R virtual instructions (funct3 = 0b000)
-pub const FUNCT7_ADVICE_LB: u32 = 0x00; // Load byte from advice tape
-pub const FUNCT7_ADVICE_LH: u32 = 0x01; // Load halfword from advice tape
-pub const FUNCT7_ADVICE_LW: u32 = 0x02; // Load word from advice tape
-pub const FUNCT7_ADVICE_LD: u32 = 0x03; // Load doubleword from advice tape
-pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get remaining bytes in advice tape
-pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05; // Reverse bytes in a word
+pub const FUNCT7_ADVICE_LB: u32 = 0x00;
+pub const FUNCT7_ADVICE_LH: u32 = 0x01;
+pub const FUNCT7_ADVICE_LW: u32 = 0x02;
+pub const FUNCT7_ADVICE_LD: u32 = 0x03;
+pub const FUNCT7_ADVICE_LEN: u32 = 0x04;
+pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05;
 
 use add::ADD;
 use addi::ADDI;
@@ -512,7 +509,6 @@ macro_rules! define_rv64imac_enums {
     ) => {
         #[derive(Debug, IntoStaticStr, From, Clone, Copy, Serialize, Deserialize, EnumIter, PartialEq)]
         pub enum Instruction {
-            /// No-operation instruction (address)
             NoOp,
             UNIMPL,
             $(
@@ -527,7 +523,6 @@ macro_rules! define_rv64imac_enums {
             From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro, PartialEq
         )]
         pub enum Cycle {
-            /// No-operation cycle (address)
             NoOp,
             $(
                 $(#[$meta])*
@@ -1114,7 +1109,6 @@ impl Valid for Instruction {
 
 impl Instruction {
     pub fn is_real(&self) -> bool {
-        // ignore no-op
         if matches!(self, Instruction::NoOp) {
             return false;
         }
@@ -1217,7 +1211,6 @@ impl Instruction {
                 }
             }
             0b0011011 => {
-                // RV64I I-type arithmetic instructions.
                 let funct3 = (instr >> 12) & 0x7;
                 let funct7 = (instr >> 25) & 0x7f;
                 match (funct3, funct7) {
@@ -1229,7 +1222,6 @@ impl Instruction {
                 }
             }
             0b0110011 => {
-                // R-type arithmetic instructions.
                 let funct3 = (instr >> 12) & 0x7;
                 let funct7 = (instr >> 25) & 0x7f;
                 match (funct3, funct7) {
@@ -1244,7 +1236,6 @@ impl Instruction {
                     (0b110, 0b0000000) => Ok(OR::new(instr, address, true, compressed).into()),
                     (0b111, 0b0000000) => Ok(AND::new(instr, address, true, compressed).into()),
 
-                    // M extension
                     (0b000, 0b0000001) => Ok(MUL::new(instr, address, true, compressed).into()),
                     (0b001, 0b0000001) => Ok(MULH::new(instr, address, true, compressed).into()),
                     (0b010, 0b0000001) => Ok(MULHSU::new(instr, address, true, compressed).into()),
@@ -1257,7 +1248,6 @@ impl Instruction {
                 }
             }
             0b0111011 => {
-                // RV64I R-type arithmetic instructions.
                 let funct3 = (instr >> 12) & 0x7;
                 let funct7 = (instr >> 25) & 0x7f;
                 match (funct3, funct7) {
@@ -1299,43 +1289,33 @@ impl Instruction {
                     (0b010, 0b00010) => Ok(LRW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00010) => Ok(LRD::new(instr, address, true, compressed).into()),
 
-                    // SC (Store Conditional)
                     (0b010, 0b00011) => Ok(SCW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00011) => Ok(SCD::new(instr, address, true, compressed).into()),
 
-                    // AMOSWAP
                     (0b010, 0b00001) => Ok(AMOSWAPW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00001) => Ok(AMOSWAPD::new(instr, address, true, compressed).into()),
 
-                    // AMOADD
                     (0b010, 0b00000) => Ok(AMOADDW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00000) => Ok(AMOADDD::new(instr, address, true, compressed).into()),
 
-                    // AMOAND
                     (0b010, 0b01100) => Ok(AMOANDW::new(instr, address, true, compressed).into()),
                     (0b011, 0b01100) => Ok(AMOANDD::new(instr, address, true, compressed).into()),
 
-                    // AMOOR
                     (0b010, 0b01000) => Ok(AMOORW::new(instr, address, true, compressed).into()),
                     (0b011, 0b01000) => Ok(AMOORD::new(instr, address, true, compressed).into()),
 
-                    // AMOXOR
                     (0b010, 0b00100) => Ok(AMOXORW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00100) => Ok(AMOXORD::new(instr, address, true, compressed).into()),
 
-                    // AMOMIN
                     (0b010, 0b10000) => Ok(AMOMINW::new(instr, address, true, compressed).into()),
                     (0b011, 0b10000) => Ok(AMOMIND::new(instr, address, true, compressed).into()),
 
-                    // AMOMAX
                     (0b010, 0b10100) => Ok(AMOMAXW::new(instr, address, true, compressed).into()),
                     (0b011, 0b10100) => Ok(AMOMAXD::new(instr, address, true, compressed).into()),
 
-                    // AMOMINU
                     (0b010, 0b11000) => Ok(AMOMINUW::new(instr, address, true, compressed).into()),
                     (0b011, 0b11000) => Ok(AMOMINUD::new(instr, address, true, compressed).into()),
 
-                    // AMOMAXU
                     (0b010, 0b11100) => Ok(AMOMAXUW::new(instr, address, true, compressed).into()),
                     (0b011, 0b11100) => Ok(AMOMAXUD::new(instr, address, true, compressed).into()),
 
@@ -1346,21 +1326,17 @@ impl Instruction {
                 }
             }
             0b1110011 => {
-                // SYSTEM instructions: ECALL, EBREAK, MRET, CSRs
                 let funct3 = (instr >> 12) & 0x7;
                 let funct7 = (instr >> 25) & 0x7f;
                 let rs2 = (instr >> 20) & 0x1f;
 
                 match (funct3, funct7, rs2) {
-                    // ECALL: funct3=0, funct7=0, rs2=0 (instr = 0x00000073)
                     (0, 0, 0) if instr == 0x00000073 => {
                         Ok(ECALL::new(instr, address, true, compressed).into())
                     }
-                    // EBREAK: funct3=0, rs2=1 (instr = 0x00100073)
                     (0, 0, 1) if instr == 0x00100073 => {
                         Ok(EBREAK::new(instr, address, true, compressed).into())
                     }
-                    // MRET: funct3=0, funct7=0x18, rs2=2 (instr = 0x30200073)
                     (0, 0x18, 2) if instr == 0x30200073 => {
                         Ok(MRET::new(instr, address, true, compressed).into())
                     }
@@ -1472,7 +1448,6 @@ impl Instruction {
     }
 }
 
-// @TODO: Optimize
 pub fn uncompress_instruction(halfword: u32) -> u32 {
     let op = halfword & 0x3; // [1:0]
     let funct3 = (halfword >> 13) & 0x7; // [15:13]
@@ -1573,7 +1548,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                     | (imm4_0 << 7)
                     | 0x23;
             }
-            _ => {} // Not happens
+            _ => {}
         },
         1 => {
             match funct3 {
@@ -1766,7 +1741,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                                             | ((rs1 + 8) << 7)
                                             | 0x33;
                                     }
-                                    _ => {} // Not happens
+                                    _ => {}
                                 },
                                 1 => match funct2_2 {
                                     0 => {
@@ -1792,12 +1767,12 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                                     3 => {
                                         // Reserved
                                     }
-                                    _ => {} // Not happens
+                                    _ => {}
                                 },
-                                _ => {} // No happens
+                                _ => {}
                             };
                         }
-                        _ => {} // not happens
+                        _ => {}
                     };
                 }
                 5 => {
@@ -1859,7 +1834,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                             ((offset >> 11) & 0x1); // imm1[0] <= [11]
                     return (imm2 << 25) | ((r + 8) << 20) | (1 << 12) | (imm1 << 7) | 0x63;
                 }
-                _ => {} // No happens
+                _ => {}
             };
         }
         2 => {
@@ -1957,7 +1932,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                                 }
                             }
                         }
-                        _ => {} // Not happens
+                        _ => {}
                     };
                 }
                 5 => {
@@ -2006,10 +1981,10 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                         | (imm4_0 << 7)
                         | 0x23;
                 }
-                _ => {} // Not happens
+                _ => {}
             };
         }
-        _ => {} // Not happens
+        _ => {}
     };
     0xffffffff // Return invalid value
 }
@@ -2359,7 +2334,6 @@ mod tests {
     }
 
     #[test]
-    // Check that the size of Cycle is as expected.
     fn rv64imac_cycle_size() {
         let size = size_of::<Cycle>();
         #[cfg(not(feature = "field-inline"))]
@@ -2533,7 +2507,6 @@ mod tests {
             // Reserved inline opcodes decode as INLINE without validation
             (0x0000_000b, "INLINE"),
             (0x0000_002b, "INLINE"),
-            // Custom opcode 0x5B: virtual/advice instructions
             (r_type(FUNCT7_ADVICE_LB, 0, 1, 0, 2, 0x5b), "AdviceLB"),
             (r_type(FUNCT7_ADVICE_LH, 0, 1, 0, 2, 0x5b), "AdviceLH"),
             (r_type(FUNCT7_ADVICE_LW, 0, 1, 0, 2, 0x5b), "AdviceLW"),
@@ -2637,7 +2610,6 @@ mod tests {
     }
 
     fn exec_binary_op(word: u32, rs1_val: i64, rs2_val: i64) -> i64 {
-        // convention: rs1 = x1, rs2 = x2, rd = x3
         let mut cpu = exec_cpu();
         cpu.write_register(1, rs1_val);
         cpu.write_register(2, rs2_val);
@@ -2646,7 +2618,6 @@ mod tests {
     }
 
     fn exec_imm_op(word: u32, rs1_val: i64) -> i64 {
-        // convention: rs1 = x1, rd = x2
         let mut cpu = exec_cpu();
         cpu.write_register(1, rs1_val);
         exec(&mut cpu, word);
@@ -2655,7 +2626,6 @@ mod tests {
 
     #[test]
     fn immediate_alu_semantics_match_the_riscv_spec() {
-        // ADDI wraps on overflow
         assert_eq!(
             exec_imm_op(i_type(1, 1, 0b000, 2, 0x13), i64::MAX),
             i64::MIN
@@ -2669,7 +2639,6 @@ mod tests {
         assert_eq!(exec_imm_op(i_type(-1, 1, 0b100, 2, 0x13), 0x55), !0x55);
         assert_eq!(exec_imm_op(i_type(-16, 1, 0b110, 2, 0x13), 0x0f), -1);
         assert_eq!(exec_imm_op(i_type(-16, 1, 0b111, 2, 0x13), 0x7f), 0x70);
-        // 64-bit shifts with shamt 63
         assert_eq!(exec_imm_op(i_type(63, 1, 0b001, 2, 0x13), 1), i64::MIN);
         assert_eq!(exec_imm_op(i_type(63, 1, 0b101, 2, 0x13), -1), 1);
         assert_eq!(
@@ -2680,19 +2649,15 @@ mod tests {
 
     #[test]
     fn word_sized_immediate_alu_truncates_then_sign_extends() {
-        // ADDIW: 0x7fffffff + 1 wraps to i32::MIN, sign-extended
         assert_eq!(
             exec_imm_op(i_type(1, 1, 0b000, 2, 0x1b), 0x7fff_ffff),
             i32::MIN as i64
         );
-        // SLLIW: 1 << 31 is negative as a word
         assert_eq!(
             exec_imm_op(i_type(31, 1, 0b001, 2, 0x1b), 1),
             i32::MIN as i64
         );
-        // SRLIW is a logical shift on the low word
         assert_eq!(exec_imm_op(i_type(31, 1, 0b101, 2, 0x1b), 0x8000_0000), 1);
-        // SRAIW is arithmetic on the low word
         assert_eq!(
             exec_imm_op(i_type(0x400 | 31, 1, 0b101, 2, 0x1b), 0x8000_0000),
             -1
@@ -2701,7 +2666,6 @@ mod tests {
 
     #[test]
     fn register_alu_semantics_match_the_riscv_spec() {
-        // ADD wraps; SUB wraps the other way
         assert_eq!(
             exec_binary_op(r_type(0x00, 2, 1, 0b000, 3, 0x33), i64::MAX, 1),
             i64::MIN
@@ -2723,10 +2687,8 @@ mod tests {
             exec_binary_op(r_type(0x20, 2, 1, 0b101, 3, 0x33), i64::MIN, 63),
             -1
         );
-        // SLT is signed, SLTU is unsigned: -1 <s 1 but (u64)-1 >u 1
         assert_eq!(exec_binary_op(r_type(0x00, 2, 1, 0b010, 3, 0x33), -1, 1), 1);
         assert_eq!(exec_binary_op(r_type(0x00, 2, 1, 0b011, 3, 0x33), -1, 1), 0);
-        // Bitwise ops
         assert_eq!(
             exec_binary_op(r_type(0x00, 2, 1, 0b100, 3, 0x33), 0b1100, 0b1010),
             0b0110
@@ -2770,7 +2732,6 @@ mod tests {
         let mulhsu_w = r_type(0x01, 2, 1, 0b010, 3, 0x33);
         let mulhu_w = r_type(0x01, 2, 1, 0b011, 3, 0x33);
 
-        // MUL keeps the low 64 bits
         assert_eq!(
             exec_binary_op(mul_w, 0x1_2345_6789, 0x1_0000_0000),
             0x2345_6789_0000_0000_u64 as i64
@@ -2795,7 +2756,6 @@ mod tests {
         let rem_w = r_type(0x01, 2, 1, 0b110, 3, 0x33);
         let remu_w = r_type(0x01, 2, 1, 0b111, 3, 0x33);
 
-        // Truncating signed division
         assert_eq!(exec_binary_op(div_w, 7, -2), -3);
         assert_eq!(exec_binary_op(rem_w, 7, -2), 1);
         assert_eq!(exec_binary_op(rem_w, -7, 2), -1);
@@ -2808,7 +2768,6 @@ mod tests {
         assert_eq!(exec_binary_op(div_w, i64::MIN, -1), i64::MIN);
         assert_eq!(exec_binary_op(rem_w, i64::MIN, -1), 0);
 
-        // Word-sized variants
         let divw = r_type(0x01, 2, 1, 0b100, 3, 0x3b);
         let divuw = r_type(0x01, 2, 1, 0b101, 3, 0x3b);
         let remw = r_type(0x01, 2, 1, 0b110, 3, 0x3b);
@@ -2822,7 +2781,6 @@ mod tests {
 
     #[test]
     fn branch_targets_are_relative_to_the_branch_address() {
-        // (word, rs1, rs2, taken)
         let cases: &[(u32, i64, i64, bool)] = &[
             (b_type(16, 2, 1, 0b000), 5, 5, true), // BEQ
             (b_type(16, 2, 1, 0b000), 5, 6, false),
@@ -2832,7 +2790,7 @@ mod tests {
             (b_type(16, 2, 1, 0b110), -1, 1, false), // BLTU is unsigned
             (b_type(16, 2, 1, 0b101), 1, -1, true), // BGE
             (b_type(16, 2, 1, 0b111), 1, -1, false), // BGEU: 1 < (u64)-1
-            (b_type(-16, 2, 1, 0b000), 7, 7, true), // negative offset
+            (b_type(-16, 2, 1, 0b000), 7, 7, true),
         ];
         for (word, rs1, rs2, taken) in cases {
             let mut cpu = exec_cpu();
@@ -2890,7 +2848,7 @@ mod tests {
     fn loads_extend_and_stores_merge_bytes_as_specified() {
         let mut cpu = exec_cpu();
         let base = DRAM_BASE + 0x100;
-        cpu.write_register(1, base as i64); // base register
+        cpu.write_register(1, base as i64);
         cpu.write_register(2, 0xffee_ddcc_bbaa_9988_u64 as i64);
 
         // SD x2, 0(x1)
@@ -2919,7 +2877,6 @@ mod tests {
         exec(&mut cpu, s_type(4, 2, 1, 0b010, 0x23));
         assert_eq!(load(&mut cpu, 0b011, 0), 0x3333_3333_2222_1188_u64 as i64);
 
-        // Negative offset addressing
         cpu.write_register(1, (base + 8) as i64);
         assert_eq!(load(&mut cpu, 0b011, -8), 0x3333_3333_2222_1188_u64 as i64);
     }
@@ -2931,7 +2888,7 @@ mod tests {
             let mut cpu = exec_cpu();
             cpu.write_register(1, addr as i64);
             cpu.mmu.store_doubleword(addr, initial).unwrap();
-            cpu.write_register(3, 0); // rd
+            cpu.write_register(3, 0);
             exec(&mut cpu, word);
             let memory = cpu.mmu.load_doubleword(addr).unwrap().0;
             (cpu.x[3], memory)
@@ -2947,13 +2904,11 @@ mod tests {
         assert_eq!(cpu.x[3], 0xffff_ffff_8000_0000_u64 as i64);
         assert_eq!(cpu.mmu.load_word(addr).unwrap().0, 0x8000_0001);
 
-        // rs2 = x0 keeps memory unchanged for ADD; swap stores zero
         let (old, mem) = run_amo(amo(0b00000, 0b011, 0, 1, 3), 77);
         assert_eq!((old, mem), (77, 77)); // AMOADD.D + x0
         let (old, mem) = run_amo(amo(0b00001, 0b011, 0, 1, 3), 77);
         assert_eq!((old, mem), (77, 0)); // AMOSWAP.D with x0
 
-        // Signed vs unsigned min/max on doublewords
         let neg1 = u64::MAX;
         let run_amo_with = |word: u32, initial: u64, rs2: i64| -> (i64, u64) {
             let mut cpu = exec_cpu();
@@ -2981,7 +2936,6 @@ mod tests {
 
     #[test]
     fn cycle_accessors_expose_register_and_ram_state() {
-        // ADD x3, x1, x2 traced as a single cycle
         let mut cpu = exec_cpu();
         cpu.write_register(1, 20);
         cpu.write_register(2, 22);
@@ -2999,7 +2953,6 @@ mod tests {
         let name: &'static str = cycle.instruction().into();
         assert_eq!(name, "ADD");
 
-        // A store cycle carries the pre/post memory word
         let mut cpu = exec_cpu();
         let base = DRAM_BASE + 0x300;
         cpu.write_register(1, base as i64);
@@ -3017,7 +2970,6 @@ mod tests {
             other => panic!("expected a RAM write, got {:?}", other.address()),
         }
 
-        // RAMAccess conversions
         assert_eq!(
             RAMAccess::from(RAMRead {
                 address: 5,
@@ -3105,7 +3057,6 @@ mod tests {
     fn trace_with_advice_panics_when_slots_outnumber_values() {
         let mut cpu = exec_cpu();
         let div = Instruction::decode(r_type(0x01, 2, 1, 0b100, 3, 0x33), ADDR, false).unwrap();
-        // No values for 1 advice slot: the advice row finds no value.
         trace_inline_sequence_with_advice(&div, &mut cpu, &[], None);
     }
 
@@ -3201,7 +3152,6 @@ mod tests {
     fn uncompress_expands_rvc_encodings_per_the_spec() {
         const INVALID: u32 = 0xffff_ffff;
         let cases: &[(u32, u32, &str)] = &[
-            // Quadrant 0
             (0x0024, i_type(8, 2, 0b000, 9, 0x13), "c.addi4spn x9, 8"),
             (0x0000, INVALID, "c.addi4spn nzuimm=0 is reserved"),
             (0x2404, i_type(8, 8, 0b011, 9, 0x07), "c.fld f9, 8(x8)"),
@@ -3211,7 +3161,6 @@ mod tests {
             (0xa488, s_type(8, 10, 9, 0b011, 0x27), "c.fsd f10, 8(x9)"),
             (0xc0c8, s_type(4, 10, 9, 0b010, 0x23), "c.sw x10, 4(x9)"),
             (0xe488, s_type(8, 10, 9, 0b011, 0x23), "c.sd x10, 8(x9)"),
-            // Quadrant 1
             (0x0001, 0x13, "c.nop"),
             (0x12fd, i_type(-1, 5, 0b000, 5, 0x13), "c.addi x5, -1"),
             (0x0005, 0x13, "c.addi hint (rd=0)"),
@@ -3250,7 +3199,6 @@ mod tests {
             (0xbfc5, j_type(-16, 0), "c.j -16"),
             (0xc481, b_type(8, 9, 0, 0b000), "c.beqz x9, +8"),
             (0xfce5, b_type(-8, 9, 0, 0b001), "c.bnez x9, -8"),
-            // Quadrant 2
             (0x12a2, i_type(40, 5, 0b001, 5, 0x13), "c.slli x5, 40"),
             (0x23e2, i_type(24, 2, 0b011, 7, 0x07), "c.fldsp f7, 24"),
             (0x2062, INVALID, "c.fldsp rd=0 is reserved"),
@@ -3269,7 +3217,6 @@ mod tests {
             (0xa822, s_type(16, 8, 2, 0b011, 0x27), "c.fsdsp f8, 16"),
             (0xc426, s_type(8, 9, 2, 0b010, 0x23), "c.swsp x9, 8"),
             (0xe826, s_type(16, 9, 2, 0b011, 0x23), "c.sdsp x9, 16"),
-            // op = 11 is not a compressed instruction
             (0x0003, INVALID, "op=3 is not compressed"),
         ];
 
@@ -3279,7 +3226,6 @@ mod tests {
                 *expected,
                 "{asm}: halfword {halfword:#06x}"
             );
-            // Every valid non-FP expansion must decode.
             if *expected != INVALID {
                 let opcode = *expected & 0x7f;
                 if opcode != 0x07 && opcode != 0x27 {

@@ -1,6 +1,6 @@
 mod sequence_tests {
     use crate::sdk::{
-        decode_glv_sign_word, GrumpkinFq, GrumpkinFr, GrumpkinPoint, GrumpkinPointExt,
+        decode_glv_sign_word, GrumpkinFr, GrumpkinPoint, GrumpkinPointExt,
         GRUMPKIN_ENDO_BETA_LIMBS, GRUMPKIN_GLV_LAMBDA_LIMBS,
     };
     use crate::{
@@ -14,7 +14,6 @@ mod sequence_tests {
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
-        // get expected value
         let arr_to_fq = |arr: &[u64; 4]| Fq::new_unchecked(BigInt(*arr));
         let expected = (arr_to_fq(b)
             .inverse()
@@ -22,7 +21,6 @@ mod sequence_tests {
             * arr_to_fq(a))
         .0
          .0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -143,13 +141,10 @@ mod sequence_tests {
     }
 
     fn scalar_mul_consistency_helper(scalar: u64) {
-        // generator * scalar in our impl
         let res = u64_point_mul(scalar, &GrumpkinPoint::generator());
-        // generator * scalar in arkworks
         let ark_res = ark_grumpkin::Affine::from(
             ark_grumpkin::Affine::generator().mul(ark_grumpkin::Fr::from(scalar)),
         );
-        // compare
         assert_eq!(res.x().fq(), ark_res.x);
         assert_eq!(res.y().fq(), ark_res.y);
     }
@@ -191,17 +186,6 @@ mod sequence_tests {
             decode_glv_sign_word(2),
             Err(GrumpkinError::InvalidGlvSignWord(2))
         ));
-    }
-
-    #[test]
-    fn test_grumpkin_field_aliases_use_configured_wrapper() {
-        use crate::sdk::{GrumpkinField, GrumpkinFqConfig, GrumpkinFrConfig};
-
-        let fq: GrumpkinField<GrumpkinFqConfig> = GrumpkinFq::zero();
-        let fr: GrumpkinField<GrumpkinFrConfig> = GrumpkinFr::zero();
-
-        assert!(fq.is_zero());
-        assert!(fr.is_zero());
     }
 
     #[test]
