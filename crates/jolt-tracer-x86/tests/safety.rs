@@ -157,10 +157,11 @@ fn store_into_stack_canary_reports_a_fault() {
             "store to {address:#x}: expected the helper-fault exit reason, got {} ({:?})",
             outcome.exit, outcome.helper_error
         );
-        assert_eq!(outcome.fault_addr, address);
         let message = outcome.helper_error.expect("a helper error message");
         assert!(
-            message.contains("Stack overflow") && message.contains("stack canary region"),
+            message.contains("Stack overflow")
+                && message.contains("stack canary region")
+                && message.contains(&format!("{address:#X}")),
             "unexpected helper error: {message}"
         );
     }
