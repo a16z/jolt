@@ -132,14 +132,14 @@ fn small_trace_roundtrip(backend: TraceCommitmentBackend, log_t: usize) {
 
 #[test]
 fn small_k16_trace_metal_roundtrip() {
-    for log_t in [20, 21] {
+    for log_t in [16, 18, 19, 20, 21, 22] {
         small_trace_roundtrip(TraceCommitmentBackend::metal_required().unwrap(), log_t);
     }
 }
 
 #[test]
 fn small_k16_trace_cpu_roundtrip() {
-    for log_t in [20, 21] {
+    for log_t in [16, 18, 19, 20, 21, 22] {
         small_trace_roundtrip(TraceCommitmentBackend::cpu(), log_t);
     }
 }

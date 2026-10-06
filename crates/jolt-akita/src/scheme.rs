@@ -95,8 +95,8 @@ impl TraceCommitmentBackend {
     pub const fn shape_is_metal_qualified(one_hot_k: usize, num_vars: usize) -> bool {
         match one_hot_k {
             // K16 packs ten address/column variables alongside the trace. The
-            // D512 route is qualified at T=2^20 and T=2^21 as well as the large-trace range.
-            AKITA_ONE_HOT_K16 => matches!(num_vars, 30..=31 | 34..=38),
+            // D512 small-trace rows are qualified; T=2^17 uses unsupported D256.
+            AKITA_ONE_HOT_K16 => matches!(num_vars, 26 | 28..=32 | 34..=38),
             AKITA_ONE_HOT_K256 => matches!(num_vars, 38..=41),
             _ => false,
         }

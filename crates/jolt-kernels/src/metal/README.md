@@ -114,13 +114,14 @@ python3 -m unittest discover -s scripts/tests -p test_akita_metal_matrix.py
 
 ## Small K16 traces
 
-The Akita commitment and opening routes admit packed arities 30 and 31
-(`2^20`- and `2^21`-row K16 traces with column capacity 64), in addition to their existing large-trace
-ranges. This uses the existing D512 schedule and kernels; it does not change
-proof parameters or the verifier. Adjacent arities retain CPU routing pending
-qualification. PIOP kernels keep their independent shape and size checks, and
-K16 packed decomposition uses Metal for the qualified resident `2^20`- and
-`2^21`-row, D512/capacity64 shapes; other K16 shapes retain CPU routing.
+The Akita commitment and opening routes admit packed arities 26 and 28 through
+32 (`2^16`- and `2^18`- through `2^22`-row K16 traces with column capacity 64),
+in addition to their existing large-trace ranges. This uses the existing D512
+schedule and kernels; it does not change proof parameters or the verifier.
+The `2^17`-row catalog uses D256 and retains CPU routing; other adjacent arities
+retain CPU routing pending qualification. PIOP kernels keep their independent
+shape and size checks. K16 packed decomposition uses Metal for those qualified
+resident D512/capacity64 shapes; other K16 shapes retain CPU routing.
 
 K16 root commitment accumulates radix-26 digits and propagates carries after
 at most 16 signed contributions. It shares the bounded accumulator and final
