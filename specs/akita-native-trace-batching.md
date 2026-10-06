@@ -156,9 +156,11 @@ opening preparation and source evaluation, including batch-only source kernels.
 The fused trace opening uses that batch dispatch. This pin does not include
 Akita #175's recursive ownership alignment.
 
-K=16 catalogs cover production shapes through `2^30` cycles. The shipped K=256
-catalogs support only the explicit adapter, benchmark, cutover, advice, and
-forced-guest fixtures listed in the [schedule policy](../crates/jolt-akita/schedules/README.md).
+K=16 catalogs cover production shapes through `2^30` cycles. Both K values also
+retain the base branch's one- and two-polynomial adapter and grouped-planner grids,
+including the smaller profile-specific arities. The shipped K=256 native trace
+keys remain limited to the explicit benchmark, cutover, advice, and forced-guest
+fixtures listed in the [schedule policy](../crates/jolt-akita/schedules/README.md).
 Arbitrary K=256 trace shapes require a deployment-owned catalog containing the
 exact shape; grouped provisioning rejects missing shapes during setup. The
 streaming witness's `u64` digit-zero mask limits the trace to 64 columns.
