@@ -25,6 +25,18 @@ pub use key::SpartanKey;
 pub const OUTER_DEGREE: usize = 3;
 pub const INNER_DEGREE: usize = 2;
 
+/// Outer sumcheck summand `eq(tau, x) * (Az(x) * Bz(x) - Cz(x))`.
+#[inline]
+pub fn outer_relation<F: JoltField>(eq: F, a: F, b: F, c: F) -> F {
+    eq * (a * b - c)
+}
+
+/// Inner sumcheck summand `L(y) * w(y)` for the weighted matrix row `L`.
+#[inline]
+pub fn inner_relation<F: JoltField>(linear: F, witness: F) -> F {
+    linear * witness
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "F: Serialize, C: Serialize, O: Serialize",
@@ -123,7 +135,7 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
             self.witness_len(),
             weights,
         )?;
-        if inner.value != linear * proof.witness_evaluation {
+        if inner.value != inner_relation(linear, proof.witness_evaluation) {
             return Err(SpartanError::InnerClaim);
         }
         Self::append_witness_evaluation(proof.witness_evaluation, transcript);

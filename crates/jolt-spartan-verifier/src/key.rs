@@ -4,7 +4,7 @@ use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 
-use crate::SpartanError;
+use crate::{outer_relation, SpartanError};
 
 /// Checked immutable relation. Columns are `[1, public inputs, witness]`.
 ///
@@ -140,7 +140,7 @@ impl<F: JoltField> SpartanKey<F> {
             return Err(SpartanError::InternalShape);
         }
         let [a, b, c] = evaluations;
-        if claim != EqPolynomial::new(tau.to_vec()).evaluate(rx) * (a * b - c) {
+        if claim != outer_relation(EqPolynomial::new(tau.to_vec()).evaluate(rx), a, b, c) {
             return Err(SpartanError::OuterClaim);
         }
         Ok(())

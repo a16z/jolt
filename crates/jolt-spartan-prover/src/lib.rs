@@ -8,7 +8,9 @@ mod rounds;
 use jolt_field::{JoltField, One, Zero};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial};
-use jolt_spartan_verifier::{SpartanError, SpartanKey, SpartanProof, INNER_DEGREE, OUTER_DEGREE};
+use jolt_spartan_verifier::{
+    inner_relation, SpartanError, SpartanKey, SpartanProof, INNER_DEGREE, OUTER_DEGREE,
+};
 use jolt_sumcheck::{
     prove_batch, BatchMember, BatchPrelude, ClearProof, ClearSumcheckRecorder,
     CompressedSumcheckProof, ProveRounds, SequentialRounds, SumcheckProof, SumcheckRecorder,
@@ -72,7 +74,7 @@ where
     let (inner, ry, final_claim) =
         prove_rounds(&mut inner_rounds, INNER_DEGREE, inner_claim, transcript)?;
     let [linear_evaluation, witness_evaluation] = inner_rounds.evaluations()?;
-    if final_claim != linear_evaluation * witness_evaluation {
+    if final_claim != inner_relation(linear_evaluation, witness_evaluation) {
         return Err(SpartanError::InnerClaim);
     }
     SpartanKey::append_witness_evaluation(witness_evaluation, transcript);

@@ -1,6 +1,8 @@
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
-use jolt_spartan_verifier::{SpartanError, SpartanKey, INNER_DEGREE, OUTER_DEGREE};
+use jolt_spartan_verifier::{
+    inner_relation, outer_relation, SpartanError, SpartanKey, INNER_DEGREE, OUTER_DEGREE,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 
 pub(crate) struct OuterRounds<F: JoltField> {
@@ -82,9 +84,12 @@ impl<F: JoltField> ProveRounds<F> for OuterRounds<F> {
         for index in 0..a.len() / 2 {
             for (x, result) in evaluations.iter_mut().enumerate() {
                 let x = F::from_u64(x as u64);
-                *result += eq.sumcheck_round_eval(index, x)
-                    * (a.sumcheck_round_eval(index, x) * b.sumcheck_round_eval(index, x)
-                        - c.sumcheck_round_eval(index, x));
+                *result += outer_relation(
+                    eq.sumcheck_round_eval(index, x),
+                    a.sumcheck_round_eval(index, x),
+                    b.sumcheck_round_eval(index, x),
+                    c.sumcheck_round_eval(index, x),
+                );
             }
         }
         Ok(UnivariatePoly::from_evals(&evaluations))
@@ -143,8 +148,10 @@ impl<F: JoltField> ProveRounds<F> for InnerRounds<F> {
         for index in 0..linear.len() / 2 {
             for (x, result) in evaluations.iter_mut().enumerate() {
                 let x = F::from_u64(x as u64);
-                *result +=
-                    linear.sumcheck_round_eval(index, x) * witness.sumcheck_round_eval(index, x);
+                *result += inner_relation(
+                    linear.sumcheck_round_eval(index, x),
+                    witness.sumcheck_round_eval(index, x),
+                );
             }
         }
         Ok(UnivariatePoly::from_evals(&evaluations))
