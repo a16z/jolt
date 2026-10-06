@@ -168,13 +168,14 @@ mod tests {
 
     /// The composed opening row order is the clear absorb order: the common value/flag openings in
     /// canonical order, then (with field-inline enabled) the five field value/product openings in
-    /// appended-column order, matching the composed jolt-r1cs column count.
+    /// appended-column order, matching the composed R1CS column count.
     #[test]
     fn stage1_opening_ids_follow_the_composed_column_order() {
         let dimensions = SpartanOuterDimensions::rv64(3);
         let ids = stage1_spartan_outer_opening_ids(&dimensions);
 
-        let expected_len = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        let expected_len =
+            jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         assert_eq!(ids.len(), expected_len);
         #[cfg(not(feature = "field-inline"))]
         assert_eq!(ids.len(), 35);

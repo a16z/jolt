@@ -24,7 +24,6 @@ field-inline = [
   "jolt-claims/field-inline",
   "jolt-lookup-tables/field-inline",
   "jolt-program/field-inline",
-  "jolt-r1cs/field-inline",
   "jolt-riscv/field-inline",
   # Fixture host and prover must compile the same field instruction profile.
   "jolt-host/field-inline",
@@ -60,7 +59,6 @@ jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-program = { workspace = true, features = ["serialization"] }
-jolt-r1cs.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true

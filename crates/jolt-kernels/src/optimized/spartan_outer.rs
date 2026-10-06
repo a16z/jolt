@@ -48,6 +48,18 @@ use std::collections::BTreeMap;
 use std::ops::{Add, Sub};
 
 #[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::r1cs::field_constraints::limb_radix;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::r1cs::field_constraints::{
+    ROW_ADVICE_LIMB, ROW_ASSERT_EQ, ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB,
+    ROW_LOAD_ACCUMULATE_FROM_MEMORY, ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
+};
+use jolt_claims::protocols::composed::r1cs::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::r1cs::{
+    SPARTAN_OUTER_FIRST_GROUP_ROWS, SPARTAN_OUTER_SECOND_GROUP_ROWS,
+};
+#[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
@@ -62,22 +74,10 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
-#[cfg(feature = "field-inline")]
-use jolt_r1cs::constraints::field_constraints::limb_radix;
-#[cfg(feature = "field-inline")]
-use jolt_r1cs::constraints::field_constraints::{
-    ROW_ADVICE_LIMB, ROW_ASSERT_EQ, ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB,
-    ROW_LOAD_ACCUMULATE_FROM_MEMORY, ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
-};
-#[cfg(feature = "field-inline")]
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_OUTER_FIRST_GROUP_ROWS, SPARTAN_OUTER_SECOND_GROUP_ROWS,
-};
-use jolt_r1cs::constraints::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
-// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the rv64-only constants
+// The COMPOSED R1CS shapes (feature-aware): identical to the rv64-only constants
 // without field-inline, the field-inline-extended row/column composition under
 // `field-inline` — the same sources the reference kernel folds with.
-use jolt_r1cs::constraints::jolt::{
+use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
@@ -453,7 +453,7 @@ impl<'a, F> FieldInlineRowCursor<'a, F> {
 
 impl SpartanOuterRow {
     /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
-    /// arithmetic. Formulas transcribe `jolt-r1cs`'s `rv64_eq_constraint_rows`
+    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
     /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
     /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
     fn group_values(&self) -> RowGroupValues {
@@ -590,7 +590,7 @@ impl SpartanOuterRow {
 
     /// The composed group values of one active field-inline cycle, in field form: the
     /// rv64 guards/magnitudes promoted plus the field-inline rows' native field values
-    /// (`jolt-r1cs`'s `field_eq_constraint_rows` transcribed at the composed group
+    /// (`jolt-claims`'s `field_eq_constraint_rows` transcribed at the composed group
     /// positions). Exact — the integer pipeline and this one compute the same field
     /// elements, so routing a cycle either way is wire-invisible; the integer path
     /// simply cannot represent an active cycle's field magnitudes.
@@ -1168,7 +1168,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 
     /// Az/Bz column weights at both stream values over the composed opening-column
-    /// selection, from the same `jolt-r1cs` sources the verifier's coefficient build
+    /// selection, from the same `jolt-claims` sources the verifier's coefficient build
     /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
@@ -1787,7 +1787,7 @@ mod tests {
 
     /// The remainder's true input claim
     /// `Σ_{t,s} kernel · eq(τ_low, (t,s)) · Az(t,s) · Bz(t,s)`, computed
-    /// through the public `jolt-r1cs` column-weight path over the COMPOSED
+    /// through the public `jolt-claims` column-weight path over the COMPOSED
     /// opening selection (independent of both kernels' row-value pipelines).
     fn true_input_claim(
         rows: &[SpartanOuterRow],

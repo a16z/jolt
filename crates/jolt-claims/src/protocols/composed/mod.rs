@@ -4,6 +4,7 @@
 //! resolve both without depending on prover or verifier orchestration.
 
 pub mod geometry;
+pub mod r1cs;
 
 mod ids;
 pub use ids::ComposedOpeningId;

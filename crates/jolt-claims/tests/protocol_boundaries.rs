@@ -153,21 +153,19 @@ fn protocol_modules_are_import_disjoint() {
 }
 
 /// The verifier consumes symbolic relations; their definitions and dependencies
-/// must stay below the verifier and R1CS crates.
+/// must stay below the verifier crate.
 #[test]
 fn symbolic_relations_stay_in_claims() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest =
         fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("claims manifest is readable");
-    for dependency in ["jolt-verifier", "jolt-r1cs"] {
-        assert!(
-            !manifest.lines().any(|line| line
-                .split('#')
-                .next()
-                .is_some_and(|code| code.contains(dependency))),
-            "jolt-claims must not depend on {dependency}"
-        );
-    }
+    assert!(
+        !manifest.lines().any(|line| line
+            .split('#')
+            .next()
+            .is_some_and(|code| code.contains("jolt-verifier"))),
+        "jolt-claims must not depend on jolt-verifier"
+    );
 
     let mut violations = Vec::new();
     for file in rust_sources(&manifest_dir.join("../jolt-verifier/src")) {

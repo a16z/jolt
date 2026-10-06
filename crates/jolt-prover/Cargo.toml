@@ -27,7 +27,6 @@ prover-fixtures = ["dep:jolt-host"]
 field-inline = [
   "jolt-claims/field-inline",
   "jolt-kernels/field-inline",
-  "jolt-r1cs/field-inline",
   "jolt-verifier/field-inline",
   "jolt-witness/field-inline",
   # Field-inline Akita integration (inert without `akita`).
@@ -108,7 +107,6 @@ jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
 jolt-program.workspace = true
-jolt-r1cs.workspace = true
 jolt-riscv.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true

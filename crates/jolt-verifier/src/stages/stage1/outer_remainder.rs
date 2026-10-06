@@ -36,6 +36,9 @@ use jolt_claims::protocols::jolt::relations::spartan::{
 };
 use std::sync::OnceLock;
 
+use jolt_claims::protocols::composed::r1cs::{
+    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
+};
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderInputClaims, OuterRemainderOutputClaims,
@@ -43,9 +46,6 @@ pub use jolt_claims::protocols::jolt::relations::spartan::{
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltRelationId, SpartanOuterPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
-use jolt_r1cs::constraints::jolt::{
-    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
-};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
@@ -156,11 +156,12 @@ pub struct OuterRemainder<F: JoltField> {
 
 impl<F: JoltField> OuterRemainder<F> {
     pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
-        // Sized from the selected R1CS composition (jolt-r1cs), not from the rv64-only
+        // Sized from the selected R1CS composition (jolt-claims r1cs), not from the rv64-only
         // symbolic dimensions: under `field-inline` the composed coefficient table carries the
         // appended field-inline columns, and the weight vectors must match it. with
         // field-inline disabled, the two sources agree (35 columns).
-        let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        let variable_count =
+            jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         debug_assert!(variable_count >= dimensions.variables().len());
         Self {
             symbolic: SelectedSymbolic::new(dimensions),
@@ -430,7 +431,8 @@ mod tests {
             .collect::<Vec<_>>();
         let uniskip_challenge = Fr::from_u64(17);
 
-        let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        let variable_count =
+            jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         let openings = (0..variable_count)
             .map(|i| Fr::from_u64(1_000 + i as u64))
             .collect::<Vec<_>>();

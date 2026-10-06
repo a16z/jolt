@@ -3187,8 +3187,10 @@ dependencies = [
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-riscv",
  "jolt-utils",
+ "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
@@ -3684,7 +3686,6 @@ dependencies = [
  "jolt-poly",
  "jolt-profiling",
  "jolt-program",
- "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
@@ -3706,17 +3707,9 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
- "jolt-claims",
  "jolt-field",
- "jolt-poly",
- "jolt-riscv",
- "num-traits",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
  "serde",
  "thiserror 2.0.20",
- "tracing",
 ]
 
 [[package]]
@@ -3880,7 +3873,6 @@ dependencies = [
  "jolt-poly",
  "jolt-program",
  "jolt-prover",
- "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
@@ -7685,6 +7677,7 @@ name = "z3-verifier"
 version = "0.0.0"
 dependencies = [
  "common",
+ "jolt-claims",
  "jolt-field",
  "jolt-r1cs",
  "jolt-riscv",

@@ -1,8 +1,12 @@
-use jolt_claims::{Expr, Source};
+// R1CS construction is control-plane code, not hot claim evaluation
+// (specs/verifier-closure-lints.md).
+#![deny(clippy::indexing_slicing, clippy::wildcard_enum_match_arm)]
+
+use crate::{Expr, Source};
 use jolt_field::JoltField;
 use thiserror::Error;
 
-use crate::{LinearCombination, R1csBuilder, Variable};
+use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ClaimLoweringError {
@@ -251,7 +255,7 @@ fn lower_product<F: JoltField>(
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_claims::{challenge, constant, derived, opening, Expr};
+    use crate::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
