@@ -7,12 +7,12 @@ use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::path::PathBuf;
 
 use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
-use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
-use akita_types::{
-    commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    ChunkedWitnessCfg, FoldSchedule, GroupOpenPhaseParams, MultiChunkProfileId,
-    PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
+use akita_params::{
+    commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, ChunkedWitnessCfg,
+    FoldSchedule, GroupOpenPhaseParams, MultiChunkProfileId, PolynomialGroupLayout,
+    PrecommittedGroupAdmissionPolicy, ScheduleLookupKey,
 };
+use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use jolt_akita::configs::{
     JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16W2R2, JoltOneHotK16W4R2,
     JoltOneHotK16W8R2, JoltOneHotK256, JoltOneHotK256W2R2, JoltOneHotK256W4R2, JoltOneHotK256W8R2,
@@ -140,7 +140,7 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
         assert!(!grid.is_empty());
         for key in &grid {
             let resolved = catalog
-                .resolve_key(&AkitaScheduleLookupKey::single(*key))
+                .resolve_key(&ScheduleLookupKey::single(*key))
                 .expect("reachable scalar shape must resolve");
             assert!(resolved.profiles().precommitteds.is_empty());
             assert_eq!(
@@ -191,7 +191,7 @@ fn multi_chunk_catalogs_cover_every_supported_profile() {
                 .keys;
             for key in &grid {
                 let schedule = catalog
-                    .resolve_key(&AkitaScheduleLookupKey::single(*key))
+                    .resolve_key(&ScheduleLookupKey::single(*key))
                     .expect("reachable multi-chunk shape must resolve")
                     .schedule();
                 assert_eq!(schedule.root.params.witness_chunk, chunk_cfg);
@@ -215,7 +215,7 @@ fn multi_chunk_catalogs_cover_every_supported_profile() {
 
 fn scalar_schedule(catalog: &ValidatedScheduleCatalog, num_vars: usize) -> FoldSchedule {
     catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+        .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
             num_vars, 1,
         )))
         .expect("cutover row must resolve")
@@ -257,10 +257,10 @@ fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
 const TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(20, 1);
 const TRUSTED_ADVICE_K256_FINAL_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(39, 1);
 
-fn trusted_advice_grouped_key(dense: &ValidatedScheduleCatalog) -> AkitaScheduleLookupKey {
+fn trusted_advice_grouped_key(dense: &ValidatedScheduleCatalog) -> ScheduleLookupKey {
     let trusted_profile = dense_group_profile(dense, TRUSTED_ADVICE_GROUP)
         .expect("trusted advice standalone row must resolve");
-    AkitaScheduleLookupKey {
+    ScheduleLookupKey {
         final_group: TRUSTED_ADVICE_K256_FINAL_GROUP,
         precommitteds: vec![trusted_profile],
     }
@@ -272,7 +272,7 @@ fn assert_adaptation_preserves_main_skeleton(
     final_group: PolynomialGroupLayout,
 ) {
     let main = base
-        .resolve_key(&AkitaScheduleLookupKey::single(final_group))
+        .resolve_key(&ScheduleLookupKey::single(final_group))
         .expect("main scalar row");
     assert_eq!(
         resolved.schedule().root.params.own_group(),
@@ -362,7 +362,7 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
                 .expect("freeze adapted K=16 catalog");
         let final_group = PolynomialGroupLayout::new(final_num_vars, 1);
         let resolved = setup_catalog
-            .resolve_key(&AkitaScheduleLookupKey {
+            .resolve_key(&ScheduleLookupKey {
                 final_group,
                 precommitteds: vec![precommit],
             })
@@ -426,7 +426,7 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
         vec![trusted_profile, trusted_profile],
     ] {
         for num_vars in FIXTURE_K16_FINAL_NUM_VARS.0..=FIXTURE_K16_FINAL_NUM_VARS.1 {
-            let key = AkitaScheduleLookupKey {
+            let key = ScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(num_vars, 1),
                 precommitteds: precommitteds.clone(),
             };
@@ -565,7 +565,7 @@ mod field_inc {
     )]
 
     use akita_config::CommitmentConfig;
-    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+    use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
     use jolt_akita::configs::AkitaChunkProfile;
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::GroupedScheduleParams;
@@ -613,7 +613,7 @@ mod field_inc {
                 1,
                 "K={one_hot_k} final arity {final_num_vars} must plan its field-inline row"
             );
-            let key = AkitaScheduleLookupKey {
+            let key = ScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                 precommitteds: vec![dense_group_profile(
                     &full_dense,
@@ -672,7 +672,7 @@ mod field_inc {
                     AKITA_ONE_HOT_K256
                 )
                 .is_err(),
-                "unsupported batch shapes must retain the guided-planning rejection"
+                "unsupported full-width batch shapes must be rejected before planner search"
             );
         }
     }
@@ -716,7 +716,7 @@ mod field_inc {
                 dense_group_profile(&full_dense, PolynomialGroupLayout::new(num_vars, 1))
                     .expect("full-width advice-shaped profile");
             assert!(catalog
-                .resolve_key(&AkitaScheduleLookupKey {
+                .resolve_key(&ScheduleLookupKey {
                     final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                     precommitteds: vec![widened_advice, inc],
                 })

@@ -11,16 +11,15 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 use akita_config::{policy_of, CommitmentConfig};
+use akita_params::{
+    CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey,
+    ScheduleRowDigest,
+};
 use akita_pcs::AkitaError;
 use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
-use akita_planner::{find_adapted_schedule, MAX_ADAPTED_PRECOMMIT_WIDTH};
+use akita_planner::find_adapted_schedule;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
-use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupCommitPhaseParams,
-    PolynomialGroupLayout, ScheduleRowDigest,
-};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
@@ -184,7 +183,7 @@ fn plan_row<Cfg: CommitmentConfig>(
     if base.resolve_key(&key).is_ok() {
         return Ok(None);
     }
-    let main_row = base.resolve_key(&AkitaScheduleLookupKey::single(key.final_group))?;
+    let main_row = base.resolve_key(&ScheduleLookupKey::single(key.final_group))?;
     let full_width_producers = producers
         .iter()
         .filter(|producer| {
@@ -194,32 +193,20 @@ fn plan_row<Cfg: CommitmentConfig>(
                 .has_bounded_committed_source()
         })
         .count();
-    let supported_batch = (producers.len() <= 3 && full_width_producers == 1)
-        || (Cfg::chunked_witness_cfg().uses_multi_chunk()
-            && producers.len() <= 2
-            && full_width_producers == 0);
-    let opening_assignments_fit = producers
-        .iter()
-        .try_fold(1usize, |count, _| {
-            count.checked_mul(PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len())
-        })
-        .is_some_and(|count| count <= MAX_ADAPTED_PRECOMMIT_WIDTH);
-    let adapted = find_adapted_schedule(
+    if full_width_producers > 1 || (full_width_producers == 1 && producers.len() > 3) {
+        return Err(AkitaError::UnsupportedSchedule(
+            "full-width batches support one field increment and at most two advice groups"
+                .to_owned(),
+        ));
+    }
+    let schedule = find_adapted_schedule(
         main_row,
         &request,
         Cfg::committed_source_contract()?,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
-    );
-    let schedule = match adapted {
-        Ok(planned) => planned.schedule,
-        Err(AkitaError::UnsupportedSchedule(_)) if supported_batch && opening_assignments_fit => {
-            // Bound even the uncanonicalized opening product before dropping
-            // the scalar guide. Every producer commitment remains fixed.
-            crate::planning::plan_schedule::<Cfg>(&key, &request.source_contracts())?
-        }
-        Err(error) => return Err(error),
-    };
+    )?
+    .schedule;
     let profiles = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::try_from_params(
             key.final_group,
@@ -276,7 +263,7 @@ pub fn dense_group_profile(
     layout: PolynomialGroupLayout,
 ) -> Result<GroupCommitPhaseParams, AkitaError> {
     Ok(dense_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(layout))?
+        .resolve_key(&ScheduleLookupKey::single(layout))?
         .profiles()
         .final_group)
 }
@@ -374,12 +361,12 @@ fn provision_groups_for_config<Cfg: CommitmentConfig>(
     }
     if family.profile() == AkitaChunkProfile::Single && params.full_width_arities().next().is_none()
     {
-        let main_row = one_hot_catalog.resolve_key(&AkitaScheduleLookupKey::single(
+        let main_row = one_hot_catalog.resolve_key(&ScheduleLookupKey::single(
             PolynomialGroupLayout::new(final_num_vars, 1),
         ))?;
         if main_row.schedule().recursive_folds.is_empty() {
-            // Akita's grouped root requires a child fold; its scalar guide
-            // reaches the terminal immediately and cannot acquire that fold.
+            // Bounded-only Single admission follows the scalar guide's child-fold
+            // capability; full planner search is intentionally not attempted here.
             return Err(AkitaError::UnsupportedSchedule(format!(
                 "one-hot K={} profile {:?} final arity {final_num_vars} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one; requested groups: {params:?}",
                 family.k(), family.profile()
@@ -463,7 +450,7 @@ mod tests {
                         let catalog = params
                             .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
                             .unwrap();
-                        let key = AkitaScheduleLookupKey {
+                        let key = ScheduleLookupKey {
                             final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                             precommitteds: [untrusted, trusted]
                                 .into_iter()
@@ -524,7 +511,7 @@ mod tests {
                         if has_full_producer {
                             precommitteds.push(full_producer);
                         }
-                        let key = AkitaScheduleLookupKey {
+                        let key = ScheduleLookupKey {
                             final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                             precommitteds,
                         };

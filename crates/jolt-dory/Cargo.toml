@@ -31,6 +31,7 @@ profiling = ["jolt-akita/profiling"]
 [dev-dependencies]
 jolt-akita.workspace = true
 akita-config.workspace = true
+akita-params.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
 akita-types.workspace = true
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
