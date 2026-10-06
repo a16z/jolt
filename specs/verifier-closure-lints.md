@@ -12,10 +12,10 @@
 > `#![forbid(unsafe_code)]`, not 15. The counts and survey table below are left exactly
 > as measured on 2026-07-26 and describe the campaign as executed.
 >
-> **Addendum (2026-10-06):** `jolt-hyperkzg` is back in the workspace and
-> `jolt-spartan-verifier` joins the closure; both carry the tier-1 deny set plus
+> **Addendum (2026-10-06):** `jolt-hyperkzg` is restored to the workspace and
+> `jolt-spartan-verifier` is added to the closure; both carry the tier-1 deny set plus
 > `indexing_slicing` and `#![forbid(unsafe_code)]`. The closure is now **20 crates**, and
-> **16** of them carry `#![forbid(unsafe_code)]`.
+> **15** of them carry `#![forbid(unsafe_code)]`.
 
 ## Summary
 
