@@ -453,7 +453,7 @@ impl<'a, F> FieldInlineRowCursor<'a, F> {
 
 impl SpartanOuterRow {
     /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
-    /// arithmetic. Formulas transcribe `jolt-r1cs`'s `rv64_eq_constraint_rows`
+    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
     /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
     /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
     fn group_values(&self) -> RowGroupValues {
@@ -590,7 +590,7 @@ impl SpartanOuterRow {
 
     /// The composed group values of one active field-inline cycle, in field form: the
     /// rv64 guards/magnitudes promoted plus the field-inline rows' native field values
-    /// (`jolt-r1cs`'s `field_eq_constraint_rows` transcribed at the composed group
+    /// (`jolt-claims`'s `field_eq_constraint_rows` transcribed at the composed group
     /// positions). Exact — the integer pipeline and this one compute the same field
     /// elements, so routing a cycle either way is wire-invisible; the integer path
     /// simply cannot represent an active cycle's field magnitudes.
@@ -1168,7 +1168,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 
     /// Az/Bz column weights at both stream values over the composed opening-column
-    /// selection, from the same `jolt-r1cs` sources the verifier's coefficient build
+    /// selection, from the same `jolt-claims` sources the verifier's coefficient build
     /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {

@@ -73,7 +73,7 @@ impl<F> ZkStageWitnesses<F> {
 /// The BlindFold stage domains in the same order: the two uni-skips run over
 /// their centered integer domains, every batch over the Boolean hypercube —
 /// the constants the stage recipes themselves prove over. The uni-skip sizes
-/// are the COMPOSED jolt-r1cs constants (feature-aware): identical to the
+/// are the COMPOSED jolt-claims R1CS constants (feature-aware): identical to the
 /// jolt-claims RV64-only constants without field-inline, and the field-inline-extended row/lane
 /// domains under `field-inline` — the domains the verifier's lowering
 /// (`stages::zk::blindfold`) builds its round constraints over.

@@ -146,7 +146,7 @@ T: Transcript<Challenge = PCS::Field>
 - `jolt-prover` owns proving orchestration and backend-specific stage 0/stage 8 integration; it consumes the shared claims rather than restating verifier formulas.
 - `jolt-witness` owns trace-backed witness construction. `jolt-kernels` owns reference and optimized evaluation kernels.
 - `jolt-poly`, `jolt-sumcheck`, `jolt-openings`, `jolt-dory`, and `jolt-akita` own the reusable polynomial, sumcheck, and PCS layers.
-- `jolt-r1cs` owns the RV64 constraint matrices and variable layout. `jolt-blindfold` owns the generic zero-knowledge proof over recorded sumchecks.
+- `jolt-claims` owns the RV64 and field-inline constraint tables and variable layout under `protocols::composed::r1cs`; `jolt-r1cs` owns the generic builder and matrix layer. `jolt-blindfold` owns the generic zero-knowledge proof over recorded sumchecks.
 
 Committed trace polynomials are identified by `JoltCommittedPolynomial`; virtual
 polynomials by `JoltVirtualPolynomial`. Do not recreate their ordering or opening

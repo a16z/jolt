@@ -215,7 +215,7 @@ impl<F: JoltField> SpartanOuterKernel<F> {
     /// uni-skip round's challenge is drawn: a plain naive member over the
     /// joint `(cycle ‖ stream)` domain, `index = (t << 1) | s`. The
     /// per-stream `Az`/`Bz` linear forms are single-sourced from the same
-    /// jolt-r1cs functions the verifier's coefficient build uses; each is
+    /// jolt-claims functions the verifier's coefficient build uses; each is
     /// linear in the stream variable, so every derived leaf materializes as
     /// one multilinear table.
     fn into_remainder(
