@@ -114,13 +114,13 @@ python3 -m unittest discover -s scripts/tests -p test_akita_metal_matrix.py
 
 ## Small K16 traces
 
-The Akita commitment and opening routes admit packed arity 31 (a `2^21`-row
-K16 trace with column capacity 64), in addition to their existing large-trace
+The Akita commitment and opening routes admit packed arities 30 and 31
+(`2^20`- and `2^21`-row K16 traces with column capacity 64), in addition to their existing large-trace
 ranges. This uses the existing D512 schedule and kernels; it does not change
 proof parameters or the verifier. Adjacent arities retain CPU routing pending
 qualification. PIOP kernels keep their independent shape and size checks, and
-K16 packed decomposition uses Metal for the qualified resident `2^21`-row,
-D512/capacity64 shape; other K16 shapes retain CPU routing.
+K16 packed decomposition uses Metal for the qualified resident `2^20`- and
+`2^21`-row, D512/capacity64 shapes; other K16 shapes retain CPU routing.
 
 The shared instruction source stores the full 56-bit logical bytecode PC in a
 separate column. Its five `u64` columns cost 40 bytes per row, an increase of
@@ -136,14 +136,14 @@ cargo nextest run --release -p jolt-kernels --features metal product_cap_fallbac
 ```
 
 The instruction-RA sequence supports four-factor groups with either 4-bit
-or 8-bit committed chunks. The production K16 route is qualified at `2^21`
-cycles and can be disabled with
+or 8-bit committed chunks. The production K16 route is qualified at `2^20`
+and `2^21` cycles and can be disabled with
 `instruction_ra_virtualization.enable_small_k16 = false`. It uploads the
 shared stage-5 lookup indices when a resident address plane is unavailable;
 the existing K256 route continues to consume that plane directly. Both routes
 use the same lazy-prefix, dense-transition, and CPU-tail machinery.
 
-Instruction Read-RAF also admits the nine-factor cycle tail at `2^21` rows.
+Instruction Read-RAF also admits the nine-factor cycle tail at `2^20` and `2^21` rows.
 The address phase and first cycle message remain on the CPU; the first cycle
 bind fills shared Metal storage directly, and subsequent rounds retain those
 tables on the GPU. `instruction_read_raf.small_k16_cutoff_elements` controls
@@ -157,7 +157,7 @@ cargo nextest run --release -p jolt-kernels --features metal product_messages_an
 ```
 
 Production instruction-input, registers claim-reduction, RAM value-check, and
-RAM RA virtualization routes admit traces from `2^21` cycles. Their shape and
+RAM RA virtualization routes admit traces from `2^20` cycles. Their shape and
 source checks still apply. RAM RA virtualization consumes the shared address
 column directly and supports five 4-bit factors as well as the existing two
 or three 8-bit factors. It keeps the initial rounds compact, then retains the
@@ -212,24 +212,42 @@ a ring:
 cargo nextest run --release -p akita-metal k16_decompose_fold_matches_cpu
 ```
 
-A 12-pair alternating-order comparison on the local Longfellow fixture
-(1,102,270 cycles padded to `2^21`, K16, `2^18` bytecode entries, D512,
-59 live columns / capacity 64) measured median prover times of **1.622 s**
-for `d5cd6f3` and **1.361 s** with the current architecture: **16.1% less
-wall time (1.19x throughput)**. All 12 matched pairs improved. The M5 Max
-used 18 Rayon threads, the default Metal configuration, and no tracing.
-Each sample was the second proof in a fresh process; the first warmed caches.
-Timing includes guest tracing plus proving, excludes preprocessing and
-verification, and describes warm non-ZK execution on this fixture only.
-All 48 untraced proofs verified and all 24 altered-output checks rejected;
-the two additional profiling processes also verified all four proofs and
-rejected altered output.
+The P-256 SDK uses joint sparse signed-digit recoding for each of the two
+independent Fake GLV scalar-multiplication checks. It also avoids subtracting
+the modulus when a field-addition result is already canonical. Both changes
+preserve the scalar identities and all input/advice validity checks; the
+signed expansion accommodates the carry beyond a full-width `u128`.
 
-Separate profiles from that campaign measured bytecode cycle preparation and
-rounds at 170 ms before versus 20 ms after, Booleanity address preparation at
-23 versus 6 ms, Hamming preparation at 30 versus 4 ms, and RAM RA rounds at
-47 versus 11 ms. These explain the changed work but are single profiled
-observations, not additional end-to-end samples. Absolute times drifted
-during the campaign; do not combine results from earlier campaigns to infer
-a cumulative speedup. Proof size remained 93,928 bytes, with proof parameters,
-transcript ordering, and verifier code unchanged.
+These guest-side changes can move a workload below a trace-padding boundary.
+For the Longfellow fixture, actual execution drops from 1,102,270 to 1,040,282
+cycles, so the derived padded trace halves from `2^21` to `2^20`. The smaller
+Metal commitment/opening, instruction-RA, Instruction Read-RAF, and production
+instruction-input/register-claim/RAM routes keep that workload on the GPU.
+The guest program and derived proof shape change; the proof protocol and
+verifier rules do not. Workloads that do not cross a padding boundary will
+not receive the same reduction in proving work.
+
+The arithmetic and both-size commitment/opening regressions are:
+
+```sh
+cargo nextest run --release -p jolt-inlines-p256 --features host
+cargo nextest run --release -p jolt-akita --features metal small_k16_trace
+```
+
+A 12-pair alternating-order Longfellow comparison measured median prover time
+of **1.370 s with the previous guest versus 1.048 s with the optimized guest**:
+**23.5% less wall time (1.31x throughput)**. All 12 pairs improved. Both guests
+ran in the same final prover binary on an M5 Max with 18 Rayon threads,
+default Metal configuration, and tracing disabled. Saved guest ELFs fixed the
+programs throughout the run; each measured proof followed one warmup in a
+fresh process. Timing includes guest tracing plus proving and excludes
+preprocessing and verification. The fixture retains K16, `2^18` bytecode
+entries, D512 and column capacity 64. Proof size changes from 93,928 to 90,647
+bytes with the smaller derived trace shape.
+
+All 48 untraced proofs and four profiling proofs verified; all 26 altered-output
+checks rejected. Separate single profiles measured opening time at 541 ms
+before and 329 ms after, and stage 5 at 214 ms before and 144 ms after.
+These profiles explain the reduction in work; the quoted end-to-end gain
+comes from the untraced paired campaign. This is a warm non-ZK result for
+this workload and padding transition, not a general GPU throughput claim.

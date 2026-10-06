@@ -40,8 +40,7 @@ impl TraceOneHotRows for ConstantRows {
     }
 }
 
-fn small_trace_roundtrip(backend: TraceCommitmentBackend) {
-    let log_t = 21;
+fn small_trace_roundtrip(backend: TraceCommitmentBackend, log_t: usize) {
     let num_vars = log_t + 10;
     let layout_digest = [4; 32];
     let (setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
@@ -133,10 +132,14 @@ fn small_trace_roundtrip(backend: TraceCommitmentBackend) {
 
 #[test]
 fn small_k16_trace_metal_roundtrip() {
-    small_trace_roundtrip(TraceCommitmentBackend::metal_required().unwrap());
+    for log_t in [20, 21] {
+        small_trace_roundtrip(TraceCommitmentBackend::metal_required().unwrap(), log_t);
+    }
 }
 
 #[test]
 fn small_k16_trace_cpu_roundtrip() {
-    small_trace_roundtrip(TraceCommitmentBackend::cpu());
+    for log_t in [20, 21] {
+        small_trace_roundtrip(TraceCommitmentBackend::cpu(), log_t);
+    }
 }

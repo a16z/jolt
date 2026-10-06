@@ -71,7 +71,7 @@ fn supports_packed_metal_decomposition<const D: usize>(source: &TracePackedOneHo
     ) || (D == 512
         && source.one_hot_k == 16
         && source.column_capacity == 64
-        && source.num_rows == 1 << 21
+        && matches!(source.num_rows.ilog2(), 20 | 21)
         && source.rows.packed_selectors().is_some())
 }
 

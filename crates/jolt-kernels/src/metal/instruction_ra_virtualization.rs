@@ -24,7 +24,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstructionRaVirtualizationMetalConfig {
-    /// Separately qualified K16 route at 2^21 cycles, using a compact lookup upload.
+    /// Separately qualified K16 route at 2^20 and 2^21 cycles, using a compact lookup upload.
     pub enable_small_k16: bool,
     /// Minimum trace size for the resident K256 route.
     pub trace_cutoff_elements: usize,
@@ -58,7 +58,7 @@ impl PrepareKernel<AkitaField, InstructionRaVirtualization<AkitaField>> for Meta
         let chunk_bits = inputs.relation.committed_chunk_bits();
         let config = self.config.instruction_ra_virtualization;
         let admitted = if chunk_bits == 4 {
-            config.enable_small_k16 && trace_elements == 1 << 21
+            config.enable_small_k16 && matches!(inputs.relation.dimensions().log_t(), 20 | 21)
         } else {
             trace_elements >= config.trace_cutoff_elements
         };
