@@ -16,10 +16,9 @@
 //! session, and embeds the backend argument bytes wholesale.
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
-use akita_types::{
-    BasisMode, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
-};
+use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_openings::{
     BatchOpeningScheme, GroupOpeningClaim, GroupOpeningWithHint, OpeningsError,
     TaggedGroupOpeningClaim, VerifierOpeningClaim,

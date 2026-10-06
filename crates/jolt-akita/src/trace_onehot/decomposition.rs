@@ -505,7 +505,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
     for challenge in challenges {
         challenge.validate::<D>()?;
     }
-    let expected_ranges = akita_types::dyadic_block_ranges(num_blocks, num_chunks)?;
+    let expected_ranges = akita_params::dyadic_block_ranges(num_blocks, num_chunks)?;
     if chunk_ranges != expected_ranges {
         return Err(AkitaError::InvalidInput(
             "noncanonical fold chunk ranges".into(),

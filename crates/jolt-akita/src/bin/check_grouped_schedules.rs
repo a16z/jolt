@@ -6,8 +6,8 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
+use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 use jolt_akita::schedule_registry::dense_group_profile;
 use jolt_akita::{
     AkitaChunkProfile, AkitaError, AkitaScheduleArtifacts, GroupedScheduleParams,
@@ -137,7 +137,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 );
                                 let result = params.extend_catalog(&dense, &full_dense, &catalog, k, profile)
                                     .and_then(|extended| {
-                                        let key = AkitaScheduleLookupKey {
+                                        let key = ScheduleLookupKey {
                                             final_group: PolynomialGroupLayout::new(final_arity, 1),
                                             precommitteds,
                                         };

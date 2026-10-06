@@ -1,6 +1,12 @@
 use std::any::Any;
 
 use akita_error::AkitaError;
+use akita_params::dispatch_for_field;
+#[expect(
+    unused_imports,
+    reason = "dispatch_for_field matches these nominal slot tokens without resolving them"
+)]
+use akita_params::{ProtocolDispatchSlot, RingRole};
 use akita_pcs::custom_source::{
     cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup, CommitInnerPlan,
     CpuFoldResponses, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
@@ -11,12 +17,7 @@ use akita_pcs::custom_source::{
     SubringCoefficientPackingPlan,
 };
 use akita_pcs::CpuBackend;
-use akita_types::{dispatch_for_field, FpExtEncoding, RingVec};
-#[expect(
-    unused_imports,
-    reason = "dispatch_for_field matches these nominal slot tokens without resolving them"
-)]
-use akita_types::{ProtocolDispatchSlot, RingRole};
+use akita_types::{FpExtEncoding, RingVec};
 use jolt_field::ExtField;
 use rayon::prelude::*;
 
@@ -87,7 +88,7 @@ impl<E, const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaFie
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness, AkitaError> {
-        let chunk_ranges = akita_types::dyadic_block_ranges(plan.challenges.len(), 1)?;
+        let chunk_ranges = akita_params::dyadic_block_ranges(plan.challenges.len(), 1)?;
         decompose_fold_packed_with_mode::<D>(
             source.source(),
             plan.challenges,
@@ -125,7 +126,7 @@ impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Ak
         let rotation_mode = DecomposeRotationMode::from_env()?;
         match plan {
             DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
-                let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, 1)?;
+                let chunk_ranges = akita_params::dyadic_block_ranges(num_blocks, 1)?;
                 let witness = decompose_fold_packed_with_mode::<D>(
                     source,
                     challenges,

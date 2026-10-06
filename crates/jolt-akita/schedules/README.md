@@ -83,12 +83,14 @@ catalog; `provisioning_failed` records failures for admitted producers and makes
 the command fail. `unsupported_grouped_shape` records an explicit capability
 rejection matching the provisioner's Single-profile scalar-guide error for that
 K and final arity. Other schedule rejections count as `provisioning_failed`,
-including all chunked-profile rejections. Grouped roots require a recursive child
-fold, while the smallest Single scalar guides reach their terminal immediately
-(K=16 arities 12–15 and K=256 arities 12–16). Guided planning cannot add that fold.
-Preprocessing derives this capability check from the selected row and rejects it before planner search,
-naming K, profile, final arity, and the requested groups. Scalar-only setups and
-full-width producer batches retain their existing paths.
+including all chunked-profile rejections. For bounded-only `Single` requests,
+Jolt requires the selected scalar row to have a recursive child fold. The
+smallest Single scalar rows reach their terminal immediately (K=16 arities
+12–15 and K=256 arities 12–16), so preprocessing rejects these requests before
+either guided or full search, naming K, profile, final arity, and the requested
+groups. This is a Jolt admission rule; it does not establish that full planning
+could never find a grouped schedule. Scalar-only setups and full-width producer
+batches retain their existing paths.
 Successful rows are audited by the production provisioner and
 checked for unchanged producer profiles and the requested trace chunk count.
 The CSV is flushed after each final arity; this is an expensive offline check.
@@ -116,9 +118,13 @@ regeneration under akita `db5efa20`. The regenerated hybrid catalogs switch
 from direct to setup-offloaded rows at the same logical trace length; the
 table was not re-measured.
 
-Grouped planning first preserves the selected trace row's fold geometry,
-opening parameters, relation modes, and direct/offloaded topology, adapting
-only the auxiliary object profiles and the sizes they induce.
+Grouped planning calls Akita's `find_adapted_schedule`, which first tries the
+selected scalar trace row's fold geometry, opening parameters, relation modes,
+and direct/offloaded topology. If guided adaptation returns `UnsupportedSchedule`,
+Akita automatically runs a full schedule search for the same request under the
+same audited policy. The resulting row may use different trace fold geometry,
+opening parameters, relation modes, or direct/offloaded topology. Invalid
+requests and other errors propagate without this fallback.
 
 Advice, bytecode, and field-valued precommits resolve their producer rows directly
 from the dense catalogs. Commitment setup receives no trace chunk count and
@@ -127,18 +133,20 @@ profiles and audits their compatibility with the selected opening schedule.
 Deployment directories must regenerate both dense catalogs for the conservative
 policy; previous catalogs have a different policy digest and are rejected.
 
-A full-width field increment can require different trace fold geometry. If
-guided planning returns `UnsupportedSchedule` for the supported field batch—
-exactly one full-width field increment and at most two bounded advice groups—or
-for a chunked trace with at most two bounded producers, preprocessing runs the
-full planner under the same audited policy. Before full search, the maximum
-opening-assignment product must fit the adapted planner's assignment budget.
-Larger batches and batches with multiple full-width objects retain the
-guided-planning rejection, including its opening-assignment budget. Every auxiliary commitment's
-profile stays fixed, and the resulting grouped row passes the usual schedule
-audit before entering the setup-owned catalog. Other errors propagate. The
-one-hot base catalogs are unchanged; proving and verification use the
-resulting frozen grouped row.
+Jolt rejects batches with multiple full-width producers, or one full-width
+producer and more than two auxiliary producers, before planner search. This
+retains the supported field-increment batch: one full-width increment and at
+most two bounded advice groups. Bounded-only requests that pass the admission
+checks above can use Akita's automatic full-search fallback, including `Single`
+requests and batches with more than two producers. They are not restricted to
+the old chunked, two-producer fallback rule.
+
+Akita owns the search limits and precommit-opening assignment enumeration;
+Jolt does not impose the former separate opening-assignment product check.
+Every auxiliary commitment's profile stays fixed through both searches, and
+the resulting grouped row passes the usual schedule audit before entering the
+setup-owned catalog. Preprocessing leaves the base artifacts intact; proving
+and verification use the resulting frozen grouped row.
 
 Regenerate all base catalogs from the planner with:
 

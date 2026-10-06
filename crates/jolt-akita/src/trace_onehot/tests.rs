@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_params::{BasisMode, SetupMatrixCapacity, SubringCoefficientPackingGeometry};
 use akita_pcs::custom_source::{
     CommitInnerPlan, CpuFoldResponses, DecomposeFoldBatchPlan, DecomposeFoldPlan, OneHotBatchView,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyMeta,
@@ -17,10 +18,7 @@ use akita_pcs::custom_source::{
 };
 use akita_pcs::AkitaError;
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
-use akita_types::{
-    BasisMode, PreparedSubringCoefficientPackingPoint, SetupMatrixCapacity,
-    SubringCoefficientPackingGeometry,
-};
+use akita_types::PreparedSubringCoefficientPackingPoint;
 use jolt_field::{Fp128x8i32, One, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -420,7 +418,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         .filter(|&num_chunks| num_chunks <= num_blocks)
     {
         let challenge_set = Challenges::from_sparse(challenges.clone(), num_blocks, 1).unwrap();
-        let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, num_chunks).unwrap();
+        let chunk_ranges = akita_params::dyadic_block_ranges(num_blocks, num_chunks).unwrap();
         let batch_plan = if num_chunks == 1 {
             DecomposeFoldBatchPlan::Sparse {
                 challenges: &challenges,
@@ -618,7 +616,7 @@ fn batch_decompose_rejects_malformed_challenge_count() {
         RootPolyShape::<AkitaField, D>::num_live_ring_elems(&source).div_ceil(POSITIONS_PER_BLOCK);
     let challenges =
         Challenges::from_sparse(sparse_challenges(2 * num_blocks), num_blocks, 2).unwrap();
-    let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, 2).unwrap();
+    let chunk_ranges = akita_params::dyadic_block_ranges(num_blocks, 2).unwrap();
     let error = batch_decompose_error::<D>(
         &source,
         DecomposeFoldBatchPlan::SparseChunked {
@@ -651,7 +649,7 @@ fn batch_decompose_rejects_nonuniform_live_block_geometry() {
         1,
     )
     .unwrap();
-    let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, 2).unwrap();
+    let chunk_ranges = akita_params::dyadic_block_ranges(num_blocks, 2).unwrap();
     let error = batch_decompose_error::<D>(
         &source,
         DecomposeFoldBatchPlan::SparseChunked {
@@ -835,7 +833,7 @@ fn chunked_decompose_reads_each_trace_row_once() {
     let sources = [&source];
     let backend = test_backend();
     let challenge_set = Challenges::from_sparse(challenges, num_blocks, 1).unwrap();
-    let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, 2).unwrap();
+    let chunk_ranges = akita_params::dyadic_block_ranges(num_blocks, 2).unwrap();
     let chunks = <TestBackend as OpeningBatchKernel<
         TracePackedOneHotBatchView<'_, D>,
         AkitaField,
