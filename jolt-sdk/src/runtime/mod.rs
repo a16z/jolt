@@ -26,8 +26,8 @@ cfg_if::cfg_if! {
             std::process::exit(code)
         }
 
-        /// Rust allocations on jolt-platform's size-class arena (see
-        /// `__platform_bootstrap` for the heap split with musl).
+        /// Rust allocations on jolt-platform's size-class arena, which
+        /// `__platform_bootstrap` also registers as ZeroOS's kernel heap.
         #[cfg(feature = "guest-size-class-alloc")]
         struct SizeClassAllocator;
 
@@ -36,9 +36,10 @@ cfg_if::cfg_if! {
 
         #[cfg(feature = "guest-size-class-alloc")]
         // SAFETY: the arena is initialized in `__platform_bootstrap` before
-        // any Rust allocation. The guest runs on one hart under cooperative
-        // scheduling, and alloc/dealloc make no syscall, so no other thread
-        // can run inside them.
+        // any Rust allocation. Calls never overlap: the hart takes no
+        // interrupts, kernel allocations run only inside syscalls, the
+        // cooperative scheduler switches threads only inside syscalls, and the
+        // allocator itself never traps.
         unsafe impl GlobalAlloc for SizeClassAllocator {
             unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
                 jolt_platform::size_class_alloc::alloc(layout)

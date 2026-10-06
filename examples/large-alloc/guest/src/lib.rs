@@ -1,4 +1,5 @@
 use libc::{MAP_ANONYMOUS, MAP_FAILED, MAP_PRIVATE, PROT_READ, PROT_WRITE};
+use std::thread::Builder;
 
 /// std-guest exercise of ZeroOS's mmap/munmap region accounting.
 ///
@@ -79,4 +80,39 @@ fn large_alloc_roundtrip() -> u64 {
     let tail = vec![7u8; 512 << 10];
     acc = acc.wrapping_add(tail.iter().map(|&byte| u64::from(byte)).sum::<u64>());
     acc
+}
+
+/// std-guest exercise of one heap shared by Rust and musl under
+/// `guest-size-class-alloc` (built with this crate's `size-class-alloc`).
+///
+/// A 4 MiB Rust allocation lives on the size-class arena while musl maps a
+/// 3 MiB `malloc` and a 3 MiB pthread stack through ZeroOS's kernel heap.
+/// Each mapping exceeds an eighth of the 16 MiB heap, so a kernel heap
+/// confined to a fixed slice of it fails here.
+#[jolt::provable(
+    heap_size = 16777216,
+    stack_size = 1048576,
+    max_trace_length = 16777216
+)]
+fn shared_heap_roundtrip() -> u64 {
+    const LEN: usize = 3 << 20;
+    // black_box keeps LLVM from eliding the allocations as unused.
+    let rust_side = core::hint::black_box(vec![3u8; 4 << 20]);
+
+    let c_side = core::hint::black_box(unsafe { libc::malloc(LEN) }).cast::<u8>();
+    assert!(!c_side.is_null(), "musl malloc failed beside the Rust heap");
+    unsafe {
+        c_side.write(5);
+        c_side.add(LEN - 1).write(9);
+    }
+    let mut acc = u64::from(unsafe { c_side.read() + c_side.add(LEN - 1).read() });
+    unsafe { libc::free(c_side.cast()) };
+
+    let worker = Builder::new()
+        .stack_size(LEN)
+        .spawn(|| 11u64)
+        .expect("pthread stack mapping failed beside the Rust heap");
+    acc += worker.join().expect("worker thread panicked");
+
+    acc + u64::from(rust_side[0]) + u64::from(rust_side[rust_side.len() - 1])
 }

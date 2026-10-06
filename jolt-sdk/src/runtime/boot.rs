@@ -11,7 +11,7 @@ macro_rules! debug_writeln {
     };
 }
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", feature = "guest-size-class-alloc"))]
 use zeroos::foundation::ops::MemoryOps;
 
 extern "C" {
@@ -37,15 +37,17 @@ pub extern "C" fn __platform_bootstrap() {
 
     zeroos::initialize();
 
-    // no_std guests: register the O(1) size-class allocator BEFORE kinit (the
-    // registered ops receive the heap). This is the only registration —
-    // no_std builds enable just zeroos's `memory` feature, so `initialize()`
-    // above registers no allocator and `linked_list_allocator` stays out of
-    // the guest binary. Motivation and measurements in
-    // `jolt_platform::size_class_alloc`. std/musl guests keep ZeroOS's
-    // linked-list allocator for musl's malloc; with `guest-size-class-alloc`,
-    // Rust allocations use the size-class arena below instead.
-    #[cfg(target_os = "none")]
+    // Register the O(1) size-class allocator as ZeroOS's kernel heap BEFORE
+    // kinit (the registered ops receive the heap). no_std builds enable just
+    // zeroos's `memory` feature, so `initialize()` above registers no
+    // allocator and `linked_list_allocator` stays out of the guest binary.
+    // std guests on `guest-size-class-alloc` replace the linked-list allocator
+    // `initialize()` registered: the kernel heap backs musl's mmap (malloc
+    // arenas, pthread stacks), and the Rust global allocator draws from the
+    // same arena, so neither side has a fixed share of the heap. Other std
+    // guests keep the linked-list allocator. Motivation and measurements in
+    // `jolt_platform::size_class_alloc`.
+    #[cfg(any(target_os = "none", feature = "guest-size-class-alloc"))]
     zeroos::foundation::register_memory(MemoryOps {
         init: jolt_platform::size_class_alloc::init,
         alloc: jolt_platform::size_class_alloc::alloc,
@@ -58,17 +60,6 @@ pub extern "C" fn __platform_bootstrap() {
         let heap_end = core::ptr::addr_of!(__heap_end) as usize;
         debug_writeln!("[BOOT] Heap start=0x{:x}, end=0x{:x}", heap_start, heap_end);
         let heap_size = heap_end - heap_start;
-        // std guests on the size-class allocator: Rust owns most of the heap
-        // directly; musl's malloc (C shims, libc internals) keeps a slice
-        // through ZeroOS. An eighth covers the verifier guest's libc use with
-        // a wide margin; a guest with heavy C allocation needs a larger share.
-        #[cfg(all(not(target_os = "none"), feature = "guest-size-class-alloc"))]
-        {
-            let musl_share = heap_size / 8;
-            zeroos::foundation::kfn::memory::kinit(heap_start, musl_share);
-            jolt_platform::size_class_alloc::init(heap_start + musl_share, heap_size - musl_share);
-        }
-        #[cfg(not(all(not(target_os = "none"), feature = "guest-size-class-alloc")))]
         zeroos::foundation::kfn::memory::kinit(heap_start, heap_size);
 
         let _stack_top = core::ptr::addr_of!(__stack_top) as usize;
