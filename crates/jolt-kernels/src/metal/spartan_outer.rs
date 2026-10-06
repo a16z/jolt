@@ -45,7 +45,7 @@ use super::solinas::{
     OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
     PendingRegistersReadWriteStage1Pipelines, ProductRemainderSequence,
     RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source, SolinasMetal,
-    SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRows, UnwrittenStage1Rows,
 };
 use super::spartan_product::{
     MetalInstructionClaimResidentRows, MetalProductUniskipEndpointCarrier,
@@ -53,7 +53,7 @@ use super::spartan_product::{
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
 use crate::optimized::registers_read_write::RegisterCapacityExceeded;
 use crate::optimized::spartan_outer::{
-    prepare_metal_instruction_input_witness_rows,
+    allocate_metal_spartan_outer_witness_rows, prepare_metal_instruction_input_witness_rows,
     prepare_metal_spartan_outer_stage1_owner_witness_rows, prepare_metal_spartan_outer_uniskip,
     prepare_metal_spartan_outer_witness_rows, take_metal_spartan_outer_tau,
     InstructionReadRafStage1Ready, MetalSpartanDenseRowsError, OptimizedOuterRemainder,
@@ -233,38 +233,22 @@ impl Default for SpartanOuterUniskipMetalConfig {
 
 impl MetalBackend {
     /// Checks the lazily backed storage of the admitted Stage-0 plan, which
-    /// Stages 1–3 touch first, against the process footprint once Stage 0 has
-    /// returned its transients. A decline releases the resident rows with
-    /// every lease on them and on that storage, so each consumer takes the
-    /// route it takes when Stage 0 admits no rows; a Stage-0 InstructionReadRAF
-    /// owner stays for Stage 5.
+    /// Stages 1–3 touch first (unwritten Stage-1 rows included), against the
+    /// process footprint once Stage 0 has returned its transients. A decline
+    /// releases the resident rows with every lease on them and on that
+    /// storage, so each consumer takes the route it takes when Stage 0 admits
+    /// no rows; a Stage-0 InstructionReadRAF owner stays for Stage 5.
     fn admit_stage1_resident_storage(
         &self,
         session: &mut ProofSession,
         cycles: usize,
     ) -> Result<(), KernelError<AkitaField>> {
-        let plan = ResidentRowPlan {
-            stage1: session.state::<SpartanOuterUniskipRows>().is_some(),
-            instruction_input: session.state::<PreparedInstructionInput>().is_some(),
-            owner: false,
-        };
-        if !plan.stage1 && !plan.instruction_input {
+        let Some(bytes) = self
+            .stage1_untouched_bytes(session, cycles)
+            .map_err(metal_prepare_error)?
+        else {
             return Ok(());
-        }
-        let rd_post_bytes = if session.state::<RegistersReadWriteStage1Source>().is_some() {
-            registers_claim_rd_post_bytes(cycles).map_err(metal_prepare_error)?
-        } else {
-            0
         };
-        let bytes = resident_row_working_set(cycles, plan, &self.config)
-            .and_then(|total| {
-                let rows = resident_row_bytes(cycles, plan)?;
-                total
-                    .checked_sub(rows)
-                    .and_then(|lazy| lazy.checked_add(rd_post_bytes))
-                    .ok_or(MetalError::InputTooLong(cycles))
-            })
-            .map_err(metal_prepare_error)?;
         let error = match self.validate_additional_footprint(bytes) {
             Ok(footprint) => {
                 tracing::info!(
@@ -294,7 +278,40 @@ impl MetalBackend {
         drop(session.take::<SpartanShiftResidentRows>());
         drop(session.take::<InstructionInputRows>());
         drop(session.take::<SpartanOuterUniskipRows>());
+        let _ = session.take::<UnwrittenStage1Rows>();
         Ok(())
+    }
+
+    /// The admitted plan's bytes Stage 1 has yet to touch; `None` without
+    /// resident rows.
+    fn stage1_untouched_bytes(
+        &self,
+        session: &ProofSession,
+        cycles: usize,
+    ) -> Result<Option<u64>, MetalError> {
+        let plan = ResidentRowPlan {
+            stage1: session.state::<SpartanOuterUniskipRows>().is_some(),
+            instruction_input: session.state::<PreparedInstructionInput>().is_some(),
+            owner: false,
+        };
+        if !plan.stage1 && !plan.instruction_input {
+            return Ok(None);
+        }
+        let rd_post_bytes = if session.state::<RegistersReadWriteStage1Source>().is_some() {
+            registers_claim_rd_post_bytes(cycles)?
+        } else {
+            0
+        };
+        let written_rows = if session.state::<UnwrittenStage1Rows>().is_some() {
+            0
+        } else {
+            resident_row_bytes(cycles, plan)?
+        };
+        resident_row_working_set(cycles, plan, &self.config)?
+            .checked_sub(written_rows)
+            .and_then(|lazy| lazy.checked_add(rd_post_bytes))
+            .map(Some)
+            .ok_or(MetalError::InputTooLong(cycles))
     }
 
     fn prepare_outer_remainder_storage(
@@ -584,7 +601,8 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                             // the whole plan, Stage-0 commit transients included:
                             // a declined owner is built at Stage 5 instead.
                             // Ownerless plans check their rows right before
-                            // writing them, and Stage 1 checks the lazy storage.
+                            // allocating them, and Stage 1 checks the lazy
+                            // storage plus any rows it still has to write.
                             if candidate.owner {
                                 let _footprint = self.validate_additional_footprint(additional)?;
                             }
@@ -658,6 +676,12 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
                     )
                     .map(|(rows, prepared)| (rows, Some(prepared)))
                     .map_err(MetalSpartanDenseRowsError::into_kernel_error)?
+                } else if use_metal_stage1(cycles, &self.config, true) {
+                    session.park(UnwrittenStage1Rows);
+                    (
+                        allocate_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?,
+                        None,
+                    )
                 } else {
                     (
                         prepare_metal_spartan_outer_witness_rows(&self.context, witness, cycles)?,
@@ -715,14 +739,6 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
             >>::prepare_witness(&OptimizedOuterUniskip, session, log_t, witness)?;
         }
         Ok(())
-    }
-
-    /// The resident rows lose their GPU residency during the commit, and the
-    /// uni-skip submit would otherwise rewire them with CPU and GPU idle.
-    fn after_trace_commit(&self, session: &ProofSession) {
-        if let Some(rows) = session.state::<SpartanOuterUniskipRows>() {
-            rows.request_residency();
-        }
     }
 
     fn prepare(
@@ -1685,7 +1701,7 @@ mod tests {
     };
     use crate::metal::solinas::{
         validate_working_set, MetalError, OuterRemainderPhase, OuterRemainderSequence,
-        OuterRemainderSequenceConfig,
+        OuterRemainderSequenceConfig, UnwrittenStage1Rows,
     };
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
     use crate::optimized::parity::run_lockstep;
@@ -2264,6 +2280,28 @@ mod tests {
             assert_eq!(leases, [false; 7]);
             assert_eq!(stage0_declined.outer_remainder_sequences(), 0);
             assert_eq!(outputs, expected);
+        });
+    }
+
+    #[test]
+    fn stage1_admission_counts_the_unwritten_rows() {
+        const LOG_T: usize = 16;
+        let cycles = 1 << LOG_T;
+        with_sample_backend_at_log_t(LOG_T, 4, |witness| {
+            let backend = stage1_backend();
+            let mut session = ProofSession::default();
+            <MetalBackend as UniskipKernel<AkitaField, OuterRemainder<AkitaField>>>::prepare_witness(
+                &backend,
+                &mut session,
+                LOG_T,
+                witness,
+            )
+            .unwrap();
+            let pending = backend.stage1_untouched_bytes(&session, cycles).unwrap();
+            assert!(session.take::<UnwrittenStage1Rows>().is_some());
+            let written = backend.stage1_untouched_bytes(&session, cycles).unwrap();
+            // 48 B compact + 32 B raw per row.
+            assert_eq!(pending.unwrap() - written.unwrap(), 80 * cycles as u64);
         });
     }
 

@@ -203,7 +203,7 @@ pub use spartan_outer_uniskip::{
 };
 pub(crate) use spartan_outer_uniskip::{
     spartan_outer_uniskip_invocation_bytes, spartan_outer_uniskip_row_bytes, SpartanRawRow,
-    SpartanStage1RowsKey,
+    SpartanStage1RowsKey, UnwrittenStage1Rows,
 };
 
 pub const OFFSET_275: u32 = 275;

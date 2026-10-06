@@ -13,19 +13,22 @@ use jolt_field::Zero as _;
 use jolt_field::{Accumulator as _, Prime128OffsetA7F7 as AkitaField, WithAccumulator};
 use jolt_witness::witnesses::SpartanOuterRow;
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, ComputePipelineState,
-    MTLResourceOptions, MTLSize,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBufferRef,
+    ComputePipelineState, MTLResourceOptions, MTLSize,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::spartan_shift::SpartanShiftResidentRows;
 use super::{
-    buffer_from_slice, completed_command_gpu_time, residency, Fp128, InstructionInputRow,
-    InstructionInputRows, MetalError, SolinasMetal,
+    buffer_from_slice, completed_command_gpu_time,
+    residency::{self, ResidencyPrefetch},
+    set_inline_bytes, Fp128, InstructionInputRow, InstructionInputRows, MetalError, SolinasMetal,
 };
 
 pub const SPARTAN_OUTER_EXTENDED_NODES: usize = 9;
+/// Pipeline depth of [`SpartanOuterUniskipInvocation::execute_filling`].
+const FILL_CHUNKS: u32 = 32;
 const ROW_WORDS: usize = 20;
 const RAW_ROW_WORDS: usize = 4;
 const SIMD_WIDTH: usize = 32;
@@ -121,6 +124,11 @@ pub(crate) struct SpartanStage1RowsKey {
     pub(crate) compact_storage_id: usize,
 }
 
+/// Parked beside Stage-1 rows from
+/// [`SolinasMetal::allocate_spartan_outer_uniskip_rows`]: Stage 1's uni-skip
+/// writes them while it dispatches, and nothing reads them before.
+pub(crate) struct UnwrittenStage1Rows;
+
 #[derive(Clone)]
 pub struct SpartanOuterUniskipRows {
     instruction_input_rows: InstructionInputRows,
@@ -166,11 +174,11 @@ impl SpartanOuterUniskipRows {
         self.raw_buffer.as_ptr() as usize
     }
 
-    /// Requests residency for both row allocations, one helper each, and
-    /// returns once both requests have completed. See [`super::residency`].
-    pub(crate) fn request_residency(&self) {
-        let _compact = residency::prefetch(vec![self.instruction_input_buffer().clone()]);
-        let _raw = residency::prefetch(vec![self.raw_buffer.clone()]);
+    pub(crate) fn prefetch_residency(&self) -> ResidencyPrefetch {
+        residency::prefetch(vec![
+            self.instruction_input_buffer().clone(),
+            self.raw_buffer.clone(),
+        ])
     }
 
     pub fn instruction_input_allocation_identity(&self) -> usize {
@@ -658,7 +666,7 @@ struct Params {
     rows: u32,
     pairs_per_block: u32,
     blocks: u32,
-    reserved: u32,
+    first_block: u32,
 }
 
 struct Buffers {
@@ -668,7 +676,6 @@ struct Buffers {
     e_out: Buffer,
     block_sums: Buffer,
     output: Buffer,
-    params: Buffer,
 }
 
 pub struct SpartanOuterUniskipInvocation<'a> {
@@ -676,7 +683,7 @@ pub struct SpartanOuterUniskipInvocation<'a> {
     blocks_pipeline: ComputePipelineState,
     reduce_pipeline: ComputePipelineState,
     buffers: Buffers,
-    blocks: usize,
+    params: Params,
     threads_per_threadgroup: usize,
     completed: Cell<bool>,
 }
@@ -712,6 +719,33 @@ impl SolinasMetal {
         rows: usize,
         fill: impl FnOnce(&mut [InstructionInputRow], &mut [SpartanRawRow]) -> Result<(), MetalError>,
     ) -> Result<SpartanOuterUniskipRows, MetalError> {
+        let prepared = self.allocate_spartan_outer_uniskip_rows(rows)?;
+        let _residency = prepared.prefetch_residency();
+        // SAFETY: the shared buffers have exactly `rows` elements and no command
+        // buffer can observe an allocation until `fill` returns.
+        let instruction_input = unsafe {
+            slice::from_raw_parts_mut(
+                prepared
+                    .instruction_input_buffer()
+                    .contents()
+                    .cast::<InstructionInputRow>(),
+                rows,
+            )
+        };
+        // SAFETY: see the instruction-input slice above.
+        let raw = unsafe {
+            slice::from_raw_parts_mut(prepared.raw_buffer.contents().cast::<SpartanRawRow>(), rows)
+        };
+        fill(instruction_input, raw)?;
+        Ok(prepared)
+    }
+
+    /// Allocates the Stage-1 rows without writing them: the uni-skip writes
+    /// them through [`SpartanOuterUniskipInvocation::execute_filling`].
+    pub(crate) fn allocate_spartan_outer_uniskip_rows(
+        &self,
+        rows: usize,
+    ) -> Result<SpartanOuterUniskipRows, MetalError> {
         if rows == 0 {
             return Err(MetalError::EmptyInput);
         }
@@ -728,23 +762,6 @@ impl SolinasMetal {
         let raw_buffer = self
             .device
             .new_buffer(raw_bytes, MTLResourceOptions::StorageModeShared);
-        let _residency =
-            residency::prefetch(vec![instruction_input_buffer.clone(), raw_buffer.clone()]);
-        // SAFETY: the shared buffers have exactly `rows` elements and no command
-        // buffer can observe an allocation until `fill` returns.
-        let instruction_input = unsafe {
-            slice::from_raw_parts_mut(
-                instruction_input_buffer
-                    .contents()
-                    .cast::<InstructionInputRow>(),
-                rows,
-            )
-        };
-        // SAFETY: see the instruction-input-buffer construction above.
-        let raw = unsafe {
-            slice::from_raw_parts_mut(raw_buffer.contents().cast::<SpartanRawRow>(), rows)
-        };
-        fill(instruction_input, raw)?;
         let device_registry_id = self.device_registry_id();
         let generation = NEXT_STAGE1_ROWS_GENERATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
@@ -889,7 +906,7 @@ impl SolinasMetal {
                 .map_err(|_| MetalError::InputTooLong(pairs_per_block))?,
             blocks: u32::try_from(e_out.len())
                 .map_err(|_| MetalError::InputTooLong(e_out.len()))?,
-            reserved: 0,
+            first_block: 0,
         };
 
         Ok(SpartanOuterUniskipInvocation {
@@ -907,9 +924,8 @@ impl SolinasMetal {
                 output: self
                     .device
                     .new_buffer(output_bytes, MTLResourceOptions::StorageModeShared),
-                params: buffer_from_slice(&self.device, slice::from_ref(&params)),
             },
-            blocks: e_out.len(),
+            params,
             threads_per_threadgroup,
             completed: Cell::new(false),
         })
@@ -926,61 +942,153 @@ impl SpartanOuterUniskipInvocation<'_> {
     pub fn execute_timed(&self) -> Result<Duration, MetalError> {
         autoreleasepool(|| {
             let command_buffer = self.context.queue.new_command_buffer();
-            let blocks = command_buffer.new_compute_command_encoder();
-            blocks.set_compute_pipeline_state(&self.blocks_pipeline);
-            blocks.set_buffer(0, Some(&self.buffers.instruction_input_rows), 0);
-            blocks.set_buffer(1, Some(&self.buffers.raw_rows), 0);
-            blocks.set_buffer(2, Some(&self.buffers.e_in), 0);
-            blocks.set_buffer(3, Some(&self.buffers.e_out), 0);
-            blocks.set_buffer(4, Some(&self.buffers.block_sums), 0);
-            blocks.set_buffer(5, Some(&self.buffers.params), 0);
-            blocks.set_threadgroup_memory_length(
-                0,
-                byte_length::<Fp128>(self.threads_per_threadgroup)?,
-            );
-            blocks.dispatch_thread_groups(
-                MTLSize {
-                    width: self.blocks as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.threads_per_threadgroup as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            blocks.end_encoding();
-
-            let reduce = command_buffer.new_compute_command_encoder();
-            reduce.set_compute_pipeline_state(&self.reduce_pipeline);
-            reduce.set_buffer(0, Some(&self.buffers.block_sums), 0);
-            reduce.set_buffer(1, Some(&self.buffers.output), 0);
-            reduce.set_buffer(2, Some(&self.buffers.params), 0);
-            reduce.set_threadgroup_memory_length(
-                0,
-                byte_length::<Fp128>(self.threads_per_threadgroup / SIMD_WIDTH)?,
-            );
-            reduce.dispatch_thread_groups(
-                MTLSize {
-                    width: SPARTAN_OUTER_EXTENDED_NODES as u64,
-                    height: 1,
-                    depth: 1,
-                },
-                MTLSize {
-                    width: self.threads_per_threadgroup as u64,
-                    height: 1,
-                    depth: 1,
-                },
-            );
-            reduce.end_encoding();
-
+            self.encode_blocks(command_buffer, 0, self.params.blocks)?;
+            self.encode_reduce(command_buffer)?;
             command_buffer.commit();
             command_buffer.wait_until_completed();
             let gpu_active = completed_command_gpu_time(command_buffer)?;
             self.completed.set(true);
             Ok(gpu_active)
         })
+    }
+
+    /// Writes the rows with `fill(first_row, compact, raw)` in
+    /// [`FILL_CHUNKS`] chunks and dispatches each chunk's blocks once the next
+    /// chunk is written, so the GPU reduces behind the producer.
+    ///
+    /// The rows must come from
+    /// [`SolinasMetal::allocate_spartan_outer_uniskip_rows`] with nothing
+    /// reading them before this call.
+    pub(crate) fn execute_filling(
+        &self,
+        mut fill: impl FnMut(
+            usize,
+            &mut [InstructionInputRow],
+            &mut [SpartanRawRow],
+        ) -> Result<(), MetalError>,
+    ) -> Result<Duration, MetalError> {
+        let rows = self.params.rows as usize;
+        let rows_per_block = self.params.pairs_per_block as usize;
+        // SAFETY: the row buffers hold exactly `rows` elements; a command
+        // buffer binding them is committed only after every row its blocks
+        // read is written, and no other reader exists before this call.
+        let instruction_input = unsafe {
+            slice::from_raw_parts_mut(
+                self.buffers
+                    .instruction_input_rows
+                    .contents()
+                    .cast::<InstructionInputRow>(),
+                rows,
+            )
+        };
+        // SAFETY: see the instruction-input slice above.
+        let raw = unsafe {
+            slice::from_raw_parts_mut(
+                self.buffers.raw_rows.contents().cast::<SpartanRawRow>(),
+                rows,
+            )
+        };
+        let chunk_blocks = self.params.blocks.div_ceil(FILL_CHUNKS);
+        let chunk_rows = chunk_blocks as usize * rows_per_block;
+        autoreleasepool(|| {
+            let mut commands = Vec::with_capacity(FILL_CHUNKS as usize);
+            let mut pending_block = None;
+            for (chunk, (instruction_input, raw)) in instruction_input
+                .chunks_mut(chunk_rows)
+                .zip(raw.chunks_mut(chunk_rows))
+                .enumerate()
+            {
+                let first_row = chunk * chunk_rows;
+                fill(first_row, instruction_input, raw)?;
+                // A block's last row reads its successor's compact and raw
+                // words (`spartan_outer_decode_residual`), so the previous
+                // chunk goes out once this one is written.
+                if let Some(first_block) = pending_block.replace(first_row / rows_per_block) {
+                    let command_buffer = self.context.queue.new_command_buffer();
+                    self.encode_blocks(command_buffer, first_block as u32, chunk_blocks)?;
+                    command_buffer.commit();
+                    commands.push(command_buffer.to_owned());
+                }
+            }
+            let first_block = pending_block.ok_or(MetalError::EmptyInput)? as u32;
+            let command_buffer = self.context.queue.new_command_buffer();
+            self.encode_blocks(
+                command_buffer,
+                first_block,
+                self.params.blocks - first_block,
+            )?;
+            self.encode_reduce(command_buffer)?;
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            let gpu_active = commands.iter().try_fold(
+                completed_command_gpu_time(command_buffer)?,
+                |total, command| Ok::<_, MetalError>(total + completed_command_gpu_time(command)?),
+            )?;
+            self.completed.set(true);
+            Ok(gpu_active)
+        })
+    }
+
+    fn encode_blocks(
+        &self,
+        command_buffer: &CommandBufferRef,
+        first_block: u32,
+        blocks: u32,
+    ) -> Result<(), MetalError> {
+        let params = Params {
+            first_block,
+            ..self.params
+        };
+        let encoder = command_buffer.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(&self.blocks_pipeline);
+        encoder.set_buffer(0, Some(&self.buffers.instruction_input_rows), 0);
+        encoder.set_buffer(1, Some(&self.buffers.raw_rows), 0);
+        encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
+        encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
+        encoder.set_buffer(4, Some(&self.buffers.block_sums), 0);
+        set_inline_bytes(encoder, 5, &params);
+        encoder
+            .set_threadgroup_memory_length(0, byte_length::<Fp128>(self.threads_per_threadgroup)?);
+        encoder.dispatch_thread_groups(
+            MTLSize {
+                width: u64::from(blocks),
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: self.threads_per_threadgroup as u64,
+                height: 1,
+                depth: 1,
+            },
+        );
+        encoder.end_encoding();
+        Ok(())
+    }
+
+    fn encode_reduce(&self, command_buffer: &CommandBufferRef) -> Result<(), MetalError> {
+        let reduce = command_buffer.new_compute_command_encoder();
+        reduce.set_compute_pipeline_state(&self.reduce_pipeline);
+        reduce.set_buffer(0, Some(&self.buffers.block_sums), 0);
+        reduce.set_buffer(1, Some(&self.buffers.output), 0);
+        set_inline_bytes(reduce, 2, &self.params);
+        reduce.set_threadgroup_memory_length(
+            0,
+            byte_length::<Fp128>(self.threads_per_threadgroup / SIMD_WIDTH)?,
+        );
+        reduce.dispatch_thread_groups(
+            MTLSize {
+                width: SPARTAN_OUTER_EXTENDED_NODES as u64,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: self.threads_per_threadgroup as u64,
+                height: 1,
+                depth: 1,
+            },
+        );
+        reduce.end_encoding();
+        Ok(())
     }
 
     pub fn read_output(&self) -> Result<[AkitaField; SPARTAN_OUTER_EXTENDED_NODES], MetalError> {
@@ -1992,6 +2100,28 @@ mod tests {
             .unwrap();
         invocation.execute().unwrap();
         assert_eq!(invocation.read_output().unwrap(), expected);
+        let unwritten = context
+            .allocate_spartan_outer_uniskip_rows(rows.len())
+            .unwrap();
+        let filling = context
+            .prepare_spartan_outer_uniskip_with_rows(
+                &unwritten,
+                &e_in,
+                &e_out,
+                SpartanOuterUniskipConfig::default(),
+            )
+            .unwrap();
+        let _gpu_active = filling
+            .execute_filling(|first_row, instruction_input, raw| {
+                for ((source, instruction_input), raw) in
+                    rows[first_row..].iter().zip(instruction_input).zip(raw)
+                {
+                    (*instruction_input, *raw) = source.split();
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(filling.read_output().unwrap(), expected);
         assert_outer_sequence_matches_field_oracle(&rows, explicit_rows);
     }
 

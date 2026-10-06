@@ -102,7 +102,7 @@ use crate::metal::solinas::{
     InstructionReadRafStage1Storage, MetalError, RegistersReadWriteStage1ChunkWriter,
     RegistersReadWriteStage1Plan, RegistersReadWriteStage1Storage, SolinasMetal,
     SpartanOuterUniskipConfig, SpartanOuterUniskipRow, SpartanOuterUniskipRows, SpartanRawRow,
-    INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, RAM_READ_WRITE_CYCLE_TILE_LOG2,
+    UnwrittenStage1Rows, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS, RAM_READ_WRITE_CYCLE_TILE_LOG2,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -1046,6 +1046,7 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
     let (out_point, in_point) = tau_low.split_at(split);
     let e_out = EqPolynomial::<AkitaField>::evals(out_point, None);
     let e_in = EqPolynomial::<AkitaField>::evals(in_point, None);
+    let unwritten = session.take::<UnwrittenStage1Rows>().is_some();
     let (extended, resident) = {
         let explicit_rows = rows.explicit_rows();
         let resident = {
@@ -1084,7 +1085,16 @@ pub(crate) fn prepare_metal_spartan_outer_uniskip(
                 gpu_active_ns = tracing::field::Empty,
             );
             let _dispatch = dispatch_span.enter();
-            let gpu_active = invocation.execute_timed().map_err(metal_outer_error)?;
+            let gpu_active = if unwritten {
+                let _residency = resident.prefetch_residency();
+                let access = rows.access();
+                invocation.execute_filling(|first_row, instruction_input, raw| {
+                    fill_spartan_outer_rows(&access, first_row, instruction_input, raw)
+                })
+            } else {
+                invocation.execute_timed()
+            }
+            .map_err(metal_outer_error)?;
             let gpu_active_ns = u64::try_from(gpu_active.as_nanos()).unwrap_or(u64::MAX);
             let _ = dispatch_span.record("gpu_active_ns", gpu_active_ns);
         }
@@ -1133,6 +1143,20 @@ pub(crate) fn prepare_metal_spartan_outer_witness_rows(
 ) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
     let rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)?;
     prepare_metal_spartan_outer_rows(context, &rows, cycles)
+}
+
+/// The Stage-1 rows Stage 1 writes itself; see [`UnwrittenStage1Rows`].
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn allocate_metal_spartan_outer_witness_rows(
+    context: &SolinasMetal,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    cycles: usize,
+) -> Result<SpartanOuterUniskipRows, KernelError<AkitaField>> {
+    let explicit_rows = BundleStore::<SpartanOuterRow>::resolve(witness, cycles)?.explicit_rows();
+    context
+        .allocate_spartan_outer_uniskip_rows(cycles)
+        .and_then(|rows| rows.with_explicit_rows(explicit_rows))
+        .map_err(metal_outer_error)
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -1793,45 +1817,7 @@ fn prepare_metal_spartan_outer_rows(
     let _entered = span.enter();
     let prepared = context
         .prepare_spartan_outer_uniskip_rows_with_fill(cycles, |instruction_input, raw| {
-            #[cfg(feature = "parallel")]
-            {
-                instruction_input
-                    .par_iter_mut()
-                    .zip(raw.par_iter_mut())
-                    .enumerate()
-                    .try_for_each(
-                        |(row_index, (instruction_input, raw))| -> Result<(), MetalError> {
-                            let row = access.row(row_index).map_err(|error| {
-                                MetalError::SpartanOuterRowExtraction {
-                                    row: row_index,
-                                    message: error.to_string(),
-                                }
-                            })?;
-                            let (input, raw_row) =
-                                SpartanOuterUniskipRow::from_spartan_outer(&row).split();
-                            *instruction_input = input;
-                            *raw = raw_row;
-                            Ok(())
-                        },
-                    )?;
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
-                for (row_index, (instruction_input, raw)) in
-                    instruction_input.iter_mut().zip(raw).enumerate()
-                {
-                    let row = access.row(row_index).map_err(|error| {
-                        MetalError::SpartanOuterRowExtraction {
-                            row: row_index,
-                            message: error.to_string(),
-                        }
-                    })?;
-                    let (input, raw_row) = SpartanOuterUniskipRow::from_spartan_outer(&row).split();
-                    *instruction_input = input;
-                    *raw = raw_row;
-                }
-            }
-            Ok(())
+            fill_spartan_outer_rows(&access, 0, instruction_input, raw)
         })
         .map_err(metal_outer_error)?
         .with_explicit_rows(explicit_rows)
@@ -1842,6 +1828,44 @@ fn prepare_metal_spartan_outer_rows(
     );
     let _ = span.record("residual_rows_storage_id", prepared.allocation_identity());
     Ok(prepared)
+}
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn fill_spartan_outer_rows(
+    access: &BundleAccess<'_, SpartanOuterRow>,
+    first_row: usize,
+    instruction_input: &mut [InstructionInputRow],
+    raw: &mut [SpartanRawRow],
+) -> Result<(), MetalError> {
+    let fill_row = |offset: usize,
+                    (instruction_input, raw): (&mut InstructionInputRow, &mut SpartanRawRow)|
+     -> Result<(), MetalError> {
+        let row_index = first_row + offset;
+        let row = access
+            .row(row_index)
+            .map_err(|error| MetalError::SpartanOuterRowExtraction {
+                row: row_index,
+                message: error.to_string(),
+            })?;
+        (*instruction_input, *raw) = SpartanOuterUniskipRow::from_spartan_outer(&row).split();
+        Ok(())
+    };
+    #[cfg(feature = "parallel")]
+    {
+        instruction_input
+            .par_iter_mut()
+            .zip(raw.par_iter_mut())
+            .enumerate()
+            .try_for_each(|(offset, rows)| fill_row(offset, rows))
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        instruction_input
+            .iter_mut()
+            .zip(raw)
+            .enumerate()
+            .try_for_each(|(offset, rows)| fill_row(offset, rows))
+    }
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]

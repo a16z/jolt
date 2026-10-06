@@ -9,7 +9,7 @@ struct SpartanOuterUniskipParams {
     uint rows;
     uint pairs_per_block;
     uint blocks;
-    uint reserved;
+    uint first_block;
 };
 
 struct SpartanFieldSum192 {
@@ -203,10 +203,11 @@ kernel void solinas_spartan_outer_uniskip_blocks(
     device SolinasFp128* block_sums [[buffer(4)]],
     constant SpartanOuterUniskipParams& params [[buffer(5)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
-    uint block [[threadgroup_position_in_grid]],
+    uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
 {
+    uint block = params.first_block + group;
     uint lane = tid & (SPARTAN_OUTER_SIMD_WIDTH - 1);
     uint simdgroup = tid / SPARTAN_OUTER_SIMD_WIDTH;
     uint simdgroups = threads / SPARTAN_OUTER_SIMD_WIDTH;

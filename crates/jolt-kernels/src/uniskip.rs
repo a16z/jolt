@@ -44,12 +44,6 @@ where
         Ok(())
     }
 
-    /// Runs once the trace commitment has returned, before any challenge is
-    /// drawn, to restore device state that [`prepare_witness`](Self::prepare_witness)
-    /// parked and the commitment displaced. Backends without such state leave
-    /// this as a no-op.
-    fn after_trace_commit(&self, _session: &ProofSession) {}
-
     /// Compute the uni-skip first-round state and park it in the session
     /// under a backend-private key.
     fn prepare(

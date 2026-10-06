@@ -79,8 +79,6 @@ where
         cycles = 1usize << log_t
     )
     .in_scope(|| prepare_kernel.prepare_witness(&mut session, log_t, witness))?;
-    tracing::info_span!("jolt_prover::backend_after_trace_commit")
-        .in_scope(|| prepare_kernel.after_trace_commit(&session));
     tracing::info_span!("release_retained_memory", stage = "stage0")
         .in_scope(|| jolt_kernels::mem::purge_retained_memory(log_t));
     let checked = stage0.checked;
