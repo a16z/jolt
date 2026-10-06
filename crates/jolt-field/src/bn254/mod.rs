@@ -366,7 +366,7 @@ impl Ring for Fq {
 
 /// The ring-op bodies behind the `impl_field!` arithmetic: native arkworks
 /// for `Fq` always, and for `Fr` unless the `field-inline-guest-bn254`
-/// feature routes it through the field-inline path (`crate::fr_inline`).
+/// feature routes it through the field-inline path (`crate::field_inline`).
 pub trait InlineArith: Sized {
     fn add(a: Self, b: Self) -> Self;
     fn sub(a: Self, b: Self) -> Self;
@@ -423,7 +423,7 @@ impl InlineArith for Fr {
 }
 
 /// The guest field path: raw Montgomery limbs in, checked Montgomery limbs out
-/// (see `crate::fr_inline` for the representation argument).
+/// (see `crate::field_inline` for the representation argument).
 #[cfg(any(
     test,
     all(feature = "field-inline-guest-bn254", target_arch = "riscv64")
@@ -441,26 +441,26 @@ impl Fr {
 #[cfg(all(feature = "field-inline-guest-bn254", target_arch = "riscv64"))]
 impl InlineArith for Fr {
     fn add(a: Self, b: Self) -> Self {
-        Fr::from_inline_limbs(crate::fr_inline::add(&a.inner_limbs(), &b.inner_limbs()))
+        Fr::from_inline_limbs(crate::field_inline::add(&a.inner_limbs(), &b.inner_limbs()))
     }
     fn sub(a: Self, b: Self) -> Self {
-        Fr::from_inline_limbs(crate::fr_inline::sub(&a.inner_limbs(), &b.inner_limbs()))
+        Fr::from_inline_limbs(crate::field_inline::sub(&a.inner_limbs(), &b.inner_limbs()))
     }
     fn mul(a: Self, b: Self) -> Self {
-        Fr::from_inline_limbs(crate::fr_inline::mul(
+        Fr::from_inline_limbs(crate::field_inline::mul(
             &a.inner_limbs(),
             &b.inner_limbs(),
             true,
         ))
     }
     fn neg(a: Self) -> Self {
-        Fr::from_inline_limbs(crate::fr_inline::neg(&a.inner_limbs()))
+        Fr::from_inline_limbs(crate::field_inline::neg(&a.inner_limbs()))
     }
     fn inverse(a: Self) -> Option<Self> {
         if a.inner_limbs() == [0; 4] {
             return None;
         }
-        Some(Fr::from_inline_limbs(crate::fr_inline::inv(
+        Some(Fr::from_inline_limbs(crate::field_inline::inv(
             &a.inner_limbs(),
             true,
         )))

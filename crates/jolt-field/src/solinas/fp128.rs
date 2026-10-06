@@ -1084,7 +1084,7 @@ impl<const P: u128> Field for Fp128<P> {
         if !Self::FIELD_INLINE {
             return crate::algebra::signed_sum_fold(terms);
         }
-        Self::from_inline_limbs(crate::fr_inline::signed_sum(
+        Self::from_inline_limbs(crate::field_inline::signed_sum(
             terms
                 .into_iter()
                 .map(|(term, negative)| (&term.0, negative)),
@@ -1100,7 +1100,7 @@ impl<const P: u128> Field for Fp128<P> {
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
         let terms: &[[[u64; 2]; 4]] =
             unsafe { core::slice::from_raw_parts(terms.as_ptr().cast(), terms.len()) };
-        Self::from_inline_limbs(crate::fr_inline::sum_of_products4(terms))
+        Self::from_inline_limbs(crate::field_inline::sum_of_products4(terms))
     }
 
     #[inline(always)]
@@ -1267,7 +1267,7 @@ impl<const P: u128> Fp128<P> {
                 core::slice::from_raw_parts(b.as_ptr().cast(), b.len()),
             )
         };
-        Self::from_inline_limbs(crate::fr_inline::dot(a, b))
+        Self::from_inline_limbs(crate::field_inline::dot(a, b))
     }
 
     fn inline_dot_rows_kernel(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) {
@@ -1279,7 +1279,7 @@ impl<const P: u128> Fp128<P> {
         let shared: &[[u64; 2]] =
             unsafe { core::slice::from_raw_parts(shared.as_ptr().cast(), shared.len()) };
         let mut limbs = vec![[0u64; 2]; out.len()];
-        crate::fr_inline::dot_rows(rows, shared, &mut limbs);
+        crate::field_inline::dot_rows(rows, shared, &mut limbs);
         for (slot, limbs) in out.iter_mut().zip(limbs) {
             *slot = Self::from_inline_limbs(limbs);
         }
@@ -1293,7 +1293,7 @@ impl<const P: u128> Fp128<P> {
         };
         let rows: &[&[[u64; 2]]] =
             unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
-        Self::from_inline_limbs(crate::fr_inline::weighted_dot_rows(
+        Self::from_inline_limbs(crate::field_inline::weighted_dot_rows(
             rows,
             cast(weights),
             cast(pows),
@@ -1431,7 +1431,7 @@ impl<const P: u128> Fp128<P> {
     fn inline_mul(a: Self, b: Self) -> Self {
         #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
         if Self::FIELD_INLINE {
-            return Self::from_inline_limbs(crate::fr_inline::mul(&a.0, &b.0, false));
+            return Self::from_inline_limbs(crate::field_inline::mul(&a.0, &b.0, false));
         }
         Fp128(Self::mul_raw(a.0, b.0))
     }
@@ -1443,7 +1443,9 @@ impl<const P: u128> Fp128<P> {
         }
         #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
         if Self::FIELD_INLINE {
-            return Some(Self::from_inline_limbs(crate::fr_inline::inv(&a.0, false)));
+            return Some(Self::from_inline_limbs(crate::field_inline::inv(
+                &a.0, false,
+            )));
         }
         Some(a.inv_or_zero())
     }

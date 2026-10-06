@@ -109,7 +109,7 @@ pub use algebra::{
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
-mod fr_inline;
+mod field_inline;
 #[cfg(all(
     feature = "field-inline-guest-bn254",
     feature = "field-inline-guest-fp128",

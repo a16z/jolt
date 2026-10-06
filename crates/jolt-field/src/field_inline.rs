@@ -1,4 +1,4 @@
-//! Field-inline (FR) guest arithmetic.
+//! Field-inline guest arithmetic.
 //!
 //! On a RISC-V guest that selects the field its field-inline unit computes in
 //! (`field-inline-guest-bn254` for [`crate::Fr`], `field-inline-guest-fp128`
@@ -11,7 +11,7 @@
 //! the result modulo the field characteristic. The field wrappers check
 //! that the returned integer is below the modulus before using it.
 //!
-//! The routed field's arithmetic owns FR registers 1 through 14 (the BN254
+//! The routed field's arithmetic owns field registers 1 through 14 (the BN254
 //! Montgomery constants stay in 1 and 2 for the whole run); guest code that
 //! also emits field-inline instructions must not write them.
 //!
@@ -23,8 +23,8 @@
 //!
 //! `Fr` keeps its Montgomery representation: a raw limb vector `aR` loaded
 //! as a field element differs from `a` by the constant `R`, which
-//! multiplication and inversion correct with one extra FR multiplication
-//! (`abR² · R⁻¹`, `(aR)⁻¹ · R²`); addition and subtraction are
+//! multiplication and inversion correct with one extra field-inline
+//! multiplication (`abR² · R⁻¹`, `(aR)⁻¹ · R²`); addition and subtraction are
 //! representation-transparent. `Fp128` is stored canonically and needs no
 //! correction.
 
@@ -49,7 +49,7 @@ const fn i_word(funct3: u32, rd: u32, imm: u32) -> u32 {
     OPCODE | (rd << 7) | (funct3 << 12) | (imm << 20)
 }
 
-// FR register map for the hinted ops. Constants live in low registers for
+// Field register map for the hinted ops. Constants live in low registers for
 // the whole run; each operation uses the scratch registers above them.
 const REG_RINV: u32 = 1; // BN254 R^-1 (Montgomery product correction)
 const REG_R2: u32 = 2; // BN254 R^2 (Montgomery inverse correction)
@@ -146,7 +146,7 @@ mod emit {
         }
     }
 
-    /// Supply a 64-bit limb with `fr[quotient] = (fr[src] − limb) / 2^64`.
+    /// Supply a 64-bit limb with `quotient = (src − limb) / 2^64` over field registers.
     /// The honest tracer chooses the canonical low limb. This row alone
     /// does not enforce that choice.
     #[inline(always)]

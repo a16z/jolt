@@ -39,7 +39,7 @@ allocative = ["dep:allocative"]
 bytemuck = ["dep:bytemuck"]
 fp128-proof-linkage = ["asm"]
 fp64-proof-linkage = []
-# Guest arithmetic on the field-inline unit (see `fr_inline`), which computes in
+# Guest arithmetic on the field-inline unit (see `field_inline`), which computes in
 # one field: a guest selects it with `-bn254` (`Fr`) or `-fp128`
 # (`Prime128OffsetA7F7`); other fields keep software arithmetic.
 # Internal: enable through exactly one field selector below.

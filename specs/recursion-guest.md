@@ -47,7 +47,7 @@ guest selects it: `field-inline-guest-fp128` routes the Fp128 protocol prime
 (Akita) and `field-inline-guest-bn254` routes BN254 `Fr` (Dory); every other
 field keeps its software arithmetic. The routed field's dot products, row
 dots, product sums, signed sums, multiplications, and inversions run through
-field-inline instructions (`fr_inline.rs`).
+field-inline instructions (`field_inline.rs`).
 
 - **Operand ingress** clears a field register (`FIELD_LOAD_IMM 0`), then folds
   the operand's words in with `FIELD_LOAD_ACCUMULATE_FROM_MEMORY` (two for

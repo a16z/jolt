@@ -872,7 +872,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.set_func("verify");
     program.set_std(true);
     // The verifier guest computes its field arithmetic through the
-    // field-inline instructions, so it decodes under the FR profile, and
+    // field-inline instructions, so it decodes under the field-inline profile, and
     // routes the one field the tracer's field-inline unit computes in.
     #[cfg(feature = "field-inline")]
     {
