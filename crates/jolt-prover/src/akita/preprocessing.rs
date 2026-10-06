@@ -137,7 +137,8 @@ pub(crate) fn grouped_setup_params(
         one_hot_k,
         grouped_schedule,
         Arc::clone(schedule_artifacts),
-    );
+    )
+    .with_akita_chunk_profile(config.akita_chunk_profile);
     Ok(params)
 }
 
