@@ -63,21 +63,16 @@ fn add_mod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     let (r2, c) = adc(a[2], b[2], c);
     let (r3, c) = adc(a[3], b[3], c);
 
-    // Try subtracting modulus; if underflow we keep the original sum
-    let (s0, bw) = sbb(r0, modulus[0], 0);
-    let (s1, bw) = sbb(r1, modulus[1], bw);
-    let (s2, bw) = sbb(r2, modulus[2], bw);
-    let (s3, bw) = sbb(r3, modulus[3], bw);
-
-    // If there was a carry from the addition (c != 0) then sum >= 2^256 > modulus,
-    // so the subtraction is valid.  If c == 0 but no borrow from subtraction (bw == 0),
-    // the subtraction is also valid.  Otherwise keep the un-subtracted value.
-    let use_sub = c != 0 || bw == 0;
-    if use_sub {
-        [s0, s1, s2, s3]
-    } else {
-        [r0, r1, r2, r3]
+    // Avoid a full borrow chain when the sum is already canonical.
+    let sum = [r0, r1, r2, r3];
+    if c == 0 && !is_non_canonical(&sum, modulus) {
+        return sum;
     }
+    let (s0, borrow) = sbb(r0, modulus[0], 0);
+    let (s1, borrow) = sbb(r1, modulus[1], borrow);
+    let (s2, borrow) = sbb(r2, modulus[2], borrow);
+    let (s3, _) = sbb(r3, modulus[3], borrow);
+    [s0, s1, s2, s3]
 }
 
 /// r = a - b mod modulus.  Both a and b must be < modulus.
@@ -745,42 +740,55 @@ fn fake_glv_scalar_mul(_s: &P256Fr, _p: &P256Point) -> (P256Point, u128, bool, u
     panic!("fake_glv_scalar_mul not available on this target");
 }
 
-/// 2-scalar 128-bit Shamir's trick.
+/// Two-scalar multiplication using a joint sparse signed-digit expansion.
 ///
-/// Computes `scalars[0] * points[0] + scalars[1] * points[1]` using
-/// simultaneous double-and-add with a 4-entry precomputed table.
-///
-/// Used by the Fake GLV verification to check each scalar multiplication
-/// independently: `a_i * P - b_i * R_i = O` binds R_i = u_i * P.
+/// Joint recoding reduces the number of nonzero columns while retaining the
+/// independent Fake GLV checks `a_i * P - b_i * R_i = O`.
 #[inline(always)]
-fn shamir_2x128(scalars: [u128; 2], points: [P256Point; 2]) -> P256Point {
-    let p01 = points[0].add(&points[1]);
+fn shamir_2x128(mut scalars: [u128; 2], points: [P256Point; 2]) -> P256Point {
+    let sum = points[0].add(&points[1]);
+    let difference = points[0].add(&points[1].neg());
     let table = [
+        sum.neg(),
+        points[0].neg(),
+        difference.neg(),
+        points[1].neg(),
         P256Point::infinity(),
-        points[0].clone(),
         points[1].clone(),
-        p01,
+        difference,
+        points[0].clone(),
+        sum,
     ];
-
-    let mut res = P256Point::infinity();
-    for bit in (0..128).rev() {
-        let mut idx = 0usize;
-        for (j, scalar) in scalars.iter().enumerate() {
-            if (scalar >> bit) & 1 == 1 {
-                idx |= 1 << j;
+    // A signed expansion can carry one bit beyond a full-width u128.
+    let mut columns = [4u8; 129];
+    let mut len = 0;
+    while scalars[0] != 0 || scalars[1] != 0 {
+        let mut digits = [0i8; 2];
+        for index in 0..2 {
+            let low = scalars[index] as u8;
+            if low & 1 != 0 {
+                let mut digit = 2 - (low & 3) as i8;
+                if matches!(low & 7, 3 | 5) && scalars[1 - index] & 3 == 2 {
+                    digit = -digit;
+                }
+                digits[index] = digit;
             }
         }
-        if res.is_infinity() {
-            if idx != 0 {
-                res = table[idx].clone();
-            }
-        } else if idx != 0 {
-            res = res.double_and_add(&table[idx]);
-        } else {
-            res = res.double();
+        columns[len] = ((digits[0] + 1) * 3 + digits[1] + 1) as u8;
+        len += 1;
+        for index in 0..2 {
+            scalars[index] = (scalars[index] >> 1) + u128::from(digits[index] == -1);
         }
     }
-    res
+    let mut result = P256Point::infinity();
+    for &index in columns[..len].iter().rev() {
+        if index == 4 {
+            result = result.double();
+        } else {
+            result = result.double_and_add(&table[index as usize]);
+        }
+    }
+    result
 }
 
 /// Verify an ECDSA P-256 signature using Fake GLV.
@@ -957,4 +965,96 @@ pub(crate) fn verify_ecdsa_inner(
         return Err(P256Error::RxMismatch);
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "host"))]
+mod scalar_tests {
+    use super::*;
+    use ark_ec::{CurveGroup, PrimeGroup};
+    use ark_ff::{BigInt, PrimeField};
+    use ark_secp256r1::{Fr, Projective};
+    use num_bigint::BigUint;
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+
+    #[test]
+    fn modular_addition_matches_integer_reduction_at_carry_boundaries() {
+        let mut rng = StdRng::seed_from_u64(0xadd256);
+        for modulus in [P256_MODULUS, P256_ORDER] {
+            let modulus_integer = BigUint::from_bytes_le(&limbs_to_bytes(&modulus));
+            let mut values = vec![
+                BigUint::from(0u8),
+                BigUint::from(1u8),
+                &modulus_integer - 1u8,
+                &modulus_integer - 2u8,
+            ];
+            for bits in [64, 128, 192, 255] {
+                let power = BigUint::from(1u8) << bits;
+                values.push(&power - 1u8);
+                values.push(power);
+            }
+            values.extend(
+                (0..64).map(|_| BigUint::from_bytes_le(&rng.gen::<[u8; 32]>()) % &modulus_integer),
+            );
+            let limbs = |value: &BigUint| {
+                let mut bytes = [0u8; 32];
+                let encoded = value.to_bytes_le();
+                bytes[..encoded.len()].copy_from_slice(&encoded);
+                bytes_to_limbs(&bytes)
+            };
+            for a in &values {
+                for b in &values {
+                    let got = add_mod(&limbs(a), &limbs(b), &modulus);
+                    assert_eq!(
+                        BigUint::from_bytes_le(&limbs_to_bytes(&got)),
+                        (a + b) % &modulus_integer
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn joint_sparse_multiplication_matches_curve_group() {
+        let mut rng = StdRng::seed_from_u64(0x256);
+        let mut cases = vec![
+            [0, 0],
+            [0, u128::MAX],
+            [u128::MAX, 0],
+            [u128::MAX, u128::MAX],
+            [1 << 127, 3],
+            [3, 1 << 127],
+        ];
+        cases.extend((0..64).map(|_| [rng.gen(), rng.gen()]));
+        for second_multiple in [0u64, 1, 2, 17] {
+            let p = Projective::generator();
+            let q = p * Fr::from(second_multiple);
+            let points = [
+                P256Point::generator(),
+                if second_multiple == 0 {
+                    P256Point::infinity()
+                } else {
+                    let a = q.into_affine();
+                    P256Point::new_unchecked(
+                        P256Fq::from_u64_arr_unchecked(&a.x.into_bigint().0),
+                        P256Fq::from_u64_arr_unchecked(&a.y.into_bigint().0),
+                    )
+                },
+            ];
+            for scalars in &cases {
+                let scalar =
+                    |value: u128| Fr::new(BigInt([value as u64, (value >> 64) as u64, 0, 0]));
+                let expected = (p * scalar(scalars[0]) + q * scalar(scalars[1])).into_affine();
+                let actual = shamir_2x128(*scalars, points.clone());
+                if expected.infinity {
+                    assert!(actual.is_infinity());
+                } else {
+                    assert_eq!(actual.x().e(), expected.x.into_bigint().0);
+                    assert_eq!(actual.y().e(), expected.y.into_bigint().0);
+                }
+            }
+            let inverse = [points[0].clone(), points[0].neg()];
+            assert!(shamir_2x128([u128::MAX; 2], inverse).is_infinity());
+        }
+    }
 }
