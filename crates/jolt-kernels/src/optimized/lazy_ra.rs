@@ -19,10 +19,11 @@
 //! offset's bound-bit eq weight (legacy `SharedRaRound1→2→3` pre-scaling).
 //! Pre-scaling keeps the round-loop gathers multiplication-free — one table
 //! lookup and one addition per branch — because the eq weights are folded
-//! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
-//! instead of multiplied per cycle. Only the fourth bind materializes dense
-//! vectors, at `T/16` length, and drops the index source. Peak memory falls
-//! from `N·T` field elements to the index source plus `N·T/16`.
+//! into the `N × 2^b × 2^w` tables at bind time. The fourth bind normally
+//! materializes dense vectors at `T/16` and drops the index source. Large
+//! address domains switch earlier when the next branch tables would be at
+//! least as large as the bound dense tables; that switching bind gathers
+//! directly, avoiding the oversized branch expansion.
 //!
 //! Byte parity: every gathered value is the same polynomial of the same
 //! table entries and challenges as the iterated `lo + r·(hi − lo)` dense
@@ -51,7 +52,7 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 }
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily until the
-/// fourth bind materializes dense.
+/// fourth bind, or earlier when dense storage is no larger than the branches.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -68,7 +69,7 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
         width: usize,
         source: S,
     },
-    /// Four or more binds: plain dense multilinears (`T/16` at entry).
+    /// Materialized multilinears after the size crossover or fourth bind.
     Dense(Vec<Polynomial<F>>),
 }
 
@@ -148,7 +149,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// until the fourth bind materializes dense (and drops the source), then
+    /// until the size crossover or fourth bind materializes dense, then
     /// use plain multilinear binds.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
@@ -157,21 +158,40 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 width,
                 source,
             } => {
-                let tables = double_branches(tables, challenge);
-                if width < 8 {
+                let next_width = width * 2;
+                let dense_elements = source.cycles() / next_width * tables.len();
+                let branch_elements = tables.iter().map(Vec::len).sum::<usize>() * 2;
+                if width < 8 && branch_elements < dense_elements {
                     Self::Lazy {
-                        tables,
-                        width: width * 2,
+                        tables: double_branches(tables, challenge),
+                        width: next_width,
                         source,
                     }
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
-                    let dense = Self::Dense(materialize(&tables, &source, width * 2));
-                    // Return branch tables and the final shared index handle.
-                    drop(tables);
+                    let _span = tracing::info_span!(
+                        "lazy_ra_materialize",
+                        branches = next_width,
+                        branch_elements,
+                        dense_elements,
+                        polynomials = tables.len(),
+                    )
+                    .entered();
+                    // Large address domains are cheaper to gather and bind directly
+                    // than to expand into another set of pre-scaled branches.
+                    let dense = if branch_elements >= dense_elements {
+                        materialize(tables, &source, width, Some(challenge))
+                    } else {
+                        materialize(
+                            double_branches(tables, challenge),
+                            &source,
+                            next_width,
+                            None,
+                        )
+                    };
                     drop(source);
                     crate::mem::purge_retained_memory(log_t);
-                    dense
+                    Self::Dense(dense)
                 }
             }
             Self::Dense(mut polys) => {
@@ -240,22 +260,27 @@ fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F
     }
 }
 
-/// The switching bind's materialization: gather every polynomial dense at
-/// `cycles / branches` length through the pre-scaled branch tables —
-/// lookups and adds only. The switch depth trades the dense tables'
-/// footprint (`N · T / branches` field elements — the stage-6b peak at
-/// large T) against one more gather round and double the branch tables;
-/// measured on a 64-thread host, T/16 beats the original T/8 on both axes.
+/// Materializes the current branch gathers, optionally fusing the next
+/// low-to-high bind. Owning the branch tables releases them before the
+/// caller purges retained memory.
 fn materialize<F: JoltField, S: ChunkIndexSource>(
-    tables: &[Vec<F>],
+    tables: Vec<Vec<F>>,
     source: &S,
     branches: usize,
+    bind: Option<F>,
 ) -> Vec<Polynomial<F>> {
     debug_assert!(source.cycles() >= branches);
-    let new_len = source.cycles() / branches;
+    let new_len = source.cycles() / branches / if bind.is_some() { 2 } else { 1 };
     let materialize_poly = |i: usize| -> Polynomial<F> {
         let table = tables[i].as_slice();
-        let eval = |j: usize| gather(table, branches, source, i, j);
+        let eval = |j: usize| match bind {
+            Some(challenge) => {
+                let lo = gather(table, branches, source, i, 2 * j);
+                let hi = gather(table, branches, source, i, 2 * j + 1);
+                lo + challenge * (hi - lo)
+            }
+            None => gather(table, branches, source, i, j),
+        };
         #[cfg(feature = "parallel")]
         let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
         #[cfg(not(feature = "parallel"))]
@@ -272,5 +297,44 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
     #[cfg(not(feature = "parallel"))]
     {
         (0..tables.len()).map(materialize_poly).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_field::Fr;
+
+    use super::{ChunkIndexSource, LazyFoldedRa};
+
+    struct SelectorRows;
+
+    impl ChunkIndexSource for SelectorRows {
+        fn num_polys(&self) -> usize {
+            1
+        }
+
+        fn cycles(&self) -> usize {
+            4096
+        }
+
+        fn index(&self, _i: usize, j: usize) -> Option<usize> {
+            Some(j % 16)
+        }
+    }
+
+    #[test]
+    fn large_address_domains_switch_before_branch_storage_exceeds_dense() {
+        for (address_domain, switching_bind) in [(16, 4), (64, 3), (256, 2), (1024, 1)] {
+            let mut ra =
+                LazyFoldedRa::new(vec![vec![Fr::from(1u64); address_domain]], SelectorRows);
+            for bind in 1..=4 {
+                ra.bind(Fr::from(3u64));
+                assert_eq!(
+                    matches!(ra, LazyFoldedRa::Dense(_)),
+                    bind >= switching_bind,
+                    "address domain {address_domain}, bind {bind}"
+                );
+            }
+        }
     }
 }

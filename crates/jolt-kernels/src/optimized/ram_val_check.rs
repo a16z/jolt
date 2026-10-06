@@ -1,7 +1,8 @@
 //! Optimized RAM value check (stage 4).
 //!
 //! Summand: `inc(j) · ra(j) · (LT(j, r_cycle) + γ)`.
-//! [`LazyFoldedRa`] delays the dense `ra` table to `T/16`; [`SplitLt`] stores
+//! [`LazyFoldedRa`] keeps `ra` lazy until dense storage is cheaper or four binds
+//! have completed; [`SplitLt`] stores
 //! `LT + γ` in ~√T space. [`IncColumn`] derives `inc` from raw trace values
 //! for two rounds, then materializes at `T/4`.
 
