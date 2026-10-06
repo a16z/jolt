@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Generated from https://claude.ai/artifact/7HubUQvkWhvQkyDDwwGbG2; companion to specs/shared-primitive-layer.md. -->
+<style>
+:root { color-scheme: light; }
+body { margin: 0; font-size: 14px; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+<title>Shared Primitive Layer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+
+/* Layout: one linear story. Before and after crate maps side by side, then rules, then ZK, then tickets in order. */
+:root {
+  --bg: #f6f7fa; --surface: #ffffff; --sunk: #eceef4; --fg: #1b1f2a; --muted: #5d6475; --line: #d8dbe5; --accent: #3b4fc4;
+  --jolt: #3b4fc4; --akita: #0d7f81; --aerie: #a83c72;
+  --c-sum: #d9480f; --c-sum-s: #fde6da;
+  --c-eq: #2b8a3e;  --c-eq-s: #ddf2e1;
+  --c-alg: #1864ab; --c-alg-s: #dcebf8;
+  --c-hash: #9c36b5; --c-hash-s: #f3e0f7;
+  --c-pcs: #9a6700; --c-pcs-s: #f8ecd0;
+  --c-wire: #c2255c; --c-wire-s: #fbe0ea;
+  --c-tool: #5f6b7a; --c-tool-s: #e6e9ee;
+  --p0: #c0392b; --p0-s: #fbe4e1; --p1: #b07200; --p1-s: #fbefd6; --p2: #52607a; --p2-s: #e6e9f0; --p3: #8a8f9c; --p3-s: #eef0f3; --w: #2a6fb0; --w-s: #e0edf9;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151c; --surface: #1a1e28; --sunk: #222736; --fg: #e6e8ef; --muted: #9aa1b3; --line: #313748; --accent: #8e9cff;
+    --jolt: #8e9cff; --akita: #4fc4c6; --aerie: #e98ab9;
+    --c-sum: #ff8a5c; --c-sum-s: #3d2418; --c-eq: #69db7c; --c-eq-s: #1b3322; --c-alg: #74b6f5; --c-alg-s: #192d42;
+    --c-hash: #da77f2; --c-hash-s: #33203a; --c-pcs: #f0b44a; --c-pcs-s: #3a2d14; --c-wire: #f783ac; --c-wire-s: #3d1d2a; --c-tool: #a9b4cc; --c-tool-s: #283041;
+    --p0: #ff7b6b; --p0-s: #3d1f1c; --p1: #f0b44a; --p1-s: #3a2d14; --p2: #a9b4cc; --p2-s: #283041; --p3: #8a8f9c; --p3-s: #242832; --w: #6fb3f0; --w-s: #1b2e42;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151c; --surface: #1a1e28; --sunk: #222736; --fg: #e6e8ef; --muted: #9aa1b3; --line: #313748; --accent: #8e9cff;
+  --jolt: #8e9cff; --akita: #4fc4c6; --aerie: #e98ab9;
+  --c-sum: #ff8a5c; --c-sum-s: #3d2418; --c-eq: #69db7c; --c-eq-s: #1b3322; --c-alg: #74b6f5; --c-alg-s: #192d42;
+  --c-hash: #da77f2; --c-hash-s: #33203a; --c-pcs: #f0b44a; --c-pcs-s: #3a2d14; --c-wire: #f783ac; --c-wire-s: #3d1d2a; --c-tool: #a9b4cc; --c-tool-s: #283041;
+  --p0: #ff7b6b; --p0-s: #3d1f1c; --p1: #f0b44a; --p1-s: #3a2d14; --p2: #a9b4cc; --p2-s: #283041; --p3: #8a8f9c; --p3-s: #242832; --w: #6fb3f0; --w-s: #1b2e42;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--body); padding-inline: 16px; padding-block: 40px 72px; }
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 64px; }
+.prose { max-width: 70ch; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(2rem, 4.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+section { display: grid; gap: 20px; }
+.step { display: flex; align-items: baseline; gap: 12px; }
+.step .n { font: 700 0.85rem/1 var(--mono); color: var(--bg); background: var(--fg); border-radius: 999px; min-width: 1.9em; height: 1.9em; display: inline-grid; place-items: center; flex: none; }
+.sub { color: var(--muted); }
+.lede { font-size: 1.12rem; color: var(--muted); }
+.lede strong { color: var(--fg); font-weight: 600; }
+
+body { padding-block: 40px 64px; }
+.wrap { max-width: 1080px; gap: 56px; }
+header { display: grid; gap: 10px; }
+.lede { max-width: 62ch; }
+.key { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 0.85rem; color: var(--muted); }
+.sep { width: 1px; height: 16px; background: var(--line); }
+.rk { font: 500 0.72rem/1.6 var(--mono); padding: 0 8px; border-radius: 4px; border: 2px solid; }
+.rk.jolt { color: var(--jolt); } .rk.akita { color: var(--akita); } .rk.aerie { color: var(--aerie); }
+.kx { display: inline-flex; align-items: center; gap: 6px; }
+.ln { width: 26px; border-top: 2px solid var(--muted); }
+.ln.dotted { border-top-style: dotted; } .ln.dashed { border-top-style: dashed; }
+.merges { display: grid; gap: 10px; }
+.merge { position: relative; display: grid; grid-template-columns: 150px minmax(0, 1fr) 90px minmax(0, 0.8fr); align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.merge svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.concept { font: 700 0.98rem/1.2 var(--display); padding-right: 10px; }
+.srcs { display: grid; gap: 6px; position: relative; z-index: 1; }
+.src { border: 2px solid; border-radius: 6px; padding: 4px 9px; background: var(--surface); font: 500 0.8rem/1.35 var(--mono); overflow-wrap: anywhere; }
+.src.jolt { border-color: var(--jolt); } .src.akita { border-color: var(--akita); } .src.aerie { border-color: var(--aerie); } .src.ext { border-color: var(--line); color: var(--muted); }
+.src.gone { border-style: dashed; color: var(--muted); text-decoration: line-through; }
+.src.impl { border-style: dotted; }
+.tgt { position: relative; z-index: 1; border: 2px solid var(--accent); background: var(--sunk); border-radius: 8px; padding: 9px 12px; font: 700 0.88rem/1.3 var(--mono); color: var(--accent); overflow-wrap: anywhere; }
+.tgt small { display: block; font: 400 0.8rem/1.35 var(--body); color: var(--muted); margin-top: 2px; }
+.merge path { fill: none; stroke-width: 2; }
+.merge path.jolt { stroke: var(--jolt); } .merge path.akita { stroke: var(--akita); } .merge path.aerie { stroke: var(--aerie); } .merge path.ext { stroke: var(--line); }
+.merge path.gone { stroke-dasharray: 5 4; opacity: 0.6; }
+.merge path.impl { stroke-dasharray: 1 5; stroke-linecap: round; }
+.merge path.head { stroke: var(--accent); }
+.merge .down { display: none; text-align: center; color: var(--muted); }
+@media (max-width: 760px) {
+  .merge { grid-template-columns: 1fr; gap: 8px; }
+  .merge svg, .merge .gap { display: none; }
+  .merge .down { display: block; }
+}
+.after-map { display: grid; gap: 8px; }
+.consumers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.cons { background: var(--surface); border: 1px solid var(--line); border-top: 4px solid; border-radius: 10px; padding: 10px 14px; display: grid; gap: 2px; font-size: 0.9rem; color: var(--muted); }
+.cons b { font: 700 1rem/1.3 var(--display); color: var(--fg); }
+.cons.akita { border-top-color: var(--akita); } .cons.aerie { border-top-color: var(--aerie); } .cons.jolt { border-top-color: var(--jolt); }
+.dep-arrow { text-align: center; color: var(--muted); font: 500 0.72rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.layer { border: 2px solid var(--accent); border-radius: 12px; padding: 12px; display: grid; gap: 6px; background: var(--surface); }
+.layer-title { font: 500 0.72rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); padding-bottom: 4px; }
+.lrow { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 28px; padding: 8px 10px; background: var(--sunk); border-radius: 6px; }
+.lc { font: 500 0.88rem/1.3 var(--mono); }
+.crit { font-size: 0.92rem; color: var(--muted); }
+.crit b { color: var(--p0); font-weight: 600; }
+.tickets { display: grid; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.tk { display: grid; grid-template-columns: 3.2em 4.8em minmax(0, 1fr) auto; align-items: baseline; gap: 4px 12px; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 0.93rem; }
+.tk:first-child { border-top: 0; }
+.tk .id { font: 700 0.95rem/1.3 var(--display); }
+.tk .ttl { min-width: 0; }
+.tk .ttl i { font-style: normal; color: var(--muted); }
+.tk .dep { font: 400 0.74rem/1.3 var(--mono); color: var(--muted); white-space: nowrap; }
+.tk.on-path .id { color: var(--p0); }
+.pill { font: 500 0.68rem/1 var(--mono); padding: 4px 7px; border-radius: 999px; text-align: center; white-space: nowrap; justify-self: start; }
+.pill.p0 { background: var(--p0-s); color: var(--p0); } .pill.p1 { background: var(--p1-s); color: var(--p1); } .pill.p2 { background: var(--p2-s); color: var(--p2); } .pill.p3 { background: var(--p3-s); color: var(--p3); } .pill.w { background: var(--w-s); color: var(--w); }
+@media (max-width: 560px) { .tk { grid-template-columns: 3em minmax(0, 1fr); } .tk .pill, .tk .dep { grid-column: 2; } }
+footer { color: var(--muted); font-size: 0.86rem; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <h1>One shared primitive layer</h1>
+  <p class="lede">Jolt, Akita and Aerie each carry their own copies of core primitives. The jolt repo will own one copy of each, and the other two will use it directly.</p>
+</header>
+
+<section>
+  <h2>Where each duplicate goes</h2>
+  <div class="key">
+    <span class="rk jolt">jolt</span><span class="rk akita">akita</span><span class="rk aerie">aerie</span>
+    <span class="sep"></span>
+    <span class="kx"><span class="ln solid"></span>moves in</span>
+    <span class="kx"><span class="ln dotted"></span>stays, uses the shared trait</span>
+    <span class="kx"><span class="ln dashed"></span><s>deleted</s></span>
+  </div>
+  <div class="merges" id="merges"></div>
+</section>
+
+<section>
+  <h2>Afterwards</h2>
+  <div class="after-map">
+    <div class="consumers">
+      <div class="cons akita"><b>akita</b><span>PCS protocol, SIS tables, CPU kernels</span></div>
+      <div class="cons aerie"><b>aerie</b><span>Falcon aggregation PIOP</span></div>
+      <div class="cons jolt"><b>jolt zkVM</b><span>prover, verifier, one-hot packing</span></div>
+    </div>
+    <div class="dep-arrow" aria-hidden="true">↓ depends on ↓</div>
+    <div class="layer">
+      <div class="layer-title">shared layer · jolt repo</div>
+      <div class="lrow"><span class="lc">jolt-zk</span></div>
+      <div class="lrow"><span class="lc">jolt-sumcheck</span><span class="lc">jolt-openings</span></div>
+      <div class="lrow"><span class="lc">jolt-crypto</span></div>
+      <div class="lrow"><span class="lc">jolt-poly</span><span class="lc">jolt-transcript</span></div>
+      <div class="lrow"><span class="lc">jolt-algebra</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Tickets</h2>
+  <p class="crit"><b>Critical path to Whiteout:</b> M0 → M2 → M3 → M6 → W4 → W5, with M1 → M5 alongside</p>
+  <div class="tickets" id="tickets"></div>
+</section>
+
+<footer>Details, invariants and open questions: <span class="mono">specs/shared-primitive-layer.md</span></footer>
+</div>
+<script>
+const MERGES = [
+  ["Sumcheck driver", "jolt-sumcheck", "one fallible driver", [["jolt","jolt-sumcheck",""],["akita","akita-sumcheck","gone"],["akita","akita-cpu-backend kernels","impl"],["aerie","aerie-falcon stage.rs","gone"]]],
+  ["eq / multilinear", "jolt-poly", "", [["jolt","jolt-poly",""],["akita","akita-algebra eq code",""],["aerie","aerie-falcon algebra.rs","gone"]]],
+  ["Ring, NTT, SIMD", "jolt-algebra", "renamed jolt-field", [["jolt","jolt-field",""],["akita","akita-algebra ring · NTT",""],["aerie","aerie-simd","gone"],["aerie","falcon_ntt.rs",""]]],
+  ["Lattice crypto", "jolt-crypto", "Ajtai · challenges · Gaussian", [["jolt","jolt-crypto",""],["akita","akita-challenges",""],["akita","Ajtai commit + matrices",""]]],
+  ["Keccak / SHAKE", "jolt-crypto::hash", "", [["akita","akita-challenges xof.rs","gone"],["aerie","aerie-keccak",""]]],
+  ["PCS boundary", "jolt-openings", "Akita implements it", [["jolt","jolt-openings",""],["jolt","jolt-akita adapter","gone"],["akita","akita-pcs","impl"],["aerie","aerie-falcon pcs.rs","gone"]]],
+  ["Serialization", "serde + spongefish", "", [["jolt","ark-serialize","gone"],["akita","akita-serialization","gone"],["aerie","aerie-falcon wire.rs","gone"]]],
+  ["Zero knowledge", "jolt-zk", "renamed jolt-blindfold", [["jolt","jolt-blindfold",""],["jolt","jolt-sumcheck ZK features",""]]],
+  ["Tooling", "jolt-profiling · jolt-eval", "", [["aerie","aerie-profiling","gone"],["aerie","aerie-invariants","gone"],["aerie","aerie-pcs-config","gone"]]]
+];
+const TICKETS = [
+  ["M0","p0",1,"Transcript unification","in review"],
+  ["W2","w",0,"Akita one-shot fold responses","start now"],
+  ["M1","p0",1,"jolt-algebra","after M0"],
+  ["M2","p0",1,"jolt-sumcheck: one fallible driver","after M0"],
+  ["M4","p0",0,"jolt-openings: hiding / ZK split","after M0"],
+  ["M9","p1",0,"Aerie: decode proof once <i>(soundness)</i>","after M0"],
+  ["M3","p0",1,"Private-message seam","after M2"],
+  ["M5","p0",1,"jolt-crypto: lattice, challenges, Gaussian","after M1"],
+  ["M7","p1",0,"jolt-poly: eq and multilinear","after M1"],
+  ["M8","p1",0,"Akita implements jolt-openings","after M4"],
+  ["M6","p0",1,"jolt-zk + BlindFold on pads","after M2, M3, M4"],
+  ["W1","w",0,"Akita hiding commitments","after M5"],
+  ["M10","p2",0,"Serialization cleanup","after M8"],
+  ["M11","p2",0,"jolt-crypto::hash","after M5"],
+  ["M12","p2",0,"Tooling","after M0"],
+  ["M13","p3",0,"Akita kernels → jolt-kernels","after M2, M7"],
+  ["W3","w",0,"Akita emits residual rows","after M6"],
+  ["W4","w",1,"jolt-zk::whiteout Σ-protocol","after M1, M5, M6"],
+  ["W5","w",1,"Akita proves the response","after W4"]
+];
+const PL = { p0:"P0", p1:"P1", p2:"P2", p3:"P3", w:"Whiteout" };
+const NS = "http://www.w3.org/2000/svg";
+const mroot = document.getElementById("merges");
+MERGES.forEach(([c, tgt, note, srcs]) => {
+  const row = document.createElement("div");
+  row.className = "merge";
+  row.innerHTML = '<div class="concept">' + c + '</div><div class="srcs">' +
+    srcs.map(([r, n, f]) => '<div class="src ' + r + (f ? " " + f : "") + '" data-r="' + r + '" data-f="' + f + '">' + n + '</div>').join("") +
+    '</div><div class="gap"></div><div class="down">↓</div><div class="tgt">' + tgt + (note ? '<small>' + note + '</small>' : '') + '</div>';
+  row.prepend(document.createElementNS(NS, "svg"));
+  mroot.appendChild(row);
+});
+function draw() {
+  document.querySelectorAll(".merge").forEach(row => {
+    const svg = row.querySelector("svg");
+    svg.replaceChildren();
+    if (getComputedStyle(svg).display === "none") return;
+    const b = row.getBoundingClientRect(), t = row.querySelector(".tgt").getBoundingClientRect();
+    const tx = t.left - b.left, ty = t.top - b.top + t.height / 2;
+    row.querySelectorAll(".src").forEach(s => {
+      const r = s.getBoundingClientRect();
+      const sx = r.right - b.left, sy = r.top - b.top + r.height / 2, mx = (sx + tx) / 2;
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("d", `M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx - 4},${ty}`);
+      p.setAttribute("class", s.dataset.r + " " + s.dataset.f);
+      svg.appendChild(p);
+    });
+    const h = document.createElementNS(NS, "path");
+    h.setAttribute("d", `M${tx - 10},${ty - 5} L${tx - 2},${ty} L${tx - 10},${ty + 5}`);
+    h.setAttribute("class", "head");
+    svg.appendChild(h);
+  });
+}
+draw();
+if (window.ResizeObserver) new ResizeObserver(draw).observe(mroot);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+const troot = document.getElementById("tickets");
+TICKETS.forEach(([id, p, crit, title, dep]) => {
+  const el = document.createElement("div");
+  el.className = "tk" + (crit ? " on-path" : "");
+  el.innerHTML = '<span class="id">' + id + '</span><span class="pill ' + p + '">' + PL[p] + '</span><span class="ttl">' + title + '</span><span class="dep">' + dep + '</span>';
+  troot.appendChild(el);
+});
+</script>
+
+</body>
+</html>

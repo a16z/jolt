@@ -544,7 +544,8 @@ per-round Pedersen commitments once M6 lands.
 ## References
 
 - Visual overview (where each duplicate goes, the resulting layer, and the
-  ticket order): https://claude.ai/artifact/7HubUQvkWhvQkyDDwwGbG2
+  ticket order): `specs/shared-primitive-layer.html`, a standalone page that
+  opens in any browser.
 - Whiteout draft: `akita-paper/whiteout.tex`, §3 (residual relation) and §4
   (protocol).
 - `specs/jolt-transcript-narg.md` (M0), `specs/jolt-prover-blindfold.md`,
