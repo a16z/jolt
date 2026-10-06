@@ -157,14 +157,20 @@ fn bad_inputs_and_malformed_matrices_reject() {
 }
 
 #[test]
-fn matrix_encoding_and_policy_are_bound_even_for_equivalent_relations() {
+fn relation_digest_binds_encoding_of_evaluation_equivalent_matrices() {
     let (pk, vk) = hyperkzg_setup();
     let proof =
         prove::<HyperKZGScheme>(&key(), &public(), &witness(), &pk, &mut transcript()).unwrap();
     let mut m = matrices();
-    m.a[0][0].1 += Fr::one();
-    m.c[0][0].1 += Fr::one();
+    m.c[0] = vec![(3, Fr::from_u64(2)), (3, -Fr::one())];
+    m.b[0].push((1, Fr::zero()));
     let equivalent = SpartanKey::new(m, 1, [19; 32]).unwrap();
+    let equivalent_proof =
+        prove::<HyperKZGScheme>(&equivalent, &public(), &witness(), &pk, &mut transcript())
+            .unwrap();
+    equivalent
+        .verify::<HyperKZGScheme>(&public(), &equivalent_proof, &vk, &mut transcript())
+        .unwrap();
     assert!(equivalent
         .verify::<HyperKZGScheme>(&public(), &proof, &vk, &mut transcript())
         .is_err());
