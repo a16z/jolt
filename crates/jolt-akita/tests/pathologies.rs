@@ -10,10 +10,9 @@
 pub mod support;
 
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaNativeBatchStatement,
+    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaNativeBatchStatement,
     AkitaNativeBatching, AkitaScheme,
 };
-use jolt_field::JoltField;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
@@ -23,15 +22,6 @@ use serde_json::{json, Value};
 use support::{batch_polynomials, f, layout, native_setup, polynomial, setup_for};
 
 type VerifierSetup = <AkitaScheme as CommitmentScheme>::VerifierSetup;
-
-fn require_jolt_field<F: JoltField>() {}
-
-#[test]
-fn akita_field_satisfies_jolt_field_bundle() {
-    require_jolt_field::<AkitaField>();
-    assert_eq!(f(3) + f(4), f(7));
-    assert_eq!(f(3) * f(4), f(12));
-}
 
 #[test]
 fn akita_public_commit_rejects_unsupported_one_hot_shape() {

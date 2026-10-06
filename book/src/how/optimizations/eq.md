@@ -113,7 +113,7 @@ q_i(1)
 \;=\;
 \frac{\textsf{claim}_i - \ell_i(0)\,q_i(0)}{\ell_i(1)}.
 $$
-(We only need $\ell_i(1)\neq 0$, which holds with overwhelming probability for random challenges.)
+When $\ell_i(1)=0$ (or $\ell_i(0)=0$), the code skips the division and evaluates the missing endpoint $q_i(1)$ (or $q_i(0)$) directly from the retained tables. When the accumulated eq prefix is zero, $s_i$ is the zero polynomial and the code emits it without dividing. Every challenge is handled, so completeness holds over the full 128-bit challenge space rather than only with overwhelming probability.
 
 Once $q_i(0)$, $q_i(1)$, and the leading coefficient $e$ are known, we can evaluate $q_i(2)$ and $q_i(3)$ cheaply (no additional inner-hypercube sums), and then compute
 $$

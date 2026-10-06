@@ -2,7 +2,7 @@ use jolt_field::Field;
 use jolt_utils::log2_power_of_two;
 use serde::{Deserialize, Serialize};
 
-pub use super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
+pub use super::error::{JoltFormulaDimensionsError, PointGeometryError};
 
 use super::{
     bytecode::BytecodeReadRafDimensions,
@@ -75,9 +75,9 @@ impl TraceDimensions {
     pub fn cycle_opening_point<F: Field>(
         self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if challenges.len() != self.log_t {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.log_t,
                 got: challenges.len(),
             });
@@ -142,40 +142,47 @@ impl ReadWriteDimensions {
         self.log_t + self.log_k - self.phase1_num_rounds
     }
 
+    /// Indices into read/write round challenges, in canonical address/cycle order.
+    pub fn read_write_opening_indices(
+        self,
+    ) -> Result<impl Iterator<Item = usize>, PointGeometryError> {
+        let phase1 = self.phase1_num_rounds;
+        let address = self.address_opening_indices()?.map(move |i| i + phase1);
+        let cycle = (phase1 + self.phase2_num_rounds..self.log_t + self.phase2_num_rounds)
+            .rev()
+            .chain((0..phase1).rev());
+        Ok(address.chain(cycle))
+    }
+
+    /// Indices into address-relation round challenges, omitting inactive cycles.
+    pub fn address_opening_indices(
+        self,
+    ) -> Result<impl Iterator<Item = usize>, PointGeometryError> {
+        self.validate_phase_split()?;
+        let cycle_gap = self.phase3_cycle_rounds();
+        Ok((self.phase2_num_rounds + cycle_gap..self.log_k + cycle_gap)
+            .rev()
+            .chain((0..self.phase2_num_rounds).rev()))
+    }
+
     pub fn read_write_opening_point<F: Field>(
         self,
         challenges: &[F],
-    ) -> Result<ReadWriteOpeningPoint<F>, JoltFormulaPointError> {
-        self.validate_phase_split()?;
-        let expected = self.log_t + self.log_k;
+    ) -> Result<ReadWriteOpeningPoint<F>, PointGeometryError> {
+        let indices = self.read_write_opening_indices()?;
+        let expected = self.read_write_rounds();
         if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: challenges.len(),
             });
         }
 
-        let (phase1, rest) = challenges.split_at(self.phase1_num_rounds);
-        let (phase2, rest) = rest.split_at(self.phase2_num_rounds);
-        let (phase3_cycle, phase3_address) = rest.split_at(self.log_t - self.phase1_num_rounds);
-
-        let r_cycle = phase3_cycle
-            .iter()
-            .rev()
-            .copied()
-            .chain(phase1.iter().rev().copied())
-            .collect::<Vec<_>>();
-        let r_address = phase3_address
-            .iter()
-            .rev()
-            .copied()
-            .chain(phase2.iter().rev().copied())
-            .collect::<Vec<_>>();
-        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
-
+        let opening_point: Vec<F> = indices.map(|i| challenges[i]).collect();
+        let (r_address, r_cycle) = opening_point.split_at(self.log_k);
         Ok(ReadWriteOpeningPoint {
-            r_address,
-            r_cycle,
+            r_address: r_address.to_vec(),
+            r_cycle: r_cycle.to_vec(),
             opening_point,
         })
     }
@@ -183,23 +190,17 @@ impl ReadWriteDimensions {
     pub fn address_opening_point<F: Field>(
         self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.validate_phase_split()?;
-        let cycle_gap_rounds = self.phase3_cycle_rounds();
-        let expected = self.log_k + cycle_gap_rounds;
+    ) -> Result<Vec<F>, PointGeometryError> {
+        let indices = self.address_opening_indices()?;
+        let expected = self.output_check_rounds();
         if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: challenges.len(),
             });
         }
 
-        let phase3_address_start = self.phase2_num_rounds + cycle_gap_rounds;
-        let mut address = Vec::with_capacity(self.log_k);
-        address.extend_from_slice(&challenges[..self.phase2_num_rounds]);
-        address.extend_from_slice(&challenges[phase3_address_start..]);
-        address.reverse();
-        Ok(address)
+        Ok(indices.map(|i| challenges[i]).collect())
     }
 
     /// Rejects a phase split exceeding the trace/address geometry. Callers
@@ -207,9 +208,9 @@ impl ReadWriteDimensions {
     /// this eagerly: the round-count accessors above subtract
     /// `phase1_num_rounds` without their own guard, so an unvalidated split
     /// underflows them before the lazy check in point derivation runs.
-    pub const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
+    pub const fn validate_phase_split(self) -> Result<(), PointGeometryError> {
         if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
-            return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+            return Err(PointGeometryError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: self.phase1_num_rounds,
                 log_t: self.log_t,
                 phase2_num_rounds: self.phase2_num_rounds,
@@ -650,7 +651,6 @@ mod tests {
 
     #[test]
     fn advice_layout_extracts_address_phase_point_without_dory_globals() {
-        // 2048 bytes = 256 words: an 8-variable advice polynomial with shape (4, 4).
         let layout = advice_layout(TracePolynomialOrder::CycleMajor, 8, 4, 2048);
         let cycle_challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
         let cycle_vars = layout
@@ -719,7 +719,6 @@ mod tests {
     fn advice_final_output_scale_includes_cycle_phase_skip_rounds() {
         let layout = advice_layout(TracePolynomialOrder::CycleMajor, 8, 4, 64);
         let challenges = (1..=8).map(Fr::from_u64).collect::<Vec<_>>();
-        // Permutation order for the active cycle rounds is [6, 1, 0].
         let permuted_point = [Fr::from_u64(7), Fr::from_u64(2), Fr::from_u64(1)];
         let reference_point = [Fr::from_u64(101), Fr::from_u64(102), Fr::from_u64(103)];
         let two_inv = Fr::from_u64(2).inv_or_zero();
@@ -795,51 +794,66 @@ mod tests {
 
     #[test]
     fn read_write_dimensions_normalize_full_opening_point() {
-        let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
-        let challenges = (1..=7).map(Fr::from_u64).collect::<Vec<_>>();
+        for (dimensions, address, cycle) in [
+            (
+                ReadWriteDimensions::new(4, 3, 1, 2),
+                vec![7, 3, 2],
+                vec![6, 5, 4, 1],
+            ),
+            (
+                ReadWriteDimensions::new(5, 4, 2, 2),
+                vec![9, 8, 4, 3],
+                vec![7, 6, 5, 2, 1],
+            ),
+            (ReadWriteDimensions::new(2, 2, 0, 2), vec![2, 1], vec![4, 3]),
+            (
+                ReadWriteDimensions::new(3, 3, 1, 1),
+                vec![6, 5, 2],
+                vec![4, 3, 1],
+            ),
+        ] {
+            let challenges = (1..=dimensions.read_write_rounds() as u64)
+                .map(Fr::from_u64)
+                .collect::<Vec<_>>();
+            let point = dimensions
+                .read_write_opening_point(&challenges)
+                .unwrap_or_else(|error| {
+                    panic!("read-write opening point should evaluate: {error}")
+                });
+            let address: Vec<_> = address.into_iter().map(Fr::from_u64).collect();
+            let cycle: Vec<_> = cycle.into_iter().map(Fr::from_u64).collect();
 
-        let point = dimensions
-            .read_write_opening_point(&challenges)
-            .unwrap_or_else(|error| panic!("read-write opening point should evaluate: {error}"));
-
-        assert_eq!(
-            point.r_cycle,
-            vec![
-                Fr::from_u64(6),
-                Fr::from_u64(5),
-                Fr::from_u64(4),
-                Fr::from_u64(1)
-            ]
-        );
-        assert_eq!(
-            point.r_address,
-            vec![Fr::from_u64(7), Fr::from_u64(3), Fr::from_u64(2)]
-        );
-        assert_eq!(
-            point.opening_point,
-            vec![
-                Fr::from_u64(7),
-                Fr::from_u64(3),
-                Fr::from_u64(2),
-                Fr::from_u64(6),
-                Fr::from_u64(5),
-                Fr::from_u64(4),
-                Fr::from_u64(1),
-            ]
-        );
+            assert_eq!(point.r_address, address, "{dimensions:?}");
+            assert_eq!(point.r_cycle, cycle, "{dimensions:?}");
+            assert_eq!(
+                point.opening_point,
+                [address, cycle].concat(),
+                "{dimensions:?}"
+            );
+        }
     }
 
     #[test]
     fn read_write_dimensions_extract_address_opening_point() {
-        let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
-        let challenges = (10..=15).map(Fr::from_u64).collect::<Vec<_>>();
-
-        assert_eq!(
-            dimensions
-                .address_opening_point(&challenges)
-                .unwrap_or_else(|error| panic!("address opening point should evaluate: {error}")),
-            vec![Fr::from_u64(15), Fr::from_u64(11), Fr::from_u64(10)]
-        );
+        for (dimensions, address) in [
+            (ReadWriteDimensions::new(4, 3, 1, 2), vec![6, 2, 1]),
+            (ReadWriteDimensions::new(5, 4, 2, 2), vec![7, 6, 2, 1]),
+            (ReadWriteDimensions::new(2, 2, 0, 2), vec![2, 1]),
+            (ReadWriteDimensions::new(3, 3, 1, 1), vec![5, 4, 1]),
+        ] {
+            let challenges = (1..=dimensions.output_check_rounds() as u64)
+                .map(Fr::from_u64)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                dimensions
+                    .address_opening_point(&challenges)
+                    .unwrap_or_else(|error| panic!(
+                        "address opening point should evaluate: {error}"
+                    )),
+                address.into_iter().map(Fr::from_u64).collect::<Vec<_>>(),
+                "{dimensions:?}"
+            );
+        }
     }
 
     #[test]
@@ -847,7 +861,7 @@ mod tests {
         let dimensions = ReadWriteDimensions::new(4, 3, 5, 2);
         assert_eq!(
             dimensions.read_write_opening_point::<Fr>(&[]),
-            Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+            Err(PointGeometryError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: 5,
                 log_t: 4,
                 phase2_num_rounds: 2,
@@ -858,7 +872,7 @@ mod tests {
         let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
         assert_eq!(
             dimensions.address_opening_point::<Fr>(&[Fr::from_u64(0)]),
-            Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: 6,
                 got: 1,
             })

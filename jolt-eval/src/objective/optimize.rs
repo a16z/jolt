@@ -6,7 +6,6 @@ use crate::agent::{truncate, AgentHarness};
 use super::objective_fn::ObjectiveFunction;
 use super::OptimizationObjective;
 
-/// Configuration for an optimization run.
 pub struct OptimizeConfig {
     pub num_iterations: usize,
     pub hint: Option<String>,
@@ -26,7 +25,6 @@ impl Default for OptimizeConfig {
     }
 }
 
-/// Result of a complete optimization run.
 pub struct OptimizeResult {
     pub attempts: Vec<OptimizationAttempt>,
     pub baseline_score: f64,
@@ -37,7 +35,6 @@ pub struct OptimizeResult {
     pub branch: Option<String>,
 }
 
-/// Record of a single optimization attempt.
 pub struct OptimizationAttempt {
     pub iteration: usize,
     pub score: f64,
@@ -62,7 +59,6 @@ pub trait OptimizeEnv {
     /// For real runs this is typically an isolated git worktree.
     fn work_dir(&self) -> &Path;
 
-    /// Measure the given objectives. Returns objective -> value.
     fn measure(
         &mut self,
         objectives: &[OptimizationObjective],
@@ -365,7 +361,7 @@ fn build_optimize_prompt(
 
     let paths_list = match objective.diff_scope() {
         crate::agent::DiffScope::Include(paths) => paths.join(", "),
-        _ => "crates/jolt-prover-legacy/".to_string(),
+        _ => "crates/jolt-prover/".to_string(),
     };
     prompt.push_str("## Instructions\n\n");
     prompt.push_str(&format!(

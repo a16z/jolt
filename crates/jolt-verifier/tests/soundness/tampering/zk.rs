@@ -20,6 +20,7 @@ use jolt_verifier::JoltProofClaims;
 #[test]
 fn missing_zk_vector_commitment_setup_rejects_now() {
     with_zk_verifier_stack(|| {
+        tamper_manifest::assert_zk_target_active("zk.vector_commitment_setup");
         let mut case = crate::support::verifier_fixtures::zk_muldiv_case();
         case.preprocessing.vc_setup = None;
 
@@ -331,13 +332,3 @@ where
     };
     let _ = proof.output_claims.commitments.pop();
 }
-
-#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
-#[test]
-#[ignore = "enable --features prover-fixtures,zk to live-generate and tamper verifier-native ZK proofs"]
-fn missing_zk_vector_commitment_setup_rejects_now() {}
-
-#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
-#[test]
-#[ignore = "enable --features prover-fixtures,zk to live-generate and tamper verifier-native ZK proofs"]
-fn tampered_blindfold_proof_reject() {}

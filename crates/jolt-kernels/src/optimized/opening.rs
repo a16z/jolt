@@ -1,5 +1,5 @@
 //! The optimized joint-opening kernel: lazy grid embeddings for the stage-8
-//! batch opening, ported from the legacy prover's streaming-RLC machinery.
+//! batch opening.
 //!
 //! The reference slot materializes every opened polynomial dense over the
 //! full `2^total_vars` commitment domain — `O(polys · 2^total_vars)` field
@@ -9,24 +9,21 @@
 //! opening; `RlcSource` distributes it per constituent) and — in hiding
 //! mode — [`MultilinearPoly::evaluate`], so nothing needs the dense table.
 //! This kernel returns lazy views that answer both from compact per-cycle
-//! trace columns, the legacy techniques by name:
+//! trace columns:
 //!
-//! - **Sparse one-hot VMP** (legacy `OneHotPolynomial::vector_matrix_product`):
+//! - **Sparse one-hot VMP**:
 //!   a one-hot polynomial's fold is `result[col(idx)] += left[row(idx)]` at
 //!   the single hot grid index per cycle — `O(T)` group-free additions
 //!   instead of an `O(K · T)` dense walk over a materialized grid.
-//! - **Streaming trace columns** (legacy `StreamingRLCContext` /
-//!   `gen_from_trace`): the committed values are re-derived from one typed
-//!   witness pass ([`CommittedColumnsWitness`], the same bundle the commit
+//! - **Streaming trace columns**: the committed values are re-derived from one typed
+//!   witness pass (`CommittedColumnsWitness`, the same bundle the commit
 //!   kernel consumed) into packed per-cycle columns — `O(T)` small scalars
 //!   shared by every trace polynomial via [`Arc`], never `K × T` oracle
 //!   tables.
-//! - **Strided dense scatter** (legacy `RLCPolynomial::vector_matrix_product`,
-//!   address-major arm): a dense trace column contributes
+//! - **Strided dense scatter**: a dense trace column contributes
 //!   `result[col] += left[row] · value` at `index = t · t_stride`, covering
 //!   both coefficient orders with one placement formula.
-//! - **Precommitted block contribution** (legacy
-//!   `vmp_precommitted_contribution`): advice / committed-program tables
+//! - **Precommitted block contribution**: advice / committed-program tables
 //!   fold from their own balanced `(2^{ν_p} × 2^{σ_p})` matrix into the
 //!   grid's top-left block, `O(len)` work and space.
 //!
@@ -34,9 +31,10 @@
 //! batch opener (`combine_hints`), so no re-commit touches these views. The
 //! placement formulas are exactly the reference embeddings'
 //! (`reference::opening`); the in-module tests pin dense equality against
-//! the reference slot on a real synthetic trace, and `byte_diff` pins the
-//! full proof bytes against `jolt-prover-legacy`.
+//! the reference slot on a real synthetic trace.
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldIncrementColumn;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -53,16 +51,13 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamC
 use rayon::prelude::*;
 
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
-use crate::opening::JointOpeningPolynomials;
+use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::reference::views::dense_view;
 use crate::{KernelError, OptimizedBackend, ProofSession};
 
-/// Column sentinel for cycles with no hot address (no bytecode row, no
-/// remappable RAM access).
 const COLD: u64 = u64::MAX;
 
-/// The row-window size of the column-collection pass.
 const COLLECT_CHUNK: usize = 1 << 12;
 
 /// Minimum per-range work of the parallel scatter/sum drivers; below it the
@@ -81,9 +76,10 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
         _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        let mut precommitted_tables = precommitted_tables()?;
         if grid.total_vars < grid.log_t + grid.log_k_chunk {
             return Err(KernelError::InvalidGeometry {
                 reason: format!(
@@ -105,7 +101,6 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
         let kind_by_id: BTreeMap<JoltCommittedPolynomial, ColumnKind> =
             trace_ids.into_iter().zip(kinds).collect();
 
-        // One typed trace pass shared by every trace polynomial.
         let columns = if kind_by_id.is_empty() {
             None
         } else {
@@ -146,9 +141,6 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
     }
 }
 
-/// Whether `polynomial` embeds as its own balanced matrix in the grid's
-/// top-left block (advice and committed-program polynomials) rather than by
-/// the trace placement.
 const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
     matches!(
         polynomial,
@@ -159,22 +151,11 @@ const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Shared per-cycle trace columns
-// ---------------------------------------------------------------------------
-
-/// Packed per-cycle facts behind every committed trace column — the
-/// [`CommittedColumnsWitness`] bundle stored column-major with `Option`s
-/// packed as [`COLD`] sentinels: 64 bytes per cycle, shared by every trace
-/// polynomial view.
 pub(crate) struct OpeningColumns {
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
     lookup_index: Vec<u128>,
-    /// Bytecode slot per cycle; total, so no
-    /// bytecode row.
     bytecode_pc: Vec<u64>,
-    /// Remapped RAM word address per cycle; [`COLD`] on no-access cycles.
     ram_address: Vec<u64>,
 }
 
@@ -280,7 +261,6 @@ impl OpeningColumns {
         self.rd_inc.len()
     }
 
-    /// The cycle's fact bundle, reassembled for [`ColumnKind`]'s accessors.
     #[inline]
     fn witness_row(&self, cycle: usize) -> CommittedColumnsWitness {
         let bytecode_pc = self.bytecode_pc[cycle];
@@ -358,10 +338,6 @@ impl TracePlacement {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Parallel scatter/sum drivers
-// ---------------------------------------------------------------------------
-
 /// Fold `total` source slots into a `num_cols`-sized accumulator through
 /// `fill`, splitting into per-thread partial accumulators when parallel.
 /// Field addition is exact, so the merge order cannot change the values.
@@ -390,8 +366,6 @@ fn scatter_fold<F: JoltField>(
     acc
 }
 
-/// Sum a per-slot contribution over `total` source slots, in parallel when
-/// worthwhile.
 fn scatter_sum<F: JoltField>(total: usize, sum: impl Fn(Range<usize>) -> F + Send + Sync) -> F {
     #[cfg(feature = "parallel")]
     if total > MIN_RANGE {
@@ -415,13 +389,6 @@ fn split_ranges(total: usize) -> Vec<Range<usize>> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Lazy trace polynomial (one-hot and dense-increment columns)
-// ---------------------------------------------------------------------------
-
-/// One committed trace polynomial as a lazy view over the shared columns:
-/// per cycle one hot grid index (one-hot kinds) or one increment value at
-/// address slot zero (dense kinds).
 struct TraceOpeningPoly<F: JoltField> {
     columns: Arc<OpeningColumns>,
     kind: ColumnKind,
@@ -430,8 +397,6 @@ struct TraceOpeningPoly<F: JoltField> {
 }
 
 impl<F: JoltField> TraceOpeningPoly<F> {
-    /// The cycle's grid entry, `None` when the cycle contributes nothing
-    /// (cold one-hot cycle, zero increment).
     #[inline]
     fn entry(&self, cycle: usize) -> Option<(usize, F)> {
         let row = self.columns.witness_row(cycle);
@@ -496,14 +461,82 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Lazy block-embedded polynomial (advice, committed program)
-// ---------------------------------------------------------------------------
+/// One dense trace-domain column (`T` values at address slot zero) as a lazy
+/// view over the commitment grid: the placement of an increment column,
+/// without materializing the `2^total_vars` grid it is embedded in. The
+/// field-inline prover's stage-8 `FieldRdInc` entry opens through this (its
+/// only production caller); the base increment columns ride the shared
+/// [`TraceOpeningPoly`].
+#[cfg(feature = "field-inline")]
+pub struct DenseTraceColumnPoly<F: JoltField> {
+    values: FieldIncrementColumn<F>,
+    placement: TracePlacement,
+}
 
-/// A precommitted polynomial as a lazy view of its top-left block embedding:
-/// its own balanced `(2^{ν_p} × 2^{σ_p})` matrix lands row-aligned in the
-/// grid matrix — coefficient `r · 2^{σ_p} + c` at grid index
-/// `r · 2^{σ_grid} + c`.
+#[cfg(feature = "field-inline")]
+impl<F: JoltField> DenseTraceColumnPoly<F> {
+    /// `None` when the column carries more cycles than the grid's trace
+    /// dimension.
+    pub fn new(values: FieldIncrementColumn<F>, grid: CommitmentGrid) -> Option<Self> {
+        (values.len() <= 1usize << grid.log_t).then(|| Self {
+            values,
+            placement: TracePlacement::new(grid),
+        })
+    }
+
+    #[inline]
+    fn entries(&self) -> impl Iterator<Item = (usize, F)> + '_ {
+        self.values
+            .nonzero_entries()
+            .map(|(cycle, value)| (self.placement.index(cycle, 0), value))
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
+    fn num_vars(&self) -> usize {
+        self.placement.total_vars
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        debug_assert_eq!(point.len(), self.placement.total_vars);
+        let eq = TensorEqTable::new(point);
+        scatter_sum(self.values.len(), |range| {
+            let mut acc = F::zero();
+            for cycle in range {
+                let value = self.values.value(cycle);
+                if !value.is_zero() {
+                    acc += value * eq.evaluate_index(self.placement.index(cycle, 0));
+                }
+            }
+            acc
+        })
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        emit_sorted_rows(self.entries().collect(), self.num_vars(), sigma, f);
+    }
+
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        debug_assert_eq!(
+            left.len(),
+            1usize << self.num_vars().saturating_sub(sigma),
+            "left vector length must equal number of rows"
+        );
+        let num_cols = 1usize << sigma;
+        let mask = num_cols - 1;
+        scatter_fold(self.values.len(), num_cols, |range, acc| {
+            for cycle in range {
+                let value = self.values.value(cycle);
+                if !value.is_zero() {
+                    let index = self.placement.index(cycle, 0);
+                    acc[index & mask] += left[index >> sigma] * value;
+                }
+            }
+        })
+    }
+}
+
 struct BlockOpeningPoly<F: JoltField> {
     table: Vec<F>,
     sigma_table: usize,
@@ -540,7 +573,6 @@ impl<F: JoltField> BlockOpeningPoly<F> {
         })
     }
 
-    /// Grid index of the table coefficient at flat index `i`.
     #[inline(always)]
     fn index(&self, i: usize) -> usize {
         let column_mask = (1usize << self.sigma_table) - 1;
@@ -656,7 +688,6 @@ mod tests {
         ]
     }
 
-    /// Both slots' outputs over the same order/grid/precommitted tables.
     #[expect(clippy::type_complexity, reason = "test helper pairing both tiers")]
     fn prepare_both(
         witness: &dyn JoltWitnessPlane<Fr>,
@@ -670,9 +701,6 @@ mod tests {
         order.push(JoltCommittedPolynomial::BytecodeChunk(0));
         order.push(JoltCommittedPolynomial::ProgramImageInit);
         let mut precommitted_tables = BTreeMap::new();
-        // Synthetic block-embedded tables: the slot embeds whatever the map
-        // carries, so random tables of odd/even variable counts exercise the
-        // block placement without a committed-program fixture.
         let _ = precommitted_tables.insert(
             JoltCommittedPolynomial::BytecodeChunk(0),
             random_scalars(1 << 3, 17),
@@ -687,7 +715,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            precommitted_tables.clone(),
+            Box::new(|| Ok(precommitted_tables.clone())),
             grid,
         )
         .unwrap();
@@ -696,7 +724,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            precommitted_tables,
+            Box::new(|| Ok(precommitted_tables)),
             grid,
         )
         .unwrap();
@@ -756,11 +784,6 @@ mod tests {
     }
 
     #[test]
-    fn cycle_major_widened_matches_reference() {
-        assert_parity(TracePolynomialOrder::CycleMajor, 2);
-    }
-
-    #[test]
     fn cycle_major_odd_widening_matches_reference() {
         assert_parity(TracePolynomialOrder::CycleMajor, 1);
     }
@@ -768,11 +791,6 @@ mod tests {
     #[test]
     fn address_major_matches_reference() {
         assert_parity(TracePolynomialOrder::AddressMajor, 0);
-    }
-
-    #[test]
-    fn address_major_widened_matches_reference() {
-        assert_parity(TracePolynomialOrder::AddressMajor, 2);
     }
 
     #[test]

@@ -100,14 +100,22 @@ fn side_effecting_rd_zero_rewrites_to_temporary_register() -> Result<(), Expansi
 }
 
 #[test]
-fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionError> {
+fn csrrs_rd_zero_rs1_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     let mut allocator = ExpansionAllocator::new();
-    let input = instruction(SourceInstructionKind::ECALL, Some(0), false);
-    let expanded = rows(expand_instruction(&input, &mut allocator, RV64IMAC_JOLT)?);
+    let mut row = source_row(SourceInstructionKind::CSRRS, Some(0), false);
+    row.operands.rs1 = Some(0);
+    row.operands.imm = 0x300;
+    let expanded = rows(expand_instruction(
+        &SourceInstruction::new(SourceInstructionKind::CSRRS, row),
+        &mut allocator,
+        RV64IMAC_JOLT,
+    )?);
 
-    assert_eq!(expanded.len(), 7);
-    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::AUIPC);
-    assert_eq!(expanded[6].instruction_kind, JoltInstructionKind::JALR);
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::ADDI);
+    assert_eq!(expanded[0].operands.rd, Some(0));
+    assert_eq!(expanded[0].operands.rs1, Some(0));
+    assert_eq!(expanded[0].operands.imm, 0);
     Ok(())
 }
 

@@ -9,8 +9,7 @@ use super::{CoeffLut, LutIndex, OneHotCoeff};
 use crate::optimized::registers_read_write::rows::RegisterCycleRow;
 use crate::optimized::support::mul_0_optimized;
 
-/// Row/column access shared by all entry layouts.
-pub(super) trait Cell: Copy + Send + Sync + 'static {
+pub(crate) trait Cell: Copy + Send + Sync + 'static {
     fn row(&self) -> usize;
     fn col(&self) -> u8;
 }
@@ -33,7 +32,6 @@ pub(super) struct IndexedMeta {
     pub(super) col: u8,
 }
 
-/// Pin the packed metadata size.
 const _: () = assert!(size_of::<IndexedMeta>() == 25);
 
 impl Cell for IndexedMeta {
@@ -48,14 +46,11 @@ impl Cell for IndexedMeta {
     }
 }
 
-/// Index-parallel value and metadata slices.
 pub(super) type SoaRow<'a, F> = (&'a [F], &'a [IndexedMeta]);
 
-/// One block's uninitialized output span across both SoA columns.
 pub(super) type SoaSpareBlock<'a, F> =
     (&'a mut [MaybeUninit<F>], &'a mut [MaybeUninit<IndexedMeta>]);
 
-/// Reassemble indexed entry `i`.
 #[inline]
 pub(super) fn load_indexed<F: JoltField>(
     (vals, metas): SoaRow<'_, F>,
@@ -73,7 +68,6 @@ pub(super) fn load_indexed<F: JoltField>(
     }
 }
 
-/// Split a working entry into its SoA columns (inverse of [`load_indexed`]).
 #[inline]
 pub(super) fn split_indexed<F: JoltField>(entry: SparseEntry<F, LutIndex>) -> (F, IndexedMeta) {
     debug_assert!(u32::try_from(entry.row).is_ok());
@@ -90,8 +84,6 @@ pub(super) fn split_indexed<F: JoltField>(entry: SparseEntry<F, LutIndex>) -> (F
     )
 }
 
-/// Split a SoA row-pair group (entries sharing `row / 2`) into its even and
-/// odd rows — [`split_pair_group`] over both columns at once.
 pub(super) fn split_soa_pair_group<'a, F>(
     vals: &'a [F],
     metas: &'a [IndexedMeta],
@@ -103,7 +95,6 @@ pub(super) fn split_soa_pair_group<'a, F>(
     )
 }
 
-/// Merge adjacent SoA rows in column order.
 #[inline]
 pub(super) fn merge_soa<F: JoltField>(
     evens: SoaRow<'_, F>,
@@ -138,7 +129,6 @@ pub(super) fn merge_soa<F: JoltField>(
     }
 }
 
-/// Quadratic-round accumulation shared by each sparse-entry layout.
 pub(super) trait MatrixEntry<F: JoltField>: Cell {
     /// Accumulate this vertical pair's `[t = 0, t = ∞]` contributions to the
     /// quadratic inner factor: `ra_t·val_t + wa_t·(val_t + inc_t)`.
@@ -163,13 +153,11 @@ pub(in crate::optimized::registers_read_write) struct SeedEntry {
     ///
     /// [`CollectRegisterEntries::collect`]: crate::optimized::registers_read_write::rows::CollectRegisterEntries::collect
     pub(super) row: u32,
-    /// Seed `γ·rs1_ra + γ²·rs2_ra` index.
     pub(super) ra: u8,
     pub(super) wa: u8,
     pub(super) col: u8,
 }
 
-/// Pin the peak layout size.
 const _: () = assert!(size_of::<SeedEntry>() == 24);
 
 impl SeedEntry {
@@ -287,7 +275,6 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
                 acc[1].fmadd(wa[1], val_m + inc_evals[1]);
             }
             (None, Some(odd)) => {
-                // Missing even coefficients make the t=0 term zero.
                 let ra = coeff_evals(None, Some(odd.ra()), ra_lut);
                 let wa = coeff_evals(None, Some(odd.wa()), wa_lut);
                 acc[1].fmadd(ra[1], F::zero());
@@ -298,8 +285,6 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
     }
 }
 
-/// Nonzero register-matrix cell. `C` is a LUT index until saturation, then a
-/// field value; boundary values stay raw until merged.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct SparseEntry<F, C> {
@@ -405,7 +390,6 @@ impl<F: JoltField, C: OneHotCoeff<F>> MatrixEntry<F> for SparseEntry<F, C> {
                 acc[1].fmadd(wa[1], val_m + inc_evals[1]);
             }
             (None, Some(odd)) => {
-                // Missing even coefficients make the t=0 term zero.
                 let ra = C::eval_pair(None, Some(odd.ra), ra_lut);
                 let wa = C::eval_pair(None, Some(odd.wa), wa_lut);
                 let val_m = odd.val - F::from_u64(odd.prev_val);
@@ -427,7 +411,6 @@ const WA_ZERO: u8 = 0;
 const WA_HOT: u8 = 1;
 
 impl RegisterCycleRow {
-    /// Count distinct touched registers without constructing entries.
     #[cfg(feature = "parallel")]
     pub(in crate::optimized::registers_read_write) fn entry_count(&self) -> usize {
         let rs1 = self.rs1.map(|(register, _)| register);
@@ -525,7 +508,7 @@ pub(super) fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
 
 /// Merge-bind adjacent column-sorted rows.
 #[inline]
-pub(super) fn merge_bind<E: Cell, B>(
+pub(crate) fn merge_bind<E: Cell, B>(
     evens: &[E],
     odds: &[E],
     bind: &(impl Fn(Option<&E>, Option<&E>) -> B + ?Sized),
@@ -563,7 +546,7 @@ pub(super) fn merge_bind<E: Cell, B>(
 }
 
 /// Split a sorted row-pair group into even and odd rows.
-pub(super) fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
+pub(crate) fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
     let odd_start = group.partition_point(|entry| entry.row() % 2 == 0);
     group.split_at(odd_start)
 }

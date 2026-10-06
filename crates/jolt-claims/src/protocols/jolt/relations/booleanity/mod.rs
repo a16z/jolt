@@ -1,5 +1,3 @@
-//! Booleanity symbolic sumcheck relations.
-
 mod address_phase;
 mod cycle_phase;
 mod monolith;

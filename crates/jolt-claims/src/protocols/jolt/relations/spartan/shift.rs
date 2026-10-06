@@ -1,20 +1,13 @@
-//! Spartan shift symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
-use crate::protocols::jolt::geometry::spartan::{
-    is_first_in_sequence_shift, is_noop_shift, is_virtual_shift, next_is_first_in_sequence_outer,
-    next_is_noop_product, next_is_virtual_outer, next_pc_outer, next_unexpanded_pc_outer, pc_shift,
-    unexpanded_pc_shift, SHIFT_DEGREE,
-};
+use crate::protocols::jolt::geometry::spartan::SHIFT_DEGREE;
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, SpartanShiftChallenge, SpartanShiftPublic, TraceDimensions,
+    JoltExpr, JoltRelationId, JoltVirtualPolynomial, SpartanShiftChallenge, SpartanShiftPublic,
+    TraceDimensions, UnbatchedClaim, UnbatchedClaimExpr, UnbatchedRelation,
 };
-use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
-};
+use crate::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// Produced Spartan shift openings (the shifted unexpanded-PC / PC / virtual /
 /// first-in-sequence / noop columns), all sharing the single shift opening point.
@@ -56,7 +49,6 @@ pub struct SpartanShiftInputClaims<C> {
     pub next_is_noop: C,
 }
 
-/// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct SpartanShiftChallenges<F> {
@@ -71,6 +63,61 @@ pub struct SpartanShiftChallenges<F> {
 #[derive(Clone)]
 pub struct Shift {
     shape: TraceDimensions,
+}
+
+impl Shift {
+    pub fn unbatched_relation() -> UnbatchedRelation {
+        let v = UnbatchedClaimExpr::polynomial;
+        let one = || UnbatchedClaimExpr::constant(1);
+        UnbatchedRelation {
+            output_relation: JoltRelationId::SpartanShift,
+            gamma: SpartanShiftChallenge::Gamma.into(),
+            claims: vec![
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::NextUnexpandedPC),
+                    output: v(JoltVirtualPolynomial::UnexpandedPC),
+                    output_weight: SpartanShiftPublic::EqPlusOneOuter.into(),
+                    offset: true,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::NextPC),
+                    output: v(JoltVirtualPolynomial::PC),
+                    output_weight: SpartanShiftPublic::EqPlusOneOuter.into(),
+                    offset: true,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::NextIsVirtual),
+                    output: v(JoltVirtualPolynomial::OpFlags(
+                        CircuitFlags::VirtualInstruction,
+                    )),
+                    output_weight: SpartanShiftPublic::EqPlusOneOuter.into(),
+                    offset: true,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::NextIsFirstInSequence),
+                    output: v(JoltVirtualPolynomial::OpFlags(
+                        CircuitFlags::IsFirstInSequence,
+                    )),
+                    output_weight: SpartanShiftPublic::EqPlusOneOuter.into(),
+                    offset: true,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanProductVirtualization,
+                    input: one() - v(JoltVirtualPolynomial::NextIsNoop),
+                    output: one()
+                        - v(JoltVirtualPolynomial::InstructionFlags(
+                            InstructionFlags::IsNoop,
+                        )),
+                    output_weight: SpartanShiftPublic::EqPlusOneProduct.into(),
+                    offset: true,
+                },
+            ],
+        }
+    }
 }
 
 impl SymbolicSumcheck for Shift {
@@ -100,119 +147,10 @@ impl SymbolicSumcheck for Shift {
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(SpartanShiftChallenge::Gamma);
-        opening(next_unexpanded_pc_outer())
-            + gamma.clone() * opening(next_pc_outer())
-            + gamma.clone().pow(2) * opening(next_is_virtual_outer())
-            + gamma.clone().pow(3) * opening(next_is_first_in_sequence_outer())
-            + gamma.pow(4) * (JoltExpr::one() - opening(next_is_noop_product()))
+        Self::unbatched_relation().folded_input()
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(SpartanShiftChallenge::Gamma);
-        derived(SpartanShiftPublic::EqPlusOneOuter)
-            * (opening(unexpanded_pc_shift())
-                + gamma.clone() * opening(pc_shift())
-                + gamma.clone().pow(2) * opening(is_virtual_shift())
-                + gamma.clone().pow(3) * opening(is_first_in_sequence_shift()))
-            + derived(SpartanShiftPublic::EqPlusOneProduct)
-                * gamma.pow(4)
-                * (JoltExpr::one() - opening(is_noop_shift()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, Ring};
-
-    fn gamma_power(gamma: Fr, exponent: usize) -> Fr {
-        let mut value = Fr::from_u64(1);
-        for _ in 0..exponent {
-            value *= gamma;
-        }
-        value
-    }
-
-    #[test]
-    fn shift_evaluates_like_core_formula() {
-        let relation = Shift::new(TraceDimensions::new(5));
-
-        let next_unexpanded_pc = Fr::from_u64(3);
-        let next_pc = Fr::from_u64(5);
-        let next_virtual = Fr::from_u64(7);
-        let next_first = Fr::from_u64(11);
-        let next_noop = Fr::from_u64(13);
-        let unexpanded_pc = Fr::from_u64(17);
-        let pc = Fr::from_u64(19);
-        let is_virtual = Fr::from_u64(23);
-        let is_first = Fr::from_u64(29);
-        let is_noop = Fr::from_u64(31);
-        let gamma = Fr::from_u64(37);
-        let eq_outer = Fr::from_u64(41);
-        let eq_product = Fr::from_u64(43);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == next_unexpanded_pc_outer() => next_unexpanded_pc,
-                id if id == next_pc_outer() => next_pc,
-                id if id == next_is_virtual_outer() => next_virtual,
-                id if id == next_is_first_in_sequence_outer() => next_first,
-                id if id == next_is_noop_product() => next_noop,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::SpartanShift(SpartanShiftChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == unexpanded_pc_shift() => unexpanded_pc,
-                id if id == pc_shift() => pc,
-                id if id == is_virtual_shift() => is_virtual,
-                id if id == is_first_in_sequence_shift() => is_first,
-                id if id == is_noop_shift() => is_noop,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::SpartanShift(SpartanShiftChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltDerivedId::SpartanShift(SpartanShiftPublic::EqPlusOneOuter) => eq_outer,
-                JoltDerivedId::SpartanShift(SpartanShiftPublic::EqPlusOneProduct) => eq_product,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(
-            input,
-            next_unexpanded_pc
-                + gamma * next_pc
-                + gamma_power(gamma, 2) * next_virtual
-                + gamma_power(gamma, 3) * next_first
-                + gamma_power(gamma, 4) * (Fr::from_u64(1) - next_noop)
-        );
-        assert_eq!(
-            output,
-            eq_outer
-                * (unexpanded_pc
-                    + gamma * pc
-                    + gamma_power(gamma, 2) * is_virtual
-                    + gamma_power(gamma, 3) * is_first)
-                + eq_product * gamma_power(gamma, 4) * (Fr::from_u64(1) - is_noop)
-        );
-    }
-
-    #[test]
-    fn shift_symbolic_matches_dependencies() {
-        let relation = Shift::new(TraceDimensions::new(5));
-        assert_eq!(Shift::id(), JoltRelationId::SpartanShift);
-        assert_eq!(relation.rounds(), TraceDimensions::new(5).log_t());
-        assert_eq!(relation.degree(), SHIFT_DEGREE);
+        Self::unbatched_relation().folded_output()
     }
 }

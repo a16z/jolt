@@ -5,8 +5,7 @@
 //! `(2^7 × T)` one-hot `rd_wa` grid into a dense cycle table at prepare time
 //! and binds three dense `T`-sized tables per round.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/registers/val_evaluation.rs`:
+//! Carries forward the former registers value-evaluation optimizations:
 //!
 //! - **Lazy one-hot `wa`** (legacy `RaPolynomial`, first-round form): round 0
 //!   serves `wa(j) = eq(r_address)[rd_j]` straight from the per-cycle hot
@@ -49,9 +48,12 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Address indices before the first bind; a dense table afterward.
+/// The write-address column: hot indices plus the address eq table until the first
+/// bind, a dense bound vector afterwards. The `K × T` grid never exists. Shared with
+/// the field-register value-evaluation kernel, whose write column has the same
+/// lazy-fold shape at the field-register address width.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-enum WaState<F: JoltField> {
+pub(crate) enum WaState<F: JoltField> {
     Indices {
         rd: Vec<Option<u8>>,
         eq_address: Vec<F>,
@@ -61,7 +63,7 @@ enum WaState<F: JoltField> {
 
 impl<F: JoltField> WaState<F> {
     #[inline]
-    fn pair(&self, y: usize) -> (F, F) {
+    pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {
             Self::Indices { rd, eq_address } => {
                 let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
@@ -74,7 +76,7 @@ impl<F: JoltField> WaState<F> {
         }
     }
 
-    fn bind(&mut self, r: F) {
+    pub(crate) fn bind(&mut self, r: F) {
         match self {
             Self::Indices { rd, eq_address } => {
                 let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
@@ -93,7 +95,7 @@ impl<F: JoltField> WaState<F> {
         }
     }
 
-    fn final_value(&self) -> F {
+    pub(crate) fn final_value(&self) -> F {
         match self {
             Self::Dense(table) => {
                 debug_assert_eq!(table.len(), 1);
@@ -163,14 +165,12 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
     }
 }
 
-/// Trace rows before the first bind; a dense table afterward.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncState<F: JoltField> {
     Rows(BundleStore<RdIncRow>),
     Dense(Polynomial<F>),
 }
 
-/// The single-column bundle behind the increment table.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RdIncRow {
     rd_inc: RdInc,
@@ -195,7 +195,6 @@ impl<F: JoltField> ValEvaluationKernel<F> {
         match &mut self.inc {
             IncState::Dense(inc) => inc.bind_with_order(challenge, BindingOrder::LowToHigh),
             IncState::Rows(store) => {
-                // Bind row pairs directly into a half-length field table.
                 debug_assert_eq!(self.progress.bound(), 0);
                 let half = (1usize << self.progress.total()) / 2;
                 let access = store.access();
@@ -367,9 +366,7 @@ mod tests {
     use super::OptimizedRegistersValEvaluation;
     use crate::ProofSession;
 
-    /// How the optimized kernel sources its per-cycle rd indices.
     enum IndexSource {
-        /// Collected from the row source inside `prepare`.
         Collect,
         /// Reclaimed from a session carry parked by stage 4.
         Parked,

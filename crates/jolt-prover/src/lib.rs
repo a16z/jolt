@@ -32,7 +32,7 @@
 
 // The packed protocol is transparent-only: its native openings have no
 // hiding mode and the BlindFold tail has no packed plumbing (the same
-// exclusion jolt-prover-legacy enforces).
+// exclusion enforced by the public prover configuration).
 #[cfg(all(feature = "akita", feature = "zk"))]
 compile_error!("the `akita` and `zk` features are mutually exclusive");
 
@@ -40,6 +40,7 @@ compile_error!("the `akita` and `zk` features are mutually exclusive");
 pub mod akita;
 #[cfg(feature = "zk")]
 mod blindfold;
+mod boundary;
 mod config;
 #[cfg(not(feature = "akita"))]
 pub mod dory;
@@ -57,7 +58,9 @@ pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 #[cfg(not(feature = "akita"))]
 pub use dory::prove;
 pub use driver::{KernelSource, Proved, StageProver};
-pub use error::ProverError;
+pub use error::{PreprocessingError, ProverError};
 pub use jolt_kernels::{JoltBackend, ProofSession};
-pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
+pub use preprocessing::{
+    CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
+};
 pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};

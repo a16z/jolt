@@ -32,7 +32,7 @@
 
 use crate::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags, JoltInstruction,
-    JoltInstructionKind, JoltInstructionRow, JoltInstructionTag,
+    JoltInstructionKind, JoltInstructionRow, JoltInstructionTag, NUM_CIRCUIT_FLAGS,
 };
 
 /// Largest register id storable in a register-id byte. `0xFF` is reserved as the
@@ -41,17 +41,21 @@ use crate::{
 /// storage-format detail, not a protocol fact.
 const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 
-/// Sentinel stored in a register-id byte for an absent (`None`) operand.
 const REGISTER_NONE: u8 = u8::MAX;
 
-/// `meta` bit layout: `circuit_flags` occupy the low 16 bits; instruction flags
-/// the next 6; the immediate sign one more; the top 9 bits are spare.
-const META_INSTRUCTION_FLAGS_SHIFT: u32 = 16;
+/// Field-inline builds use 24 circuit-flag bits; base builds retain the original
+/// 16-bit layout. Six instruction flags and the immediate sign follow them.
+const META_INSTRUCTION_FLAGS_SHIFT: u32 = if cfg!(feature = "field-inline") {
+    24
+} else {
+    16
+};
+const META_CIRCUIT_FLAGS_MASK: u32 = (1 << META_INSTRUCTION_FLAGS_SHIFT) - 1;
+const _: () = assert!(NUM_CIRCUIT_FLAGS <= META_INSTRUCTION_FLAGS_SHIFT as usize);
 const META_INSTRUCTION_FLAGS_MASK: u32 = (1u32 << (crate::NUM_INSTRUCTION_FLAGS as u32)) - 1;
 const META_IMM_NEGATIVE_SHIFT: u32 =
     META_INSTRUCTION_FLAGS_SHIFT + crate::NUM_INSTRUCTION_FLAGS as u32;
 
-/// Witness values for a non-memory row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NonMemoryState {
     pub rs1_value: u64,
@@ -103,8 +107,6 @@ impl Default for CapturedState {
 }
 
 impl CapturedState {
-    /// Pack into flat value slots, validating that the variant agrees with the
-    /// row's `Load`/`Store` circuit flags.
     fn into_value_slots(
         self,
         is_load: bool,
@@ -162,8 +164,6 @@ impl CapturedState {
 /// conversion, not here, since this crate has no notion of either.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TraceRowError {
-    /// A final-row immediate does not fit the chosen signed-magnitude `u64`
-    /// encoding.
     #[error("immediate |{imm}| does not fit the u64 magnitude encoding")]
     ImmTooWide { imm: i128 },
     /// A register id does not fit the compact `u8` storage (with `0xFF`
@@ -196,23 +196,16 @@ struct TraceValueSlots {
 #[repr(C)]
 pub struct JoltTraceRow {
     values: TraceValueSlots,
-    /// Source RV64 instruction address (guest architectural address).
     unexpanded_pc: u64,
-    /// Magnitude of the immediate; sign is bit `META_IMM_NEGATIVE_SHIFT` of `meta`.
     imm_abs: u64,
-    /// Compact local bytecode index (expanded "PC"); see [`JoltTraceRow::pc`].
     bytecode_pc: u32,
-    /// Packed flags + immediate sign: circuit flags in bits `0..16`, instruction
-    /// flags in bits `16..22`, immediate sign in bit `22`, top 9 bits spare.
     meta: u32,
     /// Final Jolt instruction tag (stable identity, not a dense index). The
     /// lookup-table routing is derived from this in `jolt-lookup-tables`.
     jolt_tag: u16,
-    /// `rs1`/`rs2`/`rd` register ids, or `0xFF` (None).
     rs1_id: u8,
     rs2_id: u8,
     rd_id: u8,
-    /// Reserved layout slots (kept zero).
     _reserved: [u8; 3],
 }
 
@@ -230,7 +223,6 @@ impl Default for JoltTraceRow {
 }
 
 impl JoltTraceRow {
-    /// Canonical no-op row.
     pub fn no_op() -> Self {
         let instruction = JoltInstructionRow::default();
         let (circuit_flags, instruction_flags) = row_flags(&instruction);
@@ -282,6 +274,8 @@ impl JoltTraceRow {
             return Err(TraceRowError::ImmTooWide { imm });
         }
 
+        let operands = instruction.integer_operands();
+
         Ok(Self {
             values,
             unexpanded_pc: instruction.address as u64,
@@ -289,14 +283,13 @@ impl JoltTraceRow {
             bytecode_pc,
             meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
             jolt_tag: kind.tag().0,
-            rs1_id: checked_register_id(instruction.operands.rs1)?,
-            rs2_id: checked_register_id(instruction.operands.rs2)?,
-            rd_id: checked_register_id(instruction.operands.rd)?,
+            rs1_id: checked_register_id(operands.rs1)?,
+            rs2_id: checked_register_id(operands.rs2)?,
+            rd_id: checked_register_id(operands.rd)?,
             _reserved: [0; 3],
         })
     }
 
-    /// The per-cycle witness values, typed by row class.
     #[inline]
     pub fn captured_state(&self) -> CapturedState {
         if self.is_load() {
@@ -427,7 +420,7 @@ impl JoltTraceRow {
 
     #[inline(always)]
     pub fn circuit_flags(&self) -> CircuitFlagSet {
-        CircuitFlagSet::from_bits(self.meta as u16)
+        CircuitFlagSet::from_bits(self.meta & META_CIRCUIT_FLAGS_MASK)
     }
 
     #[inline(always)]
@@ -476,7 +469,7 @@ fn pack_meta(
     instruction_flags: InstructionFlagSet,
     imm_negative: bool,
 ) -> u32 {
-    (circuit_flags.bits() as u32)
+    circuit_flags.bits()
         | ((instruction_flags.bits() as u32) << META_INSTRUCTION_FLAGS_SHIFT)
         | ((imm_negative as u32) << META_IMM_NEGATIVE_SHIFT)
 }
@@ -504,7 +497,7 @@ fn register_index(id: u8) -> Option<u8> {
 #[expect(clippy::unwrap_used, reason = "tests may unwrap freely")]
 mod tests {
     use super::*;
-    use crate::NormalizedOperands;
+    use crate::{NormalizedOperands, CIRCUIT_FLAGS};
 
     fn row(kind: JoltInstructionKind, operands: NormalizedOperands) -> JoltInstructionRow {
         JoltInstructionRow {
@@ -572,7 +565,6 @@ mod tests {
         assert_eq!(r.ram_address(), 0);
         assert_eq!(r.pc(), 7);
         assert_eq!(r.unexpanded_pc(), 0x8000_0000);
-        // Register indices come from the instruction operands.
         assert_eq!(r.rs1_index(), Some(2));
         assert_eq!(r.rs2_index(), Some(3));
         assert_eq!(r.rd_index(), Some(1));
@@ -650,13 +642,11 @@ mod tests {
 
     #[test]
     fn rejects_class_mismatch() {
-        // A load instruction with a non-memory captured state.
         let state = CapturedState::NonMemory(NonMemoryState::default());
         let instruction = row(JoltInstructionKind::LD, NormalizedOperands::default());
         let err = JoltTraceRow::from_components(state, &instruction, 0).unwrap_err();
         assert!(matches!(err, TraceRowError::StateClassMismatch { .. }));
 
-        // A non-memory instruction with a store captured state.
         let state = CapturedState::Store(StoreState::default());
         let instruction = row(JoltInstructionKind::ADD, NormalizedOperands::default());
         let err = JoltTraceRow::from_components(state, &instruction, 0).unwrap_err();
@@ -697,20 +687,19 @@ mod tests {
 
     #[test]
     fn flags_round_trip_through_meta() {
-        // Distinct circuit + instruction flags must survive the meta packing.
-        let instruction = row(
-            JoltInstructionKind::SD,
-            NormalizedOperands {
-                rs1: Some(1),
-                rs2: Some(2),
-                rd: None,
-                imm: 0,
-            },
-        );
-        let (circuit_flags, instruction_flags) = row_flags(&instruction);
-        let state = CapturedState::Store(StoreState::default());
-        let r = JoltTraceRow::from_components(state, &instruction, 0).unwrap();
-        assert_eq!(r.circuit_flags(), circuit_flags);
-        assert_eq!(r.instruction_flags(), instruction_flags);
+        for circuit_flag in CIRCUIT_FLAGS {
+            let circuit_flags = CircuitFlagSet::default().set(circuit_flag);
+            let instruction_flags = InstructionFlagSet::default().set(InstructionFlags::IsNoop);
+            for imm_negative in [false, true] {
+                let row = JoltTraceRow {
+                    meta: pack_meta(circuit_flags, instruction_flags, imm_negative),
+                    imm_abs: 7,
+                    ..JoltTraceRow::default()
+                };
+                assert_eq!(row.circuit_flags(), circuit_flags);
+                assert_eq!(row.instruction_flags(), instruction_flags);
+                assert_eq!(row.imm(), if imm_negative { -7 } else { 7 });
+            }
+        }
     }
 }

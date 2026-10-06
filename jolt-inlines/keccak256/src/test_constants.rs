@@ -1,10 +1,8 @@
-/// Common test vectors used across multiple tests
 pub struct TestVectors;
 
 use crate::Keccak256State;
 
 impl TestVectors {
-    /// Get standard test vectors for state testing
     pub fn get_standard_test_vectors() -> Vec<(&'static str, Keccak256State)> {
         vec![
             ("zero state", [0u64; 25]),
@@ -16,19 +14,17 @@ impl TestVectors {
         ]
     }
 
-    /// Create a simple arithmetic pattern for testing
     pub fn create_simple_pattern() -> Keccak256State {
         core::array::from_fn(|i| (i * 3 + 5) as u64)
     }
 
-    /// Get rotation test vectors
     pub fn get_rotation_test_vectors() -> Vec<(u64, u32, u64)> {
         vec![
-            (0x0000000000000001u64, 1, 0x0000000000000002u64), // Simple rotation by 1
-            (0x8000000000000000u64, 1, 0x0000000000000001u64), // MSB wraps to LSB
-            (0x0123456789ABCDEFu64, 4, 0x123456789ABCDEF0u64), // Rotation by 4
-            (0x0123456789ABCDEFu64, 32, 0x89ABCDEF01234567u64), // Rotation by 32 (swap halves)
-            (0x0123456789ABCDEFu64, 36, 0x9ABCDEF012345678u64), // Rotation by 36
+            (0x0000000000000001u64, 1, 0x0000000000000002u64),
+            (0x8000000000000000u64, 1, 0x0000000000000001u64),
+            (0x0123456789ABCDEFu64, 4, 0x123456789ABCDEF0u64),
+            (0x0123456789ABCDEFu64, 32, 0x89ABCDEF01234567u64),
+            (0x0123456789ABCDEFu64, 36, 0x9ABCDEF012345678u64),
         ]
     }
 }
@@ -164,7 +160,6 @@ pub mod xkcp_vectors {
         0x0000000000000004u64,
     ];
 
-    /// Expected state after Round 1 rho and pi steps
     pub const EXPECTED_AFTER_ROUND1_RHO_PI: Keccak256State = [
         0x0000000000000001u64,
         0x0000100000000000u64,

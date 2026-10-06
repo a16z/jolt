@@ -1,9 +1,10 @@
 use std::{
     error::Error,
-    fmt::{self, Debug},
+    fmt::{self, Debug, Formatter, Result as FmtResult},
+    marker::PhantomData,
 };
 
-use jolt_field::{Accumulator, JoltField, WithAccumulator};
+use jolt_field::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -19,8 +20,83 @@ const PAR_THRESHOLD: usize = 1024;
 /// The `Output` associated type is the single piece of connective tissue
 /// between these different levels of abstraction.
 pub trait Commitment: Clone + Debug + Eq + Send + Sync + 'static {
-    /// The commitment value (e.g., a group element, a Merkle root, a lattice vector).
     type Output: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
+}
+
+/// Type-level placeholder for protocols that do not use vector commitments.
+pub struct NoVectorCommitment<F>(PhantomData<fn() -> F>);
+
+impl<F> Clone for NoVectorCommitment<F> {
+    fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<F> Debug for NoVectorCommitment<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.write_str("NoVectorCommitment")
+    }
+}
+
+impl<F> PartialEq for NoVectorCommitment<F> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl<F> Eq for NoVectorCommitment<F> {}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoCommitment;
+
+impl CanonicalBytes for NoCommitment {
+    const NUM_BYTES: usize = 0;
+
+    fn to_bytes_le(&self, _out: &mut [u8]) {}
+}
+
+impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
+    fn add(_c1: &Self, _c2: &Self) -> Self {
+        Self
+    }
+
+    fn linear_combine(_c1: &Self, _c2: &Self, _scalar: &F) -> Self {
+        Self
+    }
+}
+
+impl<F: JoltField> Commitment for NoVectorCommitment<F> {
+    type Output = NoCommitment;
+}
+
+impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
+    type Field = F;
+    type Setup = ();
+
+    fn capacity(_setup: &Self::Setup) -> usize {
+        0
+    }
+
+    #[expect(
+        clippy::panic,
+        reason = "transparent protocols reject ZK before requesting a vector commitment"
+    )]
+    fn commit(
+        _setup: &Self::Setup,
+        _values: &[Self::Field],
+        _blinding: &Self::Field,
+    ) -> Self::Output {
+        panic!("NoVectorCommitment cannot commit")
+    }
+
+    fn verify(
+        _setup: &Self::Setup,
+        _commitment: &Self::Output,
+        _values: &[Self::Field],
+        _blinding: &Self::Field,
+    ) -> bool {
+        false
+    }
 }
 
 /// Backend-agnostic vector commitment.
@@ -157,7 +233,6 @@ pub struct VectorCommitmentOpening<F> {
     pub combined_blinding: F,
 }
 
-/// Errors returned by committed-row opening helpers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorOpeningError {
     RowLenZero,
@@ -237,7 +312,6 @@ impl Error for VectorOpeningError {}
 /// Non-group commitment types (e.g., lattice vectors) can implement this
 /// trait directly for their native scalar field.
 pub trait HomomorphicCommitment<F: JoltField>: Clone + Default {
-    /// Computes `c1 + c2`.
     #[must_use]
     fn add(c1: &Self, c2: &Self) -> Self;
 

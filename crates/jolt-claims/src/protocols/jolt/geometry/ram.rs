@@ -171,20 +171,6 @@ where
     product
 }
 
-pub(crate) fn ram_read_value() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RamReadValue,
-        JoltRelationId::SpartanOuter,
-    )
-}
-
-pub(crate) fn ram_write_value() -> JoltOpeningId {
-    JoltOpeningId::virtual_polynomial(
-        JoltVirtualPolynomial::RamWriteValue,
-        JoltRelationId::SpartanOuter,
-    )
-}
-
 pub fn ram_ra() -> JoltOpeningId {
     JoltOpeningId::virtual_polynomial(
         JoltVirtualPolynomial::RamRa,

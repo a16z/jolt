@@ -199,8 +199,6 @@ impl<T: TraceSource> TraceBackend<T> {
         }
         let mut trace_rows = Vec::new();
         let mut trailing_padding = 0;
-        #[cfg(feature = "field-inline")]
-        let mut raw_rows = Vec::new();
         for row in physical {
             let compact = Self::compact_trace_row(row, &inputs.preprocessing)?;
             if compact == JoltTraceRow::default() {
@@ -210,9 +208,14 @@ impl<T: TraceSource> TraceBackend<T> {
                 trailing_padding = 0;
                 trace_rows.push(compact);
             }
-            #[cfg(feature = "field-inline")]
-            raw_rows.push(row.clone());
         }
+        // The field-inline view replays the raw rows (payloads, register file, bridge
+        // facts); share the source's allocation when it offers one, copying only for
+        // sources that cannot.
+        #[cfg(feature = "field-inline")]
+        let raw_rows = source
+            .shared_rows()
+            .unwrap_or_else(|| Arc::new(physical.to_vec()));
         let trace = TraceOutput::new(Arc::new(trace_rows), device, final_memory, advice_tape);
         let backend = Self {
             config,
@@ -220,7 +223,7 @@ impl<T: TraceSource> TraceBackend<T> {
             preprocessing: inputs.preprocessing,
             trace,
             #[cfg(feature = "field-inline")]
-            raw_trace_rows: Arc::new(raw_rows),
+            raw_trace_rows: raw_rows,
             source: std::marker::PhantomData,
             #[cfg(feature = "field-inline")]
             field_inline: None,
@@ -443,8 +446,12 @@ fn invalid_compact_row(row: &TraceRow, reason: &'static str) -> WitnessError {
 /// with a `WitnessError` keeps the failure actionable. 32 GiB admits every
 /// in-tree test and the fibonacci profiling default (scale 16); the larger
 /// documented profiling defaults are refused by design and belong on the
-/// optimized backend.
-pub(crate) const MAX_DENSE_GRID_BYTES: usize = 1 << 35;
+/// optimized backend. On narrower targets, the allocation limit is capped
+/// at `isize::MAX` bytes instead.
+pub(crate) const MAX_DENSE_GRID_BYTES: usize = match 1_usize.checked_shl(35) {
+    Some(bytes) => bytes,
+    None => isize::MAX as usize,
+};
 
 /// The element count of a dense `addresses × cycles` grid of `F`, refused
 /// with an actionable error when the byte size overflows or exceeds

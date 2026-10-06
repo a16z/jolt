@@ -6,6 +6,8 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 
 **Invoke when** the user says: "make this Jolt provable", "wrap this in Jolt", "prove this with Jolt", "add ZK proofs to this", "make this zero-knowledge", "make this provable", "jolt-ify this".
 
+Follow the user's instructions and the target repository's conventions. Do not ask again for authorization already supplied; if a skill instruction blocks requested work, cite it and explain why.
+
 #### Step 1 — Identify the computation to prove
 
 Look for a **pure, deterministic Rust function** — inputs in, result out, no I/O or side effects. If not obvious, ask:
@@ -38,8 +40,7 @@ cargo install --git https://github.com/a16z/jolt --force jolt  # if not
 
 #### Step 4 — Scaffold
 
-If inside an existing Rust library repo, propose:
-> "I'll create `<library-name>-jolt/` here with the proof scaffold and import your library as a path dependency. Sound good?"
+If inside an existing Rust library repo, create `<library-name>-jolt/` with the proof scaffold and import the library as a path dependency. Honor any location already specified by the user.
 
 ```bash
 jolt new <project-name>        # standard mode
@@ -143,10 +144,9 @@ pub fn main() {
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_<fn>(target_dir);
-    let shared = guest::preprocess_shared_<fn>(&mut program);
-    let prover_prep = guest::preprocess_prover_<fn>(shared.clone());
-    let verifier_setup = prover_prep.generators.to_verifier_setup();
-    let verifier_prep = guest::preprocess_verifier_<fn>(shared, verifier_setup, None);
+    let shared = guest::preprocess_shared_<fn>(&mut program).unwrap();
+    let prover_prep = guest::preprocess_prover_<fn>(shared);
+    let verifier_prep = guest::verifier_preprocessing_from_prover_<fn>(&prover_prep);
     let prove = guest::build_prover_<fn>(program, prover_prep);
     let verify = guest::build_verifier_<fn>(verifier_prep);
 
@@ -196,10 +196,9 @@ Guest `Cargo.toml`:
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", features = ["zk"] }
 ```
 
-In the host, pass `BlindfoldSetup` to verifier preprocessing:
+In the host, derive verifier preprocessing from the ZK prover preprocessing:
 ```rust
-let blindfold_setup = prover_prep.blindfold_setup();
-let verifier_prep = guest::preprocess_verifier_<fn>(shared, verifier_setup, Some(blindfold_setup));
+let verifier_prep = guest::verifier_preprocessing_from_prover_<fn>(&prover_prep);
 ```
 
 Preprocessing runs once on first invocation and is not included in "Prover runtime". Diagnose failures:

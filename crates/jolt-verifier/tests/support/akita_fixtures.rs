@@ -1,11 +1,3 @@
-//! Akita verifier fixture cases: real packed-prover artifacts backing the
-//! fixture-driven tamper/soundness tests on the akita path.
-//!
-//! Unlike the Dory fixtures there is no disk cache: the transparent akita
-//! setup would have to be re-derived at load anyway, so each case is
-//! generated once per test binary (`OnceLock`) and shared across every
-//! tamper application.
-
 #![expect(
     clippy::expect_used,
     reason = "fixture generation should fail loudly when prover artifact construction breaks"
@@ -14,26 +6,25 @@
 use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;
+use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+use jolt_host::Program;
+use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
+use jolt_prover::akita::{self, JoltAkitaBackend};
+use jolt_prover::ProverConfig;
+use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
-use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-use jolt_prover_legacy::host;
-use jolt_prover_legacy::zkvm::packed::{
-    akita_verifier_preprocessing, commit_trusted_advice, shared_preprocessing_with_direct_program,
-    AkitaField, AkitaJoltProof, AkitaPackedProver, AkitaPackedScheme, AkitaScheduleArtifacts,
-    AkitaScheme, AkitaTranscript, AkitaVc,
-};
-use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
-use jolt_prover_legacy::zkvm::program::ProgramPreprocessing;
-use jolt_prover_legacy::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
+use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
-type AkitaCommitmentOutput = <AkitaScheme as jolt_crypto::Commitment>::Output;
+const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+
+pub type AkitaJoltProof = JoltProof<AkitaScheme, AkitaVc>;
 
 pub struct AkitaFixtureCase {
     pub preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
     pub public_io: JoltDevice,
     pub proof: AkitaJoltProof,
-    pub trusted_advice_commitment: Option<AkitaCommitmentOutput>,
+    pub trusted_advice_commitment: Option<AkitaCommitment>,
 }
 
 impl AkitaFixtureCase {
@@ -72,144 +63,264 @@ pub fn akita_committed_muldiv_case() -> &'static AkitaFixtureCase {
 }
 
 fn generate_muldiv() -> AkitaFixtureCase {
-    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
-    let mut program = host::Program::new("muldiv-guest");
-    let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-    let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-    let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
-        .expect("program preprocessing");
-    let shared: JoltSharedPreprocessing<AkitaPackedScheme> =
-        JoltSharedPreprocessing::new(program_data, io_device.memory_layout.clone(), 1 << 16);
-    let prover_preprocessing = JoltProverPreprocessing::new(shared);
-    let elf_contents = program.get_elf_contents().expect("elf contents");
-    let prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
-        &prover_preprocessing,
-        &elf_contents,
-        &inputs,
-        &[],
-        &[],
-        None,
-        None,
-        None,
+    let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
+    let config = derive_config(&run);
+    let preprocessing = preprocessing::preprocess_full(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        run.program_preprocessing.clone(),
+        &config,
     )
-    .expect("legacy prover construction");
-    let public_io = prover.program_io.clone();
-    let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
-        prover.one_hot_trace_setup_params(schedule_artifacts),
-    )
-    .expect("transparent packed setup");
-    let proof = prover
-        .prove_packed(&object_setup, None, None)
-        .expect("packed prover");
-    let preprocessing = akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
-    AkitaFixtureCase {
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment: None,
-    }
+    .expect("Akita preprocessing");
+    prove_prepared(run, config, preprocessing, &[])
 }
 
 fn generate_advice() -> AkitaFixtureCase {
-    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
-    // The purpose-built advice guest asserts `trusted + untrusted == public`
-    // (7 + 5 == 12), exercising both advice kinds without any exotic inline
-    // instruction (unlike the merkle example, which fails Jolt expansion).
-    let mut program = host::Program::new("advice-consumer-guest");
-    let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
-    let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted");
-    let trusted_advice = postcard::to_stdvec(&7u64).expect("serialize trusted");
-    let (_, _, _, io_device) = program.trace(&inputs, &untrusted_advice, &trusted_advice);
-
-    let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
-        .expect("program preprocessing");
-    let shared: JoltSharedPreprocessing<AkitaPackedScheme> =
-        JoltSharedPreprocessing::new(program_data, io_device.memory_layout.clone(), 1 << 16);
-    let prover_preprocessing = JoltProverPreprocessing::new(shared);
-    let elf_contents = program.get_elf_contents().expect("elf contents");
-    let trusted_object = commit_trusted_advice(
-        &schedule_artifacts,
-        &trusted_advice,
-        io_device.memory_layout.max_trusted_advice_size as usize,
-    )
-    .expect("trusted advice object");
-    let prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
-        &prover_preprocessing,
-        &elf_contents,
+    let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+    let trusted_advice = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
+    let run = prepare_guest(
+        Program::new("advice-consumer-guest"),
         &inputs,
         &untrusted_advice,
         &trusted_advice,
-        None,
-        None,
-        None,
+    );
+    let config = derive_config(&run);
+    let preprocessing = preprocessing::preprocess_full_with_advice(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        run.program_preprocessing.clone(),
+        &config,
+        true,
+        true,
     )
-    .expect("legacy prover construction");
-    let public_io = prover.program_io.clone();
-    let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
-        prover.one_hot_trace_setup_params(schedule_artifacts),
-    )
-    .expect("transparent packed setup");
-    let trusted_commitment = trusted_object.commitment.clone();
-    let proof = prover
-        .prove_packed(&object_setup, Some(&trusted_object), None)
-        .expect("packed prover");
-    let preprocessing = akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
-    AkitaFixtureCase {
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment: Some(trusted_commitment),
-    }
+    .expect("Akita advice preprocessing");
+    prove_prepared(run, config, preprocessing, &trusted_advice)
 }
 
 fn generate_committed_muldiv() -> AkitaFixtureCase {
-    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
-    let mut program = host::Program::new("muldiv-guest");
-    let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-    let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-
-    let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
-        .expect("program preprocessing");
-    let (shared, prover_data, direct_program) = shared_preprocessing_with_direct_program(
-        &schedule_artifacts,
-        program_data,
-        io_device.memory_layout.clone(),
-        1 << 16,
+    let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
+    let config = derive_config(&run);
+    let preprocessing = preprocessing::preprocess_committed(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        run.program_preprocessing.clone(),
+        &config,
         2,
     )
-    .expect("packed committed preprocessing");
-    let prover_preprocessing =
-        JoltProverPreprocessing::new_committed(shared, prover_data, AkitaPackedScheme);
-    let elf_contents = program.get_elf_contents().expect("elf contents");
-    let prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
-        &prover_preprocessing,
-        &elf_contents,
-        &inputs,
-        &[],
-        &[],
-        None,
-        None,
-        None,
+    .expect("committed Akita preprocessing");
+    prove_prepared(run, config, preprocessing, &[])
+}
+
+fn derive_config(run: &PreparedGuest) -> ProverConfig {
+    #[cfg(not(feature = "field-inline"))]
+    {
+        ProverConfig::derive_compact::<AkitaField>(
+            run.trace.trace.as_slice(),
+            &run.program_preprocessing.memory_layout,
+            run.program_preprocessing.ram.min_bytecode_address,
+            run.program_preprocessing.ram.bytecode_words.len(),
+            MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive Akita prover config")
+    }
+    #[cfg(feature = "field-inline")]
+    {
+        ProverConfig::derive::<AkitaField>(
+            run.trace.trace.rows(),
+            &run.program_preprocessing.memory_layout,
+            run.program_preprocessing.ram.min_bytecode_address,
+            run.program_preprocessing.ram.bytecode_words.len(),
+            MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive Akita prover config")
+    }
+}
+
+fn prove_prepared(
+    run: PreparedGuest,
+    config: ProverConfig,
+    preprocessing: AkitaProverPreprocessing,
+    trusted_advice: &[u8],
+) -> AkitaFixtureCase {
+    let program_preprocessing = preprocessing
+        .program_arc()
+        .expect("full program retained by prover preprocessing");
+    let public_io = run.trace.device.clone();
+    let has_trusted_advice = !trusted_advice.is_empty();
+    let witness = fixture_witness(
+        &run.program,
+        &program_preprocessing,
+        run.trace,
+        &config,
+        has_trusted_advice,
+    );
+    let trusted = has_trusted_advice.then(|| {
+        preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
+            .expect("trusted advice commitment")
+    });
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+        &JoltAkitaBackend::optimized(),
+        &preprocessing,
+        &config,
+        trusted.as_ref(),
+        &witness,
+        &public_io,
     )
-    .expect("legacy prover construction");
-    let public_io = prover.program_io.clone();
-    let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
-        prover.one_hot_trace_setup_params(schedule_artifacts),
-    )
-    .expect("transparent packed setup");
-    let proof = prover
-        .prove_packed(&object_setup, None, Some(&direct_program))
-        .expect("packed prover");
-    let preprocessing =
-        akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, Some(&direct_program));
+    .expect("prove Akita verifier fixture");
     AkitaFixtureCase {
-        preprocessing,
+        preprocessing: preprocessing.verifier,
         public_io,
         proof,
-        trusted_advice_commitment: None,
+        trusted_advice_commitment: trusted.map(|object| object.commitment),
+    }
+}
+
+/// The packed field-inline case: the eq-MLE field-inline guest proven by the MODULAR packed
+/// prover (the only field-inline-capable one) over fp128, with the transparent grouped setup
+/// carrying the field-increment limb arity line — the packed twin of the Dory
+/// `standard_field_inline_eqpoly_case`. Legacy-generated akita fixtures pin the field-inline
+/// axis disabled and cannot verify with field-inline enabled, so this is the only packed
+/// fixture the akita verifier suites with field-inline enabled run over.
+#[cfg(feature = "field-inline")]
+pub fn akita_field_inline_eqpoly_case() -> &'static AkitaFixtureCase {
+    static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
+    CASE.get_or_init(field_inline::generate_eqpoly)
+}
+
+#[cfg(feature = "field-inline")]
+mod field_inline {
+    use std::sync::Arc;
+
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
+    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_host::{JoltProgramSource, Program};
+    use jolt_program::execution::{
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+    };
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use jolt_prover::akita::JoltAkitaBackend;
+    use jolt_prover::{akita, ProverConfig};
+    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+    use tracer::execution_backend::TracerBackend;
+
+    use super::AkitaFixtureCase;
+
+    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+    const EQ_PAIRS: [[u64; 2]; 4] = [
+        [u64::MAX, u64::MAX - 1],
+        [u64::MAX - 2, 2],
+        [11, 13],
+        [u64::MAX - 3, 9],
+    ];
+
+    /// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))` over the packed axis's
+    /// proof field, pinned as four canonical little-endian u64 limbs (the
+    /// 16-byte fp128 form fills the low two; the guest Horner-recomposes them
+    /// in whatever field it proves over).
+    fn eqpoly_inputs() -> Vec<u8> {
+        jolt_host::field_inline::eqpoly_inputs::<AkitaField>(EQ_PAIRS)
+            .expect("field-ops input encoding")
+    }
+
+    fn trace_modular(
+        program: &JoltProgram,
+        memory_layout: &MemoryLayout,
+        inputs: &[u8],
+    ) -> TraceOutput<OwnedTrace> {
+        let memory_config = MemoryConfig {
+            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
+            max_input_size: memory_layout.max_input_size,
+            max_output_size: memory_layout.max_output_size,
+            stack_size: memory_layout.stack_size,
+            heap_size: memory_layout.heap_size,
+            program_size: Some(memory_layout.program_size),
+        };
+        TracerBackend::new()
+            .trace(
+                program,
+                TraceInputs {
+                    inputs: inputs.to_vec(),
+                    untrusted_advice: Vec::new(),
+                    trusted_advice: Vec::new(),
+                    memory_config,
+                    advice_tape: None,
+                },
+            )
+            .expect("modular trace")
+    }
+
+    pub(super) fn generate_eqpoly() -> AkitaFixtureCase {
+        let inputs = eqpoly_inputs();
+        let mut program = Program::new("field-ops-guest");
+        program.enable_field_inline();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let jolt_program = Arc::new(
+            program
+                .build_jolt_program()
+                .expect("build field-inline program"),
+        );
+        let program_preprocessing = JoltProgramPreprocessing::new(
+            jolt_program.expanded_bytecode.clone(),
+            jolt_program.memory_init.clone(),
+            io_device.memory_layout.clone(),
+            jolt_program.entry_address,
+            MAX_PADDED_TRACE_LENGTH,
+            program.instruction_profile(),
+        )
+        .expect("field-inline preprocessing");
+        let memory_layout = io_device.memory_layout.clone();
+        let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
+        let public_io = trace_output.device.clone();
+
+        let config = ProverConfig::derive::<AkitaField>(
+            trace_output.trace.rows(),
+            &memory_layout,
+            program_preprocessing.ram.min_bytecode_address,
+            program_preprocessing.ram.bytecode_words.len(),
+            MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive config");
+        let log_t = config.trace_length.ilog2() as usize;
+        let prover_preprocessing = jolt_prover::akita::preprocessing::preprocess_full(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            program_preprocessing,
+            &config,
+        )
+        .expect("field-inline packed preprocessing");
+
+        let mut rows = trace_output.trace.rows().to_vec();
+        rows.resize(config.trace_length, TraceRow::default());
+        let padded_output = TraceOutput::new(
+            OwnedTrace::new(rows),
+            trace_output.device,
+            trace_output.final_memory,
+            trace_output.advice_tape,
+        );
+        let program_preprocessing = prover_preprocessing
+            .program_arc()
+            .expect("full program preprocessing");
+        let witness = TraceBackend::new(
+            JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        )
+        .with_field_inline()
+        .expect("field-inline witness view");
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+            &JoltAkitaBackend::optimized(),
+            &prover_preprocessing,
+            &config,
+            None,
+            &witness,
+            &public_io,
+        )
+        .expect("packed field-inline prove");
+        AkitaFixtureCase {
+            preprocessing: prover_preprocessing.verifier,
+            public_io,
+            proof,
+            trusted_advice_commitment: None,
+        }
     }
 }

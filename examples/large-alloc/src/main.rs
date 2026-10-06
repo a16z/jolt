@@ -5,7 +5,7 @@ use tracing::info;
 /// ZeroOS's mmap/munmap region accounting: each guest allocation is past
 /// musl mallocng's individual-mmap threshold, so every `drop` issues a real
 /// `munmap` against the guest kernel's heap. The CI regression test is
-/// `large_alloc_munmap_trace` in jolt-prover-legacy's prover tests.
+/// `large_alloc_munmap_trace` in jolt-verifier's guest runtime tests.
 pub fn main() {
     tracing_subscriber::fmt::init();
 

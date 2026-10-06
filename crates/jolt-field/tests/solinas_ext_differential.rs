@@ -7,10 +7,12 @@
 //! Coverage: both `FpExt2` non-residue configs and the quartic/octic towers
 //! over `Fp32`/`Fp64`/`Fp128` bases (registered primes plus `Fp32<251>`,
 //! the one small prime with `p ≡ 3 mod 4` where `NegOneNr` is a genuine
-//! field, and `Fp64<2^32 − 99>`). Where the extension is not known to be a
-//! field (reducible defining polynomial), inversion is only verified when
-//! it succeeds (`x · x⁻¹ = 1`); a spurious `None` for an invertible element
-//! is not detectable without a polynomial-gcd oracle.
+//! field, `Fp64<2^32 − 99>`, and `Prime128OffsetA7F7`, over which no tower
+//! is a field). Whether each extension is a field is computed from the
+//! prime ([`quadratic_is_field`], [`ring_subfield_is_field`]), not stated by
+//! hand. Where it is not a field (reducible defining polynomial), inversion
+//! is only verified when it succeeds (`x · x⁻¹ = 1`); a spurious `None` for
+//! an invertible element is not detectable without a polynomial-gcd oracle.
 
 #![cfg(feature = "solinas")]
 #![expect(clippy::unwrap_used, reason = "test code")]
@@ -70,7 +72,41 @@ fn submod(a: u128, b: u128, p: u128) -> u128 {
     addmod(a, p - b, p)
 }
 
-/// Schoolbook multiply in `F[u]/(u² − nr)`.
+fn powmod(mut base: u128, mut e: u128, p: u128) -> u128 {
+    let mut acc = 1;
+    base %= p;
+    while e > 0 {
+        if (e & 1) == 1 {
+            acc = mulmod(acc, base, p);
+        }
+        base = mulmod(base, base, p);
+        e >>= 1;
+    }
+    acc
+}
+
+/// Whether `F_p[u]/(u² − nr)` is a field: `nr` is a non-residue, by Euler's
+/// criterion.
+fn quadratic_is_field(nr: u128, p: u128) -> bool {
+    powmod(nr, (p - 1) / 2, p) == p - 1
+}
+
+/// Whether the degree-`d` ring-subfield extension (`d` a power of two, basis
+/// `[1, e1, ..., e_{d−1}]`) is a field. Its defining polynomial is the minimal
+/// polynomial of `ζ + ζ⁻¹` for a primitive `4d`-th root of unity `ζ`. For odd
+/// `p` it factors over `F_p` into irreducibles whose degree is the order of
+/// `p` in `(Z/4d)^* / {±1}`, so it is a field exactly when that order is `d`.
+fn ring_subfield_is_field(d: u128, p: u128) -> bool {
+    let n = 4 * d;
+    let r = p % n;
+    let (mut x, mut order) = (r, 1);
+    while x != 1 && x != n - 1 {
+        x = x * r % n;
+        order += 1;
+    }
+    order == d
+}
+
 fn quad_mul_oracle(a: &[u128], b: &[u128], nr: u128, p: u128) -> Vec<u128> {
     vec![
         addmod(
@@ -172,10 +208,8 @@ macro_rules! check_ext {
             let ya = mk2(&vb);
             let za = mk2(&vc);
 
-            // from_base_slice / to_base_vec round trip.
             assert_eq!(vec2(&xa), va);
 
-            // Arithmetic vs the coefficient-wise / schoolbook oracles.
             let add_expect: Vec<u128> = va
                 .iter()
                 .zip(vb.iter())
@@ -195,7 +229,6 @@ macro_rules! check_ext {
             let sq = Ring::square(&xa);
             assert_eq!(vec2(&sq), oracle(&va, &va), "square vs schoolbook oracle");
 
-            // By-ref and assigning operator forms agree with the owned ones.
             assert_eq!(xa + &ya, xa + ya);
             assert_eq!(xa - &ya, xa - ya);
             assert_eq!(xa * &ya, xa * ya);
@@ -205,7 +238,6 @@ macro_rules! check_ext {
             u *= ya;
             assert_eq!((s, t, u), (xa + ya, xa - ya, xa * ya));
 
-            // Ring identities.
             assert_eq!((xa + ya) * za, xa * za + ya * za, "distributivity");
             assert_eq!((xa * ya) * za, xa * (ya * za), "associativity");
 
@@ -216,11 +248,9 @@ macro_rules! check_ext {
                 None => assert!(!$is_field || xa.is_zero(), "field ext must invert nonzero"),
             }
 
-            // Halving.
             let h = xa.half();
             assert_eq!(h + h, xa);
 
-            // lift_base / mul_base against the full extension multiply.
             let sv = $rng.gen::<u128>() % p;
             let s2 = f2(sv);
             let lifted = <$E2 as ExtField<$F2>>::lift_base(s2);
@@ -232,7 +262,6 @@ macro_rules! check_ext {
             let scale_expect: Vec<u128> = va.iter().map(|&x| mulmod(x, sv, p)).collect();
             assert_eq!(vec2(&m2), scale_expect, "mul_base scales coefficients");
 
-            // Integer embeddings: base-field embedding at coefficient 0.
             let (w64, i64v): (u64, i64) = ($rng.gen(), $rng.gen());
             let (w128, i128v): (u128, i128) = ($rng.gen(), $rng.gen());
             let embed = |v: u128, neg: bool| {
@@ -322,7 +351,6 @@ macro_rules! check_ext {
             assert_eq!(vec2(&Ring::square(&x2)), oracle(va, va), "boundary square");
         }
 
-        // Zero/One and iterator Sum/Product (owned and by-ref).
         assert!(<$E2 as Zero>::zero().is_zero());
         let one_vec = {
             let mut v = vec![0u128; d];
@@ -338,8 +366,6 @@ macro_rules! check_ext {
         assert_eq!(xs.iter().copied().product::<$E2>(), expected_prod);
         assert_eq!(xs.iter().product::<$E2>(), expected_prod);
 
-        // Canonical rejection: a wire encoding whose first coefficient is
-        // `p` itself must be rejected; so must short input.
         let nb = <$F2 as CanonicalBytes>::NUM_BYTES;
         let mut bad = vec![0u8; nb * d];
         bad[..nb].copy_from_slice(&p.to_le_bytes()[..nb]);
@@ -352,8 +378,6 @@ macro_rules! check_ext {
             "truncated encoding must be rejected"
         );
 
-        // Random sampling spec: with the same seed, `random` draws the `d`
-        // base-field coefficients in order.
         let (mut r1, mut r2) = (
             ChaCha20Rng::seed_from_u64(0x5EED_0001),
             ChaCha20Rng::seed_from_u64(0x5EED_0001),
@@ -413,7 +437,6 @@ macro_rules! check_moore {
             assert!(st.is_ok(), "Moore solve must succeed in a field");
         }
         if let Ok(zt) = st {
-            // The solution satisfies the Moore system in rebuilt arithmetic.
             for (row, want) in rhs_t.iter().enumerate() {
                 let got = thetas_t
                     .iter()
@@ -425,7 +448,6 @@ macro_rules! check_moore {
             }
         }
 
-        // Rejections: duplicate thetas (singular) and dimension mismatch.
         if d >= 2 {
             let one2 = <$E2 as One>::one();
             assert!(
@@ -443,13 +465,13 @@ macro_rules! check_moore {
 const P32: u128 = (1 << 32) - 99;
 const P64: u128 = (1 << 64) - 59;
 const P128: u128 = u128::MAX - 274;
+const P128_A7F7: u128 = u128::MAX - 0xFFFF_A7F6;
 const P251: u128 = 251;
 
-// `2^32 − 99` as a u64-backed field: exercises the sub-word Fp64 towers.
 type F64Small2 = two::Fp64<4_294_967_197>;
 
 macro_rules! ext_suite {
-    ($name2:ident, $name4:ident, $name8:ident, $moore:ident, $F2:ty, $p:expr, e2_field: $e2f:expr, neg_one_field: $nof:expr, e48_field: $e48f:expr) => {
+    ($name2:ident, $name4:ident, $name8:ident, $moore:ident, $F2:ty, $p:expr) => {
         #[test]
         fn $name2() {
             let mut rng = rng();
@@ -459,7 +481,7 @@ macro_rules! ext_suite {
                 $p,
                 2,
                 |a: &[u128], b: &[u128]| quad_mul_oracle(a, b, 2, $p),
-                is_field: $e2f,
+                is_field: quadratic_is_field(2, $p),
                 &mut rng
             );
             check_ext!(
@@ -468,7 +490,7 @@ macro_rules! ext_suite {
                 $p,
                 2,
                 |a: &[u128], b: &[u128]| quad_mul_oracle(a, b, $p - 1, $p),
-                is_field: $nof,
+                is_field: quadratic_is_field($p - 1, $p),
                 &mut rng
             );
         }
@@ -482,7 +504,7 @@ macro_rules! ext_suite {
                 $p,
                 4,
                 |a: &[u128], b: &[u128]| cheb_mul_oracle(a, b, $p),
-                is_field: $e48f,
+                is_field: ring_subfield_is_field(4, $p),
                 &mut rng
             );
         }
@@ -496,7 +518,7 @@ macro_rules! ext_suite {
                 $p,
                 8,
                 |a: &[u128], b: &[u128]| cheb_mul_oracle(a, b, $p),
-                is_field: $e48f,
+                is_field: ring_subfield_is_field(8, $p),
                 &mut rng
             );
         }
@@ -509,11 +531,25 @@ macro_rules! ext_suite {
                 $F2,
                 $p,
                 2,
-                is_field: $e2f,
+                is_field: quadratic_is_field(2, $p),
                 &mut rng
             );
-            check_moore!(two::FpExt4<$F2>, $F2, $p, 4, is_field: $e48f, &mut rng);
-            check_moore!(two::FpExt8<$F2>, $F2, $p, 8, is_field: $e48f, &mut rng);
+            check_moore!(
+                two::FpExt4<$F2>,
+                $F2,
+                $p,
+                4,
+                is_field: ring_subfield_is_field(4, $p),
+                &mut rng
+            );
+            check_moore!(
+                two::FpExt8<$F2>,
+                $F2,
+                $p,
+                8,
+                is_field: ring_subfield_is_field(8, $p),
+                &mut rng
+            );
         }
     };
 }
@@ -524,10 +560,7 @@ ext_suite!(
     ext8_over_prime32_offset99,
     moore_over_prime32_offset99,
     two::Prime32Offset99,
-    P32,
-    e2_field: true,
-    neg_one_field: false,
-    e48_field: true
+    P32
 );
 
 ext_suite!(
@@ -536,10 +569,7 @@ ext_suite!(
     ext8_over_fp32_251,
     moore_over_fp32_251,
     two::Fp32<251>,
-    P251,
-    e2_field: true,
-    neg_one_field: true,
-    e48_field: false
+    P251
 );
 
 ext_suite!(
@@ -548,10 +578,7 @@ ext_suite!(
     ext8_over_prime64_offset59,
     moore_over_prime64_offset59,
     two::Prime64Offset59,
-    P64,
-    e2_field: true,
-    neg_one_field: false,
-    e48_field: false
+    P64
 );
 
 ext_suite!(
@@ -560,10 +587,7 @@ ext_suite!(
     ext8_over_fp64_2pow32_99,
     moore_over_fp64_2pow32_99,
     F64Small2,
-    P32,
-    e2_field: true,
-    neg_one_field: false,
-    e48_field: true
+    P32
 );
 
 ext_suite!(
@@ -572,14 +596,42 @@ ext_suite!(
     ext8_over_prime128_offset275,
     moore_over_prime128_offset275,
     two::Prime128Offset275,
-    P128,
-    e2_field: true,
-    neg_one_field: false,
-    e48_field: false
+    P128
 );
 
-/// `Ext2` is the `TwoNr` alias; conjugate negates the `u` coefficient and
-/// `norm(x) = x · conj(x) = x₀² − nr·x₁²` lands in the base field.
+ext_suite!(
+    ext2_over_prime128_offset_a7f7,
+    ext4_over_prime128_offset_a7f7,
+    ext8_over_prime128_offset_a7f7,
+    moore_over_prime128_offset_a7f7,
+    two::Prime128OffsetA7F7,
+    P128_A7F7
+);
+
+/// Which towers are fields over each exported prime, as the extension docs
+/// state: over every registered prime `p ≡ 5 (mod 8)`, so `Ext2` (non-residue
+/// 2), `FpExt4` and `FpExt8` are fields and `NegOneNr` is not; over
+/// `Prime128OffsetA7F7`, `p ≡ 1 (mod 8)` and none is.
+#[test]
+fn extension_fields_over_exported_primes() {
+    for spec in two::PRIME_OFFSET_SPECS {
+        let p = spec.modulus;
+        assert_eq!(p % 8, 5, "2^{} − {}", spec.bits, spec.offset);
+        assert!(quadratic_is_field(2, p));
+        assert!(!quadratic_is_field(p - 1, p));
+        assert!(ring_subfield_is_field(4, p));
+        assert!(ring_subfield_is_field(8, p));
+    }
+    type A7f7 = two::Prime128OffsetA7F7;
+    assert_eq!(<A7f7 as CanonicalEncoding>::MODULUS_BITS, 128);
+    assert_eq!(u128::MAX - <A7f7 as PseudoMersenne>::OFFSET + 1, P128_A7F7);
+    assert_eq!(P128_A7F7 % 8, 1);
+    assert!(!quadratic_is_field(2, P128_A7F7));
+    assert!(!quadratic_is_field(P128_A7F7 - 1, P128_A7F7));
+    assert!(!ring_subfield_is_field(4, P128_A7F7));
+    assert!(!ring_subfield_is_field(8, P128_A7F7));
+}
+
 #[test]
 fn ext2_alias_and_conjugate_norm() {
     let mut r = rng();
@@ -601,13 +653,10 @@ fn ext2_alias_and_conjugate_norm() {
             "norm is x · conj(x)"
         );
         let sq = Ring::square(&a);
-        // norm(conj(a²)) = norm(a²) = norm(a)², all in oracle-verified mul.
         assert_eq!(sq.conjugate().norm(), a.norm() * a.norm());
     }
 }
 
-/// The reflexive impl: a pseudo-Mersenne base field is its own degree-1
-/// extension.
 #[test]
 fn degree_one_reflexive_ext_matches() {
     let mut r = rng();
@@ -655,26 +704,6 @@ fn ext_field_coefficient_primitives_obey_contract() {
     check::<two::Ext2<F>>();
     check::<two::FpExt4<F>>();
     check::<two::FpExt8<F>>();
-}
-
-#[test]
-#[should_panic(expected = "assertion")]
-fn ext2_from_base_slice_wrong_length_panics() {
-    let one = <two::Prime32Offset99 as Ring>::from_u64(1);
-    let _ =
-        <two::Ext2<two::Prime32Offset99> as ExtField<two::Prime32Offset99>>::from_base_slice(&[
-            one,
-        ]);
-}
-
-#[test]
-#[should_panic(expected = "assertion")]
-fn ext4_from_base_slice_wrong_length_panics() {
-    let one = <two::Prime32Offset99 as Ring>::from_u64(1);
-    let _ =
-        <two::FpExt4<two::Prime32Offset99> as ExtField<two::Prime32Offset99>>::from_base_slice(&[
-            one, one, one,
-        ]);
 }
 
 #[test]

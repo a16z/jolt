@@ -1,6 +1,5 @@
 use core::marker::PhantomData;
 
-/// Shared interface for field elements used in EC point arithmetic.
 pub trait ECField: Clone + PartialEq + core::fmt::Debug + Sized {
     type Error;
 

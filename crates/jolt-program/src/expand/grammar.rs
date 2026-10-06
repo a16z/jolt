@@ -171,10 +171,8 @@ impl<K> InstructionTemplate<K> {
     }
 }
 
-/// A single step in a symbolic expansion recipe.
 #[derive(Clone, Copy)]
 pub(super) enum ExpansionOp {
-    /// Append this row directly to the output.
     Emit(RowTemplate),
     /// Recursively expand this row through the full pipeline before appending.
     Expand(SourceInstructionRowTemplate),
@@ -195,7 +193,6 @@ pub struct ExpandedInstructionSequence {
     pub(super) ops: Vec<ExpansionOp>,
 }
 
-/// Builds a symbolic expansion recipe from instruction/allocate/release calls.
 pub(super) struct ExpansionBuilder {
     source: SourceInstructionRow,
     ops: Vec<ExpansionOp>,

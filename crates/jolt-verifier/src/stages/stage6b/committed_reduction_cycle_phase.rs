@@ -11,7 +11,7 @@
 //! point while the scale is evaluated at the Dory-permuted point, each relation
 //! OVERRIDES [`ConcreteSumcheck::expected_output`] to recover the scale from the
 //! produced opening point via the layout's `cycle_phase_*_at_opening_point`
-//! helpers — see [`PrecommittedClaimReduction::cycle_phase_permuted_from_opening_point`].
+//! helpers; see `PrecommittedClaimReduction::cycle_phase_permuted_from_opening_point`.
 //! The output expression is bypassed (not the `derive_output_term` path) because the
 //! produced opening id is dynamic in `has_address_phase`; the override computes
 //! exactly the formula value, so the clear path and BlindFold stay in sync.
@@ -54,7 +54,7 @@ pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
         .advice_contribution(JoltAdviceKind::Trusted)
         .map(|contribution| contribution.opening_value)
         .ok_or(VerifierError::MissingOpeningClaim {
-            id: ram_val_check_advice_opening(JoltAdviceKind::Trusted),
+            id: ram_val_check_advice_opening(JoltAdviceKind::Trusted).into(),
         })?;
     Ok(TrustedAdviceCyclePhaseInputClaims { trusted })
 }
@@ -67,7 +67,7 @@ pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
         .advice_contribution(JoltAdviceKind::Untrusted)
         .map(|contribution| contribution.opening_value)
         .ok_or(VerifierError::MissingOpeningClaim {
-            id: ram_val_check_advice_opening(JoltAdviceKind::Untrusted),
+            id: ram_val_check_advice_opening(JoltAdviceKind::Untrusted).into(),
         })?;
     Ok(UntrustedAdviceCyclePhaseInputClaims { untrusted })
 }

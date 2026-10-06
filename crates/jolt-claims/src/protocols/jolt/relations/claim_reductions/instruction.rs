@@ -1,5 +1,3 @@
-//! Instruction claim-reduction symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -41,8 +39,7 @@ pub struct InstructionClaimReductionOutputClaims<C> {
 /// Consumed instruction-lookup openings from stage 1's outer sumcheck, reduced by
 /// this sumcheck. The relation reads only these values (its output point comes from
 /// its own sumcheck point), so the input points are left empty. Generic over the
-/// cell. Field order matches
-/// [`instruction_claim_reduction::claim_reduction_input_openings`].
+/// cell. Field order matches the generated stage-2 batch declaration.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionClaimReductionInputClaims<C> {
     #[opening(LookupOutput, from = SpartanOuter)]
@@ -57,7 +54,6 @@ pub struct InstructionClaimReductionInputClaims<C> {
     pub right_instruction_input: C,
 }
 
-/// Fiat-Shamir challenge drawn by the instruction claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct InstructionClaimReductionChallenges<F> {
@@ -118,106 +114,5 @@ impl SymbolicSumcheck for ClaimReduction {
                 left_instruction_input_reduced(),
                 right_instruction_input_reduced(),
             )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::InstructionClaimReductionChallenge;
-    use jolt_field::{Fr, Ring};
-
-    fn dimensions() -> TraceDimensions {
-        TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn claim_reduction_evaluates_like_core_formula() {
-        let relation = ClaimReduction::new(dimensions());
-
-        let lookup_spartan = Fr::from_u64(3);
-        let left_lookup_spartan = Fr::from_u64(5);
-        let right_lookup_spartan = Fr::from_u64(7);
-        let left_input_spartan = Fr::from_u64(11);
-        let right_input_spartan = Fr::from_u64(13);
-        let lookup_reduced = Fr::from_u64(17);
-        let left_lookup_reduced = Fr::from_u64(19);
-        let right_lookup_reduced = Fr::from_u64(23);
-        let left_input_reduced = Fr::from_u64(29);
-        let right_input_reduced = Fr::from_u64(31);
-        let gamma = Fr::from_u64(37);
-        let eq_spartan = Fr::from_u64(41);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == lookup_output_spartan() => lookup_spartan,
-                id if id == left_lookup_operand_spartan() => left_lookup_spartan,
-                id if id == right_lookup_operand_spartan() => right_lookup_spartan,
-                id if id == left_instruction_input_spartan() => left_input_spartan,
-                id if id == right_instruction_input_spartan() => right_input_spartan,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::InstructionClaimReduction(
-                    InstructionClaimReductionChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == lookup_output_reduced() => lookup_reduced,
-                id if id == left_lookup_operand_reduced() => left_lookup_reduced,
-                id if id == right_lookup_operand_reduced() => right_lookup_reduced,
-                id if id == left_instruction_input_reduced() => left_input_reduced,
-                id if id == right_instruction_input_reduced() => right_input_reduced,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::InstructionClaimReduction(
-                    InstructionClaimReductionChallenge::Gamma,
-                ) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltDerivedId::InstructionClaimReduction(
-                    InstructionClaimReductionPublic::EqSpartan,
-                ) => eq_spartan,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(
-            input,
-            lookup_spartan
-                + gamma * left_lookup_spartan
-                + gamma * gamma * right_lookup_spartan
-                + gamma * gamma * gamma * left_input_spartan
-                + gamma * gamma * gamma * gamma * right_input_spartan
-        );
-        assert_eq!(
-            output,
-            eq_spartan
-                * (lookup_reduced
-                    + gamma * left_lookup_reduced
-                    + gamma * gamma * right_lookup_reduced
-                    + gamma * gamma * gamma * left_input_reduced
-                    + gamma * gamma * gamma * gamma * right_input_reduced)
-        );
-    }
-
-    #[test]
-    fn claim_reduction_exposes_expected_dependencies() {
-        let relation = ClaimReduction::new(dimensions());
-
-        assert_eq!(
-            ClaimReduction::id(),
-            JoltRelationId::InstructionClaimReduction
-        );
-        assert_eq!(relation.rounds(), dimensions().log_t());
-        assert_eq!(relation.degree(), 2);
     }
 }

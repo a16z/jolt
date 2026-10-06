@@ -1,5 +1,3 @@
-//! Consumer bundles: a consumer's witness data flow, stated as a type.
-
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_riscv::JoltTraceRow as TraceRow;
 
@@ -73,12 +71,9 @@ mod tests {
         with_sample_backend(|backend| {
             let rows: Vec<DeriveCoverageBundle> = backend.bundles().unwrap();
             assert_eq!(rows.len(), 4);
-            // The fixture's first cycle: ADDI rs1=5, imm=3 -> output 8.
             assert_eq!(rows[0].lookup_output, LookupOutput(8));
             assert_eq!(rows[0].unexpanded_pc.0, 0x8000_0000);
             assert_eq!(rows[0].add_operands, OpFlag(true));
-            // Fact fields extract too, with no protocol ids attached: the
-            // first cycle's product is rs1 * imm = 5 * 3.
             assert_eq!(rows[0].product.to_field::<Fr>(), Fr::from_u64(15));
             assert_eq!(rows[1].lookup_index, LookupIndex(0));
         });

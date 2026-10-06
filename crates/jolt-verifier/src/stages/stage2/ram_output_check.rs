@@ -128,7 +128,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
         })
     }
 
-    /// Delegates to [`super::phase1_instance_point_offset`] (the phase-1 sub-point
+    /// Delegates to `super::phase1_instance_point_offset` (the phase-1 sub-point
     /// slicing shared with `RamRafEvaluation`).
     fn instance_point_offset(&self, batch_num_vars: usize) -> Result<usize, VerifierError> {
         super::phase1_instance_point_offset(self.read_write_dimensions, self.id(), batch_num_vars)
@@ -154,7 +154,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
         challenges: &RamOutputCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamOutputCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let (eq_address, io_mask, val_io) = ram_output_check_publics(
             &self.public_memory,

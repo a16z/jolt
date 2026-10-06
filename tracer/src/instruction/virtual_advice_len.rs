@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
@@ -11,12 +12,12 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatI,
+    registers = RegisterStateI,
     ram = ()
 );
 
 impl VirtualAdviceLen {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAdviceLen as RISCVInstruction>::RAMAccess) {
-        // Get the number of bytes remaining in the advice tape and write to rd register
         let remaining = advice_tape_remaining(cpu);
         cpu.write_register(self.operands.rd as usize, remaining as i64);
     }

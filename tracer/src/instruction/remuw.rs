@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x200703b,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
@@ -32,7 +34,6 @@ impl REMUW {
 
 impl RISCVTrace for REMUW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // REMUW operands
         let x = cpu.x[self.operands.rs1 as usize] as u32;
         let y = cpu.x[self.operands.rs2 as usize] as u32;
 

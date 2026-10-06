@@ -19,7 +19,8 @@
 //! element gives lanes in `[0, 2^16)`, so at least
 //! `⌊(2^31 − 1) / (2^16 − 1)⌋ = 32768` same-sign accumulations (or
 //! `k` accumulations scaled by `s` with `k·|s|·(2^16 − 1) < 2^31`) fit
-//! before any lane can overflow.
+//! before any lane can overflow. The same lanes stored as `[u16; N]` are the
+//! [`WithCommitAccumulator::CommitLanes`] form.
 //!
 //! The baseline's NEON intrinsic Add/Sub/Neg lane paths are dropped: LLVM
 //! auto-vectorizes the element-wise `[i32; N]` code to the identical
@@ -32,10 +33,9 @@ use crate::{
     Unreduced, WithCommitAccumulator,
 };
 
-/// Splits a canonical value into 16-bit digits stored one per `i32` lane.
 #[inline(always)]
-fn split16<const N: usize>(v: u128) -> [i32; N] {
-    std::array::from_fn(|i| ((v >> (16 * i)) & 0xFFFF) as i32)
+fn split16<const N: usize>(v: u128) -> [u16; N] {
+    std::array::from_fn(|i| (v >> (16 * i)) as u16)
 }
 
 /// `Σᵢ laneᵢ · 2^{16i}` as a signed integer. Max magnitude for ≤ 4 lanes:
@@ -80,27 +80,41 @@ macro_rules! wide_lanes {
 }
 
 wide_lanes! {
-    /// Wide unreduced accumulator for [`Fp32`]: 2 × `i32` lanes.
     Fp32x2i32: 2;
-    /// Wide unreduced accumulator for [`Fp64`]: 4 × `i32` lanes.
     Fp64x4i32: 4;
-    /// Wide unreduced accumulator for [`Fp128`]: 8 × `i32` lanes (one
-    /// 256-bit vector register on AVX2, two 128-bit on NEON).
     Fp128x8i32: 8;
 }
 
 const MAX_WIDE_LANE_ACCUMULATIONS: usize = (i32::MAX as usize) / (u16::MAX as usize);
 
-impl<const P: u32> WithCommitAccumulator for Fp32<P> {
-    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+macro_rules! impl_commit_accumulator {
+    ($(impl[$($g:tt)*] $field:ty => $wide:ty, $n:literal;)*) => {$(
+        impl<$($g)*> WithCommitAccumulator for $field {
+            const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+            type CommitLanes = [u16; $n];
+
+            #[inline(always)]
+            fn flatten_commit_lanes(lanes: &[[u16; $n]]) -> &[u16] {
+                lanes.as_flattened()
+            }
+
+            #[inline(always)]
+            fn flatten_wide_mut(wide: &mut [$wide]) -> &mut [i32] {
+                // SAFETY: `$wide` is `repr(C)` with the single field
+                // `[i32; $n]`, as for `flatten_commit_lanes`; every `i32` is a
+                // valid lane, and the result holds the unique borrow of `wide`.
+                unsafe {
+                    std::slice::from_raw_parts_mut(wide.as_mut_ptr().cast(), wide.len() * $n)
+                }
+            }
+        }
+    )*};
 }
 
-impl<const P: u64> WithCommitAccumulator for Fp64<P> {
-    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
-}
-
-impl<const P: u128> WithCommitAccumulator for Fp128<P> {
-    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+impl_commit_accumulator! {
+    impl[const P: u32] Fp32<P> => Fp32x2i32, 2;
+    impl[const P: u64] Fp64<P> => Fp64x4i32, 4;
+    impl[const P: u128] Fp128<P> => Fp128x8i32, 8;
 }
 
 macro_rules! product_accum {
@@ -134,13 +148,14 @@ product_accum! {
     /// `2^64` terms.
     Fp64ProductAccum: 2;
     /// Accumulator for `Fp128 × u64` products (3 result limbs of
-    /// `mul_wide_u64`, one per slot). Each slot grows by `< 2^64` per term;
-    /// headroom `2^64 − 1` terms (the reduction's carry chain needs
-    /// `sᵢ + carry < 2^128`, see `Fp128::reduce_small_product`).
+    /// `mul_wide_u64`, one per slot). Slot 0 grows by `< 2^64` per term and
+    /// slots 1–2 by `< 2^65` (`Fp128SignedAccumulator::fmadd_i128` folds its
+    /// top limb into them); headroom `2^62` terms (the reduction's carry
+    /// chain needs `sᵢ + carry < 2^128`, see `Fp128::reduce_small_product`).
     Fp128MulU64Accum: 3;
     /// Accumulator for `Fp128 × Fp128` products (4 result limbs of
-    /// `mul_wide`, one per slot). Headroom `2^64 − 1` terms, as for
-    /// [`Fp128MulU64Accum`].
+    /// `mul_wide`, one per slot). Each slot grows by `< 2^64` per term;
+    /// headroom `2^64 − 1` terms (see `Fp128::reduce_product`).
     Fp128ProductAccum: 4;
     /// Accumulator for `FpExt4<Fp32>` products with delayed reduction: one
     /// slot per ring-subfield coefficient. The φ(X) ring reduction is fused
@@ -164,7 +179,6 @@ product_accum! {
     FpExt2Fp64ProductAccum: 4;
 }
 
-/// Lifts of a canonical element into its accumulator/lane shapes.
 macro_rules! impl_from {
     ($(impl[$($g:tt)*] $src:ty => $dst:ty { $x:ident => $body:expr })*) => {$(
         impl<$($g)*> From<$src> for $dst {
@@ -177,9 +191,12 @@ macro_rules! impl_from {
 }
 
 impl_from! {
-    impl[const P: u32] Fp32<P> => Fp32x2i32 { x => Self(split16(x.to_limbs() as u128)) }
-    impl[const P: u64] Fp64<P> => Fp64x4i32 { x => Self(split16(x.to_limbs() as u128)) }
-    impl[const P: u128] Fp128<P> => Fp128x8i32 { x => Self(split16(x.to_canonical_u128())) }
+    impl[const P: u32] Fp32<P> => [u16; 2] { x => split16(x.to_limbs() as u128) }
+    impl[const P: u64] Fp64<P> => [u16; 4] { x => split16(x.to_limbs() as u128) }
+    impl[const P: u128] Fp128<P> => [u16; 8] { x => split16(x.to_canonical_u128()) }
+    impl[const P: u32] Fp32<P> => Fp32x2i32 { x => Self(<[u16; 2]>::from(x).map(i32::from)) }
+    impl[const P: u64] Fp64<P> => Fp64x4i32 { x => Self(<[u16; 4]>::from(x).map(i32::from)) }
+    impl[const P: u128] Fp128<P> => Fp128x8i32 { x => Self(<[u16; 8]>::from(x).map(i32::from)) }
     impl[const P: u32] Fp32<P> => Fp32ProductAccum { x => Self([x.to_limbs() as u128, 0]) }
     impl[const P: u64] Fp64<P> => Fp64ProductAccum { x => Self([x.to_limbs() as u128, 0]) }
     impl[const P: u128] Fp128<P> => Fp128MulU64Accum {
@@ -325,8 +342,10 @@ impl<const P: u128> Unreduced for Fp128<P> {
         ])
     }
 
-    /// Same carry chain and headroom as
-    /// [`reduce_product`](Self::reduce_product), one limb shorter.
+    /// Same carry chain as [`reduce_product`](Self::reduce_product), one
+    /// limb shorter. With `k ≤ 2^62` terms slot 0 is `< k·2^64`, slots 1–2
+    /// are `< k·2^65 ≤ 2^127` and each carry is `< 2^64`, so
+    /// `sᵢ + carry < 2^128`.
     #[inline]
     fn reduce_small_product(accum: Fp128MulU64Accum) -> Self {
         let [s0, s1, s2] = accum.0;
@@ -546,7 +565,6 @@ fn fp_ext2_mul_to_accum_fp64<const P: u64, C: Ext2Config<Fp64<P>>>(
         let hi_carry = (carry_add as u128) - (borrow as u128);
         fp64_accum_limbs(diff, hi_carry)
     } else {
-        // c0 = p00 + 2·p11.
         let (sum1, carry1) = p00.overflowing_add(p11);
         let (sum2, carry2) = sum1.overflowing_add(p11);
         fp64_accum_limbs(sum2, (carry1 as u128) + (carry2 as u128))
@@ -674,7 +692,6 @@ unreduced_identity!(impl[const P: u64] FpExt4<Fp64<P>>, base: Fp64<P>);
 unreduced_identity!(impl[const P: u128] FpExt4<Fp128<P>>, base: Fp128<P>);
 unreduced_identity!(impl[F: PseudoMersenne] FpExt8<F>, base: F);
 
-/// Default [`Fold`]: no precomputation, one generic multiply per pair.
 macro_rules! fold_default {
     (impl[$($g:tt)*] $ty:ty) => {
         impl<$($g)*> Fold for $ty {

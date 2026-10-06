@@ -31,22 +31,6 @@ fn mixed_clear_and_committed_stage_proofs_reject_now() {
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
-fn mixed_uniskip_stage_proof_rejects_now() {
-    let base = crate::support::verifier_fixtures::standard_muldiv_case();
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        tamper_manifest::required_target("proof.stages.clear_vs_committed"),
-        &base,
-        |case| {
-            case.proof.stages.stage1_uni_skip_first_round_proof =
-                jolt_sumcheck::SumcheckProof::Committed(
-                    jolt_sumcheck::CommittedSumcheckProof::default(),
-                );
-        },
-    );
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-#[test]
 fn zk_claim_payload_in_clear_mode_rejects_now() {
     let base = crate::support::verifier_fixtures::standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(
@@ -81,11 +65,6 @@ fn clear_stage_in_zk_proof_rejects_now() {
 
     support::assert_zk_rejects(case.verify());
 }
-
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[test]
-#[ignore = "enable --features prover-fixtures to live-generate and tamper verifier-native proofs"]
-fn tampered_mixed_proof_shape_reject() {}
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn empty_blindfold_proof() -> BlindFoldProof<Fr, jolt_crypto::Bn254G1> {

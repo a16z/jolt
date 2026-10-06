@@ -24,7 +24,7 @@
 //! An optimization agent can therefore target any span it discovers in a
 //! trace without editing `jolt-eval`; parsed keys are interned
 //! (`Box::leak`) so the objective stays `Copy` like every other
-//! [`OptimizationObjective`](super::OptimizationObjective) variant.
+//! [`OptimizationObjective`] variant.
 
 use std::path::Path;
 use std::process::Command;
@@ -46,7 +46,6 @@ pub const WORKLOAD_SCALES: &[(&str, u32)] = &[
 /// The `summary.json` schema version this parser understands.
 const SUPPORTED_SCHEMA_VERSION: u64 = 1;
 
-/// Which summary field a telemetry key reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TelemetryMetric {
     /// Root-span duration, seconds.
@@ -534,7 +533,6 @@ mod tests {
             TelemetryObjective::parse("telemetry:fibonacci:heap:Stage2Batch_prepared:KernelB")
                 .unwrap();
         assert!(absent_root.extract(&summary).is_err());
-        // An allocative-less run serializes "heap": {} — still an error.
         let lane_off: Value = serde_json::json!({ "schema_version": 1, "heap": {} });
         assert!(total.extract(&lane_off).is_err());
     }

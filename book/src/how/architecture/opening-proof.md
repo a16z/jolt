@@ -16,7 +16,7 @@ These claim reduction sumchecks serve two purposes:
 1. Reduce the number of claims that need to be virtualized by a subsequent sumcheck. E.g. if the same virtual polynomial $P$ is opened at two different points $r_1$ and $r_2$, a claim reduction can be applied to avoid running two instances of the sumcheck that virtualized $P$. 
 2. Reduce the number of claims that need to be proven via PCS opening proof. Dory's homomorphic batching and Akita's prefix packing both use claims at a common point. Akita's independently committed objects can retain their own opening points in the final grouped proof.
 
-The claim reduction sumchecks can be found in `crates/jolt-prover-legacy/src/zkvm/claim_reductions/` and include:
+The claim-reduction formulas live in `crates/jolt-claims/src/protocols/jolt/relations/claim_reductions/`, with prover kernels in `crates/jolt-kernels/src/optimized/`. They include:
 
 - **Instruction lookups** (`instruction_lookups.rs`): Aggregates instruction lookup claims (lookup outputs and operands) from Spartan.
 - **Registers** (`registers.rs`): Reduces register read/write claims (rd, rs1, rs2) from Spartan.
@@ -259,7 +259,7 @@ r_{\mathrm{inc}}
 \big].
 $$
 
-The implementation is located in `compute_final_opening_point()` in `crates/jolt-prover-legacy/src/zkvm/mod.rs`.
+The implementation is `final_opening_point()` in `crates/jolt-claims/src/protocols/jolt/geometry/committed_openings.rs`; Stage 8 calls it from `crates/jolt-prover/src/dory/stages/stage8.rs`.
 
 #### Embedded Precommitted Polynomials
 

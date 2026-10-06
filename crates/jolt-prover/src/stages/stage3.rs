@@ -64,7 +64,6 @@ where
     let product_tau_low = stage2.product_tau_low.clone();
     let product_remainder_point = stage2.output_points.product_remainder_point().to_vec();
 
-    // The generated stage drivers, on the verifier's own batch type.
     let sumchecks = Stage3Sumchecks {
         shift: SpartanShift::new(
             trace_dimensions,

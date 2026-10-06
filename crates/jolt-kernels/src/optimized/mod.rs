@@ -1,8 +1,6 @@
-//! The optimized backend: legacy-ported kernels behind the same slots the
-//! reference backend serves, byte-identical round polynomials and output
-//! claims by construction (the parity tests in each module pin them against
-//! the naive tier on synthetic traces; `byte_diff` pins the full proofs
-//! against `jolt-prover-legacy`).
+//! The optimized backend: kernels behind the same slots the reference backend
+//! serves. Parity tests in each module pin round polynomials and output claims
+//! against the reference tier on synthetic traces.
 //!
 //! The shared playbook, per kernel:
 //! - **Sparse one-hot access**: per-cycle hot indices off typed witness
@@ -19,8 +17,8 @@
 //!   byte-identical.
 //! - **Eval-at-1 recovery**: round messages sample the summand at
 //!   `t ∈ {0, 2, .., degree}` and recover `s(1) = previous_claim − s(0)`,
-//!   the same trade the legacy prover makes (a dishonest input claim
-//!   surfaces at the driver's final-claim check instead of the round check).
+//!   so a dishonest input claim surfaces at the driver's final-claim check
+//!   instead of the round check.
 //! - **Rayon cycle walks** with per-thread partial accumulators.
 //!
 //! Each module documents its own port; [`JoltBackend::optimized`] wires them.
@@ -28,6 +26,14 @@
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
+#[cfg(feature = "field-inline")]
+use self::field_registers_claim_reduction::OptimizedFieldRegistersClaimReduction;
+#[cfg(feature = "field-inline")]
+use self::field_registers_inc_claim_reduction::OptimizedFieldRegistersIncClaimReduction;
+#[cfg(feature = "field-inline")]
+use self::field_registers_read_write::OptimizedFieldRegistersReadWrite;
+#[cfg(feature = "field-inline")]
+use self::field_registers_val_evaluation::OptimizedFieldRegistersValEvaluation;
 use crate::commitment::ModeStreamingCommitment;
 
 use crate::JoltBackend;
@@ -35,6 +41,14 @@ use crate::JoltBackend;
 pub mod booleanity;
 pub mod bytecode_read_raf;
 pub mod commitment;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_claim_reduction;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_inc_claim_reduction;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_read_write;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_val_evaluation;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
 pub mod instruction_claim_reduction;
@@ -52,6 +66,7 @@ pub mod ram_raf_evaluation;
 pub mod ram_read_write;
 mod ram_trace;
 pub mod ram_val_check;
+mod read_write;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
@@ -59,7 +74,7 @@ mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
-mod support;
+pub(crate) mod support;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
@@ -124,6 +139,15 @@ where
         self.registers_claim_reduction =
             Box::new(registers_claim_reduction::OptimizedRegistersClaimReduction);
 
+        #[cfg(feature = "field-inline")]
+        {
+            self.field_registers_claim_reduction = Box::new(OptimizedFieldRegistersClaimReduction);
+            self.field_registers_read_write = Box::new(OptimizedFieldRegistersReadWrite);
+            self.field_registers_val_evaluation = Box::new(OptimizedFieldRegistersValEvaluation);
+            self.field_registers_inc_claim_reduction =
+                Box::new(OptimizedFieldRegistersIncClaimReduction);
+        }
+
         self.booleanity_address = Box::new(booleanity::OptimizedBooleanityAddress);
         self.booleanity_cycle = Box::new(booleanity::OptimizedBooleanityCycle);
         self.ram_hamming_booleanity =
@@ -138,7 +162,7 @@ where
         self.untrusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
         self.bytecode_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
         self.program_image_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
-        self.advice_opening = Box::new(OptimizedPrecommittedCycle);
+        self.ram_initial_openings = Box::new(OptimizedPrecommittedCycle);
         self.trusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
             "stage 6b parked no trusted-advice reduction state for the scheduled address phase",
         ));
@@ -156,6 +180,8 @@ where
     }
 }
 
+#[cfg(all(test, feature = "field-inline"))]
+pub(crate) mod field_registers_testing;
 #[cfg(test)]
 pub(crate) mod parity;
 #[cfg(test)]

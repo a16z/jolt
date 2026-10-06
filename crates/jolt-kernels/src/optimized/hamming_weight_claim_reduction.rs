@@ -1,9 +1,7 @@
 //! Optimized Hamming-weight claim-reduction (stage 7) kernel, byte-parity
 //! twin of [`crate::reference::hamming_weight_claim_reduction`].
 //!
-//! Ported legacy techniques
-//! (`jolt-prover-legacy/src/zkvm/claim_reductions/hamming_weight.rs` +
-//! `poly/shared_ra_polys.rs::compute_all_G`):
+//! Carries forward the former prover's shared-RA `compute_all_G` technique:
 //!
 //! - **Shared-eq pushforwards over every RA family in one trace pass**: each
 //!   `G_i(k) = Σ_j eq(r_cycle, j) · ra_i(k, j)` collapses, for a one-hot
@@ -385,7 +383,6 @@ impl<F: JoltField> HammingWeightKernel<F> {
         self.progress.advance();
     }
 
-    /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
         let mut out = [F::zero(); 2];
@@ -450,11 +447,6 @@ impl<F: JoltField> SumcheckKernel<F> for HammingWeightKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel over the sample backend. All
-/// three families are live at fixture scale (the instruction family alone
-/// contributes 128/log_k_chunk polynomials), so the multi-family pushforward
-/// walk, cold RAM/bytecode cycles, and per-polynomial weight fusion are all
-/// exercised.
 #[cfg(all(test, not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

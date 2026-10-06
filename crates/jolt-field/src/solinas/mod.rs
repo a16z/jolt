@@ -34,14 +34,12 @@ pub const PRIME_OFFSET_MAX: u128 = 1 << 16;
 /// Current active bit-size bound for concrete field aliases.
 pub const PRIME_OFFSET_IMPLEMENTED_MAX_BITS: u32 = 128;
 
-/// Metadata describing a registered `2^k − offset` pseudo-Mersenne modulus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrimeOffsetSpec {
     /// `k` in `2^k − offset`.
     pub bits: u32,
     /// `offset` in `2^k − offset`.
     pub offset: u16,
-    /// Modulus value.
     pub modulus: u128,
 }
 
@@ -141,27 +139,20 @@ pub const fn is_registered_prime_offset(bits: u32, offset: u128) -> bool {
         && registered_prime_offset_spec(bits, offset).is_some()
 }
 
-/// Prime field for `2^24 - 3`.
 pub type Prime24Offset3 = Fp32<{ pm(24, 3) as u32 }>;
-/// Prime field for `2^30 - 35`.
 pub type Prime30Offset35 = Fp32<{ pm(30, 35) as u32 }>;
-/// Prime field for `2^31 - 19`.
 pub type Prime31Offset19 = Fp32<{ pm(31, 19) as u32 }>;
-/// Prime field for `2^32 - 99`.
 pub type Prime32Offset99 = Fp32<{ pm(32, 99) as u32 }>;
-/// Prime field for `2^40 - 195`.
 pub type Prime40Offset195 = Fp64<{ pm(40, 195) as u64 }>;
-/// Prime field for `2^48 - 59`.
 pub type Prime48Offset59 = Fp64<{ pm(48, 59) as u64 }>;
-/// Prime field for `2^56 - 27`.
 pub type Prime56Offset27 = Fp64<{ pm(56, 27) as u64 }>;
-/// Prime field for `2^64 - 59`.
 pub type Prime64Offset59 = Fp64<{ pm(64, 59) as u64 }>;
-/// Prime field for `2^128 − 275`.
 pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// Prime field for `2^128 − 2^32 + 22537` (`C = 0xFFFF_A7F7`): smooth
 /// multiplicative subgroup of order `2^3 · 3^7 = 17496` (pure radix-3
-/// subgroup `3^7 = 2187`). The default protocol prime.
+/// subgroup `3^7 = 2187`). The default protocol prime. Here `p ≡ 1 (mod 8)`,
+/// so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is
+/// a field: use it at extension degree 1.
 pub type Prime128OffsetA7F7 = Fp128<{ pm(128, 0xFFFF_A7F7) }>;
 
 /// Builds the balanced signed-digit table for `1 <= log_basis <= 6`.
@@ -242,8 +233,6 @@ mod sampling_tests {
 
     #[test]
     fn non_byte_aligned_modulus_masks_unused_high_bits() {
-        // 0xff_ff_ff_ff becomes 0x3f_ff_ff_ff at a 30-bit modulus width, then
-        // is rejected. The following little-endian candidate 42 is accepted.
         let mut rng = ScriptedRng::new(vec![0xff, 0xff, 0xff, 0xff, 42, 0, 0, 0]);
         assert_eq!(sample_uniform_below(&mut rng, (1u128 << 30) - 35, 30), 42);
         assert_eq!(rng.cursor, 8);
@@ -264,7 +253,8 @@ mod sampling_tests {
         let mut fp32_rng = ScriptedRng::new(fp32_bytes);
         assert_eq!(
             Prime32Offset99::random(&mut fp32_rng),
-            Prime32Offset99::from_canonical_u32(42)
+            // SAFETY: 42 is below Prime32Offset99::MODULUS.
+            unsafe { Prime32Offset99::from_canonical_u32(42) }
         );
         assert_eq!(fp32_rng.cursor, 8);
 
@@ -274,7 +264,8 @@ mod sampling_tests {
         let mut fp64_rng = ScriptedRng::new(fp64_bytes);
         assert_eq!(
             Prime64Offset59::random(&mut fp64_rng),
-            Prime64Offset59::from_canonical_u64(42)
+            // SAFETY: 42 is below Prime64Offset59::MODULUS.
+            unsafe { Prime64Offset59::from_canonical_u64(42) }
         );
         assert_eq!(fp64_rng.cursor, 16);
 
@@ -282,10 +273,11 @@ mod sampling_tests {
         let mut fp128_bytes = Vec::from(fp128_modulus.to_le_bytes());
         fp128_bytes.extend_from_slice(&42u128.to_le_bytes());
         let mut fp128_rng = ScriptedRng::new(fp128_bytes);
-        // SAFETY: 42 is below the field modulus.
-        assert_eq!(Prime128OffsetA7F7::random(&mut fp128_rng), unsafe {
-            Prime128OffsetA7F7::from_canonical_u128(42)
-        });
+        assert_eq!(
+            Prime128OffsetA7F7::random(&mut fp128_rng),
+            // SAFETY: 42 is below Prime128OffsetA7F7::MODULUS.
+            unsafe { Prime128OffsetA7F7::from_canonical_u128(42) }
+        );
         assert_eq!(fp128_rng.cursor, 32);
     }
 }

@@ -10,6 +10,8 @@ use jolt_claims::protocols::jolt::{
 };
 
 use super::*;
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldInlineWitnessOracle;
 use crate::witnesses::{
     BytecodeRaChunk, Imm, InstructionFlag, InstructionRaChunk, InstructionRafFlag,
     LeftInstructionInput, LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence,
@@ -20,14 +22,10 @@ use crate::witnesses::{
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
-/// Base-mode committed-program polynomials: precommitted from preprocessing,
-/// never derived from the execution trace.
 pub(crate) const COMMITTED_PROGRAM_REASON: &str =
     "committed-program polynomial served from preprocessing, not the execution trace";
-/// Openings produced by kernels during proving (owned by the proof session).
 pub(crate) const PROTOCOL_INTERMEDIATE_REASON: &str =
     "protocol intermediate produced during proving, never served by a witness backend";
-/// Vocabulary with no consumer on the modular stack; no derivation exists.
 pub(crate) const UNSERVED_REASON: &str =
     "no consumer on the modular stack; no trace derivation is defined";
 
@@ -265,5 +263,12 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
 
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         self.committed_polynomial_order()
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn field_inline(&self) -> Option<&dyn FieldInlineWitnessOracle<F>> {
+        self.field_inline
+            .as_ref()
+            .map(|witness| witness as &dyn FieldInlineWitnessOracle<F>)
     }
 }

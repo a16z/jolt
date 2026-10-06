@@ -5,6 +5,8 @@
 //!
 //! ```text
 //! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
+//! # Only the full-field dense family:
+//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules dense-full
 //! ```
 
 /// Emit-spec construction shared by the generator and drift tests.
@@ -20,18 +22,20 @@ pub mod emit {
     };
 
     use crate::configs::{
-        JoltDenseBounded, JoltOneHotK16, JoltOneHotK16Direct, JoltOneHotK256, JoltOneHotK256Direct,
+        JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16Direct, JoltOneHotK256,
+        JoltOneHotK256Direct,
     };
     use crate::planning::plan_schedule;
 
     /// Prefix packing produces one physical polynomial; two-polynomial rows
     /// cover adapter and tamper-test shapes.
     pub const ONE_HOT_TRACE_NUM_POLYS: &[usize] = &[1, 2];
-    /// K=16 adds six selector variables to column arity `4 + log_T`.
-    pub const K16_NUM_VARS: (usize, usize) = (12, 34);
+    /// K=16 adds six selector variables to column arity `4 + log_T`;
+    /// the catalog covers logical traces through `2^30`.
+    pub const K16_NUM_VARS: (usize, usize) = (12, 40);
     /// K=256 adds five selector variables to column arity `8 + log_T`.
     pub const K256_NUM_VARS: (usize, usize) = (12, 43);
-    /// Bounded-dense advice and committed-program byte objects.
+    /// Dense advice, committed-program, and field-register increment objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
 
     /// First Jolt trace exponent whose one-hot row uses setup offloading.
@@ -48,7 +52,6 @@ pub mod emit {
     /// Physical one-hot arity added to the logical trace exponent for K=256.
     pub const K256_PACKING_VARIABLES: usize = 13;
 
-    /// Pure DP regeneration for `Cfg`; never consults an artifact.
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
@@ -121,7 +124,7 @@ pub mod emit {
     ///
     /// Instance-specific grouped advice/program rows are planned during setup
     /// and folded into the exact catalog serialized with that verifier setup.
-    pub fn family_specs(output_dir: PathBuf) -> Result<[EmitSpec; 3], AkitaError> {
+    pub fn family_specs(output_dir: PathBuf) -> Result<[EmitSpec; 4], AkitaError> {
         Ok([
             spec::<JoltOneHotK16>(
                 JoltOneHotK16::schedule_family_name(),
@@ -142,6 +145,13 @@ pub mod emit {
                 ONE_HOT_TRACE_NUM_POLYS,
                 DENSE_NUM_VARS,
                 regen::<JoltDenseBounded>,
+                output_dir.clone(),
+            )?,
+            spec::<JoltDenseFull>(
+                JoltDenseFull::schedule_family_name(),
+                &[1],
+                DENSE_NUM_VARS,
+                regen::<JoltDenseFull>,
                 output_dir,
             )?,
         ])

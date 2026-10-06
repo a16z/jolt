@@ -110,7 +110,7 @@ pub trait CommitmentScheme: Commitment {
     // side-channel.
     fn prove_batch(
         _setup: &Self::ProverSetup,
-        _precommitted: Vec<PrecommittedOpening<Self::Field, Self::Output, Self::OpeningHint>>,
+        _groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         _final_group: GroupOpeningClaim<Self::Field, Self::Output>,
         _final_hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
@@ -124,7 +124,7 @@ pub trait CommitmentScheme: Commitment {
     /// at their group-local points, followed by a final commitment group.
     fn verify_batch(
         _setup: &Self::VerifierSetup,
-        _precommitted: &[PrecommittedClaim<Self::Field, Self::Output>],
+        _groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
         _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         _proof: &Self::Proof,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
@@ -147,6 +147,15 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Commit an arbitrary field-valued object for a later native group-batch opening.
+    /// Its source bound is independent of the default object setup's bound.
+    /// The object arity must have been admitted and prepared by preprocessing.
+    fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
+        setup: &Self::ProverSetup,
+        poly: &P,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
     /// Return the immutable context that admitted `setup`, for objects created
     /// later in the same preprocessing/proving run.
@@ -377,10 +386,17 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// The prover-side inputs are deliberately split into three parameters with
 /// distinct roles:
 ///
-/// - [`Statement`](Self::Statement) is the public input both sides agree on
-///   and bind to the transcript: the opening claims plus the commitments they
-///   refer to. Its shape is scheme-specific — [`HomomorphicBatch`] carries
-///   one commitment per claim.
+/// - [`Statement`](Self::Statement) is the public input both sides agree on:
+///   the opening claims plus the commitments they refer to. Its shape is
+///   scheme-specific — [`HomomorphicBatch`] carries one commitment per claim.
+///   The batch does not bind the commitments or the opening point itself; it
+///   absorbs at most the claimed values before drawing the batching challenge.
+///   The caller must have absorbed every commitment into `transcript` and
+///   derived the opening point from it before calling `prove_batch` or
+///   `verify_batch`, or the challenge is independent of the commitments and a
+///   prover can pick one after seeing it. In Jolt, `absorb_commitments` in
+///   `jolt-verifier` and the stage 1–7 sumcheck challenges pin this before
+///   stage 8.
 /// - [`Polynomials`](Self::Polynomials) are the borrowed prover-side
 ///   polynomial sources backing the statement; the verifier never sees them.
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
@@ -389,7 +405,9 @@ pub trait BatchOpeningScheme {
     type Field: JoltField;
     type ProverSetup;
     type VerifierSetup;
-    /// Public opening claims plus the commitments they refer to.
+    /// Public opening claims plus the commitments they refer to. Not
+    /// transcript-bound by the batch; see the trait docs for the caller's
+    /// obligation.
     type Statement;
     /// Borrowed prover-side polynomial sources backing the statement.
     type Polynomials<'a>
@@ -739,8 +757,7 @@ where
     }
 }
 
-/// One physical commitment group's opening claim. Precommitted groups carry
-/// their own [`PrecommittedRole`]; the final trace group is always last.
+/// One physical commitment group's opening claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupOpeningClaim<F, C> {
     pub commitment: C,
@@ -758,16 +775,16 @@ impl<F, C> GroupOpeningClaim<F, C> {
     }
 }
 
-/// Protocol-supplied identity of one precommitted group.
+/// Protocol-supplied identity and batch order of one commitment group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PrecommittedRole {
+pub struct CommitmentGroupRole {
     order: u64,
     transcript_label: &'static [u8],
     diagnostic_name: &'static str,
     transcript_index: Option<u64>,
 }
 
-impl PrecommittedRole {
+impl CommitmentGroupRole {
     pub const fn new(
         order: u64,
         transcript_label: &'static [u8],
@@ -805,7 +822,6 @@ impl PrecommittedRole {
         self.transcript_label
     }
 
-    /// Protocol-defined name used in validation diagnostics.
     pub const fn diagnostic_name(self) -> &'static str {
         self.diagnostic_name
     }
@@ -816,19 +832,19 @@ impl PrecommittedRole {
     }
 }
 
-/// One precommitted group's public opening claim, tagged with its role.
+/// One commitment group's public opening claim, tagged with its protocol role.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrecommittedClaim<F, C> {
-    pub role: PrecommittedRole,
+pub struct TaggedGroupOpeningClaim<F, C> {
+    pub role: CommitmentGroupRole,
     pub claim: GroupOpeningClaim<F, C>,
 }
 
-/// One precommitted group's public claim paired with the prover's retained
+/// One commitment group's tagged claim paired with the prover's retained
 /// opening hint.
-pub type PrecommittedOpening<F, C, H> = (PrecommittedClaim<F, C>, H);
+pub type GroupOpeningWithHint<F, C, H> = (TaggedGroupOpeningClaim<F, C>, H);
 
-impl<F, C> PrecommittedClaim<F, C> {
-    pub fn new(role: PrecommittedRole, claim: GroupOpeningClaim<F, C>) -> Self {
+impl<F, C> TaggedGroupOpeningClaim<F, C> {
+    pub fn new(role: CommitmentGroupRole, claim: GroupOpeningClaim<F, C>) -> Self {
         Self { role, claim }
     }
 }
