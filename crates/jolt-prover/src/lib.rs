@@ -10,8 +10,6 @@
 
 #[cfg(feature = "zk")]
 mod blindfold;
-#[cfg(feature = "profiling")]
-pub mod compare;
 mod config;
 pub mod driver;
 mod error;

@@ -77,11 +77,9 @@ cargo run --release -p jolt-prover --features profiling -- benchmark --min-scale
 # Per-batch heap snapshots (*.folded in the run directory, exact bytes; totals in summary.json's .heap; rendered by memory.html)
 cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome
 
-# Legacy comparison (the CUDA performance gate): both provers, one guest/input,
-# median of N, proof bytes asserted identical. --skip-modular records the legacy
-# target (the reference tier is ~230x slower, so it cannot run at gate scales);
-# --skip-legacy iterates on a kernel. Baselines: sha2-chain 2^20 = 9.4s, 2^22 = 19.1s.
-cargo run --release -p jolt-prover --features profiling,cuda -- compare --name sha2-chain --scale 22 --backend cuda
+# CUDA backend; device count comes from JOLT_CUDA_GPUS (default 1).
+# Baselines for the legacy performance gate: sha2-chain 2^20 = 9.4s, 2^22 = 19.1s.
+JOLT_CUDA_GPUS=2 cargo run --release -p jolt-prover --features profiling,cuda -- profile --name sha2-chain --scale 22 --backend cuda
 
 # jolt-eval telemetry objectives over the same summary (grammar: telemetry:<workload>:<metric>)
 cargo run -p jolt-eval --bin measure-objectives -- --objective telemetry:fibonacci:prover_time_s

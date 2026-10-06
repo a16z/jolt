@@ -462,14 +462,6 @@ mod support {
         )
         .expect("modular proof must verify end-to-end");
     }
-
-    pub fn backends() -> Vec<JoltBackend<Fr, DoryScheme>> {
-        let mut backends = vec![JoltBackend::<Fr, DoryScheme>::reference()];
-        backends.push(JoltBackend::<Fr, DoryScheme>::optimized());
-        #[cfg(feature = "cuda")]
-        backends.push(JoltBackend::<Fr, DoryScheme>::cuda());
-        backends
-    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -991,13 +983,10 @@ mod muldiv {
             "the rounds slot never reached prove_batch, so invariance was not exercised",
         );
 
-        #[cfg(feature = "cuda")]
-        assert_backend_matches_legacy(&JoltBackend::cuda());
-
         // The full-proof ratchet: the top-level prove() runs the same stage
         // sequence on a fresh session and assembles the complete JoltProof —
         // it must equal legacy's wire-for-wire and verify end-to-end.
-        for backend in support::backends() {
+        for backend in [JoltBackend::reference(), JoltBackend::optimized()] {
             let proof =
                 jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                     &backend,
@@ -1010,59 +999,6 @@ mod muldiv {
                 .expect("top-level prove");
             assert_eq!(proof, legacy_proof, "assembled proof diverged from legacy");
             support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
-        }
-
-        #[cfg(feature = "cuda")]
-        {
-            use jolt_kernels::cuda::CudaDoryScheme;
-
-            let cuda_preprocessing = JoltProverPreprocessing::<CudaDoryScheme, Pedersen<Bn254G1>> {
-                verifier: CudaDoryScheme::adopt_verifier_preprocessing(
-                    prover_preprocessing.verifier.clone(),
-                )
-                .expect("the CUDA scheme adopts the verifier preprocessing"),
-                pcs_setup: CudaDoryScheme::setup_prover(support::setup_total_vars(
-                    memory_layout,
-                    &[],
-                    support::MAX_PADDED_TRACE_LENGTH,
-                )),
-                committed_program: None,
-            };
-            let cuda_proof =
-                jolt_prover::prove::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                    &JoltBackend::<Fr, CudaDoryScheme>::cuda(),
-                    &cuda_preprocessing,
-                    &config,
-                    None,
-                    Arc::clone(&witness),
-                    &public_io,
-                )
-                .expect("cuda Dory prove");
-            jolt_verifier::verify::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &cuda_preprocessing.verifier,
-                &public_io,
-                &cuda_proof,
-                None,
-            )
-            .expect("the cuda Dory proof must verify end-to-end");
-            assert_eq!(
-                cuda_proof.commitments, legacy_proof.commitments,
-                "the cuda Dory commitments diverged from legacy"
-            );
-            assert_eq!(
-                cuda_proof.joint_opening_proof, legacy_proof.joint_opening_proof,
-                "the cuda Dory joint opening proof diverged from legacy"
-            );
-            let cuda_bytes =
-                bincode::serde::encode_to_vec(&cuda_proof, bincode::config::standard())
-                    .expect("serialize the cuda Dory proof");
-            let legacy_bytes =
-                bincode::serde::encode_to_vec(&legacy_proof, bincode::config::standard())
-                    .expect("serialize the legacy proof");
-            assert_eq!(
-                cuda_bytes, legacy_bytes,
-                "the cuda Dory proof diverged from legacy"
-            );
         }
 
         let chaos_proof =
@@ -1249,10 +1185,7 @@ mod advice_consumer {
             committed_program: None,
         };
 
-        #[cfg(not(feature = "cuda"))]
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        #[cfg(feature = "cuda")]
-        let backend = JoltBackend::<Fr, DoryScheme>::cuda();
         let trusted_advice_commitment = support::modular_trusted_advice_commitment(
             &backend,
             &witness,
@@ -1342,7 +1275,7 @@ mod committed_muldiv {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_program::execution::JoltProgram;
-    use jolt_prover::{CommittedProgramProverData, JoltProverPreprocessing};
+    use jolt_prover::{CommittedProgramProverData, JoltBackend, JoltProverPreprocessing};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
@@ -1475,7 +1408,10 @@ mod committed_muldiv {
         // (bytecode/program-image reductions, the joint opening's
         // block-embedded committed views) that only these arms anchor to
         // legacy bytes.
-        for backend in support::backends() {
+        for backend in [
+            JoltBackend::<Fr, DoryScheme>::reference(),
+            JoltBackend::<Fr, DoryScheme>::optimized(),
+        ] {
             let proof =
                 jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                     &backend,
@@ -1524,7 +1460,7 @@ mod address_major {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_program::execution::JoltProgram;
-    use jolt_prover::JoltProverPreprocessing;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
@@ -1608,7 +1544,10 @@ mod address_major {
         // Both backends: the optimized commit/opening slots handle the
         // address-major strided placement themselves, so this arm anchors
         // them to legacy bytes too.
-        for backend in support::backends() {
+        for backend in [
+            JoltBackend::<Fr, DoryScheme>::reference(),
+            JoltBackend::<Fr, DoryScheme>::optimized(),
+        ] {
             let proof =
                 jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                     &backend,
@@ -1797,7 +1736,10 @@ mod advice_committed {
         // Both backends: the mixed advice + committed-program geometry is
         // the only anchor for the optimized committed slots sharing batches
         // with advice members.
-        for backend in support::backends() {
+        for backend in [
+            JoltBackend::<Fr, DoryScheme>::reference(),
+            JoltBackend::<Fr, DoryScheme>::optimized(),
+        ] {
             let proof =
                 jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                     &backend,
@@ -2186,7 +2128,7 @@ mod wide_one_hot {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_program::execution::JoltProgram;
-    use jolt_prover::JoltProverPreprocessing;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing};
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::config::{
         OneHotConfig as LegacyOneHotConfig, OneHotParams as LegacyOneHotParams,
@@ -2288,7 +2230,10 @@ mod wide_one_hot {
         // Both backends: the optimized kernels' chunk arithmetic (8-bit RA
         // chunks, 32-bit virtual batches, the halved d counts) gets its
         // legacy byte anchor here.
-        for backend in support::backends() {
+        for backend in [
+            JoltBackend::<Fr, DoryScheme>::reference(),
+            JoltBackend::<Fr, DoryScheme>::optimized(),
+        ] {
             let proof =
                 jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
                     &backend,

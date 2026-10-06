@@ -38,10 +38,8 @@ use std::time::{Duration, Instant};
 use clap::ValueEnum;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_crypto::{Bn254G1, Pedersen};
-use jolt_dory::{DoryProverSetup, DoryScheme};
+use jolt_dory::DoryScheme;
 use jolt_field::Fr;
-#[cfg(feature = "cuda")]
-use jolt_kernels::cuda::CudaDoryScheme;
 // Keep the inline libraries linked so their host-side registrations reach the
 // tracer, exactly as the legacy harness does.
 use jolt_inlines_keccak256 as _;
@@ -66,6 +64,9 @@ use tracer::execution_backend::TracerBackend;
 
 use crate::{JoltBackend, JoltProverPreprocessing, ProverConfig};
 
+#[cfg(feature = "cuda")]
+mod cuda;
+
 // Empirically measured cycles per operation for RV64IMAC — copied from the
 // legacy harness (`benches/e2e_profiling.rs`) so both harnesses construct
 // identical guest inputs for a given scale.
@@ -73,7 +74,7 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
-pub(crate) const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
+const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
@@ -219,11 +220,6 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
-
-    /// CUDA devices to split the proof across (`cuda` backend only).
-    #[cfg(feature = "cuda")]
-    #[clap(long, default_value_t = 1)]
-    pub gpus: usize,
 }
 
 /// `benchmark` subcommand arguments: a multi-scale sweep over the workload
@@ -270,7 +266,7 @@ pub struct ProfileArtifacts {
 const MAX_SCALE: u32 = 40;
 
 /// Rejects out-of-range log2 trace lengths before they wrap a shift.
-pub(crate) fn validate_scale(scale: u32) {
+fn validate_scale(scale: u32) {
     assert!(
         (1..=MAX_SCALE).contains(&scale),
         "--scale {scale} out of range: expected a log2 trace length in 1..={MAX_SCALE}"
@@ -320,8 +316,6 @@ impl Drop for RunLock {
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
-    #[cfg(feature = "cuda")]
-    jolt_kernels::cuda::request_devices(args.gpus);
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
     let trace_name = format!(
@@ -522,61 +516,6 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     failed.is_empty()
 }
 
-#[cfg(feature = "cuda")]
-const DEVICE_MEMORY_INTERVAL_VARIABLE: &str = "JOLT_CUDA_MEM_INTERVAL_MS";
-
-#[cfg(feature = "cuda")]
-struct DeviceMemorySampler {
-    stop: Arc<std::sync::atomic::AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
-}
-
-#[cfg(feature = "cuda")]
-impl DeviceMemorySampler {
-    fn start() -> Self {
-        let interval = Duration::from_millis(
-            std::env::var(DEVICE_MEMORY_INTERVAL_VARIABLE)
-                .ok()
-                .and_then(|value| value.trim().parse::<u64>().ok())
-                .unwrap_or(10)
-                .max(1),
-        );
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag = Arc::clone(&stop);
-        let handle = std::thread::Builder::new()
-            .name("cuda-mem-sampler".to_string())
-            .spawn(move || {
-                let mib = |used: &[usize], ordinal: usize| {
-                    used.get(ordinal).copied().unwrap_or(0) as f64 / (1024.0 * 1024.0)
-                };
-                while !flag.load(std::sync::atomic::Ordering::Acquire) {
-                    let used = jolt_kernels::cuda::device_memory_used();
-                    tracing::debug!(
-                        counters.device0_mib = mib(&used, 0),
-                        counters.device1_mib = mib(&used, 1),
-                        counters.device2_mib = mib(&used, 2),
-                        counters.device3_mib = mib(&used, 3),
-                        counters.device_mib_total =
-                            used.iter().sum::<usize>() as f64 / (1024.0 * 1024.0),
-                    );
-                    std::thread::sleep(interval);
-                }
-            })
-            .ok();
-        Self { stop, handle }
-    }
-}
-
-#[cfg(feature = "cuda")]
-impl Drop for DeviceMemorySampler {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Release);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
 fn measure_prove<PCS, W>(
     backend: &JoltBackend<Fr, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, Pedersen<Bn254G1>>,
@@ -591,8 +530,6 @@ where
     PCS::Output: jolt_transcript::AppendToTranscript + jolt_crypto::HomomorphicCommitment<Fr>,
     W: jolt_witness::JoltWitnessPlane<Fr> + 'static,
 {
-    #[cfg(feature = "cuda")]
-    jolt_kernels::cuda::xfer_stats::reset();
     let now = Instant::now();
     let proof = crate::prove::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript, W>(
         backend,
@@ -698,18 +635,11 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // materialization, commitment, all sumcheck stages, joint opening). The
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
-    let setup_width = 1usize << total_vars.div_ceil(2);
-    let shared_setup = (legacy_preprocessing.generators.g1_vec.len() >= setup_width
-        && legacy_preprocessing.generators.g2_vec.len() >= setup_width)
-        .then(|| DoryProverSetup(legacy_preprocessing.generators.clone()));
-
-    #[cfg(feature = "cuda")]
-    let device_memory = DeviceMemorySampler::start();
     let (duration, proof_size) = match backend {
         BackendKind::Reference | BackendKind::Optimized => {
             let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
                 verifier: verifier_preprocessing,
-                pcs_setup: shared_setup.unwrap_or_else(|| DoryScheme::setup_prover(total_vars)),
+                pcs_setup: DoryScheme::setup_prover(total_vars),
                 committed_program: None,
             };
             let backend = if matches!(backend, BackendKind::Reference) {
@@ -726,27 +656,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             )
         }
         #[cfg(feature = "cuda")]
-        BackendKind::Cuda => {
-            let prover_preprocessing = JoltProverPreprocessing::<CudaDoryScheme, Pedersen<Bn254G1>> {
-                verifier: CudaDoryScheme::adopt_verifier_preprocessing(verifier_preprocessing)
-                    .expect("the CUDA scheme adopts the verifier preprocessing"),
-                pcs_setup: shared_setup.unwrap_or_else(|| CudaDoryScheme::setup_prover(total_vars)),
-                committed_program: None,
-            };
-            let backend = JoltBackend::<Fr, CudaDoryScheme>::cuda();
-            measure_prove(
-                &backend,
-                &prover_preprocessing,
-                &config,
-                Arc::clone(&witness),
-                &public_io,
-            )
-        }
+        BackendKind::Cuda => cuda::prove_measured(
+            verifier_preprocessing,
+            total_vars,
+            &config,
+            Arc::clone(&witness),
+            &public_io,
+        ),
     };
-    #[cfg(feature = "cuda")]
-    drop(device_memory);
-    #[cfg(feature = "cuda")]
-    let transfers = jolt_kernels::cuda::xfer_stats::snapshot();
 
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
     let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
@@ -765,10 +682,6 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             scale,
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
-    }
-    #[cfg(feature = "cuda")]
-    if transfers != jolt_kernels::cuda::xfer_stats::Snapshot::default() {
-        println!("{}", transfers.report());
     }
 
     // The legacy harness's 7 CSV fields plus a trailing backend column, in
@@ -864,7 +777,7 @@ pub fn pad_trace(
 }
 
 /// A word-aligned advice buffer's balanced Dory matrix variable count.
-pub(crate) fn advice_vars(max_advice_size_bytes: u64) -> usize {
+fn advice_vars(max_advice_size_bytes: u64) -> usize {
     ((max_advice_size_bytes / 8) as usize)
         .next_power_of_two()
         .max(1)
