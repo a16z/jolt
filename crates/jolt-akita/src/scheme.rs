@@ -96,7 +96,7 @@ impl TraceCommitmentBackend {
         match one_hot_k {
             // K16 packs ten address/column variables alongside the trace. The
             // D512 small-trace rows are qualified; T=2^17 uses unsupported D256.
-            AKITA_ONE_HOT_K16 => matches!(num_vars, 26 | 28..=32 | 34..=38),
+            AKITA_ONE_HOT_K16 => matches!(num_vars, 26 | 28..=38),
             AKITA_ONE_HOT_K256 => matches!(num_vars, 38..=41),
             _ => false,
         }

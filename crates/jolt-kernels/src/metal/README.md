@@ -127,7 +127,7 @@ cargo nextest run --release -p jolt-akita coefficient_packing
 ```
 
 The Akita commitment and opening routes admit packed arities 26 and 28 through
-32 (`2^16`- and `2^18`- through `2^22`-row K16 traces with column capacity 64),
+33 (`2^16`- and `2^18`- through `2^23`-row K16 traces with column capacity 64),
 in addition to their existing large-trace ranges. This uses the existing D512
 schedule and kernels; it does not change proof parameters or the verifier.
 The `2^17`-row catalog uses D256 and retains CPU routing; other adjacent arities
