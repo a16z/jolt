@@ -19,9 +19,6 @@ impl<F: JoltField> SparseDensePrefix<F> for LeftShiftPrefix {
         let (x_val, y_val) = (u64::from(x), u64::from(y));
         let n = y.len();
 
-        // Per-round recurrence at binary points:
-        //   result += x_i * (1-y_i) * prod * 2^(XLEN-1-j_start/2-i)
-        //   prod *= (1 + y_i)       [= 1 when y_i=0, 2 when y_i=1]
         let mut result = checkpoints[Prefixes::LeftShift];
         let mut prod = checkpoints[Prefixes::LeftShiftHelper];
         for i in 0..n {

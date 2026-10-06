@@ -1,5 +1,3 @@
-//! The akita path accepts every untampered fixture case.
-
 #![expect(
     clippy::expect_used,
     reason = "completeness fixtures should fail loudly when a valid proof is rejected"

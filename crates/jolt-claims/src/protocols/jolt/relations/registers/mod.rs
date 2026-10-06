@@ -1,5 +1,3 @@
-//! registers symbolic sumcheck relations.
-
 mod read_write_checking;
 mod val_evaluation;
 

@@ -34,9 +34,6 @@ fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    // String-keyed telemetry/callgrind objectives: parse, measure in the
-    // current directory (deterministic artifact paths — the objective owns
-    // the workload/scale), print one row, done.
     if let Some(keyed) = cli
         .objective
         .as_ref()
@@ -55,7 +52,6 @@ fn main() -> eyre::Result<()> {
         return Ok(());
     }
 
-    // Performance objectives (from Criterion)
     if !cli.no_bench {
         let perf = PerformanceObjective::all();
         let run_bench = cli
@@ -111,7 +107,6 @@ fn main() -> eyre::Result<()> {
         print_header();
     }
 
-    // Static-analysis objectives
     for sa in StaticAnalysisObjective::all() {
         if let Some(ref name) = cli.objective {
             if sa.name() != name.as_str() {

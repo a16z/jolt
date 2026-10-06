@@ -36,10 +36,7 @@ use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Per-cycle hot indices of `N` committed one-hot selector polynomials over
-/// a shared compact backing store (typed witness rows, packed columns).
 pub(crate) trait ChunkIndexSource: Send + Sync {
-    /// Number of selector polynomials served.
     fn num_polys(&self) -> usize;
 
     /// The unbound cycle-domain length.
@@ -167,7 +164,6 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
                     let dense = Self::Dense(materialize(&tables, &source, width * 2));
-                    // Return branch tables and the final shared index handle.
                     drop(tables);
                     drop(source);
                     crate::mem::purge_retained_memory(log_t);

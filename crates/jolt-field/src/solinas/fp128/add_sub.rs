@@ -1,5 +1,3 @@
-//! Architecture-specific Fp128 addition and subtraction kernels.
-
 #[cfg(any(
     test,
     feature = "fuzzing",
@@ -15,14 +13,11 @@ impl<const P: u128> Fp128<P> {
     pub(super) fn add_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         #[cfg(all(feature = "asm", target_arch = "aarch64"))]
         {
-            // Keep the reduction predicate in flags through `ccmp`.
             Self::add_raw_aarch64_dispatch(a, b)
         }
 
         #[cfg(all(feature = "asm", target_arch = "x86_64"))]
         {
-            // Materialize the carry as a mask, then use `cmovne` for the
-            // final branchless selection.
             Self::add_raw_x86_64_dispatch(a, b)
         }
 
@@ -39,7 +34,6 @@ impl<const P: u128> Fp128<P> {
     ))]
     #[inline(always)]
     pub(super) fn add_raw_portable(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        // Compute s = a + b as two limbs.
         let (s0, carry0) = a[0].overflowing_add(b[0]);
         let (s1a, carry1a) = a[1].overflowing_add(b[1]);
         let (s1, carry1b) = s1a.overflowing_add(carry0 as u64);
@@ -152,13 +146,11 @@ impl<const P: u128> Fp128<P> {
     pub(super) fn sub_raw(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         #[cfg(all(feature = "asm", target_arch = "aarch64"))]
         {
-            // Keep the borrow in flags and reduce by subtracting C.
             Self::sub_raw_aarch64_dispatch(a, b)
         }
 
         #[cfg(all(feature = "asm", target_arch = "x86_64"))]
         {
-            // Turn the borrow into a mask, select 0 or C, and subtract it.
             Self::sub_raw_x86_64_dispatch(a, b)
         }
 

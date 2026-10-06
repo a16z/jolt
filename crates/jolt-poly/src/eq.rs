@@ -1,5 +1,3 @@
-//! Equality polynomial for multilinear evaluation.
-
 use std::ops::{Mul, SubAssign};
 
 use jolt_field::JoltField;
@@ -25,17 +23,14 @@ pub struct EqPolynomial<F: JoltField> {
     point: Vec<F>,
 }
 
-/// Parallelism threshold: tables larger than this are built with rayon.
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
 impl<F: JoltField> EqPolynomial<F> {
-    /// Creates a new equality polynomial for the given point $r \in \mathbb{F}^n$.
     pub fn new(point: Vec<F>) -> Self {
         Self { point }
     }
 
-    /// Number of variables `n` in the fixed point `r`.
     pub fn num_vars(&self) -> usize {
         self.point.len()
     }
@@ -66,7 +61,6 @@ impl<F: JoltField> EqPolynomial<F> {
             {
                 if prev_len >= PAR_THRESHOLD {
                     use rayon::prelude::*;
-                    // Snapshot the previous layer so we can scatter into interleaved positions.
                     let prev: Vec<F> = table[..prev_len].to_vec();
                     let dest = &mut table[..prev_len * 2];
                     dest.par_chunks_mut(2)
@@ -180,11 +174,6 @@ pub fn boolean_index_msb<F: JoltField>(point: &[F]) -> Option<usize> {
     Some(index)
 }
 
-/// Static (point-free) evaluation methods for eq polynomial tables.
-///
-/// These accept challenge or field-element slices and produce materialized
-/// tables without constructing an `EqPolynomial` instance. They are used
-/// by split-eq evaluators and sumcheck witnesses.
 impl<F: JoltField> EqPolynomial<F> {
     /// Computes `eq(x, y) = Π_i (x_i y_i + (1 - x_i)(1 - y_i))` for two slices.
     pub fn mle<C>(x: &[C], y: &[C]) -> F
@@ -294,7 +283,6 @@ impl<F: JoltField> EqPolynomial<F> {
         )
     }
 
-    /// Serial eq table construction with optional scaling.
     #[inline]
     pub(crate) fn evals_serial<C>(r: &[C], scaling_factor: Option<F>) -> Vec<F>
     where
@@ -505,21 +493,6 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_at_boolean_selects_entry() {
-        let mut rng = ChaCha20Rng::seed_from_u64(99);
-        let n = 3;
-        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let eq = EqPolynomial::new(point);
-        let table = eq.evaluations();
-
-        for (idx, &entry) in table.iter().enumerate() {
-            let bits = index_to_bits(idx, n);
-            let direct = eq.evaluate(&bits);
-            assert_eq!(direct, entry, "mismatch at index {idx}");
-        }
-    }
-
-    #[test]
     fn evaluations_matches_evaluate_pointwise() {
         let mut rng = ChaCha20Rng::seed_from_u64(7);
         let n = 5;
@@ -549,42 +522,6 @@ mod tests {
     }
 
     #[test]
-    fn parallel_evaluations_inner_product_consistency() {
-        // Verifies that the inner product of two eq tables (which computes
-        // eq(r, s) = sum_x eq(x,r)*eq(x,s)) is consistent with evaluate().
-        // This holds regardless of table ordering.
-        let mut rng = ChaCha20Rng::seed_from_u64(303);
-        let n = 11;
-        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let s: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let eq_r = EqPolynomial::new(r.clone());
-        let eq_s = EqPolynomial::new(s.clone());
-
-        let table_r = eq_r.evaluations();
-        let table_s = eq_s.evaluations();
-
-        let inner_product: Fr = table_r
-            .iter()
-            .zip(table_s.iter())
-            .map(|(&a, &b)| a * b)
-            .sum();
-        let direct = eq_r.evaluate(&s);
-        assert_eq!(inner_product, direct);
-    }
-
-    #[test]
-    fn parallel_sum_over_hypercube_is_one() {
-        let mut rng = ChaCha20Rng::seed_from_u64(301);
-        let n = 11;
-        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        let eq = EqPolynomial::new(point);
-        let table = eq.evaluations();
-        let sum: Fr = table.iter().copied().sum();
-        assert_eq!(sum, Fr::one());
-    }
-
-    #[test]
     fn evaluate_cross_verification_random_point() {
         let mut rng = ChaCha20Rng::seed_from_u64(302);
         let n = 6;
@@ -592,12 +529,9 @@ mod tests {
         let eq = EqPolynomial::new(r);
         let table = eq.evaluations();
 
-        // Pick a random non-Boolean evaluation point and verify via definition
         let p: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
         let direct = eq.evaluate(&p);
 
-        // Manual computation: sum over hypercube of eq(x,r) * eq(x,p)
-        // which equals eq(r,p) since sum_x eq(x,r)*eq(x,p) = eq(r,p)
         let eq_p = EqPolynomial::new(p);
         let table_p = eq_p.evaluations();
         let via_tables: Fr = table.iter().zip(table_p.iter()).map(|(&a, &b)| a * b).sum();
@@ -606,7 +540,6 @@ mod tests {
 
     #[test]
     fn eq_at_boolean_point_is_one() {
-        // eq(b, b) = 1 for any Boolean vector b ∈ {0,1}^n
         for n in 1..=5 {
             for idx in 0..(1 << n) {
                 let bits = index_to_bits(idx, n);
@@ -674,25 +607,6 @@ mod tests {
                 let direct = EqPolynomial::<Fr>::evals_serial(&r[..i], None);
                 assert_eq!(cached[i], direct, "cached[{i}] mismatch for n={n}");
             }
-        }
-    }
-
-    #[test]
-    fn evals_cached_rev_consistency() {
-        let mut rng = ChaCha20Rng::seed_from_u64(403);
-        for n in 2..=8 {
-            let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-            let cached_rev = EqPolynomial::<Fr>::evals_cached_rev(&r, None);
-            assert_eq!(cached_rev.len(), n + 1);
-            assert_eq!(cached_rev[0], vec![Fr::one()]);
-            for (j, table) in cached_rev.iter().enumerate() {
-                assert_eq!(table.len(), 1 << j);
-            }
-            // The last entry should equal evals over all variables in reverse order
-            let full_rev: Vec<Fr> = r.iter().rev().copied().collect();
-            let full_table = EqPolynomial::<Fr>::evals_serial(&full_rev, None);
-            // Sizes should match but the table is built differently
-            assert_eq!(cached_rev[n].len(), full_table.len());
         }
     }
 

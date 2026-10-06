@@ -1,9 +1,3 @@
-//! The BlindFold lowering's field-inline seam: every field-inline-specific piece of the ZK
-//! verifier's R1CS build in one place — the field-inline members' symbolic relations and baked
-//! publics per stage, the composed bytecode public extension, the field-inline output-row
-//! splices, and the field-inline-lane expression terms. Each blindfold stage file keeps
-//! exactly one contiguous, flagged region per interaction point, calling into here.
-
 use crate::stages::derivations;
 use jolt_claims::protocols::field_inline::geometry::claim_reductions as field_claim_reductions;
 use jolt_claims::protocols::field_inline::geometry::registers as field_registers_geometry;
@@ -255,7 +249,6 @@ pub(super) fn composed_bytecode_stage_values<F: JoltField>(
     Ok(public_values.stage_values)
 }
 
-/// The stage-6b field-register increment-reduction member's symbolic relation.
 pub(super) fn stage6b_inc_relation(log_t: usize) -> field_increments::ClaimReduction {
     field_increments::ClaimReduction::new(FieldRegistersTraceDimensions::new(log_t))
 }

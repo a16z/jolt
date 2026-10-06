@@ -43,8 +43,6 @@ impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Refe
     }
 }
 
-/// The program-image reduction's cycle-phase kernel — see the module doc for
-/// the value/eq table construction.
 fn program_image_reduction_kernel<F: JoltField>(
     layout: &ProgramImageClaimReductionLayout,
     r_addr_rw: &[F],

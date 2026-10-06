@@ -26,7 +26,6 @@ impl LWU {
             match value {
                 Ok((word, memory_read)) => {
                     *ram_access = memory_read;
-                    // Zero extension for unsigned word load
                     word as i64
                 }
                 Err(_) => panic!("MMU load error"),

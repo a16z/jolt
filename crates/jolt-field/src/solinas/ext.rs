@@ -73,8 +73,6 @@ impl<F: Field, C: Ext2Config<F>> FpExt2<F, C> {
         self.coeffs[1]
     }
 
-    /// Multiplies a base-field element by the non-residue (a free negation
-    /// when `C` declares a non-residue of `-1`).
     #[inline(always)]
     fn mul_nr(x: F) -> F {
         C::mul_non_residue(x, |base| base)
@@ -145,7 +143,6 @@ impl<F: Field + CanonicalBytes, C: Ext2Config<F>> CanonicalBytes for FpExt2<F, C
 crate::impl_ring_ops!(impl[F: Field, C: Ext2Config<F>] FpExt2<F, C> {
     add(a, b): FpExt2::new(a.coeffs[0] + b.coeffs[0], a.coeffs[1] + b.coeffs[1]),
     sub(a, b): FpExt2::new(a.coeffs[0] - b.coeffs[0], a.coeffs[1] - b.coeffs[1]),
-    // Karatsuba: 3 base multiplies (2 when NR = −1 makes mul_nr free).
     mul(a, b): {
         let v0 = a.coeffs[0] * b.coeffs[0];
         let v1 = a.coeffs[1] * b.coeffs[1];
@@ -175,8 +172,6 @@ impl<F: Field, C: Ext2Config<F>> Ring for FpExt2<F, C> {
         Self::new(F::from_i128(v), F::zero())
     }
 
-    /// Specialized squaring, 2 base multiplies instead of 3:
-    /// `(c0 + c1·u)² = (c0² + NR·c1²) + (2·c0·c1)·u`.
     #[inline(always)]
     fn square(&self) -> Self {
         let v0 = self.coeffs[0] * self.coeffs[0];
@@ -501,8 +496,6 @@ impl<F: PseudoMersenne> Ring for FpExt8<F> {
         Self::from_constant(F::from_i128(v))
     }
 
-    /// Squaring via the dedicated schedule (fewer base ops than the mul
-    /// schedule; identical field result).
     #[inline(always)]
     fn square(&self) -> Self {
         Self::new(F::ext8_square(self.coeffs))
@@ -616,7 +609,6 @@ where
     out
 }
 
-/// A pseudo-Mersenne base field is its own degree-1 extension.
 impl<F: PseudoMersenne> ExtField<F> for F {
     const DEGREE: usize = 1;
 
@@ -644,7 +636,6 @@ impl<F: PseudoMersenne> ExtField<F> for F {
         *self
     }
 
-    /// Frobenius is the identity on the prime field.
     #[inline]
     fn frobenius_pow(self, _power: usize) -> Self {
         self

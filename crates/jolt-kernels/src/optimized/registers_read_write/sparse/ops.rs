@@ -221,7 +221,6 @@ pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
             .collect()
     };
 
-    // Compact both columns in lockstep.
     let mut total = counts[0];
     for block in 1..blocks {
         let src = bounds[block];
@@ -235,7 +234,6 @@ pub(super) fn bind_indexed_in_place_soa<F: JoltField>(
     metas.truncate(total);
 }
 
-/// Merge-bind indexed SoA entries directly into field entries.
 pub(super) fn bind_indexed_to_direct<F: JoltField>(
     vals: &[F],
     metas: &[IndexedMeta],
@@ -315,7 +313,6 @@ pub(super) fn bind_indexed_to_direct<F: JoltField>(
     bound
 }
 
-/// Accumulate one row pair's `[q(0), q(∞)]` terms.
 fn accumulate_pair_group<F, E>(
     evens: &[E],
     odds: &[E],
@@ -500,7 +497,6 @@ pub(super) fn sparse_quadratic_soa<F: JoltField>(
     }
 }
 
-/// Per-thread intermediate rows for one 4-row group.
 type FusedScratch<F> = (Vec<SparseEntry<F, LutIndex>>, Vec<SparseEntry<F, LutIndex>>);
 
 pub(super) fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
@@ -510,7 +506,6 @@ pub(super) fn fused_scratch<F: JoltField>() -> FusedScratch<F> {
     )
 }
 
-/// Rebuild one 4-row group's two first-bind intermediates.
 #[inline]
 pub(super) fn fused_intermediates<F: JoltField>(
     group: &[SeedEntry],
@@ -612,13 +607,11 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
     r1: F,
     r2: F,
 ) -> (Vec<F>, Vec<IndexedMeta>) {
-    // One bit per register column.
     const _: () = assert!(REGISTER_ADDRESS_BITS <= 7);
     let group_predicate = |a: &SeedEntry, b: &SeedEntry| a.row() / 4 == b.row() / 4;
     let bounds = pair_aligned_bounds(entries, 2);
     let blocks = bounds.len() - 1;
 
-    // Each 4-row group emits one entry per distinct column.
     let count_block = |block: usize| -> usize {
         entries[bounds[block]..bounds[block + 1]]
             .chunk_by(group_predicate)

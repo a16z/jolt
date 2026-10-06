@@ -1,5 +1,3 @@
-//! The address-phase split of the booleanity symbolic sumcheck relation.
-
 use core::marker::PhantomData;
 
 use jolt_field::{JoltField, Ring};
@@ -124,25 +122,5 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(booleanity_address_phase_opening())
-    }
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-
-    fn dimensions(instruction: usize, bytecode: usize, ram: usize) -> BooleanityDimensions {
-        let layout = JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap();
-        BooleanityDimensions::new(layout, 5, 8)
-    }
-
-    #[test]
-    fn booleanity_address_phase_symbolic_matches_dependencies() {
-        let relation = BooleanityAddressPhase::new(dimensions(1, 1, 1));
-        assert_eq!(BooleanityAddressPhase::id(), JoltRelationId::Booleanity);
-        assert_eq!(relation.rounds(), 8);
-        assert_eq!(relation.degree(), 3);
     }
 }

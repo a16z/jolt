@@ -246,9 +246,6 @@ impl<F: JoltField> SpartanProductKernel<F> {
         )))
     }
 
-    /// The remainder member: the naive prover over the expanded product form.
-    /// Each `LagrangeWeight(i)` leaf is the SCALAR `L_i(r₀)` (a constant
-    /// table); `TauKernel` is the `LK(τ_high, r₀)`-scaled eq-cycle table.
     fn into_remainder(
         self,
         inputs: &ProverInputs<'_, F, ProductRemainder<F>>,

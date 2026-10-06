@@ -41,12 +41,11 @@ fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
         return;
     }
-    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1; // 1..=5
+    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1;
     let n = 1usize << num_vars;
     let corruption = data[1];
     let corruption_round = data[2] as usize % num_vars;
     let corruption_coeff = data[3] as usize % 3;
-    // Corruption scalar + the two evaluation tables.
     if data.len() < 4 + (1 + 2 * n) * SCALAR_BYTES {
         return;
     }
@@ -77,7 +76,6 @@ fuzz_target!(|data: &[u8]| {
             let (b0, b1) = (b[2 * j], b[2 * j + 1]);
             s0 += a0 * b0;
             s1 += a1 * b1;
-            // s(2) with a(2) = 2·a1 − a0 by multilinearity.
             s2 += (a1 + a1 - a0) * (b1 + b1 - b0);
         }
         let c0 = s0;
@@ -98,18 +96,15 @@ fuzz_target!(|data: &[u8]| {
         rounds.push(poly);
     }
 
-    // Apply exactly one corruption.
     let mut claimed_sum = true_sum;
     match corruption % 5 {
         0 => {
-            // False statement: honest proof, wrong claimed sum.
             if corruption_scalar.is_zero() {
                 return;
             }
             claimed_sum += corruption_scalar;
         }
         1 => {
-            // One round coefficient replaced; breaks that round's s(0)+s(1).
             let coefficients = rounds[corruption_round].coefficients();
             if coefficients[corruption_coeff] == corruption_scalar {
                 return;
@@ -126,7 +121,6 @@ fuzz_target!(|data: &[u8]| {
             rounds.push(last);
         }
         _ => {
-            // Degree inflation past the claimed bound.
             let coefficients = rounds[corruption_round].coefficients();
             let mut inflated = coefficients.to_vec();
             inflated.push(corruption_scalar);
