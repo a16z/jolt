@@ -15,7 +15,6 @@ use super::{
 };
 
 const SIMD_WIDTH: usize = 32;
-const BINS: usize = 256;
 const ACCUMULATOR_WORDS: usize = 5;
 const MAX_SELECTORS_PER_TILE: usize = 6;
 const MAX_INNER_LOG2: usize = 16;
@@ -110,6 +109,8 @@ pub struct BooleanityAddressPushforward {
     tile_threads_per_threadgroup: usize,
     finalize_threads_per_threadgroup: usize,
     completed: Cell<bool>,
+    bins: usize,
+    accumulator_copies: usize,
 }
 
 impl SolinasMetal {
@@ -117,6 +118,7 @@ impl SolinasMetal {
         &self,
         rows: BooleanityRows,
         selectors: &[BooleanitySelector],
+        chunk_bits: usize,
         reference_cycle: &[AkitaField],
         config: BooleanityAddressPushforwardConfig,
     ) -> Result<BooleanityAddressPushforward, MetalError> {
@@ -130,7 +132,7 @@ impl SolinasMetal {
         let e_out = EqPolynomial::evals(out_point, None);
         let e_in = EqPolynomial::evals(in_point, None);
         self.prepare_booleanity_address_pushforward_with_weights(
-            rows, selectors, &e_in, &e_out, config,
+            rows, selectors, chunk_bits, &e_in, &e_out, config,
         )
     }
 
@@ -138,6 +140,7 @@ impl SolinasMetal {
         &self,
         rows: BooleanityRows,
         selectors: &[BooleanitySelector],
+        chunk_bits: usize,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
         config: BooleanityAddressPushforwardConfig,
@@ -186,13 +189,25 @@ impl SolinasMetal {
                 covered: e_in.len().saturating_mul(e_out.len()),
             });
         }
-        let chunk_bits = BINS.ilog2() as usize;
+        let bins = match chunk_bits {
+            4 => 16,
+            8 => 256,
+            _ => {
+                return Err(MetalError::InvalidBooleanityState(
+                    "address pushforward requires four- or eight-bit chunks",
+                ))
+            }
+        };
         let selector_abi = selectors
             .iter()
             .copied()
             .map(|selector| selector_abi(selector, chunk_bits))
             .collect::<Result<Vec<_>, _>>()?;
-        let production_schedule = production_selector_schedule(selectors);
+        let production_schedule = if chunk_bits == 8 {
+            production_selector_schedule(selectors)
+        } else {
+            None
+        };
         let tile_pipeline_names = match (config.selectors_per_tile, production_schedule) {
             (MAX_SELECTORS_PER_TILE, Some(ProductionSelectorSchedule::TwoRam)) => {
                 PRODUCTION_TILE_PIPELINES.to_vec()
@@ -201,7 +216,11 @@ impl SolinasMetal {
                 PRODUCTION_THREE_RAM_TILE_PIPELINES.to_vec()
             }
             (3, Some(ProductionSelectorSchedule::TwoRam)) => PRODUCTION_TILE_PIPELINES_3.to_vec(),
-            _ => vec![TILE_PIPELINE],
+            _ => vec![if chunk_bits == 4 {
+                "solinas_booleanity_address_tile_k16"
+            } else {
+                TILE_PIPELINE
+            }],
         };
         let production_specialized = tile_pipeline_names.len() > 1;
         let tile_pipelines = tile_pipeline_names
@@ -244,17 +263,23 @@ impl SolinasMetal {
             config.finalize_threads_per_threadgroup,
             finalize_limits,
         )?;
-        if finalize_threads_per_threadgroup < BINS
-            || !finalize_threads_per_threadgroup.is_multiple_of(BINS)
+        if finalize_threads_per_threadgroup < bins
+            || !finalize_threads_per_threadgroup.is_multiple_of(bins)
         {
             return Err(MetalError::InvalidBooleanityAddressFinalizeWidth(
                 finalize_threads_per_threadgroup,
             ));
         }
 
+        let accumulator_copies = if chunk_bits == 4 {
+            tile_threads_per_threadgroup / SIMD_WIDTH
+        } else {
+            1
+        };
         let accumulator_bytes = config
             .selectors_per_tile
-            .checked_mul(BINS)
+            .checked_mul(bins)
+            .and_then(|value| value.checked_mul(accumulator_copies))
             .and_then(|value| value.checked_mul(ACCUMULATOR_WORDS))
             .and_then(|value| value.checked_mul(size_of::<u32>()))
             .ok_or(MetalError::InputTooLong(config.selectors_per_tile))?;
@@ -286,11 +311,11 @@ impl SolinasMetal {
         let partial_elements = e_out
             .len()
             .checked_mul(config.selectors_per_tile)
-            .and_then(|value| value.checked_mul(BINS))
+            .and_then(|value| value.checked_mul(bins))
             .ok_or(MetalError::InputTooLong(e_out.len()))?;
         let output_elements = selectors
             .len()
-            .checked_mul(BINS)
+            .checked_mul(bins)
             .ok_or(MetalError::InputTooLong(selectors.len()))?;
         let selector_bytes = byte_length::<super::booleanity::SelectorAbi>(selector_abi.len())?;
         let e_in_bytes = byte_length::<Fp128>(e_in.len())?;
@@ -360,6 +385,8 @@ impl SolinasMetal {
             tile_threads_per_threadgroup,
             finalize_threads_per_threadgroup,
             completed: Cell::new(false),
+            bins,
+            accumulator_copies,
         })
     }
 }
@@ -385,11 +412,11 @@ impl BooleanityAddressPushforward {
     }
 
     pub const fn output_elements(&self) -> usize {
-        self.polys * BINS
+        self.polys * self.bins
     }
 
     pub const fn partial_bytes(&self) -> u64 {
-        (self.e_out_length * self.selectors_per_tile * BINS * size_of::<Fp128>()) as u64
+        (self.e_out_length * self.selectors_per_tile * self.bins * size_of::<Fp128>()) as u64
     }
 
     pub fn static_buffer_identities(&self) -> [usize; 5] {
@@ -419,7 +446,7 @@ impl BooleanityAddressPushforward {
                         .map_err(|_| MetalError::InputTooLong(self.rows))?,
                     polys: u32::try_from(self.polys)
                         .map_err(|_| MetalError::InputTooLong(self.polys))?,
-                    k: BINS as u32,
+                    k: self.bins as u32,
                     e_in_length: u32::try_from(self.e_in_length)
                         .map_err(|_| MetalError::InputTooLong(self.e_in_length))?,
                     e_out_length: u32::try_from(self.e_out_length)
@@ -428,8 +455,8 @@ impl BooleanityAddressPushforward {
                         .map_err(|_| MetalError::InputTooLong(selector_offset))?,
                     selectors_in_tile: u32::try_from(selectors_in_tile)
                         .map_err(|_| MetalError::InputTooLong(selectors_in_tile))?,
-                    chunk_bits: BINS.ilog2(),
-                    inc_bias: balanced_bias(BINS.ilog2() as usize),
+                    chunk_bits: self.bins.ilog2(),
+                    inc_bias: balanced_bias(self.bins.ilog2() as usize),
                 };
 
                 let tile = command_buffer.new_compute_command_encoder();
@@ -447,7 +474,11 @@ impl BooleanityAddressPushforward {
                 set_inline_bytes(tile, 5, &params);
                 tile.set_threadgroup_memory_length(
                     0,
-                    (selectors_in_tile * BINS * ACCUMULATOR_WORDS * size_of::<u32>()) as u64,
+                    (selectors_in_tile
+                        * self.bins
+                        * self.accumulator_copies
+                        * ACCUMULATOR_WORDS
+                        * size_of::<u32>()) as u64,
                 );
                 tile.dispatch_thread_groups(
                     MTLSize {
@@ -583,7 +614,7 @@ mod tests {
     use jolt_field::{FromPrimitiveInt, Prime128OffsetA7F7 as AkitaField, Zero as _};
 
     use super::{
-        balanced_bias, BooleanityAddressPushforwardConfig, BooleanitySelector, SolinasMetal, BINS,
+        balanced_bias, BooleanityAddressPushforwardConfig, BooleanitySelector, SolinasMetal,
     };
     use crate::metal::solinas::BooleanityRow;
 
@@ -596,37 +627,42 @@ mod tests {
         let resident = context.prepare_booleanity_rows(&rows).unwrap();
         let resident_identity = resident.allocation_identity();
 
-        for ram_chunks in [2, 3] {
-            let selectors = selectors(ram_chunks);
-            let expected = oracle(&rows, &selectors, &e_in, &e_out);
-            for selectors_per_tile in [1, 3, 4, 6] {
-                let invocation = context
-                    .prepare_booleanity_address_pushforward_with_weights(
-                        resident.clone(),
-                        &selectors,
-                        &e_in,
-                        &e_out,
-                        BooleanityAddressPushforwardConfig {
-                            inner_log2: 10,
-                            selectors_per_tile,
-                            tile_threads_per_threadgroup: Some(256),
-                            finalize_threads_per_threadgroup: Some(256),
-                        },
-                    )
-                    .unwrap();
-                assert_eq!(invocation.resident_row_identity(), resident_identity);
-                assert_eq!(
-                    invocation.selector_tiles(),
-                    selectors.len().div_ceil(selectors_per_tile)
-                );
-                assert_eq!(
-                    invocation.uses_production_specialization(),
-                    selectors_per_tile == 6 || (ram_chunks == 2 && selectors_per_tile == 3)
-                );
-                let identities = invocation.static_buffer_identities();
-                invocation.execute().unwrap();
-                assert_eq!(invocation.static_buffer_identities(), identities);
-                assert_eq!(invocation.read_masses().unwrap(), expected);
+        for chunk_bits in [4, 8] {
+            for ram_chunks in [2, 3] {
+                let selectors = selectors(ram_chunks, chunk_bits);
+                let expected = oracle(&rows, &selectors, &e_in, &e_out, 1 << chunk_bits);
+                for selectors_per_tile in [1, 3, 4, 6] {
+                    let invocation = context
+                        .prepare_booleanity_address_pushforward_with_weights(
+                            resident.clone(),
+                            &selectors,
+                            chunk_bits,
+                            &e_in,
+                            &e_out,
+                            BooleanityAddressPushforwardConfig {
+                                inner_log2: 10,
+                                selectors_per_tile,
+                                tile_threads_per_threadgroup: Some(256),
+                                finalize_threads_per_threadgroup: Some(256),
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(invocation.resident_row_identity(), resident_identity);
+                    assert_eq!(
+                        invocation.selector_tiles(),
+                        selectors.len().div_ceil(selectors_per_tile)
+                    );
+                    assert_eq!(
+                        invocation.uses_production_specialization(),
+                        chunk_bits == 8
+                            && (selectors_per_tile == 6
+                                || (ram_chunks == 2 && selectors_per_tile == 3))
+                    );
+                    let identities = invocation.static_buffer_identities();
+                    invocation.execute().unwrap();
+                    assert_eq!(invocation.static_buffer_identities(), identities);
+                    assert_eq!(invocation.read_masses().unwrap(), expected);
+                }
             }
         }
     }
@@ -638,13 +674,14 @@ mod tests {
             [48, 40, 32, 24, 16, 8, 0].map(|shift| BooleanitySelector::Bytecode { shift });
         let e_in = fields(1 << 10, 41);
         let e_out = fields(4, 67);
-        let expected = oracle(&rows, &selectors, &e_in, &e_out);
+        let expected = oracle(&rows, &selectors, &e_in, &e_out, 256);
         let context = SolinasMetal::for_akita().unwrap();
         let resident = context.prepare_booleanity_rows(&rows).unwrap();
         let invocation = context
             .prepare_booleanity_address_pushforward_with_weights(
                 resident,
                 &selectors,
+                8,
                 &e_in,
                 &e_out,
                 BooleanityAddressPushforwardConfig {
@@ -661,45 +698,58 @@ mod tests {
 
     #[test]
     fn pushforward_reduces_adversarial_carry_bucket() {
-        let rows = vec![BooleanityRow::new(0, Some(0), Some(0), 0).unwrap(); 1 << 12];
+        let context = SolinasMetal::for_akita().unwrap();
         let selectors = vec![BooleanitySelector::Lookup { shift: 0 }; 6];
         let near_modulus = AkitaField::from_u128(u128::MAX - 0xffff_a7f7);
-        let e_in = vec![near_modulus; rows.len()];
-        let e_out = vec![AkitaField::from_u64(17)];
-        let expected = oracle(&rows, &selectors, &e_in, &e_out);
-        let context = SolinasMetal::for_akita().unwrap();
-        let resident = context.prepare_booleanity_rows(&rows).unwrap();
-        let invocation = context
-            .prepare_booleanity_address_pushforward_with_weights(
-                resident,
-                &selectors,
-                &e_in,
-                &e_out,
-                BooleanityAddressPushforwardConfig {
-                    inner_log2: 12,
-                    selectors_per_tile: 6,
-                    tile_threads_per_threadgroup: Some(1024),
-                    finalize_threads_per_threadgroup: Some(1024),
-                },
-            )
-            .unwrap();
-        invocation.execute().unwrap();
-        assert_eq!(invocation.read_masses().unwrap(), expected);
+        for inner_log2 in [2, 5, 12] {
+            let rows = vec![BooleanityRow::new(0, Some(0), Some(0), 0).unwrap(); 1 << inner_log2];
+            let e_in = vec![near_modulus; rows.len()];
+            let e_out = vec![AkitaField::from_u64(17)];
+            let resident = context.prepare_booleanity_rows(&rows).unwrap();
+            for chunk_bits in [4, 8] {
+                let expected = oracle(&rows, &selectors, &e_in, &e_out, 1 << chunk_bits);
+                let invocation = context
+                    .prepare_booleanity_address_pushforward_with_weights(
+                        resident.clone(),
+                        &selectors,
+                        chunk_bits,
+                        &e_in,
+                        &e_out,
+                        BooleanityAddressPushforwardConfig {
+                            inner_log2,
+                            selectors_per_tile: 6,
+                            tile_threads_per_threadgroup: Some(if chunk_bits == 4 {
+                                256
+                            } else {
+                                1024
+                            }),
+                            finalize_threads_per_threadgroup: Some(1024),
+                        },
+                    )
+                    .unwrap();
+                invocation.execute().unwrap();
+                assert_eq!(invocation.read_masses().unwrap(), expected);
+            }
+        }
     }
 
-    fn selectors(ram_chunks: usize) -> Vec<BooleanitySelector> {
-        let mut selectors = (0..16)
+    fn selectors(ram_chunks: usize, chunk_bits: usize) -> Vec<BooleanitySelector> {
+        let lookup_chunks = 128 / chunk_bits;
+        let mut selectors = (0..lookup_chunks)
             .map(|index| BooleanitySelector::Lookup {
-                shift: (8 * (15 - index)) as u32,
+                shift: (chunk_bits * (lookup_chunks - 1 - index)) as u32,
             })
             .collect::<Vec<_>>();
-        selectors.extend([8, 0].map(|shift| BooleanitySelector::Bytecode { shift }));
+        selectors
+            .extend([chunk_bits as u32, 0].map(|shift| BooleanitySelector::Bytecode { shift }));
         selectors.extend((0..ram_chunks).map(|index| BooleanitySelector::Ram {
-            shift: (8 * (ram_chunks - 1 - index)) as u32,
+            shift: (chunk_bits * (ram_chunks - 1 - index)) as u32,
         }));
-        selectors.extend((0..8).map(|index| BooleanitySelector::FusedInc {
-            shift: (8 * index) as u32,
-        }));
+        selectors.extend(
+            (0..64 / chunk_bits).map(|index| BooleanitySelector::FusedInc {
+                shift: (chunk_bits * index) as u32,
+            }),
+        );
         selectors.push(BooleanitySelector::FusedIncMsb);
         selectors
     }
@@ -746,24 +796,25 @@ mod tests {
         selectors: &[BooleanitySelector],
         e_in: &[AkitaField],
         e_out: &[AkitaField],
+        bins: usize,
     ) -> Vec<AkitaField> {
-        let mut output = vec![AkitaField::zero(); selectors.len() * BINS];
+        let mut output = vec![AkitaField::zero(); selectors.len() * bins];
         for (row_index, row) in rows.iter().copied().enumerate() {
             let x_out = row_index / e_in.len();
             let x_in = row_index % e_in.len();
             let weight = e_out[x_out] * e_in[x_in];
             for (selector_index, selector) in selectors.iter().copied().enumerate() {
-                if let Some(hot) = hot_index(row, selector) {
-                    output[selector_index * BINS + hot] += weight;
+                if let Some(hot) = hot_index(row, selector, bins) {
+                    output[selector_index * bins + hot] += weight;
                 }
             }
         }
         output
     }
 
-    fn hot_index(row: BooleanityRow, selector: BooleanitySelector) -> Option<usize> {
+    fn hot_index(row: BooleanityRow, selector: BooleanitySelector, bins: usize) -> Option<usize> {
         let words = row.words();
-        let mask = (BINS - 1) as u64;
+        let mask = (bins - 1) as u64;
         match selector {
             BooleanitySelector::Lookup { shift } => {
                 let word = if shift < 64 { words[0] } else { words[1] };
@@ -778,19 +829,19 @@ mod tests {
                 (words[2] != 0).then(|| (((words[2] - 1) >> shift) & mask) as usize)
             }
             BooleanitySelector::FusedInc { shift } => {
-                let (biased, _) = biased_inc(words);
+                let (biased, _) = biased_inc(words, bins);
                 let standard = (biased >> shift) & mask;
-                Some(((standard + (BINS / 2) as u64) & mask) as usize)
+                Some(((standard + (bins / 2) as u64) & mask) as usize)
             }
             BooleanitySelector::FusedIncMsb => {
-                let (_, carry) = biased_inc(words);
-                Some((carry as usize) & (BINS - 1))
+                let (_, carry) = biased_inc(words, bins);
+                Some((carry as usize) & (bins - 1))
             }
         }
     }
 
-    fn biased_inc(words: [u64; 5]) -> (u64, i32) {
-        let bias = balanced_bias(BINS.ilog2() as usize);
+    fn biased_inc(words: [u64; 5], bins: usize) -> (u64, i32) {
+        let bias = balanced_bias(bins.ilog2() as usize);
         let magnitude = words[3];
         if words[4] >> 63 != 0 {
             (

@@ -40,7 +40,7 @@
 //! column: the pushforward slot and the committed one-hot hot index are the
 //! same value on every row.
 
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     self, read_raf_stage_values, BytecodeReadRafStageValueInputs,
@@ -119,83 +119,90 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
         .map(|point| eq_table(&point[hi_bits..]))
         .collect::<Vec<_>>();
 
-    let block = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
-        let mut partial = (0..num_stages)
-            .map(|_| vec![F::zero(); addresses])
-            .collect::<Vec<_>>();
-        let mut inner = (0..num_stages)
-            .map(|_| vec![F::zero(); addresses])
-            .collect::<Vec<_>>();
-        let mut seen = vec![false; addresses];
-        let mut touched: Vec<usize> = Vec::with_capacity(in_len);
+    // A block usually visits far fewer bytecode addresses than the padded
+    // program contains. Keep field scratch only for visited addresses; the
+    // final address-sized result is allocated once, after the workers finish.
+    let block = |range: Range<usize>| {
+        let mut positions = vec![None; addresses];
+        let mut visited = Vec::new();
+        let mut partial = (0..num_stages).map(|_| Vec::<F>::new()).collect::<Vec<_>>();
+        let mut inner = (0..num_stages).map(|_| Vec::<F>::new()).collect::<Vec<_>>();
+        let mut seen = Vec::new();
+        let mut touched = Vec::with_capacity(in_len);
         for j_hi in range {
-            for &k in &touched {
+            for &slot in &touched {
                 for stage_inner in &mut inner {
-                    stage_inner[k] = F::zero();
+                    stage_inner[slot] = F::zero();
                 }
-                seen[k] = false;
+                seen[slot] = false;
             }
             touched.clear();
             let base = j_hi << lo_bits;
             for j_lo in 0..in_len {
                 let row = &rows[base + j_lo];
-                let pc = pc(row);
-                if !seen[pc] {
-                    seen[pc] = true;
-                    touched.push(pc);
+                let address = pc(row);
+                let slot = if let Some(slot) = positions[address] {
+                    slot
+                } else {
+                    let slot = visited.len();
+                    positions[address] = Some(slot);
+                    visited.push(address);
+                    seen.push(false);
+                    for table in partial.iter_mut().chain(&mut inner) {
+                        table.push(F::zero());
+                    }
+                    slot
+                };
+                if !seen[slot] {
+                    seen[slot] = true;
+                    touched.push(slot);
                 }
                 let (base_inner, weighted_inner) = inner.split_at_mut(base_stages);
                 for (stage_inner, stage_lo) in base_inner.iter_mut().zip(&e_lo[..base_stages]) {
-                    stage_inner[pc] += stage_lo[j_lo];
+                    stage_inner[slot] += stage_lo[j_lo];
                 }
                 if !weighted_inner.is_empty() {
                     let weight = row_weight(row);
                     for (stage_inner, stage_lo) in
                         weighted_inner.iter_mut().zip(&e_lo[base_stages..])
                     {
-                        stage_inner[pc] += stage_lo[j_lo] * weight;
+                        stage_inner[slot] += stage_lo[j_lo] * weight;
                     }
                 }
             }
-            for &k in &touched {
+            for &slot in &touched {
                 for ((stage_partial, stage_inner), stage_hi) in
                     partial.iter_mut().zip(&inner).zip(&e_hi)
                 {
-                    stage_partial[k] += stage_hi[j_hi] * stage_inner[k];
+                    stage_partial[slot] += stage_hi[j_hi] * stage_inner[slot];
                 }
             }
         }
-        partial
+        (visited, partial)
     };
 
     #[cfg(feature = "parallel")]
-    {
+    let partials = {
         let num_threads = rayon::current_num_threads();
         let chunk = out_len.div_ceil(num_threads).max(1);
         (0..out_len)
             .into_par_iter()
             .step_by(chunk)
             .map(|start| block(start..(start + chunk).min(out_len)))
-            .reduce(
-                || {
-                    (0..num_stages)
-                        .map(|_| vec![F::zero(); addresses])
-                        .collect()
-                },
-                |mut left, right| {
-                    for (left, right) in left.iter_mut().zip(right) {
-                        for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
-                        }
-                    }
-                    left
-                },
-            )
-    }
+            .collect::<Vec<_>>()
+    };
     #[cfg(not(feature = "parallel"))]
-    {
-        block(0..out_len)
+    let partials = vec![block(0..out_len)];
+
+    let mut output = vec![vec![F::zero(); addresses]; num_stages];
+    for (visited, partial) in partials {
+        for (output, partial) in output.iter_mut().zip(partial) {
+            for (&address, value) in visited.iter().zip(partial) {
+                output[address] += value;
+            }
+        }
     }
+    output
 }
 
 /// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
@@ -747,8 +754,7 @@ pub(crate) struct MetalBytecodeCycleInputs {
     pub stage_points: Vec<Vec<AkitaField>>,
     pub stage_weights: Vec<AkitaField>,
     pub entry_weight: AkitaField,
-    pub ra0: Vec<AkitaField>,
-    pub ra1: Vec<AkitaField>,
+    pub ra: Vec<Vec<AkitaField>>,
 }
 
 #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
@@ -760,9 +766,12 @@ pub(crate) fn prepare_metal_bytecode_cycle_shell(
     let dimensions = relation.dimensions();
     let cycles = 1usize << dimensions.log_t();
     let num_ra = dimensions.num_committed_ra_polys();
-    if relation.degree() != 4 || num_ra != 2 || relation.committed_chunk_bits() != 8 {
+    if !matches!(
+        (relation.degree(), num_ra, relation.committed_chunk_bits()),
+        (4, 2, 8) | (7, 5, 4)
+    ) {
         return Err(KernelError::InvariantViolation {
-            reason: "Metal bytecode cycle shell requires degree four and two 8-bit RA chunks",
+            reason: "Metal bytecode cycle shell requires two 8-bit or five 4-bit RA chunks",
         });
     }
 
@@ -811,25 +820,24 @@ pub(crate) fn prepare_metal_bytecode_cycle_shell(
                 reason: "bytecode entry index exceeds the address domain",
             })?;
     let chunks = committed_address_chunks(r_address, relation.committed_chunk_bits());
-    if chunks.len() != 2 || chunks.iter().any(|chunk| chunk.len() != 8) {
+    if chunks.len() != num_ra {
         return Err(KernelError::InvariantViolation {
-            reason: "Metal bytecode cycle RA chunk geometry is not two by eight",
+            reason: "Metal bytecode RA chunk count disagrees with relation",
         });
     }
-    let selectors = (0..2)
-        .map(|index| RaChunkSelector::new(index, 2, 8).map_err(KernelError::from))
-        .collect::<Result<Vec<_>, _>>()?;
-    if selectors[0].shift() != 8 || selectors[1].shift() != 0 {
-        return Err(KernelError::InvariantViolation {
-            reason: "Metal bytecode cycle RA chunks are not most-significant first",
-        });
-    }
-    let ra0 = eq_table(&chunks[0]);
-    let ra1 = eq_table(&chunks[1]);
+    let entries = 1usize << relation.committed_chunk_bits();
+    let ra = chunks
+        .iter()
+        .map(|chunk| {
+            let mut table = eq_table(chunk);
+            table.resize(entries, AkitaField::from_u64(0));
+            table
+        })
+        .collect();
     let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
-    if output_openings.len() != 2 {
+    if output_openings.len() != num_ra {
         return Err(KernelError::InvariantViolation {
-            reason: "Metal bytecode cycle output opening count is not two",
+            reason: "Metal bytecode output count disagrees with relation",
         });
     }
 
@@ -849,8 +857,7 @@ pub(crate) fn prepare_metal_bytecode_cycle_shell(
             stage_points: stage_points.to_vec(),
             stage_weights,
             entry_weight,
-            ra0,
-            ra1,
+            ra,
         },
     ))
 }
@@ -956,24 +963,23 @@ pub(crate) struct BytecodeCycleDenseState {
     pub combined: Vec<AkitaField>,
     pub fused_combined: Vec<AkitaField>,
     pub fused_inc: Vec<AkitaField>,
-    pub ra0: Vec<AkitaField>,
-    pub ra1: Vec<AkitaField>,
+    pub ra: Vec<Vec<AkitaField>>,
 }
 
 #[cfg(all(feature = "akita", feature = "metal", target_os = "macos"))]
 impl CycleKernel<AkitaField> {
     pub(crate) fn metal_message(
         &self,
-        evals: [AkitaField; 4],
+        evals: &[AkitaField],
         previous_claim: AkitaField,
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
-        if self.degree != 4 {
+        if self.degree != evals.len() {
             return Err(bytecode_cycle_state_error(
-                "Metal bytecode cycle message requires degree four",
+                "Metal bytecode cycle message has the wrong degree",
             ));
         }
         let _ = self.metal_elements()?;
-        Ok(round_poly_from_skipped_evals(&evals, previous_claim))
+        Ok(round_poly_from_skipped_evals(evals, previous_claim))
     }
 
     pub(crate) fn metal_commit_bind(
@@ -1007,8 +1013,6 @@ impl CycleKernel<AkitaField> {
             ("combined", state.combined.len()),
             ("fused_combined", state.fused_combined.len()),
             ("fused_inc", state.fused_inc.len()),
-            ("ra0", state.ra0.len()),
-            ("ra1", state.ra1.len()),
         ] {
             if got != expected {
                 return Err(bytecode_cycle_state_error(format!(
@@ -1016,7 +1020,14 @@ impl CycleKernel<AkitaField> {
                 )));
             }
         }
-        self.ra = LazyFoldedRa::Dense(vec![Polynomial::new(state.ra0), Polynomial::new(state.ra1)]);
+        if state.ra.len() != self.output_openings.len()
+            || state.ra.iter().any(|table| table.len() != expected)
+        {
+            return Err(bytecode_cycle_state_error(
+                "Metal bytecode RA readback geometry disagrees with relation",
+            ));
+        }
+        self.ra = LazyFoldedRa::Dense(state.ra.into_iter().map(Polynomial::new).collect());
         self.combined = Polynomial::new(state.combined);
         self.fused_inc = LazyFusedInc::Dense(Polynomial::new(state.fused_inc));
         self.fused_combined = Polynomial::new(state.fused_combined);

@@ -13,10 +13,9 @@ use super::{
 };
 use crate::metal::ram_records::RamAccessColumns;
 
-const MAX_FACTORS: usize = 3;
-const BINS: usize = 256;
-const REDUCTION_COLUMNS: usize = 4;
-const MESSAGE_SAMPLES: usize = 3;
+const MAX_FACTORS: usize = 5;
+const REDUCTION_COLUMNS: usize = 5;
+const MESSAGE_SAMPLES: usize = 5;
 const SIMD_WIDTH: usize = 32;
 const MESSAGE_THREADS: usize = 128;
 const MATERIALIZE_THREADS: usize = 64;
@@ -27,7 +26,7 @@ const LAZY_PIPELINE: &str = "solinas_ram_ra_lazy_message";
 const DOUBLE_PIPELINE: &str = "solinas_ram_ra_double_branches";
 const MATERIALIZE_PIPELINE: &str = "solinas_ram_ra_materialize_width_16";
 const DENSE_PIPELINE: &str = "solinas_ram_ra_dense_transition";
-const REDUCE_PIPELINE: &str = "solinas_instruction_ra_reduce";
+const REDUCE_PIPELINE: &str = "solinas_instruction_claim_reduce";
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -83,6 +82,7 @@ pub(crate) struct RamRaSequence {
     buffers: Buffers,
     rows: usize,
     factors: usize,
+    bins: usize,
     e_in_capacity: usize,
     e_out_capacity: usize,
     message_threads: usize,
@@ -112,11 +112,13 @@ impl allocative::Allocative for RamRaSequence {
 }
 
 impl SolinasMetal {
-    fn compile_ram_ra_width_pipeline(
+    fn compile_ram_ra_pipeline(
         &self,
+        name: &'static str,
         width: usize,
+        chunk_bits: usize,
     ) -> Result<ComputePipelineState, MetalError> {
-        let key = (LAZY_PIPELINE, Some(width as u32));
+        let key = (name, Some(((chunk_bits as u32) << 16) | width as u32));
         let mut cache = self
             .pipeline_cache
             .lock()
@@ -131,20 +133,20 @@ impl SolinasMetal {
             MTLDataType::UInt,
             20,
         );
+        let bits = chunk_bits as u32;
+        constants.set_constant_value_at_index(
+            std::ptr::from_ref(&bits).cast::<c_void>(),
+            MTLDataType::UInt,
+            26,
+        );
         let function = self
             .library
-            .get_function(LAZY_PIPELINE, Some(constants))
-            .map_err(|message| MetalError::FunctionLookup {
-                name: LAZY_PIPELINE,
-                message,
-            })?;
+            .get_function(name, Some(constants))
+            .map_err(|message| MetalError::FunctionLookup { name, message })?;
         let pipeline = self
             .device
             .new_compute_pipeline_state_with_function(&function)
-            .map_err(|message| MetalError::PipelineCompilation {
-                name: LAZY_PIPELINE,
-                message,
-            })?;
+            .map_err(|message| MetalError::PipelineCompilation { name, message })?;
         let _ = cache.insert(key, pipeline.clone());
         Ok(pipeline)
     }
@@ -163,12 +165,18 @@ impl SolinasMetal {
         }
         if !(2..=MAX_FACTORS).contains(&factors) {
             return Err(MetalError::InvalidRamRaState(
-                "the direct sequence supports two or three factors",
+                "the direct sequence supports two through five factors",
             ));
         }
-        if chunk_tables.len() != factors * BINS {
+        let bins = chunk_tables.len() / factors;
+        if !matches!(bins, 16 | 256) || (bins == 256 && factors > 3) {
+            return Err(MetalError::InvalidRamRaState(
+                "RAM RA requires four- or eight-bit chunks",
+            ));
+        }
+        if chunk_tables.len() != factors * bins {
             return Err(MetalError::RamRaStorageLength {
-                expected: factors * BINS,
+                expected: factors * bins,
                 got: chunk_tables.len(),
             });
         }
@@ -185,15 +193,19 @@ impl SolinasMetal {
         let lazy = [1, 2, 4, 8]
             .into_iter()
             .map(|width| {
-                self.compile_ram_ra_width_pipeline(width)
+                self.compile_ram_ra_pipeline(LAZY_PIPELINE, width, bins.ilog2() as usize)
                     .map(|pipeline| (width, pipeline))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let pipelines = Pipelines {
             lazy,
-            double: self.compile_named_pipeline(DOUBLE_PIPELINE)?,
-            materialize: self.compile_named_pipeline(MATERIALIZE_PIPELINE)?,
-            dense: self.compile_named_pipeline(DENSE_PIPELINE)?,
+            double: self.compile_ram_ra_pipeline(DOUBLE_PIPELINE, 1, bins.ilog2() as usize)?,
+            materialize: self.compile_ram_ra_pipeline(
+                MATERIALIZE_PIPELINE,
+                1,
+                bins.ilog2() as usize,
+            )?,
+            dense: self.compile_ram_ra_pipeline(DENSE_PIPELINE, 1, bins.ilog2() as usize)?,
             reduce: self.compile_named_pipeline(REDUCE_PIPELINE)?,
         };
         let message_limits = Self::limits(&pipelines.lazy[0].1);
@@ -231,7 +243,7 @@ impl SolinasMetal {
         let branch_threads =
             Self::resolve_threadgroup_width(Some(BRANCH_THREADS), Self::limits(&pipelines.double))?;
 
-        let branch_capacity = factors * MATERIALIZE_WIDTH * BINS;
+        let branch_capacity = factors * MATERIALIZE_WIDTH * bins;
         let dense_a_capacity = factors
             .checked_mul(rows / MATERIALIZE_WIDTH)
             .ok_or(MetalError::InputTooLong(rows))?;
@@ -286,6 +298,7 @@ impl SolinasMetal {
             buffers,
             rows,
             factors,
+            bins,
             e_in_capacity,
             e_out_capacity,
             message_threads,
@@ -429,7 +442,7 @@ impl RamRaSequence {
                 encoder.set_buffer(1, Some(self.branch_destination_buffer()), 0);
                 set_inline_bytes(encoder, 2, &Fp128::from_jolt_field(&challenge));
                 set_inline_bytes(encoder, 3, &params);
-                let elements = self.factors * self.branch_width * BINS;
+                let elements = self.factors * self.branch_width * self.bins;
                 encoder.dispatch_thread_groups(
                     MTLSize {
                         width: elements.div_ceil(self.branch_threads) as u64,
@@ -716,3 +729,123 @@ fn byte_length<T>(elements: usize) -> Result<u64, MetalError> {
 const _: () = assert!(size_of::<MessageParams>() == 16);
 const _: () = assert!(size_of::<BranchParams>() == 16);
 const _: () = assert!(size_of::<MaterializeParams>() == 16);
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "RAM RA field oracle setup")]
+mod tests {
+    use super::*;
+    use jolt_field::{One as _, Ring as _};
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+    #[test]
+    fn compact_and_dense_rounds_match_direct_products() {
+        let context = SolinasMetal::for_akita().unwrap();
+        let log_t = 9;
+        let rows = 1usize << log_t;
+        for (chunk_bits, factors) in [(8, 2), (8, 3), (4, 5)] {
+            let bins = 1usize << chunk_bits;
+            let domain = 1usize << (chunk_bits * factors);
+            let addresses = (0..rows)
+                .map(|index| {
+                    if index % 7 == 0 {
+                        u32::MAX
+                    } else {
+                        ((index * 7919 + domain - 1) % domain) as u32
+                    }
+                })
+                .collect::<Vec<_>>();
+            let chunks = (0..factors * bins)
+                .map(|index| -AkitaField::from_u64(17 + 101 * index as u64))
+                .collect::<Vec<_>>();
+            let mut tables = (0..factors)
+                .map(|factor| {
+                    addresses
+                        .iter()
+                        .map(|&address| {
+                            if address == u32::MAX {
+                                AkitaField::zero()
+                            } else {
+                                let shift = (factors - 1 - factor) * chunk_bits;
+                                chunks[factor * bins + ((address as usize >> shift) & (bins - 1))]
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let columns = Arc::new(RamAccessColumns::from_direct_addresses(
+                addresses, rows, domain,
+            ));
+            let point = (0..log_t)
+                .map(|index| AkitaField::from_u64(11 + index as u64 * 71))
+                .collect::<Vec<_>>();
+            let mut gruen = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+            let mut sequence = context
+                .prepare_ram_ra_sequence(
+                    columns,
+                    &chunks,
+                    factors,
+                    gruen.e_in_current().len(),
+                    gruen.e_out_current().len(),
+                )
+                .unwrap();
+            for round in 0..log_t {
+                let challenge = match round % 4 {
+                    0 => AkitaField::zero(),
+                    1 => AkitaField::one(),
+                    2 => -AkitaField::one(),
+                    _ => AkitaField::from_u64(103),
+                };
+                if round > 0 {
+                    gruen.bind(challenge);
+                    for table in &mut tables {
+                        *table = table
+                            .chunks_exact(2)
+                            .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                            .collect();
+                    }
+                }
+                let e_in = gruen.e_in_current();
+                let e_out = gruen.e_out_current();
+                let actual = if round == 0 {
+                    sequence.message(e_in, e_out)
+                } else {
+                    sequence.bind_and_message(challenge, e_in, e_out)
+                }
+                .unwrap();
+                let expected = (0..factors)
+                    .map(|sample| {
+                        (0..tables[0].len() / 2)
+                            .map(|pair| {
+                                let product =
+                                    tables.iter().fold(AkitaField::one(), |product, table| {
+                                        let delta = table[2 * pair + 1] - table[2 * pair];
+                                        let value = if sample + 1 == factors {
+                                            delta
+                                        } else {
+                                            table[2 * pair]
+                                                + AkitaField::from_u64(sample as u64 + 1) * delta
+                                        };
+                                        product * value
+                                    });
+                                e_in[pair % e_in.len()] * e_out[pair / e_in.len()] * product
+                            })
+                            .sum::<AkitaField>()
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    &actual[..factors],
+                    expected,
+                    "bits {chunk_bits}, factors {factors}, round {round}"
+                );
+            }
+            let challenge = AkitaField::from_u64(211);
+            let actual = sequence.finish_bind(challenge).unwrap();
+            for factor in 0..factors {
+                assert_eq!(
+                    actual[factor],
+                    tables[factor][0] + challenge * (tables[factor][1] - tables[factor][0])
+                );
+            }
+        }
+    }
+}

@@ -414,6 +414,10 @@ impl BooleanityAddressMetalPlan {
         })
     }
 
+    pub(crate) const fn address_domain(&self) -> usize {
+        self.k
+    }
+
     pub(crate) fn selectors(&self) -> &[BooleanitySelector] {
         &self.selectors
     }

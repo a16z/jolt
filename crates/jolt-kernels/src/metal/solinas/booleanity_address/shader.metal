@@ -477,14 +477,14 @@ kernel void solinas_booleanity_address_finalize(
     uint tid [[thread_index_in_threadgroup]],
     uint threads [[threads_per_threadgroup]])
 {
-    uint bin = tid & (BOOLEANITY_ADDRESS_BINS - 1u);
-    uint shard = tid / BOOLEANITY_ADDRESS_BINS;
-    uint shards = threads / BOOLEANITY_ADDRESS_BINS;
-    uint fields = params.selectors_in_tile * BOOLEANITY_ADDRESS_BINS;
+    uint bin = tid & (params.k - 1u);
+    uint shard = tid / params.k;
+    uint shards = threads / params.k;
+    uint fields = params.selectors_in_tile * params.k;
     SolinasFp128 sum = solinas_zero();
     for (uint x_out = shard; x_out < params.e_out_length; x_out += shards) {
         uint index = x_out * fields
-            + local_selector * BOOLEANITY_ADDRESS_BINS
+            + local_selector * params.k
             + bin;
         sum = solinas_add(sum, partials[index]);
     }
@@ -495,9 +495,57 @@ kernel void solinas_booleanity_address_finalize(
         for (uint other = 1u; other < shards; other++) {
             sum = solinas_add(
                 sum,
-                shared[other * BOOLEANITY_ADDRESS_BINS + bin]);
+                shared[other * params.k + bin]);
         }
         uint selector = params.selector_offset + local_selector;
-        output[selector * BOOLEANITY_ADDRESS_BINS + bin] = sum;
+        output[selector * params.k + bin] = sum;
+    }
+}
+
+// Each SIMD group owns a small K16 histogram. Uniform selectors (notably
+// upper increment chunks) contribute one SIMD sum instead of 32 atomics.
+kernel void solinas_booleanity_address_tile_k16(
+    device const ulong* rows [[buffer(0)]],
+    device const BooleanitySelector* selectors [[buffer(1)]],
+    device const SolinasFp128* e_in [[buffer(2)]],
+    device const SolinasFp128* e_out [[buffer(3)]],
+    device SolinasFp128* partials [[buffer(4)]],
+    constant BooleanityAddressParams& params [[buffer(5)]],
+    threadgroup atomic_uint* sums [[threadgroup(0)]],
+    uint x_out [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]])
+{
+    uint fields = params.selectors_in_tile * 16u;
+    uint copies = threads / 32u;
+    uint counters = fields * copies * BOOLEANITY_ADDRESS_ACCUMULATOR_WORDS;
+    for (uint counter = tid; counter < counters; counter += threads) {
+        atomic_store_explicit(&sums[counter], 0u, memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint row_base = x_out * params.e_in_length;
+    uint histogram_base = (tid / 32u) * fields;
+    for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
+        SolinasFp128 weight = e_in[x_in];
+        SolinasFp128 uniform_weight = params.e_in_length >= 32u ? solinas_simd_sum_32(weight) : weight;
+        BooleanityRow row = booleanity_row_load(rows, params.rows, row_base + x_in);
+        for (uint local = 0; local < params.selectors_in_tile; local++) {
+            uint hot = 16u;
+            BooleanitySelector selector = selectors[params.selector_offset + local];
+            if (!booleanity_hot_index(row, selector, 4u, params.inc_bias, hot)) hot = 16u;
+            bool uniform = params.e_in_length >= 32u && simd_all(hot == simd_broadcast_first(hot));
+            if (hot < 16u && (!uniform || (tid & 31u) == 0u)) {
+                booleanity_address_add(sums, 0u, histogram_base + local * 16u + hot,
+                    uniform ? uniform_weight : weight);
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint field = tid; field < fields; field += threads) {
+        SolinasFp128 value = solinas_zero();
+        for (uint copy = 0; copy < copies; copy++) {
+            value = solinas_add(value, solinas_deferred_atomic_reduce_5(sums, copy * fields + field));
+        }
+        partials[x_out * fields + field] = solinas_mul_wide(e_out[x_out], value);
     }
 }

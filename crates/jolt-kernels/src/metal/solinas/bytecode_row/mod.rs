@@ -10,10 +10,11 @@ use super::PipelineLimits;
 use super::{
     buffer_from_slice, set_inline_bytes, validate_completed_command, BooleanityRows,
     BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTablesMut, Fp128, MetalError,
-    SolinasMetal, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
+    SolinasMetal,
 };
 
 pub(crate) const BYTECODE_ROW_STAGES: usize = 9;
+#[cfg(test)]
 pub(crate) const BYTECODE_ROW_RA_ENTRIES: usize = 256;
 
 const SIMD_WIDTH: usize = 32;
@@ -25,8 +26,7 @@ pub(crate) struct BytecodeCycleRowInputs<'a> {
     pub stage_points: &'a [Vec<AkitaField>],
     pub stage_weights: &'a [AkitaField],
     pub entry_weight: AkitaField,
-    pub ra0: &'a [AkitaField],
-    pub ra1: &'a [AkitaField],
+    pub ra: &'a [Vec<AkitaField>],
 }
 
 #[repr(C)]
@@ -57,8 +57,7 @@ struct RowBuffers {
     eq_lo: Buffer,
     bound_eq_lo: Buffer,
     weighted_eq_hi: Buffer,
-    ra0: Buffer,
-    ra1: Buffer,
+    ra: Buffer,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +85,7 @@ pub(crate) struct BytecodeCycleRowSequence {
     first_bind_threads: usize,
     initial_elements: usize,
     phase: RowPhase,
+    tables: usize,
 }
 
 impl SolinasMetal {
@@ -122,11 +122,21 @@ impl SolinasMetal {
                 });
             }
         }
-        for (plane, values) in [("ra0", inputs.ra0), ("ra1", inputs.ra1)] {
-            if values.len() != BYTECODE_ROW_RA_ENTRIES {
+        let tables = inputs.ra.len() + 3;
+        let ra_entries = match inputs.ra.len() {
+            2 => 256,
+            5 => 16,
+            _ => {
+                return Err(MetalError::InvalidBytecodeCycleState(
+                    "unsupported bytecode RA count",
+                ))
+            }
+        };
+        for values in inputs.ra {
+            if values.len() != ra_entries {
                 return Err(MetalError::BytecodeCyclePlaneLength {
-                    plane,
-                    expected: BYTECODE_ROW_RA_ENTRIES,
+                    plane: "RA",
+                    expected: ra_entries,
                     got: values.len(),
                 });
             }
@@ -138,14 +148,15 @@ impl SolinasMetal {
             u32::try_from(lo_length).map_err(|_| MetalError::InputTooLong(lo_length))?;
         let hi_length_u32 =
             u32::try_from(hi_length).map_err(|_| MetalError::InputTooLong(hi_length))?;
-        let allocation = row_device_allocation(elements, lo_length, hi_length, config)?;
+        let allocation =
+            row_device_allocation(elements, lo_length, hi_length, tables, ra_entries, config)?;
         for bytes in allocation.buffer_bytes {
             self.validate_buffer_length(bytes)?;
         }
         let device = self.device_info();
         let _allocation_span = tracing::info_span!(
             "MetalBytecodeReadRafCycle::allocation_plan",
-            device_buffers = 17_u64,
+            device_buffers = (6 + 2 * tables) as u64,
             planned_device_bytes = allocation.total_bytes,
             current_device_bytes = device.current_allocated_size,
             recommended_device_bytes = device.recommended_max_working_set_size,
@@ -154,9 +165,9 @@ impl SolinasMetal {
         self.validate_additional_working_set(allocation.total_bytes)?;
 
         let pipelines = Pipelines {
-            first_message: self.compile_named_pipeline(FIRST_MESSAGE_PIPELINE)?,
+            first_message: self.compile_bytecode_pipeline(FIRST_MESSAGE_PIPELINE, tables)?,
             bind_roots: self.compile_named_pipeline(BIND_ROOTS_PIPELINE)?,
-            first_bind: self.compile_named_pipeline(FIRST_BIND_PIPELINE)?,
+            first_bind: self.compile_bytecode_pipeline(FIRST_BIND_PIPELINE, tables)?,
         };
         let first_message_limits = Self::limits(&pipelines.first_message);
         let bind_roots_limits = Self::limits(&pipelines.bind_roots);
@@ -197,12 +208,15 @@ impl SolinasMetal {
         }
         let eq_lo = fields_to_fp128(&eq_lo);
         let weighted_eq_hi = fields_to_fp128(&weighted_eq_hi);
-        let ra0 = fields_to_fp128(inputs.ra0);
-        let ra1 = fields_to_fp128(inputs.ra1);
+        let ra = inputs
+            .ra
+            .iter()
+            .flatten()
+            .map(Fp128::from_jolt_field)
+            .collect::<Vec<_>>();
         self.validate_inputs("bytecode row low roots", &eq_lo)?;
         self.validate_inputs("bytecode row weighted high roots", &weighted_eq_hi)?;
-        self.validate_inputs("bytecode row RA0", &ra0)?;
-        self.validate_inputs("bytecode row RA1", &ra1)?;
+        self.validate_inputs("bytecode row RA", &ra)?;
 
         let bound_root_elements = allocation.bound_eq_lo_elements;
         let _ = u32::try_from(bound_root_elements)
@@ -211,6 +225,7 @@ impl SolinasMetal {
         self.validate_buffer_length(bound_root_bytes)?;
         let dense = self.prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
             elements / 2,
+            tables,
             config,
             hi_length,
         )?;
@@ -228,8 +243,7 @@ impl SolinasMetal {
                     .device
                     .new_buffer(bound_root_bytes, MTLResourceOptions::StorageModeShared),
                 weighted_eq_hi: buffer_from_slice(&self.device, &weighted_eq_hi),
-                ra0: buffer_from_slice(&self.device, &ra0),
-                ra1: buffer_from_slice(&self.device, &ra1),
+                ra: buffer_from_slice(&self.device, &ra),
             }),
             dense,
             params: Params {
@@ -250,12 +264,13 @@ impl SolinasMetal {
             first_bind_threads,
             initial_elements: elements,
             phase: RowPhase::BeforeMessage,
+            tables,
         })
     }
 }
 
 impl BytecodeCycleRowSequence {
-    pub(crate) fn message(&mut self) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+    pub(crate) fn message(&mut self) -> Result<Vec<AkitaField>, MetalError> {
         if self.phase != RowPhase::BeforeMessage {
             return Err(MetalError::InvalidBytecodeCycleState(
                 "row-derived message may run exactly once before the first bind",
@@ -269,7 +284,7 @@ impl BytecodeCycleRowSequence {
     pub(crate) fn bind_and_message(
         &mut self,
         challenge: AkitaField,
-    ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+    ) -> Result<Vec<AkitaField>, MetalError> {
         match self.phase {
             RowPhase::BeforeMessage => Err(MetalError::InvalidBytecodeCycleState(
                 "row-derived first bind requires the initial message",
@@ -321,7 +336,7 @@ impl BytecodeCycleRowSequence {
     fn execute_row_round(
         &mut self,
         challenge: Option<AkitaField>,
-    ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+    ) -> Result<Vec<AkitaField>, MetalError> {
         let row_buffers =
             self.row_buffers
                 .as_ref()
@@ -356,14 +371,15 @@ impl BytecodeCycleRowSequence {
             if let Some(challenge) = challenge {
                 encoder.set_compute_pipeline_state(&self.pipelines.first_bind);
                 Self::encode_row_inputs(encoder, row_buffers, true);
-                for (index, buffer) in self.dense.initial_table_buffers().iter().enumerate() {
+                for index in 0..8 {
+                    let buffer = &self.dense.initial_table_buffers()[index.min(self.tables - 1)];
                     encoder.set_buffer((5 + index) as u64, Some(buffer), 0);
                 }
-                encoder.set_buffer(10, Some(self.dense.partial_buffer()), 0);
-                set_inline_bytes(encoder, 11, &Fp128::from_jolt_field(&challenge));
+                encoder.set_buffer(13, Some(self.dense.partial_buffer()), 0);
+                set_inline_bytes(encoder, 14, &Fp128::from_jolt_field(&challenge));
                 let bound_entry = (AkitaField::one() - challenge) * self.entry_weight;
-                set_inline_bytes(encoder, 12, &Fp128::from_jolt_field(&bound_entry));
-                set_inline_bytes(encoder, 13, &self.params);
+                set_inline_bytes(encoder, 15, &Fp128::from_jolt_field(&bound_entry));
+                set_inline_bytes(encoder, 16, &self.params);
                 self.encode_row_dispatch(encoder, self.first_bind_threads);
             } else {
                 encoder.set_compute_pipeline_state(&self.pipelines.first_message);
@@ -401,8 +417,7 @@ impl BytecodeCycleRowSequence {
             0,
         );
         encoder.set_buffer(2, Some(&buffers.weighted_eq_hi), 0);
-        encoder.set_buffer(3, Some(&buffers.ra0), 0);
-        encoder.set_buffer(4, Some(&buffers.ra1), 0);
+        encoder.set_buffer(3, Some(&buffers.ra), 0);
     }
 
     fn encode_row_dispatch(
@@ -411,7 +426,7 @@ impl BytecodeCycleRowSequence {
         threads_per_threadgroup: usize,
     ) {
         let dynamic_elements =
-            BYTECODE_ROW_STAGES + BYTECODE_CYCLE_SAMPLES * (threads_per_threadgroup / SIMD_WIDTH);
+            BYTECODE_ROW_STAGES + (self.tables - 1) * (threads_per_threadgroup / SIMD_WIDTH);
         encoder.set_threadgroup_memory_length(0, (dynamic_elements * size_of::<Fp128>()) as u64);
         encoder.dispatch_thread_groups(
             MTLSize {
@@ -433,7 +448,7 @@ struct RowDeviceAllocation {
     eq_lo_elements: usize,
     bound_eq_lo_elements: usize,
     weighted_eq_hi_elements: usize,
-    buffer_bytes: [u64; 7],
+    buffer_bytes: [u64; 6],
     total_bytes: u64,
 }
 
@@ -441,6 +456,8 @@ fn row_device_allocation(
     elements: usize,
     lo_length: usize,
     hi_length: usize,
+    tables: usize,
+    ra_entries: usize,
     config: BytecodeCycleSequenceConfig,
 ) -> Result<RowDeviceAllocation, MetalError> {
     let eq_lo_elements = BYTECODE_ROW_STAGES
@@ -452,25 +469,24 @@ fn row_device_allocation(
     let weighted_eq_hi_elements = BYTECODE_ROW_STAGES
         .checked_mul(hi_length)
         .ok_or(MetalError::InputTooLong(hi_length))?;
-    let dense_a_elements = BYTECODE_CYCLE_TABLES
+    let dense_a_elements = tables
         .checked_mul(elements / 2)
         .ok_or(MetalError::InputTooLong(elements))?;
-    let dense_b_elements = BYTECODE_CYCLE_TABLES
+    let dense_b_elements = tables
         .checked_mul(elements / 4)
         .ok_or(MetalError::InputTooLong(elements))?;
     let partial_elements = 2usize
-        .checked_mul(BYTECODE_CYCLE_SAMPLES)
+        .checked_mul(tables - 1)
         .and_then(|value| value.checked_mul(config.max_threadgroups))
         .ok_or(MetalError::InputTooLong(config.max_threadgroups))?;
-    let ra_elements = 2usize
-        .checked_mul(BYTECODE_ROW_RA_ENTRIES)
-        .ok_or(MetalError::InputTooLong(BYTECODE_ROW_RA_ENTRIES))?;
+    let ra_elements = (tables - 3)
+        .checked_mul(ra_entries)
+        .ok_or(MetalError::InputTooLong(ra_entries))?;
     let buffer_bytes = [
         byte_length(eq_lo_elements)?,
         byte_length(bound_eq_lo_elements)?,
         byte_length(weighted_eq_hi_elements)?,
-        byte_length(BYTECODE_ROW_RA_ENTRIES)?,
-        byte_length(BYTECODE_ROW_RA_ENTRIES)?,
+        byte_length(ra_elements)?,
         byte_length(elements / 2)?,
         byte_length(partial_elements / 2)?,
     ];
@@ -533,77 +549,36 @@ mod tests {
         AkitaField::from_u64(value)
     }
 
-    fn grid_from_anchors(
-        at_zero: AkitaField,
-        at_one: AkitaField,
-        leading: AkitaField,
-    ) -> [AkitaField; BYTECODE_CYCLE_SAMPLES] {
-        let second_difference = leading + leading;
-        let delta_two = at_one - at_zero + second_difference;
-        let at_two = at_one + delta_two;
-        let delta_three = delta_two + second_difference;
-        let at_three = at_two + delta_three;
-        [
-            at_zero,
-            at_two,
-            at_three,
-            at_three + delta_three + second_difference,
-        ]
+    fn cpu_message(tables: &[Vec<AkitaField>]) -> Vec<AkitaField> {
+        (0..tables.len() - 1)
+            .map(|sample| {
+                let x = field(if sample == 0 { 0 } else { sample as u64 + 1 });
+                (0..tables[0].len() / 2)
+                    .map(|pair| {
+                        let at = |table: usize| {
+                            tables[table][2 * pair]
+                                + x * (tables[table][2 * pair + 1] - tables[table][2 * pair])
+                        };
+                        (3..tables.len()).fold(at(0) + at(1) * at(2), |acc, table| acc * at(table))
+                    })
+                    .sum()
+            })
+            .collect()
     }
-
-    fn q10(
-        lo: [AkitaField; BYTECODE_CYCLE_TABLES],
-        hi: [AkitaField; BYTECODE_CYCLE_TABLES],
-    ) -> [AkitaField; BYTECODE_CYCLE_SAMPLES] {
-        let ra = grid_from_anchors(
-            lo[3] * lo[4],
-            hi[3] * hi[4],
-            (hi[3] - lo[3]) * (hi[4] - lo[4]),
-        );
-        let coefficient = grid_from_anchors(
-            lo[0] + lo[2] * lo[1],
-            hi[0] + hi[2] * hi[1],
-            (hi[2] - lo[2]) * (hi[1] - lo[1]),
-        );
-        std::array::from_fn(|sample| ra[sample] * coefficient[sample])
+    fn bind_tables(tables: &[Vec<AkitaField>], challenge: AkitaField) -> Vec<Vec<AkitaField>> {
+        tables
+            .iter()
+            .map(|table| {
+                table
+                    .chunks_exact(2)
+                    .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
+                    .collect()
+            })
+            .collect()
     }
-
-    fn cpu_message(
-        tables: &[Vec<AkitaField>; BYTECODE_CYCLE_TABLES],
-    ) -> [AkitaField; BYTECODE_CYCLE_SAMPLES] {
-        let mut message = [AkitaField::zero(); BYTECODE_CYCLE_SAMPLES];
-        for pair in 0..tables[0].len() / 2 {
-            let lo = std::array::from_fn(|table| tables[table][2 * pair]);
-            let hi = std::array::from_fn(|table| tables[table][2 * pair + 1]);
-            for (acc, value) in message.iter_mut().zip(q10(lo, hi)) {
-                *acc += value;
-            }
-        }
-        message
-    }
-
-    fn bind_tables(
-        tables: &[Vec<AkitaField>; BYTECODE_CYCLE_TABLES],
-        challenge: AkitaField,
-    ) -> [Vec<AkitaField>; BYTECODE_CYCLE_TABLES] {
-        std::array::from_fn(|table| {
-            tables[table]
-                .chunks_exact(2)
-                .map(|pair| pair[0] + challenge * (pair[1] - pair[0]))
-                .collect()
-        })
-    }
-
-    fn table_views_mut(
-        tables: &mut [Vec<AkitaField>; BYTECODE_CYCLE_TABLES],
-    ) -> BytecodeCycleTablesMut<'_> {
-        let [combined, fused_combined, fused_inc, ra0, ra1] = tables;
+    fn table_views_mut(tables: &mut [Vec<AkitaField>]) -> BytecodeCycleTablesMut<'_> {
         BytecodeCycleTablesMut {
-            combined,
-            fused_combined,
-            fused_inc,
-            ra0,
-            ra1,
+            planes: tables.iter_mut().map(Vec::as_mut_slice).collect(),
         }
     }
 
@@ -625,13 +600,14 @@ mod tests {
         let elements = 1usize << 26;
         let (_, _, lo_length, hi_length) = row_split(26, 1 << 13).unwrap();
         let config = BytecodeCycleSequenceConfig::default();
-        let allocation = row_device_allocation(elements, lo_length, hi_length, config).unwrap();
+        let allocation =
+            row_device_allocation(elements, lo_length, hi_length, 5, 256, config).unwrap();
         let expected_elements = BYTECODE_ROW_STAGES * lo_length
             + BYTECODE_ROW_STAGES * (lo_length / 2)
             + BYTECODE_ROW_STAGES * hi_length
             + 2 * BYTECODE_ROW_RA_ENTRIES
-            + BYTECODE_CYCLE_TABLES * (elements / 2 + elements / 4)
-            + 2 * BYTECODE_CYCLE_SAMPLES * config.max_threadgroups;
+            + 5 * (elements / 2 + elements / 4)
+            + 2 * 4 * config.max_threadgroups;
         assert_eq!(
             allocation.total_bytes,
             (expected_elements * size_of::<Fp128>()) as u64
@@ -641,144 +617,148 @@ mod tests {
             (BYTECODE_ROW_STAGES * lo_length * size_of::<Fp128>()) as u64
         );
 
-        let tiny_group_plan = row_device_allocation(elements, elements, 1, config).unwrap();
+        let tiny_group_plan = row_device_allocation(elements, elements, 1, 5, 256, config).unwrap();
         assert!(tiny_group_plan.total_bytes > allocation.total_bytes);
     }
 
     #[test]
     fn row_derived_sequence_matches_dense_cpu() {
-        let context = SolinasMetal::for_akita().unwrap();
-        let log_t = 14;
-        let elements = 1usize << log_t;
-        let stage_points = (0..BYTECODE_ROW_STAGES)
-            .map(|stage| {
-                (0..log_t)
-                    .map(|index| field(5 + 41 * stage as u64 + 67 * index as u64))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let stage_weights = (0..BYTECODE_ROW_STAGES)
-            .map(|stage| {
-                let value = field(101 + 73 * stage as u64);
-                if stage % 3 == 1 {
-                    -value
-                } else {
-                    value
+        for (num_ra, chunk_bits) in [(2, 8), (5, 4)] {
+            let context = SolinasMetal::for_akita().unwrap();
+            let log_t = 14;
+            let elements = 1usize << log_t;
+            let stage_points = (0..BYTECODE_ROW_STAGES)
+                .map(|stage| {
+                    (0..log_t)
+                        .map(|index| field(5 + 41 * stage as u64 + 67 * index as u64))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let stage_weights = (0..BYTECODE_ROW_STAGES)
+                .map(|stage| {
+                    let value = field(101 + 73 * stage as u64);
+                    if stage % 3 == 1 {
+                        -value
+                    } else {
+                        value
+                    }
+                })
+                .collect::<Vec<_>>();
+            let entry_weight = -field(0x9a37);
+            let ra = (0..num_ra)
+                .map(|chunk| {
+                    (0..1usize << chunk_bits)
+                        .map(|index| field(1009 + 97 * chunk as u64 + 17 * index as u64))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let mut rows = Vec::with_capacity(elements);
+            let mut factors = vec![vec![AkitaField::zero(); elements]; 3 + num_ra];
+            for (stage, (point, weight)) in stage_points.iter().zip(&stage_weights).enumerate() {
+                let scaled = EqPolynomial::<AkitaField>::evals(point, Some(*weight));
+                let destination = usize::from(stage >= 5);
+                for (acc, value) in factors[destination].iter_mut().zip(scaled) {
+                    *acc += value;
                 }
-            })
-            .collect::<Vec<_>>();
-        let entry_weight = -field(0x9a37);
-        let ra0 = (0..BYTECODE_ROW_RA_ENTRIES)
-            .map(|index| field(1009 + 17 * index as u64))
-            .collect::<Vec<_>>();
-        let ra1 = (0..BYTECODE_ROW_RA_ENTRIES)
-            .map(|index| -field(2003 + 29 * index as u64))
-            .collect::<Vec<_>>();
-
-        let mut rows = Vec::with_capacity(elements);
-        let mut factors: [Vec<AkitaField>; BYTECODE_CYCLE_TABLES] =
-            std::array::from_fn(|_| vec![AkitaField::zero(); elements]);
-        for (stage, (point, weight)) in stage_points.iter().zip(&stage_weights).enumerate() {
-            let scaled = EqPolynomial::<AkitaField>::evals(point, Some(*weight));
-            let destination = usize::from(stage >= 5);
-            for (acc, value) in factors[destination].iter_mut().zip(scaled) {
-                *acc += value;
             }
-        }
-        factors[0][0] += entry_weight;
+            factors[0][0] += entry_weight;
 
-        let inc_values = [0, 1, -1, u64::MAX as i128, -(u64::MAX as i128)];
-        for index in 0..elements {
-            let mapped_pc = match index % 13 {
-                0 => None,
-                1 => Some(0),
-                2 => Some(255),
-                3 => Some(256),
-                4 => Some(262_143),
-                _ => Some((37 * index % 262_144) as u64),
-            };
-            let inc = inc_values[index % inc_values.len()];
-            rows.push(BooleanityRow::new(index as u128, mapped_pc, None, inc).unwrap());
-            factors[2][index] = if inc < 0 {
-                -AkitaField::from_u64(inc.unsigned_abs() as u64)
-            } else {
-                AkitaField::from_u64(inc as u64)
-            };
-            if let Some(pc) = mapped_pc {
-                factors[3][index] = ra0[((pc >> 8) & 0xff) as usize];
-                factors[4][index] = ra1[(pc & 0xff) as usize];
+            let inc_values = [0, 1, -1, u64::MAX as i128, -(u64::MAX as i128)];
+            for index in 0..elements {
+                let mapped_pc = match index % 13 {
+                    0 => None,
+                    1 => Some(0),
+                    2 => Some(255),
+                    3 => Some(256),
+                    4 => Some(262_143),
+                    _ => Some((37 * index % 262_144) as u64),
+                };
+                let inc = inc_values[index % inc_values.len()];
+                rows.push(BooleanityRow::new(index as u128, mapped_pc, None, inc).unwrap());
+                factors[2][index] = if inc < 0 {
+                    -AkitaField::from_u64(inc.unsigned_abs() as u64)
+                } else {
+                    AkitaField::from_u64(inc as u64)
+                };
+                if let Some(pc) = mapped_pc {
+                    for chunk in 0..num_ra {
+                        factors[3 + chunk][index] = ra[chunk][((pc
+                            >> ((num_ra - 1 - chunk) * chunk_bits))
+                            & ((1 << chunk_bits) - 1))
+                            as usize];
+                    }
+                }
             }
-        }
 
-        let resident_rows = context.prepare_booleanity_rows(&rows).unwrap();
-        let mut sequence = context
-            .prepare_bytecode_cycle_row_sequence(
-                resident_rows,
-                BytecodeCycleRowInputs {
-                    stage_points: &stage_points,
-                    stage_weights: &stage_weights,
-                    entry_weight,
-                    ra0: &ra0,
-                    ra1: &ra1,
-                },
-                BytecodeCycleSequenceConfig {
-                    message_threads_per_threadgroup: Some(32),
-                    transition_threads_per_threadgroup: Some(32),
-                    max_threadgroups: 1 << 5,
-                },
-            )
-            .unwrap();
-        assert!(!sequence.is_dense());
-        assert_eq!(sequence.current_elements(), elements);
-        let mut premature = std::array::from_fn(|_| Vec::new());
-        assert!(sequence
-            .read_current_tables(table_views_mut(&mut premature))
-            .is_err());
-        assert!(sequence.bind_and_message(field(3)).is_err());
-        assert_eq!(sequence.message().unwrap(), cpu_message(&factors));
-        assert!(sequence.message().is_err());
+            let resident_rows = context.prepare_booleanity_rows(&rows).unwrap();
+            let mut sequence = context
+                .prepare_bytecode_cycle_row_sequence(
+                    resident_rows,
+                    BytecodeCycleRowInputs {
+                        stage_points: &stage_points,
+                        stage_weights: &stage_weights,
+                        entry_weight,
+                        ra: &ra,
+                    },
+                    BytecodeCycleSequenceConfig {
+                        message_threads_per_threadgroup: Some(32),
+                        transition_threads_per_threadgroup: Some(32),
+                        max_threadgroups: 1 << 5,
+                    },
+                )
+                .unwrap();
+            assert!(!sequence.is_dense());
+            assert_eq!(sequence.current_elements(), elements);
+            let mut premature = vec![Vec::new(); 3 + num_ra];
+            assert!(sequence
+                .read_current_tables(table_views_mut(&mut premature))
+                .is_err());
+            assert!(sequence.bind_and_message(field(3)).is_err());
+            assert_eq!(sequence.message().unwrap(), cpu_message(&factors));
+            assert!(sequence.message().is_err());
 
-        let first_challenge = field(7);
-        factors = bind_tables(&factors, first_challenge);
-        assert_eq!(
-            sequence.bind_and_message(first_challenge).unwrap(),
-            cpu_message(&factors)
-        );
-        assert!(sequence.is_dense());
-        assert_eq!(sequence.current_elements(), elements / 2);
-        let mut restored =
-            std::array::from_fn(|_| vec![AkitaField::zero(); sequence.current_elements()]);
-        sequence
-            .read_current_tables(table_views_mut(&mut restored))
-            .unwrap();
-        assert_eq!(restored, factors);
-
-        for challenge in [
-            AkitaField::zero(),
-            AkitaField::one(),
-            -AkitaField::one(),
-            field(29),
-            -field(43),
-        ] {
-            factors = bind_tables(&factors, challenge);
+            let first_challenge = field(7);
+            factors = bind_tables(&factors, first_challenge);
             assert_eq!(
-                sequence.bind_and_message(challenge).unwrap(),
+                sequence.bind_and_message(first_challenge).unwrap(),
                 cpu_message(&factors)
             );
-        }
-        assert_eq!(
-            BytecodeCycleRowSequence::round_device_buffer_allocations(),
-            0
-        );
-        assert_eq!(
+            assert!(sequence.is_dense());
+            assert_eq!(sequence.current_elements(), elements / 2);
+            let mut restored =
+                vec![vec![AkitaField::zero(); sequence.current_elements()]; 3 + num_ra];
             sequence
-                .first_message_pipeline_limits()
-                .thread_execution_width,
-            32
-        );
-        assert_eq!(
-            sequence.first_bind_pipeline_limits().thread_execution_width,
-            32
-        );
+                .read_current_tables(table_views_mut(&mut restored))
+                .unwrap();
+            assert_eq!(restored, factors);
+
+            for challenge in [
+                AkitaField::zero(),
+                AkitaField::one(),
+                -AkitaField::one(),
+                field(29),
+                -field(43),
+            ] {
+                factors = bind_tables(&factors, challenge);
+                assert_eq!(
+                    sequence.bind_and_message(challenge).unwrap(),
+                    cpu_message(&factors)
+                );
+            }
+            assert_eq!(
+                BytecodeCycleRowSequence::round_device_buffer_allocations(),
+                0
+            );
+            assert_eq!(
+                sequence
+                    .first_message_pipeline_limits()
+                    .thread_execution_width,
+                32
+            );
+            assert_eq!(
+                sequence.first_bind_pipeline_limits().thread_execution_width,
+                32
+            );
+        }
     }
 }

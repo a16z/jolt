@@ -1,4 +1,6 @@
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
+#[cfg(test)]
+use jolt_field::Ring as _;
 use jolt_field::Zero as _;
 use jolt_poly::EqPolynomial;
 use jolt_sumcheck::{ProveRounds, RoundExecutionDomain, SumcheckError};
@@ -181,8 +183,7 @@ fn exact_bytecode_cycle_input_claim(
         || !rows.len().is_power_of_two()
         || inputs.stage_points.len() != 9
         || inputs.stage_weights.len() != 9
-        || inputs.ra0.len() != 256
-        || inputs.ra1.len() != 256
+        || !matches!(inputs.ra.len(), 2 | 5)
     {
         return Err(KernelError::InvariantViolation {
             reason: "Bytecode evaluator input-claim geometry is invalid",
@@ -221,28 +222,36 @@ fn exact_bytecode_cycle_input_claim(
         });
     }
 
-    let term = |index: usize| {
-        let row = &rows[index];
-        let Some(mapped_pc) = row.mapped_pc() else {
-            return AkitaField::zero();
+    let term =
+        |index: usize| {
+            let row = &rows[index];
+            let Some(mapped_pc) = row.mapped_pc() else {
+                return AkitaField::zero();
+            };
+            let bits = inputs.ra[0].len().ilog2() as usize;
+            let ra = inputs.ra.iter().enumerate().fold(
+                AkitaField::from_u64(1),
+                |acc, (index, table)| {
+                    acc * table
+                        [(mapped_pc >> ((inputs.ra.len() - 1 - index) * bits)) & (table.len() - 1)]
+                },
+            );
+            let hi = index >> lo_bits;
+            let lo = index & (lo_length - 1);
+            let stage_eq = |stage: usize| roots[stage].0[hi] * roots[stage].1[lo];
+            let combined = (0..5).fold(AkitaField::zero(), |sum, stage| {
+                sum + inputs.stage_weights[stage] * stage_eq(stage)
+            });
+            let fused_combined = (5..9).fold(AkitaField::zero(), |sum, stage| {
+                sum + inputs.stage_weights[stage] * stage_eq(stage)
+            });
+            let entry = if index == 0 {
+                inputs.entry_weight
+            } else {
+                AkitaField::zero()
+            };
+            ra * (combined + row.fused_inc::<AkitaField>() * fused_combined + entry)
         };
-        let ra = inputs.ra0[mapped_pc >> 8] * inputs.ra1[mapped_pc & 0xff];
-        let hi = index >> lo_bits;
-        let lo = index & (lo_length - 1);
-        let stage_eq = |stage: usize| roots[stage].0[hi] * roots[stage].1[lo];
-        let combined = (0..5).fold(AkitaField::zero(), |sum, stage| {
-            sum + inputs.stage_weights[stage] * stage_eq(stage)
-        });
-        let fused_combined = (5..9).fold(AkitaField::zero(), |sum, stage| {
-            sum + inputs.stage_weights[stage] * stage_eq(stage)
-        });
-        let entry = if index == 0 {
-            inputs.entry_weight
-        } else {
-            AkitaField::zero()
-        };
-        ra * (combined + row.fused_inc::<AkitaField>() * fused_combined + entry)
-    };
     #[cfg(feature = "parallel")]
     let claim = (0..rows.len())
         .into_par_iter()
@@ -457,9 +466,14 @@ impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBacken
 
         if trace_elements < config.trace_cutoff_elements
             || config.cutoff_elements > trace_elements / 2
-            || relation.degree() != 4
-            || dimensions.num_committed_ra_polys() != 2
-            || relation.committed_chunk_bits() != 8
+            || !matches!(
+                (
+                    relation.degree(),
+                    dimensions.num_committed_ra_polys(),
+                    relation.committed_chunk_bits()
+                ),
+                (4, 2, 8) | (7, 5, 4)
+            )
         {
             return fallback(session);
         }
@@ -479,8 +493,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBacken
                 stage_points: &metadata.stage_points,
                 stage_weights: &metadata.stage_weights,
                 entry_weight: metadata.entry_weight,
-                ra0: &metadata.ra0,
-                ra1: &metadata.ra1,
+                ra: &metadata.ra,
             },
             config.dispatch,
         ) {
@@ -497,7 +510,12 @@ impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBacken
         Ok(Box::new(MetalBytecodeReadRafKernel::new(
             cpu,
             sequence,
-            config.cutoff_elements,
+            if dimensions.num_committed_ra_polys() == 5 {
+                config.cutoff_elements.min(1 << 10)
+            } else {
+                config.cutoff_elements
+            },
+            dimensions.num_committed_ra_polys() + 3,
         )))
     }
 }
@@ -505,7 +523,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBacken
 pub(crate) struct MetalBytecodeReadRafKernel {
     cpu: CycleKernel<AkitaField>,
     sequence: Option<BytecodeCycleRowSequence>,
-    host_tail: Option<[Vec<AkitaField>; 5]>,
+    host_tail: Option<Vec<Vec<AkitaField>>>,
     cutoff_elements: usize,
 }
 
@@ -514,13 +532,16 @@ impl MetalBytecodeReadRafKernel {
         cpu: CycleKernel<AkitaField>,
         sequence: BytecodeCycleRowSequence,
         cutoff_elements: usize,
+        tables: usize,
     ) -> Self {
         Self {
             cpu,
             sequence: Some(sequence),
-            host_tail: Some(std::array::from_fn(|_| {
-                vec![AkitaField::zero(); cutoff_elements]
-            })),
+            host_tail: Some(
+                (0..tables)
+                    .map(|_| vec![AkitaField::zero(); cutoff_elements])
+                    .collect(),
+            ),
             cutoff_elements,
         }
     }
@@ -537,7 +558,9 @@ impl MetalBytecodeReadRafKernel {
         }
         let elements = sequence.current_elements();
         let readback_bytes = elements
-            .checked_mul(5 * std::mem::size_of::<AkitaField>())
+            .checked_mul(
+                self.host_tail.as_ref().map_or(0, Vec::len) * std::mem::size_of::<AkitaField>(),
+            )
             .and_then(|bytes| u64::try_from(bytes).ok())
             .ok_or_else(|| metal_error("bytecode cycle readback byte count overflowed"))?;
         let _span = tracing::info_span!(
@@ -554,26 +577,30 @@ impl MetalBytecodeReadRafKernel {
                 "bytecode cycle readback exceeds the preallocated host tail",
             ));
         }
-        let [combined, fused_combined, fused_inc, ra0, ra1] = &mut tables;
         sequence
             .read_current_tables(BytecodeCycleTablesMut {
-                combined: &mut combined[..elements],
-                fused_combined: &mut fused_combined[..elements],
-                fused_inc: &mut fused_inc[..elements],
-                ra0: &mut ra0[..elements],
-                ra1: &mut ra1[..elements],
+                planes: tables
+                    .iter_mut()
+                    .map(|table| &mut table[..elements])
+                    .collect(),
             })
             .map_err(|error| metal_error(error.to_string()))?;
         for table in &mut tables {
             table.truncate(elements);
         }
-        let [combined, fused_combined, fused_inc, ra0, ra1] = tables;
+        let ra = tables.split_off(3);
+        let mut coefficients = tables.into_iter();
         self.cpu.metal_restore_dense(BytecodeCycleDenseState {
-            combined,
-            fused_combined,
-            fused_inc,
-            ra0,
-            ra1,
+            combined: coefficients
+                .next()
+                .ok_or_else(|| metal_error("missing combined table"))?,
+            fused_combined: coefficients
+                .next()
+                .ok_or_else(|| metal_error("missing fused coefficient table"))?,
+            fused_inc: coefficients
+                .next()
+                .ok_or_else(|| metal_error("missing increment table"))?,
+            ra,
         })
     }
 }
@@ -629,7 +656,7 @@ impl ProveRounds<AkitaField> for MetalBytecodeReadRafKernel {
                     evals
                 }
             };
-            return self.cpu.metal_message(evals, previous_claim);
+            return self.cpu.metal_message(&evals, previous_claim);
         }
 
         let _span = tracing::info_span!("MetalBytecodeReadRafCycle::cpu_tail").entered();
@@ -681,6 +708,7 @@ fn bytecode_prepare_can_fallback(error: &MetalError) -> bool {
 #[expect(clippy::unwrap_used, reason = "Metal bytecode parity setup")]
 mod tests {
     use crate::metal::solinas::BOOLEANITY_SOURCE_ROW_BYTES;
+    use crate::metal::MetalConfig;
     use jolt_field::{One as _, Ring as _};
     use std::num::NonZeroUsize;
 
@@ -768,7 +796,7 @@ mod tests {
         let log_t = 15;
         with_sample_backend_at_geometry(log_t, 14, 8, |witness| {
             assert!(!bytecode_address_stage1_topology_supported(witness));
-            let backend = MetalBackend::new(super::super::MetalConfig {
+            let backend = MetalBackend::new(MetalConfig {
                 instruction_read_raf: super::super::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 1 << log_t,
                     ..Default::default()
@@ -862,7 +890,7 @@ mod tests {
             .unwrap();
             let claim = probe_input_claim(reference.as_mut());
 
-            let backend = MetalBackend::new(super::super::MetalConfig {
+            let backend = MetalBackend::new(MetalConfig {
                 instruction_read_raf: super::super::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 1 << log_t,
                     ..Default::default()
@@ -1020,8 +1048,7 @@ mod tests {
             stage_points: (0..9).map(|stage| point(2, stage)).collect(),
             stage_weights: vec![AkitaField::one(); 9],
             entry_weight: AkitaField::one(),
-            ra0: vec![AkitaField::one(); 256],
-            ra1: vec![AkitaField::one(); 256],
+            ra: vec![vec![AkitaField::one(); 256]; 2],
         };
 
         assert!(matches!(
@@ -1086,7 +1113,7 @@ mod tests {
             let claim = probe_input_claim(reference.as_mut());
             let round_challenges = point(dimensions.log_k(), 101);
 
-            let production = MetalBackend::new(super::super::MetalConfig {
+            let production = MetalBackend::new(MetalConfig {
                 spartan_product_remainder: SpartanProductRemainderMetalConfig {
                     trace_cutoff_elements: 1 << log_t,
                     ..Default::default()
@@ -1187,119 +1214,131 @@ mod tests {
     #[test]
     fn production_kernel_matches_optimized_cpu_through_handoff() {
         let log_t = 10;
-        with_sample_backend_at_geometry(log_t, 13, 8, |witness| {
-            let dimensions = BytecodeReadRafDimensions::new(log_t, 13, 2);
-            let relation = BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
-                dimensions,
-                r_address: point(13, 19),
-                stage_cycle_points: std::array::from_fn(|stage| point(log_t, 41 + stage as u64)),
-                entry_bytecode_index: 17,
-                committed_chunk_bits: 8,
-                val_stages: (0..NUM_BYTECODE_VAL_STAGES)
-                    .map(|stage| AkitaField::from_u64(101 + stage as u64))
-                    .collect(),
-            });
-            assert_eq!(relation.stage_cycle_points().len(), READ_RAF_CYCLE_STAGES);
-            let claims = BytecodeReadRafInputClaims::<AkitaField>::default();
-            let points = BytecodeReadRafInputClaims::<Vec<AkitaField>>::default();
-            let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
-                gamma: AkitaField::from_u64(31),
-            };
-            let inputs = || ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &challenges,
-            };
+        for (log_k, chunk_bits, num_ra) in [(13, 8, 2), (18, 4, 5)] {
+            with_sample_backend_at_geometry(log_t, log_k, chunk_bits, |witness| {
+                let dimensions = BytecodeReadRafDimensions::new(log_t, log_k, num_ra);
+                let relation =
+                    BytecodeReadRafCycle::committed(BytecodeReadRafCommittedCycleInputs {
+                        dimensions,
+                        r_address: point(log_k, 19),
+                        stage_cycle_points: std::array::from_fn(|stage| {
+                            point(log_t, 41 + stage as u64)
+                        }),
+                        entry_bytecode_index: 17,
+                        committed_chunk_bits: usize::from(chunk_bits),
+                        val_stages: (0..NUM_BYTECODE_VAL_STAGES)
+                            .map(|stage| AkitaField::from_u64(101 + stage as u64))
+                            .collect(),
+                    });
+                assert_eq!(relation.stage_cycle_points().len(), READ_RAF_CYCLE_STAGES);
+                let claims = BytecodeReadRafInputClaims::<AkitaField>::default();
+                let points = BytecodeReadRafInputClaims::<Vec<AkitaField>>::default();
+                let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
+                    gamma: AkitaField::from_u64(31),
+                };
+                let inputs = || ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                };
 
-            let (mut shell, metadata) =
-                prepare_metal_bytecode_cycle_shell(inputs(), BytecodeCycleAlgebra::Q10Accum)
+                let (mut shell, metadata) =
+                    prepare_metal_bytecode_cycle_shell(inputs(), BytecodeCycleAlgebra::Q10Accum)
+                        .unwrap();
+                assert_eq!(shell.metal_elements().unwrap(), 1 << log_t);
+                assert_eq!(shell.metal_rounds_bound(), 0);
+                let _ = shell
+                    .metal_message(
+                        &(0..relation.degree())
+                            .map(|index| AkitaField::from_u64(7 + index as u64))
+                            .collect::<Vec<_>>(),
+                        AkitaField::zero(),
+                    )
                     .unwrap();
-            assert_eq!(shell.metal_elements().unwrap(), 1 << log_t);
-            assert_eq!(shell.metal_rounds_bound(), 0);
-            let _ = shell
-                .metal_message(
-                    std::array::from_fn(|index| AkitaField::from_u64(7 + index as u64)),
-                    AkitaField::zero(),
+                assert!(shell.metal_commit_bind((1 << log_t) / 4).is_err());
+                shell.metal_commit_bind((1 << log_t) / 2).unwrap();
+                assert_eq!(shell.metal_rounds_bound(), 1);
+                assert_eq!(shell.metal_elements().unwrap(), (1 << log_t) / 2);
+
+                let packed =
+                    collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+                let claim =
+                    exact_bytecode_cycle_input_claim(&packed, &metadata, 1 << log_k).unwrap();
+                let mut reference = <ReferenceBackend as PrepareKernel<
+                    AkitaField,
+                    BytecodeReadRafCycle<AkitaField>,
+                >>::prepare(
+                    &ReferenceBackend,
+                    &mut ProofSession::default(),
+                    witness,
+                    inputs(),
                 )
                 .unwrap();
-            assert!(shell.metal_commit_bind((1 << log_t) / 4).is_err());
-            shell.metal_commit_bind((1 << log_t) / 2).unwrap();
-            assert_eq!(shell.metal_rounds_bound(), 1);
-            assert_eq!(shell.metal_elements().unwrap(), (1 << log_t) / 2);
+                assert_eq!(claim, probe_input_claim(reference.as_mut()));
+                assert_ne!(claim, AkitaField::zero());
 
-            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
-            let claim = exact_bytecode_cycle_input_claim(&packed, &metadata, 1 << 13).unwrap();
-            let mut reference = <ReferenceBackend as PrepareKernel<
-                AkitaField,
-                BytecodeReadRafCycle<AkitaField>,
-            >>::prepare(
-                &ReferenceBackend,
-                &mut ProofSession::default(),
-                witness,
-                inputs(),
-            )
-            .unwrap();
-            assert_eq!(claim, probe_input_claim(reference.as_mut()));
-            assert_ne!(claim, AkitaField::zero());
-
-            let mut expected = OptimizedBytecodeReadRafCycle::new(BytecodeCycleAlgebra::Q10Accum)
-                .prepare(&mut ProofSession::default(), witness, inputs())
-                .unwrap();
-            let metal = MetalBackend::new(super::super::MetalConfig {
-                bytecode_read_raf_cycle: BytecodeReadRafMetalConfig {
-                    trace_cutoff_elements: 2,
-                    cutoff_elements: 4,
-                    dispatch: BytecodeCycleSequenceConfig {
-                        message_threads_per_threadgroup: Some(32),
-                        transition_threads_per_threadgroup: Some(32),
-                        max_threadgroups: 1 << 13,
+                let mut expected =
+                    OptimizedBytecodeReadRafCycle::new(BytecodeCycleAlgebra::Q10Accum)
+                        .prepare(&mut ProofSession::default(), witness, inputs())
+                        .unwrap();
+                let metal = MetalBackend::new(MetalConfig {
+                    bytecode_read_raf_cycle: BytecodeReadRafMetalConfig {
+                        trace_cutoff_elements: 2,
+                        cutoff_elements: 4,
+                        dispatch: BytecodeCycleSequenceConfig {
+                            message_threads_per_threadgroup: Some(32),
+                            transition_threads_per_threadgroup: Some(32),
+                            max_threadgroups: 1 << 13,
+                        },
+                        cpu_tail_algebra: BytecodeCycleAlgebra::Q10Accum,
                     },
-                    cpu_tail_algebra: BytecodeCycleAlgebra::Q10Accum,
-                },
-                ..Default::default()
-            })
-            .unwrap();
-            let resident = metal
-                .context
-                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                    ..Default::default()
+                })
                 .unwrap();
-            let mut session = ProofSession::default();
-            session.park(resident);
-            let mut actual = <MetalBackend as PrepareKernel<
-                AkitaField,
-                BytecodeReadRafCycle<AkitaField>,
-            >>::prepare(&metal, &mut session, witness, inputs())
-            .unwrap();
-            assert!(session.state::<BooleanityRows>().is_some());
+                let resident = metal
+                    .context
+                    .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                    .unwrap();
+                let mut session = ProofSession::default();
+                session.park(resident);
+                let mut actual = <MetalBackend as PrepareKernel<
+                    AkitaField,
+                    BytecodeReadRafCycle<AkitaField>,
+                >>::prepare(
+                    &metal, &mut session, witness, inputs()
+                )
+                .unwrap();
+                assert!(session.state::<BooleanityRows>().is_some());
 
-            let mut round_challenges = point(log_t, 211);
-            round_challenges[0] = AkitaField::zero();
-            round_challenges[1] = AkitaField::one();
-            round_challenges[2] = -AkitaField::one();
-            let mut claim = claim;
-            let mut nonzero_round = false;
-            for round in 0..log_t {
-                let bind = round
-                    .checked_sub(1)
-                    .map(|previous| round_challenges[previous]);
-                let expected_poly = expected.prove_round(bind, round, claim).unwrap();
-                let actual_poly = actual.prove_round(bind, round, claim).unwrap();
-                assert_eq!(actual_poly, expected_poly, "round {round}");
-                nonzero_round |= expected_poly
-                    .coefficients()
-                    .iter()
-                    .any(|coefficient| *coefficient != AkitaField::zero());
-                claim = expected_poly.evaluate(round_challenges[round]);
-            }
-            assert!(nonzero_round, "all round polynomials were zero");
-            let final_bind = round_challenges[log_t - 1];
-            expected.finish_rounds(final_bind).unwrap();
-            actual.finish_rounds(final_bind).unwrap();
-            assert_eq!(
-                actual.output_claims(&claims).unwrap(),
-                expected.output_claims(&claims).unwrap()
-            );
-        });
+                let mut round_challenges = point(log_t, 211);
+                round_challenges[0] = AkitaField::zero();
+                round_challenges[1] = AkitaField::one();
+                round_challenges[2] = -AkitaField::one();
+                let mut claim = claim;
+                let mut nonzero_round = false;
+                for round in 0..log_t {
+                    let bind = round
+                        .checked_sub(1)
+                        .map(|previous| round_challenges[previous]);
+                    let expected_poly = expected.prove_round(bind, round, claim).unwrap();
+                    let actual_poly = actual.prove_round(bind, round, claim).unwrap();
+                    assert_eq!(actual_poly, expected_poly, "round {round}");
+                    nonzero_round |= expected_poly
+                        .coefficients()
+                        .iter()
+                        .any(|coefficient| *coefficient != AkitaField::zero());
+                    claim = expected_poly.evaluate(round_challenges[round]);
+                }
+                assert!(nonzero_round, "all round polynomials were zero");
+                let final_bind = round_challenges[log_t - 1];
+                expected.finish_rounds(final_bind).unwrap();
+                actual.finish_rounds(final_bind).unwrap();
+                assert_eq!(
+                    actual.output_claims(&claims).unwrap(),
+                    expected.output_claims(&claims).unwrap()
+                );
+            });
+        }
     }
 }

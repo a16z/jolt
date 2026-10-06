@@ -156,10 +156,37 @@ The five- and nine-factor arithmetic and binding regression is:
 cargo nextest run --release -p jolt-kernels --features metal product_messages_and_bindings_match_direct_field_evaluation
 ```
 
-Production instruction-input, registers claim-reduction, and RAM value-check
-routes now admit traces from `2^21` cycles. Their existing shape and source
-checks still apply. Other PIOP cutoffs, proof parameters, and verifier code
-are unchanged by this follow-up.
+Production instruction-input, registers claim-reduction, RAM value-check, and
+RAM RA virtualization routes admit traces from `2^21` cycles. Their shape and
+source checks still apply. RAM RA virtualization consumes the shared address
+column directly and supports five 4-bit factors as well as the existing two
+or three 8-bit factors. It keeps the initial rounds compact, then retains the
+folded factor tables on the GPU.
+
+Bytecode Read-RAF cycle processing supports five 4-bit RA factors (degree seven)
+and the existing two 8-bit factors (degree four). The GPU constructs coefficients
+from nine split equality roots and the shared compact instruction rows, evaluates
+the first message, and materializes bound tables during the first bind. The
+five-factor route returns to the CPU at at most 1,024 rows; the configured
+`bytecode_read_raf_cycle.cutoff_elements` remains the upper bound. Address-phase
+CPU preparation now accumulates field values only for addresses visited by each
+worker, then writes one full-domain output.
+
+Booleanity address and Hamming-weight preparation also support 4-bit chunks.
+Their K16 kernel uses a separate 16-bin histogram per SIMD group and combines
+uniform selectors before updating the histogram. Both preparations reuse the
+resident instruction rows; Hamming-weight preparation consumes the final lease.
+The existing 8-bit selector specializations remain in use for K256.
+
+These changes preserve proof parameters, transcript ordering, and verifier code.
+The component regressions and full kernel suite can be run with:
+
+```sh
+cargo nextest run --release -p jolt-kernels --features metal compact_and_dense_rounds_match_direct_products
+cargo nextest run --release -p jolt-kernels --features metal production_kernel_matches_optimized_cpu_through_handoff
+cargo nextest run --release -p jolt-kernels --features metal pushforward_matches_exact_cpu_oracle_across_selector_tiles
+cargo nextest run --release -p jolt-kernels --features metal
+```
 
 The chunk-width and CPU-handoff regression is:
 
@@ -167,30 +194,11 @@ The chunk-width and CPU-handoff regression is:
 cargo nextest run --release -p jolt-kernels --features metal metal_k16_and_k256_sequences
 ```
 
-On the local Longfellow fixture (1,102,270 cycles padded to `2^21`, K16,
-`2^18` bytecode entries), an M5 Max with 18 Rayon threads measured median
-prover times of 3.249 s CPU, 2.179 s before this follow-up, and 1.899 s with
-the default Metal configuration after it. Each backend had five measured
-samples, each following a fresh-process warmup; configuration order rotated
-across rounds. All 30 proofs verified and all 15 altered-output checks rejected.
-These are non-ZK measurements without tracing or threshold overrides, not a
-claim about other guests or larger-trace throughput.
-
 Packed selector validation now reuses the witness producer's exact entry count
 and certified zero suffix for K16 as well as K256. The Akita view still checks
 all selector bounds; the zero suffix also lets commitment skip padded blocks.
 A separate validation span distinguishes this CPU work from GPU coefficient
 packing. This requires the companion Akita revision pinned in `Cargo.toml`.
-
-A subsequent five-round matched comparison against `62b7d04` measured medians
-of 3.331 s for the previous Metal version, 2.922 s with selector metric reuse,
-and 6.030 s CPU (12.3% less time than the previous Metal version). The machine
-had substantial unrelated background activity, so these absolute times are not
-comparable to the quieter measurements above. Four of five matched rounds
-improved; all 30 proofs verified and 15 altered-output checks rejected.
-Separate profiles reduced each selector-validation call from about 100 ms to
-5–7 ms and Metal coefficient packing from 129 ms to 35 ms. Parameters, workload,
-and benchmark procedure were unchanged.
 
 The K16 packed decompose-fold route supports both sparse challenges and embedded
 subring-64 challenges. It consumes the compact selector bytes directly, including
@@ -204,21 +212,24 @@ a ring:
 cargo nextest run --release -p akita-metal k16_decompose_fold_matches_cpu
 ```
 
-A five-round matched run of this fold follow-up measured 1.840 s for the previous
-Metal version (`a50743b`), 1.780 s for the new version, and 3.538 s CPU: 3.3% less
-proving time and about 1.99x the CPU throughput on this fixture. All five matched
-rounds improved; all 30 proofs verified and 15 altered-output checks rejected.
-The same fresh-process warmup and rotating-order procedure was used. Separate
-profiles put the packed fold at 94 ms on CPU and 28 ms on Metal. These figures
-qualify this small workload, not larger K16 traces or general GPU throughput.
+A 12-pair alternating-order comparison on the local Longfellow fixture
+(1,102,270 cycles padded to `2^21`, K16, `2^18` bytecode entries, D512,
+59 live columns / capacity 64) measured median prover times of **1.622 s**
+for `d5cd6f3` and **1.361 s** with the current architecture: **16.1% less
+wall time (1.19x throughput)**. All 12 matched pairs improved. The M5 Max
+used 18 Rayon threads, the default Metal configuration, and no tracing.
+Each sample was the second proof in a fresh process; the first warmed caches.
+Timing includes guest tracing plus proving, excludes preprocessing and
+verification, and describes warm non-ZK execution on this fixture only.
+All 48 untraced proofs verified and all 24 altered-output checks rejected;
+the two additional profiling processes also verified all four proofs and
+rejected altered output.
 
-The nine-factor Instruction Read-RAF follow-up reduced an eight-round
-Metal-only comparison from 1.625 s to 1.596 s median (1.8%); all eight matched
-pairs improved. A separate ten-round comparison interleaving CPU proving
-measured 1.646 s previous Metal, 1.601 s new Metal, and 3.207 s CPU (2.7% lower
-Metal median, six of ten pairs improved). Both used fresh-process warmups and
-rotating order. These are warm proving times; absolute timings drifted during
-the runs. Separate profiles reduced Instruction Read-RAF round time from
-175 ms to 155 ms. All 200 Metal kernel tests and 92 untraced benchmark proofs
-passed, with 46 altered-output rejections; four additional profiling proofs
-and two altered-output checks also passed.
+Separate profiles from that campaign measured bytecode cycle preparation and
+rounds at 170 ms before versus 20 ms after, Booleanity address preparation at
+23 versus 6 ms, Hamming preparation at 30 versus 4 ms, and RAM RA rounds at
+47 versus 11 ms. These explain the changed work but are single profiled
+observations, not additional end-to-end samples. Absolute times drifted
+during the campaign; do not combine results from earlier campaigns to infer
+a cumulative speedup. Proof size remained 93,928 bytes, with proof parameters,
+transcript ordering, and verifier code unchanged.

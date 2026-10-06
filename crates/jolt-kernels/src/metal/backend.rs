@@ -126,6 +126,7 @@ impl MetalConfig {
         config.instruction_input.trace_cutoff_elements = 1 << 21;
         config.registers_claim_reduction.trace_cutoff_elements = 1 << 21;
         config.ram_val_check.trace_cutoff_elements = 1 << 21;
+        config.ram_ra_virtualization.trace_cutoff_elements = 1 << 21;
         config
     }
 }

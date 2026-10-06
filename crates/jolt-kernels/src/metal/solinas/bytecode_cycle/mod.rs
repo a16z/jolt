@@ -1,93 +1,75 @@
-use std::{mem::size_of, slice};
+use std::{ffi::c_void, mem::size_of, slice};
 
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
-use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
+use metal::{
+    objc::rc::autoreleasepool, Buffer, ComputePipelineState, FunctionConstantValues, MTLDataType,
+    MTLResourceOptions, MTLSize,
+};
 
 use super::{
     encode_column_reductions, set_inline_bytes, validate_completed_command, Fp128, MetalError,
     PipelineLimits, SolinasMetal, AKITA_OFFSET_FFFFA7F7,
 };
 
-pub const BYTECODE_CYCLE_TABLES: usize = 5;
-pub const BYTECODE_CYCLE_SAMPLES: usize = 4;
-
 const SIMD_WIDTH: usize = 32;
-const MESSAGE_PIPELINE: &str = "solinas_bytecode_cycle_q10_message";
-const TRANSITION_PIPELINE: &str = "solinas_bytecode_cycle_q10_transition";
-const REDUCE_PIPELINE: &str = "solinas_instruction_ra_reduce";
+const MESSAGE_PIPELINE: &str = "solinas_bytecode_cycle_message";
+const TRANSITION_PIPELINE: &str = "solinas_bytecode_cycle_transition";
+const REDUCE_PIPELINE: &str = "solinas_instruction_claim_reduce";
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
+/// Coefficients, fused coefficient, increment, then the committed RA factors.
 pub struct BytecodeCycleTables<'a> {
-    pub combined: &'a [AkitaField],
-    pub fused_combined: &'a [AkitaField],
-    pub fused_inc: &'a [AkitaField],
-    pub ra0: &'a [AkitaField],
-    pub ra1: &'a [AkitaField],
+    pub planes: Vec<&'a [AkitaField]>,
 }
 
 #[derive(Debug)]
+/// Readback planes in the same order as [`BytecodeCycleTables`].
 pub struct BytecodeCycleTablesMut<'a> {
-    pub combined: &'a mut [AkitaField],
-    pub fused_combined: &'a mut [AkitaField],
-    pub fused_inc: &'a mut [AkitaField],
-    pub ra0: &'a mut [AkitaField],
-    pub ra1: &'a mut [AkitaField],
+    pub planes: Vec<&'a mut [AkitaField]>,
 }
 
-impl<'a> BytecodeCycleTables<'a> {
-    fn planes(self) -> [(&'static str, &'a [AkitaField]); BYTECODE_CYCLE_TABLES] {
-        [
-            ("combined", self.combined),
-            ("fused_combined", self.fused_combined),
-            ("fused_inc", self.fused_inc),
-            ("ra0", self.ra0),
-            ("ra1", self.ra1),
-        ]
-    }
-
-    fn validate(self, expected: usize) -> Result<(), MetalError> {
-        for (plane, values) in self.planes() {
-            if values.len() != expected {
-                return Err(MetalError::BytecodeCyclePlaneLength {
-                    plane,
-                    expected,
-                    got: values.len(),
-                });
-            }
-        }
-        Ok(())
+impl BytecodeCycleTables<'_> {
+    fn validate(&self, expected: usize, tables: usize) -> Result<(), MetalError> {
+        validate_planes(
+            self.planes.iter().map(|plane| plane.len()),
+            expected,
+            tables,
+        )
     }
 }
 
-impl<'a> BytecodeCycleTablesMut<'a> {
-    fn validate(&self, expected: usize) -> Result<(), MetalError> {
-        for (plane, got) in [
-            ("combined", self.combined.len()),
-            ("fused_combined", self.fused_combined.len()),
-            ("fused_inc", self.fused_inc.len()),
-            ("ra0", self.ra0.len()),
-            ("ra1", self.ra1.len()),
-        ] {
-            if got != expected {
-                return Err(MetalError::BytecodeCyclePlaneLength {
-                    plane,
-                    expected,
-                    got,
-                });
-            }
-        }
-        Ok(())
+impl BytecodeCycleTablesMut<'_> {
+    fn validate(&self, expected: usize, tables: usize) -> Result<(), MetalError> {
+        validate_planes(
+            self.planes.iter().map(|plane| plane.len()),
+            expected,
+            tables,
+        )
     }
+}
 
-    fn into_planes(self) -> [&'a mut [AkitaField]; BYTECODE_CYCLE_TABLES] {
-        [
-            self.combined,
-            self.fused_combined,
-            self.fused_inc,
-            self.ra0,
-            self.ra1,
-        ]
+fn validate_planes(
+    lengths: impl Iterator<Item = usize>,
+    expected: usize,
+    tables: usize,
+) -> Result<(), MetalError> {
+    let mut count = 0;
+    for got in lengths {
+        if got != expected {
+            return Err(MetalError::BytecodeCyclePlaneLength {
+                plane: "factor",
+                expected,
+                got,
+            });
+        }
+        count += 1;
     }
+    if count != tables || !matches!(tables, 5 | 8) {
+        return Err(MetalError::InvalidBytecodeCycleState(
+            "bytecode cycle requires five or eight factor tables",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,18 +122,52 @@ pub struct BytecodeCycleSequence {
     initial_elements: usize,
     current_elements: usize,
     source_in_a: bool,
+    tables: usize,
 }
 
 impl SolinasMetal {
+    pub(super) fn compile_bytecode_pipeline(
+        &self,
+        name: &'static str,
+        factors: usize,
+    ) -> Result<ComputePipelineState, MetalError> {
+        let factors = u32::try_from(factors).map_err(|_| MetalError::InputTooLong(factors))?;
+        let key = (name, Some(factors));
+        let mut cache = self
+            .pipeline_cache
+            .lock()
+            .map_err(|_| MetalError::PipelineCachePoisoned)?;
+        if let Some(pipeline) = cache.get(&key) {
+            return Ok(pipeline.clone());
+        }
+        let constants = FunctionConstantValues::new();
+        constants.set_constant_value_at_index(
+            std::ptr::from_ref(&factors).cast::<c_void>(),
+            MTLDataType::UInt,
+            25,
+        );
+        let function = self
+            .library
+            .get_function(name, Some(constants))
+            .map_err(|message| MetalError::FunctionLookup { name, message })?;
+        let pipeline = self
+            .device
+            .new_compute_pipeline_state_with_function(&function)
+            .map_err(|message| MetalError::PipelineCompilation { name, message })?;
+        let _ = cache.insert(key, pipeline.clone());
+        Ok(pipeline)
+    }
+
     pub fn prepare_bytecode_cycle_sequence(
         &self,
         tables: BytecodeCycleTables<'_>,
         config: BytecodeCycleSequenceConfig,
     ) -> Result<BytecodeCycleSequence, MetalError> {
-        let elements_per_table = tables.combined.len();
-        tables.validate(elements_per_table)?;
+        let elements_per_table = tables.planes.first().map_or(0, |plane| plane.len());
+        let count = tables.planes.len();
+        tables.validate(elements_per_table, count)?;
         let mut sequence =
-            self.prepare_empty_bytecode_cycle_sequence(elements_per_table, config)?;
+            self.prepare_empty_bytecode_cycle_sequence(elements_per_table, count, config)?;
         sequence.reset(tables)?;
         Ok(sequence)
     }
@@ -159,10 +175,12 @@ impl SolinasMetal {
     fn prepare_empty_bytecode_cycle_sequence(
         &self,
         elements_per_table: usize,
+        tables: usize,
         config: BytecodeCycleSequenceConfig,
     ) -> Result<BytecodeCycleSequence, MetalError> {
         self.prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
             elements_per_table,
+            tables,
             config,
             0,
         )
@@ -171,6 +189,7 @@ impl SolinasMetal {
     pub(super) fn prepare_empty_bytecode_cycle_sequence_with_partial_capacity(
         &self,
         elements_per_table: usize,
+        tables: usize,
         config: BytecodeCycleSequenceConfig,
         minimum_partial_capacity: usize,
     ) -> Result<BytecodeCycleSequence, MetalError> {
@@ -198,8 +217,8 @@ impl SolinasMetal {
             .map_err(|_| MetalError::InputTooLong(elements_per_table))?;
 
         let pipelines = Pipelines {
-            message: self.compile_named_pipeline(MESSAGE_PIPELINE)?,
-            transition: self.compile_named_pipeline(TRANSITION_PIPELINE)?,
+            message: self.compile_bytecode_pipeline(MESSAGE_PIPELINE, tables)?,
+            transition: self.compile_bytecode_pipeline(TRANSITION_PIPELINE, tables)?,
             reduce: self.compile_named_pipeline(REDUCE_PIPELINE)?,
         };
         let message_limits = Self::limits(&pipelines.message);
@@ -236,7 +255,7 @@ impl SolinasMetal {
         let partial_capacity = message_partial_capacity
             .max(transition_partial_capacity)
             .max(minimum_partial_capacity);
-        let partial_elements = BYTECODE_CYCLE_SAMPLES
+        let partial_elements = (tables - 1)
             .checked_mul(partial_capacity)
             .ok_or(MetalError::InputTooLong(partial_capacity))?;
         Ok(BytecodeCycleSequence {
@@ -244,8 +263,8 @@ impl SolinasMetal {
             pipelines,
             reduction_limits,
             buffers: Buffers {
-                tables_a: self.new_bytecode_cycle_buffers(elements_per_table)?,
-                tables_b: self.new_bytecode_cycle_buffers(elements_per_table / 2)?,
+                tables_a: self.new_bytecode_cycle_buffers(elements_per_table, tables)?,
+                tables_b: self.new_bytecode_cycle_buffers(elements_per_table / 2, tables)?,
                 partial_a: self.new_bytecode_cycle_buffer(partial_elements)?,
                 partial_b: self.new_bytecode_cycle_buffer(partial_elements)?,
             },
@@ -255,6 +274,7 @@ impl SolinasMetal {
             initial_elements: elements_per_table,
             current_elements: elements_per_table,
             source_in_a: true,
+            tables,
         })
     }
 
@@ -266,8 +286,12 @@ impl SolinasMetal {
             .new_buffer(bytes, MTLResourceOptions::StorageModeShared))
     }
 
-    fn new_bytecode_cycle_buffers(&self, elements: usize) -> Result<Vec<Buffer>, MetalError> {
-        (0..BYTECODE_CYCLE_TABLES)
+    fn new_bytecode_cycle_buffers(
+        &self,
+        elements: usize,
+        tables: usize,
+    ) -> Result<Vec<Buffer>, MetalError> {
+        (0..tables)
             .map(|_| self.new_bytecode_cycle_buffer(elements))
             .collect()
     }
@@ -275,13 +299,8 @@ impl SolinasMetal {
 
 impl BytecodeCycleSequence {
     pub fn reset(&mut self, tables: BytecodeCycleTables<'_>) -> Result<(), MetalError> {
-        tables.validate(self.initial_elements)?;
-        for (buffer, table) in self
-            .buffers
-            .tables_a
-            .iter()
-            .zip(tables.planes().map(|(_, values)| values))
-        {
+        tables.validate(self.initial_elements, self.tables)?;
+        for (buffer, table) in self.buffers.tables_a.iter().zip(tables.planes) {
             write_fields(buffer, self.initial_elements, table);
         }
         self.current_elements = self.initial_elements;
@@ -289,14 +308,14 @@ impl BytecodeCycleSequence {
         Ok(())
     }
 
-    pub fn message(&mut self) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+    pub fn message(&mut self) -> Result<Vec<AkitaField>, MetalError> {
         self.execute_round(None)
     }
 
     pub fn bind_and_message(
         &mut self,
         challenge: AkitaField,
-    ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+    ) -> Result<Vec<AkitaField>, MetalError> {
         self.execute_round(Some(challenge))
     }
 
@@ -316,8 +335,8 @@ impl BytecodeCycleSequence {
         &self,
         output: BytecodeCycleTablesMut<'_>,
     ) -> Result<(), MetalError> {
-        output.validate(self.current_elements)?;
-        for (buffer, output) in self.source_buffers().iter().zip(output.into_planes()) {
+        output.validate(self.current_elements, self.tables)?;
+        for (buffer, output) in self.source_buffers().iter().zip(output.planes) {
             // SAFETY: each resident factor buffer has at least
             // `current_elements` fields and every command has completed.
             let values = unsafe {
@@ -341,7 +360,7 @@ impl BytecodeCycleSequence {
     fn execute_round(
         &mut self,
         challenge: Option<AkitaField>,
-    ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+    ) -> Result<Vec<AkitaField>, MetalError> {
         let (pipeline, threads_per_threadgroup, divisor, minimum) = match challenge {
             Some(_) => (
                 self.pipelines.transition.clone(),
@@ -378,23 +397,24 @@ impl BytecodeCycleSequence {
         let final_in_a = autoreleasepool(|| {
             let encoder = command_buffer.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&pipeline);
-            for (index, buffer) in self.source_buffers().iter().enumerate() {
+            for index in 0..8 {
+                let buffer = &self.source_buffers()[index.min(self.tables - 1)];
                 encoder.set_buffer(index as u64, Some(buffer), 0);
             }
             if let Some(challenge) = challenge {
-                for (index, buffer) in self.destination_buffers().iter().enumerate() {
-                    encoder.set_buffer((BYTECODE_CYCLE_TABLES + index) as u64, Some(buffer), 0);
+                for index in 0..8 {
+                    let buffer = &self.destination_buffers()[index.min(self.tables - 1)];
+                    encoder.set_buffer((8 + index) as u64, Some(buffer), 0);
                 }
-                encoder.set_buffer(10, Some(&self.buffers.partial_a), 0);
-                set_inline_bytes(encoder, 11, &Fp128::from_jolt_field(&challenge));
-                set_inline_bytes(encoder, 12, &params);
+                encoder.set_buffer(16, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 17, &Fp128::from_jolt_field(&challenge));
+                set_inline_bytes(encoder, 18, &params);
             } else {
-                encoder.set_buffer(5, Some(&self.buffers.partial_a), 0);
-                set_inline_bytes(encoder, 6, &params);
+                encoder.set_buffer(8, Some(&self.buffers.partial_a), 0);
+                set_inline_bytes(encoder, 9, &params);
             }
-            let dynamic_memory = BYTECODE_CYCLE_SAMPLES
-                * (threads_per_threadgroup / SIMD_WIDTH)
-                * size_of::<Fp128>();
+            let dynamic_memory =
+                (self.tables - 1) * (threads_per_threadgroup / SIMD_WIDTH) * size_of::<Fp128>();
             encoder.set_threadgroup_memory_length(0, dynamic_memory as u64);
             encoder.dispatch_thread_groups(
                 MTLSize {
@@ -434,7 +454,7 @@ impl BytecodeCycleSequence {
             &self.buffers.partial_a,
             &self.buffers.partial_b,
             input_count,
-            BYTECODE_CYCLE_SAMPLES,
+            self.tables - 1,
             self.reduction_limits.thread_execution_width,
         )
     }
@@ -442,23 +462,20 @@ impl BytecodeCycleSequence {
     pub(super) fn read_reduced_message(
         &self,
         final_in_a: bool,
-    ) -> Result<[AkitaField; BYTECODE_CYCLE_SAMPLES], MetalError> {
+    ) -> Result<Vec<AkitaField>, MetalError> {
         let final_buffer = if final_in_a {
             &self.buffers.partial_a
         } else {
             &self.buffers.partial_b
         };
         // SAFETY: the main dispatch and recursive reductions have completed
-        // and leave four canonical fields at the selected buffer's front.
+        // and leave one canonical field per sample at the selected buffer's front.
         let values = unsafe {
-            slice::from_raw_parts(
-                final_buffer.contents().cast::<Fp128>(),
-                BYTECODE_CYCLE_SAMPLES,
-            )
+            slice::from_raw_parts(final_buffer.contents().cast::<Fp128>(), self.tables - 1)
         };
         self.context
             .validate_inputs("bytecode cycle message", values)?;
-        Ok(std::array::from_fn(|index| values[index].into_jolt_field()))
+        Ok(values.iter().copied().map(Fp128::into_jolt_field).collect())
     }
 
     pub(super) fn initial_table_buffers(&self) -> &[Buffer] {
@@ -507,6 +524,8 @@ const _: () = assert!(size_of::<Params>() == 16);
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
+    const Q10_TABLES: usize = 5;
+    const Q10_SAMPLES: usize = 4;
     use super::*;
     use jolt_field::{One as _, Ring as _, Zero as _};
 
@@ -515,7 +534,7 @@ mod tests {
     }
 
     fn test_tables(elements: usize) -> Vec<AkitaField> {
-        (0..BYTECODE_CYCLE_TABLES)
+        (0..Q10_TABLES)
             .flat_map(|table| {
                 (0..elements).map(move |index| {
                     let value = 19 + 97 * table as u64 + 131 * index as u64;
@@ -530,26 +549,13 @@ mod tests {
     }
 
     fn table_views(tables: &[AkitaField], elements: usize) -> BytecodeCycleTables<'_> {
-        assert_eq!(tables.len(), BYTECODE_CYCLE_TABLES * elements);
-        let mut planes = tables.chunks_exact(elements);
         BytecodeCycleTables {
-            combined: planes.next().unwrap(),
-            fused_combined: planes.next().unwrap(),
-            fused_inc: planes.next().unwrap(),
-            ra0: planes.next().unwrap(),
-            ra1: planes.next().unwrap(),
+            planes: tables.chunks_exact(elements).collect(),
         }
     }
-
     fn table_views_mut(tables: &mut [AkitaField], elements: usize) -> BytecodeCycleTablesMut<'_> {
-        assert_eq!(tables.len(), BYTECODE_CYCLE_TABLES * elements);
-        let mut planes = tables.chunks_exact_mut(elements);
         BytecodeCycleTablesMut {
-            combined: planes.next().unwrap(),
-            fused_combined: planes.next().unwrap(),
-            fused_inc: planes.next().unwrap(),
-            ra0: planes.next().unwrap(),
-            ra1: planes.next().unwrap(),
+            planes: tables.chunks_exact_mut(elements).collect(),
         }
     }
 
@@ -557,7 +563,7 @@ mod tests {
         at_zero: AkitaField,
         at_one: AkitaField,
         leading: AkitaField,
-    ) -> [AkitaField; BYTECODE_CYCLE_SAMPLES] {
+    ) -> [AkitaField; Q10_SAMPLES] {
         let second_difference = leading + leading;
         let delta_two = at_one - at_zero + second_difference;
         let at_two = at_one + delta_two;
@@ -603,8 +609,8 @@ mod tests {
         challenge: AkitaField,
     ) -> Vec<AkitaField> {
         let bound_elements = elements / 2;
-        let mut bound = vec![AkitaField::zero(); BYTECODE_CYCLE_TABLES * bound_elements];
-        for table in 0..BYTECODE_CYCLE_TABLES {
+        let mut bound = vec![AkitaField::zero(); Q10_TABLES * bound_elements];
+        for table in 0..Q10_TABLES {
             for index in 0..bound_elements {
                 let lo = tables[table * elements + 2 * index];
                 let hi = tables[table * elements + 2 * index + 1];

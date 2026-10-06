@@ -33,7 +33,7 @@ impl Default for HammingWeightMetalConfig {
 impl HammingWeightMetalConfig {
     pub(super) fn admits(self, trace_elements: usize, log_t: usize, log_k_chunk: usize) -> bool {
         trace_elements >= self.trace_cutoff_elements
-            && log_k_chunk == 8
+            && matches!(log_k_chunk, 4 | 8)
             && self.dispatch.inner_log2 <= log_t
             && self.dispatch.inner_log2 <= 16
             && (1..=6).contains(&self.dispatch.selectors_per_tile)
@@ -100,9 +100,10 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
         let selector_bytes = selectors.len() * size_of::<[u32; 2]>();
         let e_in_bytes = e_in_elements * size_of::<AkitaField>();
         let e_out_bytes = e_out_elements * size_of::<AkitaField>();
+        let bins = 1usize << dimensions.log_k_chunk;
         let partial_bytes =
-            e_out_elements * config.dispatch.selectors_per_tile * 256 * size_of::<AkitaField>();
-        let output_bytes = selectors.len() * 256 * size_of::<AkitaField>();
+            e_out_elements * config.dispatch.selectors_per_tile * bins * size_of::<AkitaField>();
+        let output_bytes = selectors.len() * bins * size_of::<AkitaField>();
         let planned_device_bytes =
             selector_bytes + e_in_bytes + e_out_bytes + partial_bytes + output_bytes;
         let device = self.context.device_info();
@@ -121,7 +122,7 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
             resident_row_bytes,
             row_upload_bytes = 0u64,
             polys = selectors.len(),
-            k = 256usize,
+            k = bins,
             e_in_elements,
             e_out_elements,
             requested_inner_log2 = config.dispatch.inner_log2,
@@ -147,6 +148,7 @@ impl PrepareKernel<AkitaField, HammingWeightClaimReduction<AkitaField>> for Meta
         let invocation = match self.context.prepare_booleanity_address_pushforward(
             resident_rows,
             &selectors,
+            dimensions.log_k_chunk,
             plan.reference_cycle(),
             config.dispatch,
         ) {
@@ -267,6 +269,7 @@ fn metal_error(message: impl Into<String>) -> SumcheckError<AkitaField> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
+    use crate::metal::MetalBackend;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::Prime128OffsetA7F7 as AkitaField;
     use jolt_field::{Ring as _, Zero as _};
@@ -343,50 +346,53 @@ mod tests {
     #[test]
     fn prepare_matches_optimized_cpu_and_consumes_resident_rows() {
         let log_t = 10;
-        with_booleanity_backend(log_t, 8, |witness, base_dimensions| {
-            let dimensions = HammingWeightClaimReductionDimensions::new(
-                base_dimensions.layout,
-                base_dimensions.log_k_chunk,
-            )
-            .unwrap();
-            let relation = HammingWeightClaimReduction::new(
-                dimensions,
-                point(300, log_t),
-                point(500, dimensions.log_k_chunk),
-                (0..dimensions.layout.total())
-                    .map(|index| point(700 + index as u64, dimensions.log_k_chunk))
-                    .collect(),
-            );
-            let challenges = HammingWeightClaimReductionChallenges {
-                gamma: AkitaField::from_u64(23),
-            };
-            let claims = HammingWeightClaimReductionInputClaims::<AkitaField>::default();
-            let points = HammingWeightClaimReductionInputClaims::<Vec<AkitaField>>::default();
-            let inputs = || ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &challenges,
-            };
-
-            let mut expected = OptimizedHammingWeightClaimReduction
-                .prepare(&mut ProofSession::default(), witness, inputs())
+        for chunk_bits in [4, 8] {
+            with_booleanity_backend(log_t, chunk_bits, |witness, base_dimensions| {
+                let dimensions = HammingWeightClaimReductionDimensions::new(
+                    base_dimensions.layout,
+                    base_dimensions.log_k_chunk,
+                )
                 .unwrap();
-            let metal = super::super::MetalBackend::new(metal_config(2, Some(256))).unwrap();
-            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
-            let resident = metal
-                .context
-                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
-                .unwrap();
-            let mut session = ProofSession::default();
-            session.park(resident);
+                let relation = HammingWeightClaimReduction::new(
+                    dimensions,
+                    point(300, log_t),
+                    point(500, dimensions.log_k_chunk),
+                    (0..dimensions.layout.total())
+                        .map(|index| point(700 + index as u64, dimensions.log_k_chunk))
+                        .collect(),
+                );
+                let challenges = HammingWeightClaimReductionChallenges {
+                    gamma: AkitaField::from_u64(23),
+                };
+                let claims = HammingWeightClaimReductionInputClaims::<AkitaField>::default();
+                let points = HammingWeightClaimReductionInputClaims::<Vec<AkitaField>>::default();
+                let inputs = || ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                };
 
-            let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
-            assert!(session.state::<BooleanityRows>().is_none());
-            assert_eq!(metal.hamming_dispatches(), 1);
+                let mut expected = OptimizedHammingWeightClaimReduction
+                    .prepare(&mut ProofSession::default(), witness, inputs())
+                    .unwrap();
+                let metal = MetalBackend::new(metal_config(2, Some(256))).unwrap();
+                let packed =
+                    collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+                let resident = metal
+                    .context
+                    .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                    .unwrap();
+                let mut session = ProofSession::default();
+                session.park(resident);
 
-            run_lockstep(expected.as_mut(), actual.as_mut(), &claims);
-        });
+                let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
+                assert!(session.state::<BooleanityRows>().is_none());
+                assert_eq!(metal.hamming_dispatches(), 1);
+
+                run_lockstep(expected.as_mut(), actual.as_mut(), &claims);
+            });
+        }
     }
 
     #[test]
@@ -469,7 +475,7 @@ mod tests {
                 (invalid_finalize, Some(1 << log_t)),
             ];
             for (config, resident_len) in cases {
-                let metal = super::super::MetalBackend::new(config).unwrap();
+                let metal = MetalBackend::new(config).unwrap();
                 let mut session = ProofSession::default();
                 if let Some(resident_len) = resident_len {
                     let resident = metal

@@ -133,6 +133,7 @@ inline void instruction_ra_accumulate_group(
         solinas_mul_wide(lhs.at_infinity, rhs.at_infinity));
 }
 
+template<uint samples = INSTRUCTION_RA_SAMPLES>
 inline void instruction_ra_finish_block(
     thread SolinasFp128* lanes,
     SolinasFp128 e_out,
@@ -144,7 +145,7 @@ inline void instruction_ra_finish_block(
     uint simdgroup,
     uint simdgroups)
 {
-    for (uint sample = 0; sample < INSTRUCTION_RA_SAMPLES; sample++) {
+    for (uint sample = 0; sample < samples; sample++) {
         SolinasFp128 sum = solinas_simd_sum_32(lanes[sample]);
         if (lane_in_simd == 0) {
             shared[sample * simdgroups + simdgroup] = sum;
@@ -153,7 +154,7 @@ inline void instruction_ra_finish_block(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (simdgroup == 0) {
-        for (uint sample = 0; sample < INSTRUCTION_RA_SAMPLES; sample++) {
+        for (uint sample = 0; sample < samples; sample++) {
             SolinasFp128 sum = lane_in_simd < simdgroups
                 ? shared[sample * simdgroups + lane_in_simd]
                 : solinas_zero();

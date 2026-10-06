@@ -88,7 +88,7 @@ impl PrepareKernel<AkitaField, BooleanityAddressPhase<AkitaField>> for MetalBack
         let trace_elements = 1usize << dimensions.log_t;
         let config = self.config.booleanity_address;
         if trace_elements < config.trace_cutoff_elements
-            || dimensions.log_k_chunk != 8
+            || !matches!(dimensions.log_k_chunk, 4 | 8)
             || config.dispatch.inner_log2 > dimensions.log_t
         {
             return cpu(session);
@@ -124,6 +124,7 @@ fn prepare_accepted_booleanity_address(
     Box<dyn SumcheckKernel<AkitaField, Relation = BooleanityAddressPhase<AkitaField>>>,
     KernelError<AkitaField>,
 > {
+    let bins = plan.address_domain();
     let resident_row_identity = resident_rows.allocation_identity();
     let trace_elements = resident_rows.len();
     let resident_row_bytes = BOOLEANITY_SOURCE_ROW_BYTES;
@@ -133,8 +134,8 @@ fn prepare_accepted_booleanity_address(
     let e_in_bytes = e_in_elements * size_of::<AkitaField>();
     let e_out_bytes = e_out_elements * size_of::<AkitaField>();
     let partial_bytes =
-        e_out_elements * config.dispatch.selectors_per_tile * 256 * size_of::<AkitaField>();
-    let output_bytes = plan.selectors().len() * 256 * size_of::<AkitaField>();
+        e_out_elements * config.dispatch.selectors_per_tile * bins * size_of::<AkitaField>();
+    let output_bytes = plan.selectors().len() * bins * size_of::<AkitaField>();
     let planned_device_bytes =
         selector_bytes + e_in_bytes + e_out_bytes + partial_bytes + output_bytes;
     let device = backend.context.device_info();
@@ -150,7 +151,7 @@ fn prepare_accepted_booleanity_address(
         resident_row_bytes,
         row_upload_bytes = 0u64,
         polys = plan.selectors().len(),
-        k = 256usize,
+        k = bins,
         e_in_elements,
         e_out_elements,
         requested_inner_log2 = config.dispatch.inner_log2,
@@ -176,6 +177,7 @@ fn prepare_accepted_booleanity_address(
     let invocation = match backend.context.prepare_booleanity_address_pushforward(
         resident_rows,
         plan.selectors(),
+        bins.ilog2() as usize,
         plan.reference_cycle(),
         config.dispatch,
     ) {
@@ -486,6 +488,7 @@ pub(super) fn booleanity_address_can_fallback(error: &MetalError) -> bool {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal parity test setup")]
 mod tests {
+    use crate::metal::MetalConfig;
     use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions;
     use jolt_field::Ring as _;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -509,79 +512,82 @@ mod tests {
     #[test]
     fn address_prepare_matches_optimized_cpu_and_preserves_resident_rows() {
         let log_t = 10;
-        with_booleanity_backend(log_t, 8, |witness, dimensions| {
-            let relation = BooleanityAddressPhase::new(
-                dimensions,
-                point(900, dimensions.log_k_chunk),
-                point(400, log_t),
-            );
-            let claims = Default::default();
-            let points = Default::default();
-            let challenges = BooleanityAddressPhaseChallenges {
-                reference_address: point(700, dimensions.log_k_chunk),
-                gamma: AkitaField::from_u64(31),
-            };
-            let inputs = || ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &challenges,
-            };
+        for chunk_bits in [4, 8] {
+            with_booleanity_backend(log_t, chunk_bits, |witness, dimensions| {
+                let relation = BooleanityAddressPhase::new(
+                    dimensions,
+                    point(900, dimensions.log_k_chunk),
+                    point(400, log_t),
+                );
+                let claims = Default::default();
+                let points = Default::default();
+                let challenges = BooleanityAddressPhaseChallenges {
+                    reference_address: point(700, dimensions.log_k_chunk),
+                    gamma: AkitaField::from_u64(31),
+                };
+                let inputs = || ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &challenges,
+                };
 
-            let mut expected = OptimizedBooleanityAddress
-                .prepare(&mut ProofSession::default(), witness, inputs())
-                .unwrap();
-            let metal = MetalBackend::new(super::super::MetalConfig {
-                booleanity_address: BooleanityAddressMetalConfig {
-                    trace_cutoff_elements: 2,
-                    dispatch: BooleanityAddressPushforwardConfig {
-                        inner_log2: 8,
-                        selectors_per_tile: 6,
-                        tile_threads_per_threadgroup: Some(256),
-                        finalize_threads_per_threadgroup: Some(256),
+                let mut expected = OptimizedBooleanityAddress
+                    .prepare(&mut ProofSession::default(), witness, inputs())
+                    .unwrap();
+                let metal = MetalBackend::new(MetalConfig {
+                    booleanity_address: BooleanityAddressMetalConfig {
+                        trace_cutoff_elements: 2,
+                        dispatch: BooleanityAddressPushforwardConfig {
+                            inner_log2: 8,
+                            selectors_per_tile: 6,
+                            tile_threads_per_threadgroup: Some(256),
+                            finalize_threads_per_threadgroup: Some(256),
+                        },
                     },
-                },
-                ..Default::default()
-            })
-            .unwrap();
-            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
-            let resident = metal
-                .context
-                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                    ..Default::default()
+                })
                 .unwrap();
-            let retained = resident.clone();
-            let mut session = ProofSession::default();
-            session.park(resident);
-            let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
-            let parked = session.state::<BooleanityRows>().unwrap();
-            assert!(retained.shares_allocation(parked));
+                let packed =
+                    collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+                let resident = metal
+                    .context
+                    .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                    .unwrap();
+                let retained = resident.clone();
+                let mut session = ProofSession::default();
+                session.park(resident);
+                let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
+                let parked = session.state::<BooleanityRows>().unwrap();
+                assert!(retained.shares_allocation(parked));
 
-            let mut claim = AkitaField::zero();
-            let mut bind = None;
-            let mut round_challenges = Vec::new();
-            for round in 0..expected.num_rounds() {
-                let expected_poly = expected.prove_round(bind, round, claim).unwrap();
-                let actual_poly = actual.prove_round(bind, round, claim).unwrap();
-                assert_eq!(actual_poly, expected_poly, "round {round}");
-                let challenge = AkitaField::from_u64(0x1234_5678 + 1000 * round as u64 + 7);
-                claim = expected_poly.evaluate(challenge);
-                round_challenges.push(challenge);
-                bind = Some(challenge);
-            }
-            let final_bind = *round_challenges.last().unwrap();
-            expected.finish_rounds(final_bind).unwrap();
-            actual.finish_rounds(final_bind).unwrap();
-            assert_eq!(
-                actual.output_claims(&claims).unwrap(),
-                expected.output_claims(&claims).unwrap()
-            );
-            let output_points = relation
-                .derive_opening_points(&round_challenges, &points)
-                .unwrap();
-            actual
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
-        });
+                let mut claim = AkitaField::zero();
+                let mut bind = None;
+                let mut round_challenges = Vec::new();
+                for round in 0..expected.num_rounds() {
+                    let expected_poly = expected.prove_round(bind, round, claim).unwrap();
+                    let actual_poly = actual.prove_round(bind, round, claim).unwrap();
+                    assert_eq!(actual_poly, expected_poly, "round {round}");
+                    let challenge = AkitaField::from_u64(0x1234_5678 + 1000 * round as u64 + 7);
+                    claim = expected_poly.evaluate(challenge);
+                    round_challenges.push(challenge);
+                    bind = Some(challenge);
+                }
+                let final_bind = *round_challenges.last().unwrap();
+                expected.finish_rounds(final_bind).unwrap();
+                actual.finish_rounds(final_bind).unwrap();
+                assert_eq!(
+                    actual.output_claims(&claims).unwrap(),
+                    expected.output_claims(&claims).unwrap()
+                );
+                let output_points = relation
+                    .derive_opening_points(&round_challenges, &points)
+                    .unwrap();
+                actual
+                    .validate_derived_tables(&relation, &points, &output_points, &challenges)
+                    .unwrap();
+            });
+        }
     }
 
     #[test]
@@ -616,7 +622,7 @@ mod tests {
             let mut expected = OptimizedBooleanityCycle
                 .prepare(&mut ProofSession::default(), witness, inputs())
                 .unwrap();
-            let metal = MetalBackend::new(super::super::MetalConfig {
+            let metal = MetalBackend::new(MetalConfig {
                 booleanity_cycle: BooleanityMetalConfig {
                     trace_cutoff_elements: 2,
                     cutoff_elements: 4,
@@ -697,7 +703,7 @@ mod tests {
             let challenges = BooleanityCyclePhaseChallenges {
                 gamma: AkitaField::from_u64(31),
             };
-            let metal = MetalBackend::new(super::super::MetalConfig {
+            let metal = MetalBackend::new(MetalConfig {
                 booleanity_cycle: BooleanityMetalConfig {
                     trace_cutoff_elements: 2,
                     cutoff_elements: 4,
@@ -765,7 +771,7 @@ mod tests {
             let challenges = BooleanityCyclePhaseChallenges {
                 gamma: AkitaField::from_u64(31),
             };
-            let metal = MetalBackend::new(super::super::MetalConfig {
+            let metal = MetalBackend::new(MetalConfig {
                 booleanity_cycle: BooleanityMetalConfig {
                     trace_cutoff_elements: 1 << 12,
                     cutoff_elements: 4,
@@ -814,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn k16_cycle_releases_rows_that_hamming_cannot_use() {
+    fn k16_cycle_retains_rows_for_hamming() {
         let log_t = 10;
         with_booleanity_backend(log_t, 4, |witness, dimensions| {
             let r_address = point(110, dimensions.log_k_chunk);
@@ -833,7 +839,7 @@ mod tests {
             let challenges = BooleanityCyclePhaseChallenges {
                 gamma: AkitaField::from_u64(31),
             };
-            let metal = MetalBackend::new(super::super::MetalConfig {
+            let metal = MetalBackend::new(MetalConfig {
                 booleanity_cycle: BooleanityMetalConfig {
                     trace_cutoff_elements: 1 << 12,
                     cutoff_elements: 4,
@@ -876,7 +882,7 @@ mod tests {
                 )
                 .unwrap();
 
-            assert!(session.state::<BooleanityRows>().is_none());
+            assert!(session.state::<BooleanityRows>().is_some());
         });
     }
 }

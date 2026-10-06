@@ -62,7 +62,7 @@ struct MetalRamRaVirtualizationKernel {
     log_t: usize,
     num_factors: usize,
     next_round: usize,
-    final_values: Option<[AkitaField; 3]>,
+    final_values: Option<[AkitaField; 5]>,
 }
 
 #[cfg(feature = "allocative")]
@@ -329,9 +329,9 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
         }
 
         let log_k = r_address.len();
-        if chunk_bits == 8
-            && (2..=3).contains(&chunks.len())
-            && chunks.iter().all(|chunk| chunk.len() == 8)
+        if ((chunk_bits == 8 && (2..=3).contains(&chunks.len()))
+            || (chunk_bits == 4 && chunks.len() == 5))
+            && chunks.iter().all(|chunk| chunk.len() == chunk_bits)
         {
             let columns = RamAccessColumns::shared(session, witness, log_t)?;
             let address_domain = 1usize

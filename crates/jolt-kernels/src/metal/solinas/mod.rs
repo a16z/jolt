@@ -94,8 +94,7 @@ pub use booleanity::{
 pub(crate) use booleanity::{BOOLEANITY_SOURCE_ROW_BYTES, BOOLEANITY_SOURCE_WORDS};
 pub use booleanity_address::{BooleanityAddressPushforward, BooleanityAddressPushforwardConfig};
 pub use bytecode_cycle::{
-    BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables,
-    BytecodeCycleTablesMut, BYTECODE_CYCLE_SAMPLES, BYTECODE_CYCLE_TABLES,
+    BytecodeCycleSequence, BytecodeCycleSequenceConfig, BytecodeCycleTables, BytecodeCycleTablesMut,
 };
 pub(crate) use bytecode_row::{BytecodeCycleRowInputs, BytecodeCycleRowSequence};
 pub(crate) use instruction_claim_reduction_successor::{
