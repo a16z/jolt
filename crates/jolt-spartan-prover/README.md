@@ -8,9 +8,9 @@ and shared claim calculations. The prover crate supplies sumcheck kernels.
 HyperKZG and Dory are exercised as independent PCS implementations.
 
 This is a standalone library contract for applications supplying sparse R1CS.
-It is not yet an Akita verifier circuit or an EVM verifier. Verification and
-statement absorption traverse the matrices; the baseline has no succinct
-matrix argument, no structured matrix evaluator, and no ZK masking.
+It is not yet an Akita verifier circuit or an EVM verifier. Verification
+traverses the matrices; the baseline has no succinct matrix argument, no
+structured matrix evaluator, and no ZK masking.
 
 ## Key and accepted statement
 
@@ -27,8 +27,9 @@ deserialize `ConstraintMatrices`, then invoke the checked constructor. Shape
 validation is not authentication: applications must select the intended
 matrices, public partition, transcript, and PCS setup independently of the
 proof. `policy_id` is the authenticated identifier of that application policy.
-The exact matrix encoding and dimensions are also absorbed in each proof;
-the protocol does not trust a prover-supplied matrix digest.
+Each proof also absorbs the key's relation digest: Blake2b-256 over the
+dimensions, public partition, and exact matrix encoding, computed once by
+`SpartanKey::new` from the matrices it owns. No prover-supplied digest is read.
 
 Rows and private witness coordinates pad independently to powers of two, each
 at least two. Additional rows/columns have zero matrix coefficients. The honest
@@ -44,7 +45,7 @@ with explicit sparse matrix evaluation. Arithmetic kernels adapt
 `56343ddbea18b5021b6971b7c2c3f17d1a67726f`; the donor's committed-round stream,
 column carries, Dory verifier circuit, and shared-domain packing are excluded.
 
-1. `SpartanKey::begin` absorbs protocol version, policy, matrix shape/content,
+1. `SpartanKey::begin` absorbs protocol version, relation digest, policy,
    public inputs, and `C_W`, then draws `tau` and separates the outer stage.
 2. `OuterRounds` proves
    `sum_x eq(tau,x) * (Az(x)Bz(x)-Cz(x)) = 0` at individual degree three.

@@ -1,14 +1,16 @@
+use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_transcript::{AppendToTranscript, Transcript, U64Word};
+use jolt_transcript::{AppendToTranscript, Label, Transcript};
 
 use crate::SpartanError;
 
 /// Checked immutable relation. Columns are `[1, public inputs, witness]`.
 ///
 /// `policy_id` identifies the application's authenticated PCS/transcript policy.
-/// Matrix contents and shape are additionally bound verbatim in every proof.
+/// Every proof also binds `relation_digest`, which the constructor computes
+/// from the owned matrices and partition; the key is not deserializable.
 /// The constructor validates shape; it does not authenticate an application.
 #[derive(Clone, Debug)]
 pub struct SpartanKey<F: JoltField> {
@@ -17,6 +19,36 @@ pub struct SpartanKey<F: JoltField> {
     padded_rows: usize,
     padded_witness: usize,
     policy_id: [u8; 32],
+    relation_digest: [u8; 32],
+}
+
+const RELATION_DIGEST_DOMAIN: &[u8] = b"jolt-spartan-relation-v1";
+
+/// Blake2b-256 over the domain, `num_constraints`, `num_vars`,
+/// `public_columns`, then each A/B/C row as its length followed by
+/// `(column, coefficient)` entries. Integers are big-endian u64 and
+/// coefficients canonical little-endian; row counts are fixed by the validated
+/// `num_constraints`, so the encoding is injective.
+fn relation_digest<F: JoltField>(
+    matrices: &ConstraintMatrices<F>,
+    public_columns: usize,
+) -> [u8; 32] {
+    let mut hasher = Blake2b::<U32>::new_with_prefix(RELATION_DIGEST_DOMAIN);
+    for word in [matrices.num_constraints, matrices.num_vars, public_columns] {
+        hasher.update((word as u64).to_be_bytes());
+    }
+    let mut coefficient_bytes = vec![0; F::NUM_BYTES];
+    for matrix in [&matrices.a, &matrices.b, &matrices.c] {
+        for row in matrix {
+            hasher.update((row.len() as u64).to_be_bytes());
+            for (column, coefficient) in row {
+                hasher.update((*column as u64).to_be_bytes());
+                coefficient.to_bytes_le(&mut coefficient_bytes);
+                hasher.update(&coefficient_bytes);
+            }
+        }
+    }
+    hasher.finalize().into()
 }
 
 impl<F: JoltField> SpartanKey<F> {
@@ -61,6 +93,7 @@ impl<F: JoltField> SpartanKey<F> {
             .checked_next_power_of_two()
             .ok_or(SpartanError::InvalidShape)?;
         Ok(Self {
+            relation_digest: relation_digest(&matrices, public_columns),
             matrices,
             public_columns,
             padded_rows,
@@ -134,22 +167,9 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
         transcript: &mut impl Transcript<Challenge = F>,
     ) -> Result<Vec<F>, SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
-        transcript.append_labeled(
-            b"spartan-clear-v1",
-            &U64Word(self.matrices.num_constraints as u64),
-        );
+        transcript.append(&Label(b"spartan-clear-v1"));
+        transcript.append_bytes(&self.relation_digest);
         transcript.append_bytes(&self.policy_id);
-        transcript.append(&U64Word(self.matrices.num_vars as u64));
-        transcript.append(&U64Word(self.public_columns as u64));
-        for matrix in [&self.matrices.a, &self.matrices.b, &self.matrices.c] {
-            for row in matrix {
-                transcript.append(&U64Word(row.len() as u64));
-                for (column, coefficient) in row {
-                    transcript.append(&U64Word(*column as u64));
-                    transcript.append(coefficient);
-                }
-            }
-        }
         transcript.append_values(b"public-inputs", public_inputs);
         transcript.append_labeled(b"witness-commitment", commitment);
         let tau = transcript.challenge_vector(self.row_vars());

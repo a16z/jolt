@@ -9,6 +9,7 @@ description = "PCS-generic clear Spartan verification for sparse R1CS"
 workspace = true
 
 [dependencies]
+blake2.workspace = true
 jolt-field.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
