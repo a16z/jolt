@@ -18,9 +18,7 @@ Construct `SpartanKey::new(matrices, public_input_count, policy_id)` from an
 authenticated application relation. Columns are `[1, public inputs, private
 witness]`. The constructor checks all row counts and column bounds, nonempty
 constraint/private-witness sets, partition arithmetic, and padding overflow.
-The field must have characteristic greater than three, because the inherited
-round interpolation uses the points zero through three. Invalid input returns
-`SpartanError` in release builds as well.
+Invalid input returns `SpartanError` in release builds as well.
 
 The key owns its matrices immutably and is not deserializable. Applications may
 deserialize `ConstraintMatrices`, then invoke the checked constructor. Shape

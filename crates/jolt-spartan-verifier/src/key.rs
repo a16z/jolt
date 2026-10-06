@@ -53,7 +53,7 @@ fn relation_digest<F: JoltField>(
 
 impl<F: JoltField> SpartanKey<F> {
     /// Checks matrix dimensions, partition, and power-of-two padding sizes.
-    /// Requires nonempty constraints/private witness and characteristic > 3.
+    /// Requires nonempty constraints and private witness.
     pub fn new(
         matrices: ConstraintMatrices<F>,
         public_input_count: usize,
@@ -67,22 +67,12 @@ impl<F: JoltField> SpartanKey<F> {
             .checked_sub(public_columns)
             .filter(|len| *len > 0)
             .ok_or(SpartanError::InvalidShape)?;
-        if F::from_u64(2).is_zero() || F::from_u64(3).is_zero() {
-            return Err(SpartanError::UnsupportedField);
-        }
         if matrices.num_constraints == 0 {
             return Err(SpartanError::InvalidShape);
         }
-        for matrix in [&matrices.a, &matrices.b, &matrices.c] {
-            if matrix.len() != matrices.num_constraints
-                || matrix
-                    .iter()
-                    .flatten()
-                    .any(|(column, _)| *column >= matrices.num_vars)
-            {
-                return Err(SpartanError::InvalidShape);
-            }
-        }
+        matrices
+            .validate()
+            .map_err(|_| SpartanError::InvalidShape)?;
         let padded_rows = matrices
             .num_constraints
             .max(2)

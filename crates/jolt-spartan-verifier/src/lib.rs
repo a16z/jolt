@@ -42,8 +42,6 @@ pub struct SpartanProof<F: JoltField, C, O> {
 
 #[derive(Debug, Error)]
 pub enum SpartanError<F: JoltField> {
-    #[error("Spartan round interpolation requires field characteristic greater than three")]
-    UnsupportedField,
     #[error("invalid R1CS shape or public/private partition")]
     InvalidShape,
     #[error("public input count does not match the key")]

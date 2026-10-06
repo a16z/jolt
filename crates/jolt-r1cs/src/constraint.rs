@@ -149,6 +149,18 @@ impl<F: Field> ConstraintMatrices<F> {
         }
     }
 
+    /// Rechecks the row-count and column-bound invariants of [`Self::new`];
+    /// the fields are public, so a held value may no longer satisfy them.
+    pub fn validate(&self) -> Result<(), String> {
+        check_invariants(
+            self.num_constraints,
+            self.num_vars,
+            &self.a,
+            &self.b,
+            &self.c,
+        )
+    }
+
     /// Checks whether a per-cycle witness satisfies all constraints.
     ///
     /// Returns `Ok(())` if Az ∘ Bz = Cz for every row, or the index
