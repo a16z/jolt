@@ -4,19 +4,17 @@
 
 use std::time::Duration;
 
-use jolt_field::solinas::Prime128OffsetA7F7;
+use jolt_field::solinas::{Ext2, Fp128, Fp64};
 use jolt_field::Ring;
 use jolt_metal::runtime::{
     host_name, Batch, Binding, Device, Grid, LibrarySpec, Pipeline, ShaderLibrary,
 };
 use jolt_metal::shaders::FIELD_HEADERS;
-
-/// The field every benchmark measures.
-pub type F = Prime128OffsetA7F7;
+use jolt_metal::MetalField;
 
 /// Compiles the field headers and `sources`, with every template in
-/// `templates` instantiated for [`F`] and every kernel in `kernels` as is.
-pub fn library(
+/// `templates` instantiated for `T` and every kernel in `kernels` as is.
+pub fn library<T: MetalField>(
     device: &Device,
     sources: &[(&str, &str)],
     templates: &[&str],
@@ -30,18 +28,18 @@ pub fn library(
         });
     let spec = templates
         .iter()
-        .fold(spec, |spec, template| spec.instantiate::<F>(template));
+        .fold(spec, |spec, template| spec.instantiate::<T>(template));
     let spec = kernels
         .iter()
         .fold(spec, |spec, kernel| spec.kernel(kernel));
     ShaderLibrary::compile(device, &spec).expect("benchmark library compiles")
 }
 
-/// The pipeline of `kernel`, a template instantiated for [`F`] or, failing
+/// The pipeline of `kernel`, a template instantiated for `T` or, failing
 /// that, a plain kernel.
-pub fn pipeline<'l>(library: &'l ShaderLibrary, kernel: &str) -> &'l Pipeline {
+pub fn pipeline<'l, T: MetalField>(library: &'l ShaderLibrary, kernel: &str) -> &'l Pipeline {
     library
-        .pipeline(&host_name::<F>(kernel))
+        .pipeline(&host_name::<T>(kernel))
         .or_else(|_| library.pipeline(kernel))
         .expect("kernel is in the library")
 }
@@ -65,11 +63,51 @@ pub fn words(seed: u64, len: usize) -> Vec<u64> {
         .collect()
 }
 
+/// A benchmarked field: fixed-seed elements from 64-bit words.
+pub trait Sample: MetalField + Ring + Send + Sync {
+    /// Words per element.
+    const WORDS: usize;
+
+    /// The element made from `words`, which has `WORDS` entries.
+    fn from_words(words: &[u64]) -> Self;
+}
+
+impl<const P: u128> Sample for Fp128<P> {
+    const WORDS: usize = 2;
+
+    fn from_words(words: &[u64]) -> Self {
+        Self::from_u128((u128::from(words[0]) << 64) | u128::from(words[1]))
+    }
+}
+
+impl<const P: u64> Sample for Fp64<P>
+where
+    Self: MetalField,
+{
+    const WORDS: usize = 1;
+
+    fn from_words(words: &[u64]) -> Self {
+        Self::from_u64(words[0])
+    }
+}
+
+impl<F: Sample> Sample for Ext2<F>
+where
+    Self: MetalField,
+{
+    const WORDS: usize = 2 * F::WORDS;
+
+    fn from_words(words: &[u64]) -> Self {
+        let (c0, c1) = words.split_at(F::WORDS);
+        Self::new(F::from_words(c0), F::from_words(c1))
+    }
+}
+
 /// Fixed-seed field elements.
-pub fn elements(seed: u64, len: usize) -> Vec<F> {
-    words(seed, 2 * len)
-        .chunks_exact(2)
-        .map(|pair| F::from_u128((u128::from(pair[0]) << 64) | u128::from(pair[1])))
+pub fn elements<T: Sample>(seed: u64, len: usize) -> Vec<T> {
+    words(seed, T::WORDS * len)
+        .chunks_exact(T::WORDS)
+        .map(T::from_words)
         .collect()
 }
 

@@ -17,7 +17,7 @@ pub fn element<F: TestField>(value: u128) -> F {
 }
 
 pub fn modulus<F: TestField>() -> u128 {
-    0u128.wrapping_sub(F::OFFSET)
+    (u128::MAX >> (128 - F::MODULUS_BITS)) - F::OFFSET + 1
 }
 
 /// Canonical values at every boundary the arithmetic treats specially:
@@ -66,9 +66,11 @@ pub fn edges<F: TestField>() -> Vec<u128> {
 
 pub fn random_elements<F: TestField>(words: &mut SplitMix64, len: usize) -> Vec<u128> {
     let p = modulus::<F>();
+    let mask = u128::MAX >> (128 - F::MODULUS_BITS);
     let mut values = Vec::with_capacity(len);
     while values.len() < len {
-        let v = u128::from(words.next().unwrap()) | u128::from(words.next().unwrap()) << 64;
+        let v =
+            (u128::from(words.next().unwrap()) | u128::from(words.next().unwrap()) << 64) & mask;
         if v < p {
             values.push(v);
         }
