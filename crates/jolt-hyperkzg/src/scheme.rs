@@ -51,6 +51,7 @@ impl HyperKZGScheme {
         point: &[Fr],
         evaluation: Fr,
         setup: &HyperKZGProverSetup,
+        hint: Option<Bn254G1>,
         transcript: &mut impl Transcript<Challenge = Fr>,
     ) -> Result<HyperKZGProof, HyperKZGError> {
         let len = setup.verifier.check_arity(point.len())?;
@@ -72,7 +73,10 @@ impl HyperKZGScheme {
         if current.as_slice() != [evaluation] {
             return Err(HyperKZGError::WrongEvaluation);
         }
-        let commitment = setup.commit_coefficients(evaluations)?;
+        let commitment = match hint {
+            Some(commitment) => commitment,
+            None => setup.commit_coefficients(evaluations)?,
+        };
         setup
             .verifier
             .append_statement(&commitment, point, evaluation, transcript);
@@ -148,7 +152,9 @@ impl CommitmentScheme for HyperKZGScheme {
     type Proof = HyperKZGProof;
     type ProverSetup = HyperKZGProverSetup;
     type VerifierSetup = HyperKZGVerifierSetup;
-    type OpeningHint = ();
+    /// The commitment returned by `commit`. `open` binds it into the statement
+    /// without recomputing it, so a mismatched hint yields a rejected proof.
+    type OpeningHint = Bn254G1;
     type SetupParams = HyperKZGSetupParams;
 
     fn setup(
@@ -180,7 +186,7 @@ impl CommitmentScheme for HyperKZGScheme {
         }
         setup
             .commit_coefficients(&evaluations)
-            .map(|commitment| (commitment, ()))
+            .map(|commitment| (commitment, commitment))
             .map_err(|error| OpeningsError::CommitFailed(error.to_string()))
     }
 
@@ -189,7 +195,7 @@ impl CommitmentScheme for HyperKZGScheme {
         point: &[Fr],
         evaluation: Fr,
         setup: &Self::ProverSetup,
-        _hint: Option<Self::OpeningHint>,
+        hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Fr>,
     ) -> Result<Self::Proof, OpeningsError> {
         if poly.num_vars() != point.len() {
@@ -201,7 +207,7 @@ impl CommitmentScheme for HyperKZGScheme {
             .verifier
             .check_arity(point.len())
             .map_err(|error| OpeningsError::ProveFailed(error.to_string()))?;
-        Self::open_table(&poly.to_dense(), point, evaluation, setup, transcript)
+        Self::open_table(&poly.to_dense(), point, evaluation, setup, hint, transcript)
             .map_err(|error| OpeningsError::ProveFailed(error.to_string()))
     }
 

@@ -86,7 +86,7 @@ fn independent_evaluations_and_transcripts_match() {
 fn coefficient_commitment_has_known_answer() {
     let (pk, _) = setup(7, 4);
     let poly = Polynomial::new([1, 2, 3, 4].map(Fr::from_u64).to_vec());
-    let (commitment, ()) = HyperKZGScheme::commit(&poly, &pk).unwrap();
+    let (commitment, _) = HyperKZGScheme::commit(&poly, &pk).unwrap();
     assert_eq!(
         commitment,
         Bn254::g1_generator().scalar_mul(&Fr::from_u64(1534))
@@ -108,7 +108,7 @@ impl Fixture {
         let point = [2, 3, 5, 7].map(Fr::from_u64).to_vec();
         let evaluation = multilinear_oracle(&table, &point);
         let poly = Polynomial::new(table);
-        let (commitment, ()) = HyperKZGScheme::commit(&poly, &pk).unwrap();
+        let (commitment, _) = HyperKZGScheme::commit(&poly, &pk).unwrap();
         let proof =
             HyperKZGScheme::open(&poly, &point, evaluation, &pk, None, &mut transcript()).unwrap();
         Self {
@@ -177,6 +177,25 @@ fn statement_changes_reject() {
 }
 
 #[test]
+fn absent_hint_is_recomputed_and_present_hint_is_bound() {
+    let f = Fixture::new();
+    f.verify(&f.proof).unwrap();
+    let (pk, _) = setup(7, 16);
+    let poly = Polynomial::new((1..=16).map(Fr::from_u64).collect::<Vec<_>>());
+    let hint = f.commitment + Bn254::g1_generator();
+    let proof = HyperKZGScheme::open(
+        &poly,
+        &f.point,
+        f.evaluation,
+        &pk,
+        Some(hint),
+        &mut transcript(),
+    )
+    .unwrap();
+    assert!(f.verify(&proof).is_err());
+}
+
+#[test]
 fn malformed_shape_and_arity_return_errors_before_transcript_mutation() {
     let f = Fixture::new();
     for row in 0..3 {
@@ -242,7 +261,7 @@ fn bad_imports_and_false_prover_claims_reject() {
     )
     .is_err());
     let zero = Polynomial::new(vec![Fr::zero(); 4]);
-    let (commitment, ()) = HyperKZGScheme::commit(&zero, &pk).unwrap();
+    let (commitment, _) = HyperKZGScheme::commit(&zero, &pk).unwrap();
     let proof = HyperKZGScheme::open(
         &zero,
         &[Fr::one(); 2],

@@ -81,5 +81,7 @@ cargo fmt -p jolt-hyperkzg --check
 ```
 
 No speed, EVM gas, or zero-knowledge claim is made. The implementation uses
-the existing group MSM and pairing backend and recomputes the original
-commitment during opening to own its complete transcript statement.
+the existing group MSM and pairing backend. The opening hint is the
+commitment returned by `commit`; `open` binds it into the statement and
+recomputes the commitment only when no hint is supplied. A hint that is not
+the polynomial's commitment yields a proof the verifier rejects.
