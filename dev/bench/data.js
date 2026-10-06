@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791313730643,
+  "lastUpdate": 1791317767765,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -179410,6 +179410,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 859288,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "khajepour.amirhossein@gmail.com",
+            "name": "Amirhossein Khajehpour",
+            "username": "RadNi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8e19897a623e3a8306696e9fce555ee851bc2e90",
+          "message": "feat(akita): add multi-chunk one-hot profiles (#1976)\n\n* build(akita): bump akita to db5efa20 and spongefish to ef974134\n\nAkita main (includes LayerZero-Labs/akita#37): akita-transcript on\nspongefish 0.7.4 rev ef974134 (u64 squeeze counters, pointer-width\nindependent challenges). One workspace spongefish source; jolt-poly joins\nthe a16z/jolt path patch because akita now depends on it via git.\n\n* refactor(akita): port jolt-akita to the spongefish-native akita API\n\nakita db5efa20 (akita#37) replaces the typed batched proof and its\ntranscript with Spongefish argument bytes keyed by a session label, moves\nthe CPU prover behind an owning CpuBackend with CommitmentHandles, and\nverifies through AkitaVerifier. Bridge Jolt's statement-bound challenge\ninto the session bytes, commit via CpuBackend::import_source/commit, keep\nthe retained source in the handle instead of a second copy in the hint,\ncache prepared AkitaVerifiers per flavor, and port TracePackedOneHot to the\nakita_pcs::custom_source contracts. The proof-shape guard goes away with\nthe structured proof layer; only the commitment payload guard remains.\n\n* bench(dory): port akita_paths raw backend groups to CpuBackend\n\nThe akita_prover groups commit through CpuBackend::commit and prove to\nSpongefish argument bytes; sources are imported once outside the timed\nregion. akita-prover and akita-transcript are no longer direct\ndependencies of jolt-dory.\n\n* build(fuzz): re-resolve fuzz lockfiles to spongefish ef974134\n\ncargo metadata per sub-workspace; no wholesale update.\n\n* build(akita): drop the direct akita-prover/akita-transcript lock edges\n\n* build(akita): regenerate schedule catalogs under the db5efa20 planner\n\nakita#37 changed the planner policy identity (cost model\nNativeNoncePayloadAndSetupEnvelopeV2, selection objectives V5/V6), so the\nchecked-in .aks envelopes no longer pass the policy-digest check. Rows:\nk16 46 (37 changed), k256 64 (38 changed), dense 42 (40 changed); no rows\nadded or removed, and the direct/offloaded cutover is unchanged.\n\n* fix(akita): import precommitted handles into the trace backend\n\nAn Akita CommitmentHandle proves only on the CpuBackend that committed it,\nand advice / committed-program objects are committed on their own\ntransparent setups' dense backends. Import each precommitted handle into\nthe trace one-hot backend before the grouped batched_prove; Akita\nrecomputes the dense commitment from the retained source and checks it\nagainst the shared public matrix. The trailing-garbage fold_paths test now\nexpects Akita's own EOF rejection (VerificationFailed) since the adapter no\nlonger deserializes the proof.\n\n* test(verifier): re-bless the Fiat-Shamir challenge-site inventory for bridged_akita_session\n\n* build: drop the unused akita-prover and akita-transcript workspace dependencies\n\n* test(akita): pin the deep-fold fixture at four recursive folds\n\n* docs(akita): date the cutover timings and name the Spongefish proof body\n\n* refactor(akita): stop echoing the proof's schedule selection from the shape guard\n\n* refactor(akita): read one_hot_k from the hint source variant\n\n* refactor(akita): name the backend verifier-setup alias for what it is\n\n* test(akita): check trailing-byte rejection on the commitment payload type\n\n* refactor(akita): inline the single-caller grouped opening selection\n\n* feat(akita): add multi-chunk profiles on updated Akita\n\n* style(akita): import Range in decomposition signatures\n\n* build(akita): bump akita to 1cc7a2a9 (spongefish 0.7.4, pointer-width independent challenges)\n\n* Resolve Akita multi-chunk conflicts with upstream main\n\n* fix(akita): refresh expanded K16 schedule catalogs and transcript fixture\n\n* fix(akita): address chunked profile review findings\n\n* fix(akita): cover chunked fold validation gaps\n\n* fix(akita): satisfy nominal import style\n\n* fix(verifier): refresh Fiat-Shamir inventory\n\n* fix(akita): provision advice commitments for chunked openings\n\n* fix(akita): reuse dense commitments across chunk profiles\n\nCertify bounded and full-width dense producers for the maximum eight-chunk response budget and regenerate their catalogs. Remove profile-specific producer replanning so advice commitments can be created once and reused across all supported trace chunk profiles.\n\nCover producer certificate admission, commitment reuse, and committed-program proofs across Single, Two, Four, and Eight.\n\n* fix(akita): extend chunked catalogs to smaller arities\n\n* fix(akita): validate chunk profiles and close review gaps\n\nRename the chunk-profile API and reject prove-time profile mismatches. Reuse the single-chunk, single-digit buffer, reject tampered verifier setups in existing round trips, and document cache compatibility, migration, and benchmark findings.\n\nValidation: targeted Akita tests, the Akita e2e suite, Fiat-Shamir inventory, both workspace Clippy modes, formatting, and diff checks passed.\n\n* fix(akita): audit grouped advice matrix and reject unsupported scalar guides\n\n* fix(akita): tighten grouped diagnostics and clarify migration docs\n\n* test(akita): cover every chunked rotation mode explicitly\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <atretyakov@a16z.com>",
+          "timestamp": "2026-10-06T12:21:21-07:00",
+          "tree_id": "0e5f015a4a3554887a989f223d83de3b7cc31fc1",
+          "url": "https://github.com/a16z/jolt/commit/8e19897a623e3a8306696e9fce555ee851bc2e90"
+        },
+        "date": 1791317761248,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.668,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 860320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.1966,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 509092,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 501084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7618,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 503376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999152,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5557,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.5189,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.2465,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 135248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4487,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859504,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.597,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4191,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 501340,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 18.1803,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.7078,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 499128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.5529,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1957140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 12.5861,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 640852,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 65.5743,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1100924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2991,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498724,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.4566,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 13.985,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 859404,
             "unit": "KB",
             "extra": ""
           }
