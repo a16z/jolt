@@ -1721,58 +1721,129 @@ mod tests {
     }
 
     #[test]
-    fn latest_suffix_abi_matches_host_at_every_address_phase() {
+    fn address_phases_match_field_oracle() {
         let tables: Vec<_> = LookupTableKind::<RISCV_XLEN>::iter().collect();
-        let lookups = [
-            0,
-            u128::MAX,
-            0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
-            0xa55a_3cc3_f00f_6996_9669_0ff0_c33c_5aa5,
-        ];
-        let logical_rows = tables.len() * lookups.len();
-        let rows = logical_rows.next_power_of_two();
+        // Per table, 64-row blocks of one chunk distribution: every chunk zero,
+        // every chunk nonzero, both alternating, and two shared values.
+        let lookup = |pattern: usize, row: usize| {
+            let nonzero = (0..16).fold(0u128, |bits, byte| {
+                bits | (((1 + (row * 37 + byte * 11) % 255) as u128) << (8 * byte))
+            });
+            match pattern {
+                0 => 0,
+                1 => nonzero,
+                2 if row.is_multiple_of(2) => 0,
+                2 => nonzero,
+                3 => u128::MAX,
+                _ => 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
+            }
+        };
+        let rows = (tables.len() * 5 * 64 + 1).next_power_of_two();
         let mut buckets = vec![Vec::new(); tables.len()];
-        let mut sources = Vec::with_capacity(rows);
+        let mut lookups = vec![0u128; rows];
+        let mut flags = vec![false; rows];
+        let mut row_tables = vec![None; rows];
+        let mut row = 0;
         for table in &tables {
-            for (sample, lookup) in lookups.iter().copied().enumerate() {
-                let row = sources.len();
-                buckets[table.index()].push(row as u32);
-                sources.push((
-                    AddressRafScanRow::new_with_table(lookup, Some(table.index()), false),
-                    Fp128::from_jolt_field(&AkitaField::from_u64((sample + 1) as u64)),
-                ));
+            for pattern in 0..5 {
+                for _ in 0..64 {
+                    buckets[table.index()].push(row as u32);
+                    lookups[row] = lookup(pattern, row);
+                    flags[row] = (row / 3) % 2 == 1;
+                    row_tables[row] = Some(table.index());
+                    row += 1;
+                }
             }
         }
-        sources.resize(rows, (AddressRafScanRow::new(0, false), Fp128::ONE));
+        let near_modulus = u128::MAX - 0xffff_a7f7;
+        let mut weights: Vec<_> = (0..rows)
+            .map(|row| AkitaField::from_u128(near_modulus - (row % 7) as u128))
+            .collect();
+        let sources: Vec<_> = (0..rows)
+            .map(|row| {
+                (
+                    AddressRafScanRow::new_with_table(lookups[row], row_tables[row], flags[row]),
+                    Fp128::from_jolt_field(&weights[row]),
+                )
+            })
+            .collect();
 
         let context = SolinasMetal::for_akita().expect("Metal context should compile");
         let mut sequence = context
             .prepare_address_phase_sequence_from_buckets(
                 rows,
                 &buckets,
-                AddressPhaseSequenceConfig::default(),
+                AddressPhaseSequenceConfig {
+                    rows_per_threadgroup: 1 << 10,
+                    threads_per_threadgroup: Some(64),
+                },
                 |row| sources[row],
             )
             .expect("address sequence should prepare");
 
-        for suffix_len in (0..=120u32).step_by(8) {
+        let zero = AkitaField::from_u64(0);
+        let mut previous: Option<Vec<AkitaField>> = None;
+        for suffix_len in (0..=120u32).rev().step_by(8) {
+            let previous_fp = previous.as_ref().map(|table| {
+                std::array::from_fn::<_, ADDRESS_RAF_BINS, _>(|chunk| {
+                    Fp128::from_jolt_field(&table[chunk])
+                })
+            });
             let sums = sequence
-                .phase(suffix_len, None)
+                .phase(suffix_len, previous_fp.as_ref())
                 .expect("address phase should execute");
+            if let Some(table) = &previous {
+                for (weight, lookup) in weights.iter_mut().zip(&lookups) {
+                    *weight *=
+                        table[((lookup >> (suffix_len + 8)) as usize) & (ADDRESS_RAF_BINS - 1)];
+                }
+            }
+
+            let suffix_mask = (1u128 << suffix_len) - 1;
+            let upper_bits = suffix_len.saturating_sub(64);
+            let mut raf = vec![zero; ADDRESS_RAF_LANES * ADDRESS_RAF_BINS];
+            for row in 0..rows {
+                let chunk = ((lookups[row] >> suffix_len) as usize) & (ADDRESS_RAF_BINS - 1);
+                let suffix_bits = lookups[row] & suffix_mask;
+                let weight = weights[row];
+                let mut add = |lane: usize, value| raf[lane * ADDRESS_RAF_BINS + chunk] += value;
+                if flags[row] {
+                    add(3, weight);
+                    add(4, weight * AkitaField::from_u128(suffix_bits));
+                    if upper_bits == 0
+                        || suffix_bits >> (suffix_len - upper_bits) == (1u128 << upper_bits) - 1
+                    {
+                        add(5, weight);
+                    }
+                } else {
+                    let (left, right) =
+                        LookupBits::new(suffix_bits, suffix_len as usize).uninterleave();
+                    add(0, weight);
+                    add(1, weight * AkitaField::from_u64(u64::from(left)));
+                    add(2, weight * AkitaField::from_u64(u64::from(right)));
+                }
+            }
+            let raf: Vec<_> = raf.iter().map(Fp128::from_jolt_field).collect();
+            assert_eq!(
+                sums.raf().as_flat_slice(),
+                raf,
+                "RAF mismatch at suffix_len={suffix_len}"
+            );
+
             for table in &tables {
                 let actual = sums
                     .suffix()
                     .table(table.index())
                     .expect("table output should exist");
                 let suffixes = table.suffixes();
-                let mut expected = vec![AkitaField::from_u64(0); actual.len()];
-                for (sample, lookup) in lookups.iter().copied().enumerate() {
-                    let chunk = ((lookup >> suffix_len) as usize) & (ADDRESS_SUFFIX_BINS - 1);
-                    let bits = LookupBits::new(lookup, suffix_len as usize);
-                    let weight = AkitaField::from_u64((sample + 1) as u64);
+                let mut expected = vec![zero; actual.len()];
+                for &row in &buckets[table.index()] {
+                    let row = row as usize;
+                    let chunk = ((lookups[row] >> suffix_len) as usize) & (ADDRESS_SUFFIX_BINS - 1);
+                    let bits = LookupBits::new(lookups[row], suffix_len as usize);
                     for (index, suffix) in suffixes.iter().enumerate() {
                         expected[index * ADDRESS_SUFFIX_BINS + chunk] +=
-                            weight * AkitaField::from_u64(suffix.suffix_mle(bits));
+                            weights[row] * AkitaField::from_u64(suffix.suffix_mle(bits));
                     }
                 }
                 let expected: Vec<_> = expected.iter().map(Fp128::from_jolt_field).collect();
@@ -1781,6 +1852,15 @@ mod tests {
                     "suffix mismatch for table {table:?} at suffix_len={suffix_len}"
                 );
             }
+            previous = Some(
+                (0..ADDRESS_RAF_BINS as u64)
+                    .map(|chunk| {
+                        AkitaField::from_u64(
+                            (chunk + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ u64::from(suffix_len),
+                        )
+                    })
+                    .collect(),
+            );
         }
     }
 }

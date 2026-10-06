@@ -383,7 +383,7 @@ kernel void solinas_address_suffix_full_tile(
         AddressSuffixFullBits bits = address_suffix_full_bits(lookup, params.suffix_len);
         uint chunk = address_suffix_full_lookup_byte(lookup, params.suffix_len);
         SolinasFp128 weight = weights[row];
-        // A constant trip count keeps chunk_zero indexed statically (in registers).
+        // The fixed bound allows unrolling.
         for (uint suffix = 0; suffix < ADDRESS_SUFFIX_FULL_MAX_SUFFIXES; suffix++) {
             if (suffix >= suffix_count) {
                 break;
