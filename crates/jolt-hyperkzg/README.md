@@ -1,9 +1,10 @@
 # Clear binary HyperKZG
 
 This crate implements ordinary BN254 multilinear commitment/opening through
-`jolt_openings::CommitmentScheme`; `jolt-spartan-prover` and
-`jolt-spartan-verifier` consume it. There is no hiding, committed-round
-protocol, or batch/homomorphic API.
+`jolt_openings::CommitmentScheme`. The `jolt-spartan-prover` tests exercise it
+as one of two PCS backends (Dory is the other); no workspace crate links it in
+production yet. There is no hiding, committed-round protocol, or
+batch/homomorphic API.
 
 ## Statement and setup contract
 
