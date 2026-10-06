@@ -27,37 +27,15 @@ struct BooleanityReductionParams {
     uint2 reserved;
 };
 
-struct BooleanityLazySum {
-    SolinasFp128 low;
-    uint overflow;
-};
-
 struct BooleanityLazyWideSum {
     SolinasWide256 low;
     uint overflow;
 };
 
-inline BooleanityLazySum booleanity_lazy_zero()
-{
-    BooleanityLazySum sum = {};
-    return sum;
-}
-
 inline BooleanityLazyWideSum booleanity_lazy_wide_zero()
 {
     BooleanityLazyWideSum sum = {};
     return sum;
-}
-
-inline void booleanity_lazy_add(thread BooleanityLazySum& sum, SolinasFp128 value)
-{
-    ulong carry = 0ul;
-    for (uint i = 0; i < 4; i++) {
-        ulong word = (ulong)sum.low.limb[i] + (ulong)value.limb[i] + carry;
-        sum.low.limb[i] = (uint)word;
-        carry = word >> 32;
-    }
-    sum.overflow += (uint)carry;
 }
 
 inline void booleanity_lazy_wide_add(thread BooleanityLazyWideSum& sum, SolinasWide256 value)
@@ -77,7 +55,7 @@ inline void booleanity_lazy_wide_add(thread BooleanityLazyWideSum& sum, SolinasW
 // u32-checked polynomial count for per-pair sums. With SOLINAS_OFFSET < 2^32 the
 // correction overflow * SOLINAS_OFFSET^(bits / 128) is below 2^96, which
 // solinas_add folds canonically next to any 128-bit left operand.
-inline SolinasFp128 booleanity_lazy_reduce(BooleanityLazySum sum)
+inline SolinasFp128 booleanity_lazy_reduce(SolinasLazySum sum)
 {
     ulong residue = (ulong)sum.overflow * (ulong)SOLINAS_OFFSET;
     SolinasFp128 correction = solinas_zero();
@@ -148,17 +126,17 @@ inline void booleanity_lazy_half_sums(
     uint one,
     uint shift,
     uint mask,
-    thread BooleanityLazySum& lazy_0,
-    thread BooleanityLazySum& lazy_1)
+    thread SolinasLazySum& lazy_0,
+    thread SolinasLazySum& lazy_1)
 {
     for (uint offset = 0; offset < branch_width; offset++) {
         uint lo = halves[2u * (original + offset)] & value_mask;
         uint hi = halves[2u * (original + branch_width + offset)] & value_mask;
         if (lo >= one) {
-            booleanity_lazy_add(lazy_0, table[((lo - one) >> shift) & mask]);
+            solinas_lazy_add(lazy_0, table[((lo - one) >> shift) & mask]);
         }
         if (hi >= one) {
-            booleanity_lazy_add(lazy_1, table[((hi - one) >> shift) & mask]);
+            solinas_lazy_add(lazy_1, table[((hi - one) >> shift) & mask]);
         }
         table += k;
     }
@@ -178,7 +156,7 @@ inline void booleanity_lazy_pair(
 {
     BooleanityLazyWideSum leading = booleanity_lazy_wide_zero();
     if (params.branch_width == 1u && params.materialize == 0u) {
-        BooleanityLazySum constant_sum = booleanity_lazy_zero();
+        SolinasLazySum constant_sum = solinas_lazy_zero();
         for (uint poly = 0; poly < params.polys; poly++) {
             BooleanitySelector selector = selectors[poly];
             uint first = params.k;
@@ -189,7 +167,7 @@ inline void booleanity_lazy_pair(
             booleanity_row_hot_index(
                 rows, params.rows, 2u * pair + 1u, selector,
                 params.chunk_bits, params.inc_bias, second);
-            booleanity_lazy_add(
+            solinas_lazy_add(
                 constant_sum,
                 initial_constant[poly * (params.k + 1u) + first]);
             // Round 0 branches are the base tables, so derive the leading
@@ -210,8 +188,8 @@ inline void booleanity_lazy_pair(
     BooleanityLazyWideSum constant_sum = booleanity_lazy_wide_zero();
     for (uint poly = 0; poly < params.polys; poly++) {
         BooleanitySelector selector = selectors[poly];
-        BooleanityLazySum lazy_0 = booleanity_lazy_zero();
-        BooleanityLazySum lazy_1 = booleanity_lazy_zero();
+        SolinasLazySum lazy_0 = solinas_lazy_zero();
+        SolinasLazySum lazy_1 = solinas_lazy_zero();
         uint original = 2u * pair * params.branch_width;
         uint mask = (1u << params.chunk_bits) - 1u;
         device const SolinasFp128* table = branches + poly * params.branch_width * params.k;
@@ -241,8 +219,8 @@ inline void booleanity_lazy_pair(
                     magnitudes[hi_row],
                     ((metadata_high[2u * hi_row] >> (BOOLEANITY_SOURCE_FUSED_SIGN_SHIFT - 32u)) & 1u) != 0u,
                     selector, params.chunk_bits, params.inc_bias);
-                booleanity_lazy_add(lazy_0, table[lo]);
-                booleanity_lazy_add(lazy_1, table[hi]);
+                solinas_lazy_add(lazy_0, table[lo]);
+                solinas_lazy_add(lazy_1, table[hi]);
                 table += params.k;
             }
         } else {
@@ -251,12 +229,12 @@ inline void booleanity_lazy_pair(
                 if (booleanity_row_hot_index(
                         rows, params.rows, original + offset, selector,
                         params.chunk_bits, params.inc_bias, hot)) {
-                    booleanity_lazy_add(lazy_0, table[hot]);
+                    solinas_lazy_add(lazy_0, table[hot]);
                 }
                 if (booleanity_row_hot_index(
                         rows, params.rows, original + params.branch_width + offset, selector,
                         params.chunk_bits, params.inc_bias, hot)) {
-                    booleanity_lazy_add(lazy_1, table[hot]);
+                    solinas_lazy_add(lazy_1, table[hot]);
                 }
                 table += params.k;
             }

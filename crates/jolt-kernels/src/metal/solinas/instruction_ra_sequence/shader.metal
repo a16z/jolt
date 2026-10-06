@@ -1,5 +1,5 @@
 // Appended after instruction_ra_common.metal and booleanity/shader.metal: this
-// file reuses the field ABI, quadratic helpers, and the booleanity lazy sums.
+// file reuses the field ABI, quadratic helpers, and booleanity_lazy_reduce.
 
 struct InstructionRaBranchParams {
     uint branch_width;
@@ -42,8 +42,8 @@ inline void instruction_ra_gather_group(
         }
         return;
     }
-    BooleanityLazySum lo_sums[INSTRUCTION_RA_FACTORS_PER_GROUP] = {};
-    BooleanityLazySum hi_sums[INSTRUCTION_RA_FACTORS_PER_GROUP] = {};
+    SolinasLazySum lo_sums[INSTRUCTION_RA_FACTORS_PER_GROUP] = {};
+    SolinasLazySum hi_sums[INSTRUCTION_RA_FACTORS_PER_GROUP] = {};
     for (uint offset = 0; offset < branch_width; offset++) {
         uint lo_row = cycle_to_table_major[original + offset];
         uint hi_row = cycle_to_table_major[original + branch_width + offset];
@@ -53,8 +53,8 @@ inline void instruction_ra_gather_group(
             uint factor = group * INSTRUCTION_RA_FACTORS_PER_GROUP + local;
             uint table = (factor * branch_width + offset) * INSTRUCTION_RA_BINS;
             uint shift = (3u - local) * 8u;
-            booleanity_lazy_add(lo_sums[local], branches[table + ((lo_word >> shift) & 0xffu)]);
-            booleanity_lazy_add(hi_sums[local], branches[table + ((hi_word >> shift) & 0xffu)]);
+            solinas_lazy_add(lo_sums[local], branches[table + ((lo_word >> shift) & 0xffu)]);
+            solinas_lazy_add(hi_sums[local], branches[table + ((hi_word >> shift) & 0xffu)]);
         }
     }
 

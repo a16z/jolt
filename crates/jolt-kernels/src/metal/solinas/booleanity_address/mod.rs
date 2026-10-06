@@ -634,29 +634,33 @@ mod tests {
     #[test]
     fn pushforward_reduces_adversarial_carry_bucket() {
         let rows = vec![BooleanityRow::new(0, Some(0), Some(0), 0).unwrap(); 1 << 12];
-        let selectors = vec![BooleanitySelector::Lookup { shift: 0 }; 6];
         let near_modulus = AkitaField::from_u128(u128::MAX - 0xffff_a7f7);
         let e_in = vec![near_modulus; rows.len()];
         let e_out = vec![AkitaField::from_u64(17)];
-        let expected = oracle(&rows, &selectors, &e_in, &e_out);
         let context = SolinasMetal::for_akita().unwrap();
         let resident = context.prepare_booleanity_rows(&rows).unwrap();
-        let invocation = context
-            .prepare_booleanity_address_pushforward_with_weights(
-                resident,
-                &selectors,
-                &e_in,
-                &e_out,
-                BooleanityAddressPushforwardConfig {
-                    inner_log2: 12,
-                    selectors_per_tile: 6,
-                    tile_threads_per_threadgroup: Some(1024),
-                    finalize_threads_per_threadgroup: Some(1024),
-                },
-            )
-            .unwrap();
-        invocation.execute().unwrap();
-        assert_eq!(invocation.read_masses().unwrap(), expected);
+        for selectors in [
+            vec![BooleanitySelector::Lookup { shift: 0 }; 6],
+            selectors(2),
+        ] {
+            let expected = oracle(&rows, &selectors, &e_in, &e_out);
+            let invocation = context
+                .prepare_booleanity_address_pushforward_with_weights(
+                    resident.clone(),
+                    &selectors,
+                    &e_in,
+                    &e_out,
+                    BooleanityAddressPushforwardConfig {
+                        inner_log2: 12,
+                        selectors_per_tile: 6,
+                        tile_threads_per_threadgroup: Some(1024),
+                        finalize_threads_per_threadgroup: Some(1024),
+                    },
+                )
+                .unwrap();
+            invocation.execute().unwrap();
+            assert_eq!(invocation.read_masses().unwrap(), expected);
+        }
     }
 
     fn selectors(ram_chunks: usize) -> Vec<BooleanitySelector> {

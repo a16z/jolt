@@ -1,5 +1,4 @@
 #define BOOLEANITY_ADDRESS_BINS 256u
-#define BOOLEANITY_ADDRESS_ACCUMULATOR_WORDS 5u
 
 struct BooleanityAddressParams {
     uint rows;
@@ -13,49 +12,6 @@ struct BooleanityAddressParams {
     ulong inc_bias;
 };
 
-struct BooleanityAddressLocalSum {
-    SolinasFp128 low;
-    uint overflow;
-};
-
-inline BooleanityAddressLocalSum booleanity_address_local_zero() {
-    BooleanityAddressLocalSum result;
-    result.low = solinas_zero();
-    result.overflow = 0u;
-    return result;
-}
-
-inline void booleanity_address_local_add(
-    thread BooleanityAddressLocalSum& sum,
-    SolinasFp128 value)
-{
-    ulong carry = 0ul;
-    for (uint limb = 0u; limb < 4u; limb++) {
-        ulong word = (ulong)sum.low.limb[limb]
-            + (ulong)value.limb[limb]
-            + carry;
-        sum.low.limb[limb] = (uint)word;
-        carry = word >> 32;
-    }
-    sum.overflow += (uint)carry;
-}
-
-inline void booleanity_address_flush_local(
-    threadgroup atomic_uint* sums,
-    uint local,
-    uint hot,
-    BooleanityAddressLocalSum value)
-{
-    uint field = local * BOOLEANITY_ADDRESS_BINS + hot;
-    solinas_deferred_atomic_add_5(sums, field, value.low);
-    if (value.overflow != 0u) {
-        atomic_fetch_add_explicit(
-            &sums[field * BOOLEANITY_ADDRESS_ACCUMULATOR_WORDS + 4u],
-            value.overflow,
-            memory_order_relaxed);
-    }
-}
-
 inline void booleanity_address_add(
     threadgroup atomic_uint* sums,
     uint local,
@@ -64,56 +20,6 @@ inline void booleanity_address_add(
 {
     uint field = local * BOOLEANITY_ADDRESS_BINS + hot;
     solinas_deferred_atomic_add_5(sums, field, weight);
-}
-
-inline void booleanity_address_add_lookup_word(
-    threadgroup atomic_uint* sums,
-    ulong word,
-    uint local,
-    uint word_shift,
-    SolinasFp128 weight)
-{
-    booleanity_address_add(
-        sums,
-        local,
-        (uint)(word >> word_shift) & (BOOLEANITY_ADDRESS_BINS - 1u),
-        weight);
-}
-
-inline void booleanity_address_add_bytecode(
-    threadgroup atomic_uint* sums,
-    ulong packed_pc_and_flags,
-    uint local,
-    uint shift,
-    SolinasFp128 weight)
-{
-    ulong plus_one = packed_pc_and_flags & 0x00ffFFFFFFFFFFFFul;
-    if (plus_one != 0ul) {
-        booleanity_address_add(
-            sums,
-            local,
-            (uint)((plus_one - 1ul) >> shift)
-                & (BOOLEANITY_ADDRESS_BINS - 1u),
-            weight);
-    }
-}
-
-inline void booleanity_address_add_ram(
-    threadgroup atomic_uint* sums,
-    ulong ram_address_plus_one,
-    uint local,
-    uint shift,
-    SolinasFp128 weight)
-{
-    ulong plus_one = ram_address_plus_one & 0x00ffFFFFFFFFFFFFul;
-    if (plus_one != 0ul) {
-        booleanity_address_add(
-            sums,
-            local,
-            (uint)((plus_one - 1ul) >> shift)
-                & (BOOLEANITY_ADDRESS_BINS - 1u),
-            weight);
-    }
 }
 
 inline void booleanity_address_inc(
@@ -133,135 +39,92 @@ inline void booleanity_address_inc(
     }
 }
 
-inline void booleanity_address_add_inc(
-    threadgroup atomic_uint* sums,
-    ulong biased,
-    uint local,
-    uint shift,
-    SolinasFp128 weight)
-{
+inline uint booleanity_address_inc_bin(ulong biased, uint shift) {
     uint standard = (uint)(biased >> shift) & (BOOLEANITY_ADDRESS_BINS - 1u);
-    booleanity_address_add(
-        sums,
-        local,
-        (standard + BOOLEANITY_ADDRESS_BINS / 2u)
-            & (BOOLEANITY_ADDRESS_BINS - 1u),
-        weight);
+    return (standard + BOOLEANITY_ADDRESS_BINS / 2u) & (BOOLEANITY_ADDRESS_BINS - 1u);
 }
 
-template <uint selector>
-inline void booleanity_address_add_production_selector(
+inline uint booleanity_address_byte_bin(ulong word, uint shift) {
+    return (uint)(word >> shift) & (BOOLEANITY_ADDRESS_BINS - 1u);
+}
+
+inline bool booleanity_address_offset_bin(ulong plus_one, uint shift, thread uint& hot) {
+    plus_one &= 0x00ffFFFFFFFFFFFFul;
+    hot = (uint)((plus_one - 1ul) >> shift) & (BOOLEANITY_ADDRESS_BINS - 1u);
+    return plus_one != 0ul;
+}
+
+// Production selector layout: 0..7 lookup_hi bytes, 8..15 lookup_lo bytes,
+// 16..17 bytecode, then two (three with `three_ram`) RAM bytes, eight
+// increment bytes and the increment carry. Keep in sync with
+// `production_selector_schedule` (booleanity_address/mod.rs).
+template <uint selector, bool three_ram>
+inline bool booleanity_address_production_hot(
     BooleanityRow row,
-    threadgroup atomic_uint* sums,
-    uint local,
     constant BooleanityAddressParams& params,
-    SolinasFp128 weight)
+    thread uint& hot)
 {
+    const uint ram_end = three_ram ? 21u : 20u;
     if (selector < 8u) {
-        booleanity_address_add_lookup_word(
-            sums,
-            row.lookup_hi,
-            local,
-            8u * (7u - selector),
-            weight);
-    } else if (selector < 16u) {
-        booleanity_address_add_lookup_word(
-            sums,
-            row.lookup_lo,
-            local,
-            8u * (15u - selector),
-            weight);
-    } else if (selector < 18u) {
-        booleanity_address_add_bytecode(
-            sums,
-            row.packed_pc_and_flags,
-            local,
-            8u * (17u - selector),
-            weight);
-    } else if (selector < 20u) {
-        booleanity_address_add_ram(
-            sums,
-            row.ram_address_plus_one,
-            local,
-            8u * (19u - selector),
-            weight);
-    } else {
-        ulong biased;
-        int carry;
-        booleanity_address_inc(
-            row.fused_inc_magnitude,
-            row.packed_pc_and_flags,
-            params.inc_bias,
-            biased,
-            carry);
-        if (selector < 28u) {
-            booleanity_address_add_inc(
-                sums, biased, local, 8u * (selector - 20u), weight);
-        } else {
-            booleanity_address_add(
-                sums,
-                local,
-                (uint)carry & (BOOLEANITY_ADDRESS_BINS - 1u),
-                weight);
-        }
+        hot = booleanity_address_byte_bin(row.lookup_hi, 8u * (7u - selector));
+        return true;
     }
+    if (selector < 16u) {
+        hot = booleanity_address_byte_bin(row.lookup_lo, 8u * (15u - selector));
+        return true;
+    }
+    if (selector < 18u) {
+        return booleanity_address_offset_bin(
+            row.packed_pc_and_flags, 8u * (17u - selector), hot);
+    }
+    if (selector < ram_end) {
+        return booleanity_address_offset_bin(
+            row.ram_address_plus_one, 8u * (ram_end - 1u - selector), hot);
+    }
+    ulong biased;
+    int carry;
+    booleanity_address_inc(
+        row.fused_inc_magnitude,
+        row.packed_pc_and_flags,
+        params.inc_bias,
+        biased,
+        carry);
+    hot = selector < ram_end + 8u
+        ? booleanity_address_inc_bin(biased, 8u * (selector - ram_end))
+        : (uint)carry & (BOOLEANITY_ADDRESS_BINS - 1u);
+    return true;
 }
 
-template <uint selector>
-inline void booleanity_address_add_three_ram_production_selector(
+// The bin of a zero source value, which most rows hit (padding rows, short
+// lookups and pcs, zero increments).
+inline uint booleanity_address_dominant_bin(
+    uint selector,
+    bool three_ram,
+    constant BooleanityAddressParams& params)
+{
+    uint ram_end = three_ram ? 21u : 20u;
+    return selector >= ram_end && selector < ram_end + 8u
+        ? booleanity_address_inc_bin(params.inc_bias, 8u * (selector - ram_end))
+        : 0u;
+}
+
+template <uint selector, bool three_ram>
+inline void booleanity_address_add_production(
     BooleanityRow row,
     threadgroup atomic_uint* sums,
     uint local,
     constant BooleanityAddressParams& params,
-    SolinasFp128 weight)
+    SolinasFp128 weight,
+    thread SolinasLazySum& dominant)
 {
-    if (selector < 8u) {
-        booleanity_address_add_lookup_word(
-            sums,
-            row.lookup_hi,
-            local,
-            8u * (7u - selector),
-            weight);
-    } else if (selector < 16u) {
-        booleanity_address_add_lookup_word(
-            sums,
-            row.lookup_lo,
-            local,
-            8u * (15u - selector),
-            weight);
-    } else if (selector < 18u) {
-        booleanity_address_add_bytecode(
-            sums,
-            row.packed_pc_and_flags,
-            local,
-            8u * (17u - selector),
-            weight);
-    } else if (selector < 21u) {
-        booleanity_address_add_ram(
-            sums,
-            row.ram_address_plus_one,
-            local,
-            8u * (20u - selector),
-            weight);
+    uint hot;
+    if (!booleanity_address_production_hot<selector, three_ram>(row, params, hot)) {
+        return;
+    }
+    if (hot == booleanity_address_dominant_bin(selector, three_ram, params)) {
+        solinas_lazy_add(dominant, weight);
     } else {
-        ulong biased;
-        int carry;
-        booleanity_address_inc(
-            row.fused_inc_magnitude,
-            row.packed_pc_and_flags,
-            params.inc_bias,
-            biased,
-            carry);
-        if (selector < 29u) {
-            booleanity_address_add_inc(
-                sums, biased, local, 8u * (selector - 21u), weight);
-        } else {
-            booleanity_address_add(
-                sums,
-                local,
-                (uint)carry & (BOOLEANITY_ADDRESS_BINS - 1u),
-                weight);
-        }
+        booleanity_address_add(sums, local, hot, weight);
     }
 }
 
@@ -280,19 +143,24 @@ inline void booleanity_address_tile_impl(
     threadgroup atomic_uint* sums,
     uint x_out,
     uint tid,
+    uint lane,
     uint threads)
 {
     uint fields = params.selectors_in_tile * BOOLEANITY_ADDRESS_BINS;
-    uint counters = fields * BOOLEANITY_ADDRESS_ACCUMULATOR_WORDS;
+    uint counters = fields * SOLINAS_DEFERRED_SUM_WORDS;
     for (uint counter = tid; counter < counters; counter += threads) {
         atomic_store_explicit(&sums[counter], 0u, memory_order_relaxed);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    BooleanityAddressLocalSum common_inc_sum = booleanity_address_local_zero();
-    BooleanityAddressLocalSum negative_carry_sum = booleanity_address_local_zero();
-    BooleanityAddressLocalSum zero_carry_sum = booleanity_address_local_zero();
-    BooleanityAddressLocalSum positive_carry_sum = booleanity_address_local_zero();
+    SolinasLazySum common_inc_sum = solinas_lazy_zero();
+    SolinasLazySum negative_carry_sum = solinas_lazy_zero();
+    SolinasLazySum zero_carry_sum = solinas_lazy_zero();
+    SolinasLazySum positive_carry_sum = solinas_lazy_zero();
+    SolinasLazySum dominant[6];
+    for (uint local = 0u; local < 6u; local++) {
+        dominant[local] = solinas_lazy_zero();
+    }
     uint row_base = x_out * params.e_in_length;
     for (uint x_in = tid; x_in < params.e_in_length; x_in += threads) {
         uint row_index = row_base + x_in;
@@ -316,19 +184,15 @@ inline void booleanity_address_tile_impl(
                 params.inc_bias,
                 biased,
                 carry);
-            uint hot_24 = ((uint)(biased >> 24) + BOOLEANITY_ADDRESS_BINS / 2u)
-                & (BOOLEANITY_ADDRESS_BINS - 1u);
-            uint hot_32 = ((uint)(biased >> 32) + BOOLEANITY_ADDRESS_BINS / 2u)
-                & (BOOLEANITY_ADDRESS_BINS - 1u);
-            uint hot_40 = ((uint)(biased >> 40) + BOOLEANITY_ADDRESS_BINS / 2u)
-                & (BOOLEANITY_ADDRESS_BINS - 1u);
-            uint hot_48 = ((uint)(biased >> 48) + BOOLEANITY_ADDRESS_BINS / 2u)
-                & (BOOLEANITY_ADDRESS_BINS - 1u);
+            uint hot_24 = booleanity_address_inc_bin(biased, 24u);
+            uint hot_32 = booleanity_address_inc_bin(biased, 32u);
+            uint hot_40 = booleanity_address_inc_bin(biased, 40u);
+            uint hot_48 = booleanity_address_inc_bin(biased, 48u);
             if ((!three_ram || hot_24 == 0u)
                 && hot_32 == 0u
                 && hot_40 == 0u
                 && hot_48 == 0u) {
-                booleanity_address_local_add(common_inc_sum, weight);
+                solinas_lazy_add(common_inc_sum, weight);
             } else {
                 if (three_ram) {
                     booleanity_address_add(sums, 0u, hot_24, weight);
@@ -341,84 +205,58 @@ inline void booleanity_address_tile_impl(
                     booleanity_address_add(sums, 2u, hot_48, weight);
                 }
             }
-            booleanity_address_add_inc(
-                sums, biased, three_ram ? 4u : 3u, 56u, weight);
+            booleanity_address_add(
+                sums, three_ram ? 4u : 3u, booleanity_address_inc_bin(biased, 56u), weight);
             if (carry < 0) {
-                booleanity_address_local_add(negative_carry_sum, weight);
+                solinas_lazy_add(negative_carry_sum, weight);
             } else if (carry > 0) {
-                booleanity_address_local_add(positive_carry_sum, weight);
+                solinas_lazy_add(positive_carry_sum, weight);
             } else {
-                booleanity_address_local_add(zero_carry_sum, weight);
+                solinas_lazy_add(zero_carry_sum, weight);
             }
         } else {
             if (production_count > 0u) {
-                if (three_ram) {
-                    booleanity_address_add_three_ram_production_selector<production_offset>(
-                        row, sums, 0u, params, weight);
-                } else {
-                    booleanity_address_add_production_selector<production_offset>(
-                        row, sums, 0u, params, weight);
-                }
+                booleanity_address_add_production<production_offset, three_ram>(
+                    row, sums, 0u, params, weight, dominant[0]);
             }
             if (production_count > 1u) {
-                if (three_ram) {
-                    booleanity_address_add_three_ram_production_selector<production_offset + 1u>(
-                        row, sums, 1u, params, weight);
-                } else {
-                    booleanity_address_add_production_selector<production_offset + 1u>(
-                        row, sums, 1u, params, weight);
-                }
+                booleanity_address_add_production<production_offset + 1u, three_ram>(
+                    row, sums, 1u, params, weight, dominant[1]);
             }
             if (production_count > 2u) {
-                if (three_ram) {
-                    booleanity_address_add_three_ram_production_selector<production_offset + 2u>(
-                        row, sums, 2u, params, weight);
-                } else {
-                    booleanity_address_add_production_selector<production_offset + 2u>(
-                        row, sums, 2u, params, weight);
-                }
+                booleanity_address_add_production<production_offset + 2u, three_ram>(
+                    row, sums, 2u, params, weight, dominant[2]);
             }
             if (production_count > 3u) {
-                if (three_ram) {
-                    booleanity_address_add_three_ram_production_selector<production_offset + 3u>(
-                        row, sums, 3u, params, weight);
-                } else {
-                    booleanity_address_add_production_selector<production_offset + 3u>(
-                        row, sums, 3u, params, weight);
-                }
+                booleanity_address_add_production<production_offset + 3u, three_ram>(
+                    row, sums, 3u, params, weight, dominant[3]);
             }
             if (production_count > 4u) {
-                if (three_ram) {
-                    booleanity_address_add_three_ram_production_selector<production_offset + 4u>(
-                        row, sums, 4u, params, weight);
-                } else {
-                    booleanity_address_add_production_selector<production_offset + 4u>(
-                        row, sums, 4u, params, weight);
-                }
+                booleanity_address_add_production<production_offset + 4u, three_ram>(
+                    row, sums, 4u, params, weight, dominant[4]);
             }
             if (production_count > 5u) {
-                if (three_ram) {
-                    booleanity_address_add_three_ram_production_selector<production_offset + 5u>(
-                        row, sums, 5u, params, weight);
-                } else {
-                    booleanity_address_add_production_selector<production_offset + 5u>(
-                        row, sums, 5u, params, weight);
-                }
+                booleanity_address_add_production<production_offset + 5u, three_ram>(
+                    row, sums, 5u, params, weight, dominant[5]);
             }
         }
     }
     if (aggregate_inc) {
-        booleanity_address_flush_local(sums, 0u, 0u, common_inc_sum);
-        booleanity_address_flush_local(sums, 1u, 0u, common_inc_sum);
-        booleanity_address_flush_local(sums, 2u, 0u, common_inc_sum);
-        if (three_ram) {
-            booleanity_address_flush_local(sums, 3u, 0u, common_inc_sum);
+        uint carry_field = (three_ram ? 5u : 4u) * BOOLEANITY_ADDRESS_BINS;
+        for (uint local = 0u; local < (three_ram ? 4u : 3u); local++) {
+            solinas_deferred_atomic_flush_simd(
+                sums, local * BOOLEANITY_ADDRESS_BINS, common_inc_sum, lane);
         }
-        uint carry_local = three_ram ? 5u : 4u;
-        booleanity_address_flush_local(
-            sums, carry_local, BOOLEANITY_ADDRESS_BINS - 1u, negative_carry_sum);
-        booleanity_address_flush_local(sums, carry_local, 0u, zero_carry_sum);
-        booleanity_address_flush_local(sums, carry_local, 1u, positive_carry_sum);
+        solinas_deferred_atomic_flush_simd(
+            sums, carry_field + BOOLEANITY_ADDRESS_BINS - 1u, negative_carry_sum, lane);
+        solinas_deferred_atomic_flush_simd(sums, carry_field, zero_carry_sum, lane);
+        solinas_deferred_atomic_flush_simd(sums, carry_field + 1u, positive_carry_sum, lane);
+    } else {
+        for (uint local = 0u; local < production_count; local++) {
+            uint bin = booleanity_address_dominant_bin(production_offset + local, three_ram, params);
+            solinas_deferred_atomic_flush_simd(
+                sums, local * BOOLEANITY_ADDRESS_BINS + bin, dominant[local], lane);
+        }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -441,10 +279,12 @@ kernel void name(                                                               
     threadgroup atomic_uint* sums [[threadgroup(0)]],                             \
     uint x_out [[threadgroup_position_in_grid]],                                  \
     uint tid [[thread_index_in_threadgroup]],                                     \
+    uint lane [[thread_index_in_simdgroup]],                                      \
     uint threads [[threads_per_threadgroup]])                                     \
 {                                                                                 \
     booleanity_address_tile_impl<offset, count, aggregate_inc, three_ram>(        \
-        rows, selectors, e_in, e_out, partials, params, sums, x_out, tid, threads); \
+        rows, selectors, e_in, e_out, partials, params, sums, x_out, tid, lane,   \
+        threads);                                                                 \
 }
 
 BOOLEANITY_ADDRESS_TILE_ENTRY(solinas_booleanity_address_tile, 0u, 0u, false, false)
