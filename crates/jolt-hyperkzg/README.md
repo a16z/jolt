@@ -62,7 +62,7 @@ The clear binary construction is adapted from Jolt donor
 | Coefficient commitment | `HyperKZGProverSetup::commit_coefficients` | Known-answer commitment for coefficients `[1,2,3,4]` |
 | Suffix binary fold; last fold equals claimed value | `HyperKZGScheme::open_table`, `verify_opening` | Independent multilinear evaluation oracle at arities 1–6; false claims rejected |
 | Fold relation `2r P_next(r²) = r(1-x)(P(r)+P(-r)) + x(P(r)-P(-r))` | `verify_opening` | All transmitted evaluation/fold components individually tampered |
-| Univariate synthetic division and KZG batching | `kzg.rs` | Explicit quotient coefficients; wrong statement, witness, and key rejection |
+| Univariate synthetic division and KZG batching | `kzg.rs` | Round trips at arities 1–6; wrong statement, witness, and key rejection |
 | Exact shape and nonzero fold challenge | `check_arity`, `verify_opening` | Malformed lengths and out-of-range arities; zero challenge rejected by prover and verifier |
 | Commitment/query/claim fixed before opening challenges | `append_statement` | Statement/key-policy tampering and final transcript agreement |
 | Global-degree extraction and complete FS reduction | Consumer security contract above | **Not established by these tests** |

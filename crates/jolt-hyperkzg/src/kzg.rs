@@ -123,20 +123,3 @@ fn quotient(coefficients: &[Fr], point: Fr) -> Vec<Fr> {
     result.reverse();
     result
 }
-
-#[cfg(test)]
-mod tests {
-    use jolt_field::Ring;
-
-    use super::*;
-
-    #[test]
-    fn synthetic_division_has_independent_coefficients() {
-        let coefficients = [1, 2, 3, 4].map(Fr::from_u64);
-        assert_eq!(
-            quotient(&coefficients, Fr::from_u64(2)),
-            [24, 11, 4].map(Fr::from_u64)
-        );
-        assert_eq!(evaluate(&coefficients, Fr::from_u64(2)), Fr::from_u64(49));
-    }
-}
