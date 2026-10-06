@@ -174,7 +174,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 let (rs1, rs1_m) = ext_u64(even.rs1_value.0, odd.rs1_value.0);
                 let (upc, upc_m) = ext_u64(even.unexpanded_pc.0, odd.unexpanded_pc.0);
                 let (rs2, rs2_m) = ext_u64(even.rs2_value.0, odd.rs2_value.0);
-                // Immediates as `high·2^64 + low` with `low ∈ [0, 2^64)`.
                 let split = |imm: i128| (imm >> 64, i128::from(imm as u64));
                 let (imm_even_high, imm_even_low) = split(even.imm.0);
                 let (imm_odd_high, imm_odd_low) = split(odd.imm.0);

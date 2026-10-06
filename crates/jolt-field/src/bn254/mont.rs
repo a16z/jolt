@@ -504,8 +504,6 @@ impl Accumulator for FrSignedProductAccumulator {
         }
     }
 
-    /// The sign folds into the multiplicand, so every term lands in `pos`
-    /// without a data-dependent branch or address select.
     #[inline(always)]
     fn fmadd_i128(&mut self, value: Fr, scalar: i128) {
         let value = if scalar < 0 { -value } else { value };

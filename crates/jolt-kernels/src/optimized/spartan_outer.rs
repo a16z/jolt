@@ -507,7 +507,6 @@ impl SpartanOuterRow {
             i128::from(1 - flag(self.do_not_update_unexpanded_pc.0)),
         ];
 
-        // Wide operands as `hi·2^64 + lo`.
         let halves = |value: i128| (value >> 64, word(value as u64));
         let right_lookup = self.right_lookup_operand.0;
         let (right_lookup_hi, right_lookup_lo) =
@@ -622,8 +621,6 @@ impl SpartanOuterRow {
     }
 }
 
-/// Extended nodes left of the base window (`EXTENDED_START..DOMAIN_START`);
-/// the rest lie right of it.
 const LEFT_NODE_COUNT: usize = (DOMAIN_START - EXTENDED_START) as usize;
 
 /// Each extended node's position in the `2·DOMAIN − 1` window, in
@@ -701,8 +698,6 @@ struct NodeProducts {
     second_hi: i128,
 }
 
-/// Integer extension of one cycle's group row values to every extended node,
-/// then the per-stream `Az·Bz` products.
 fn extended_products(values: &RowGroupValues) -> [NodeProducts; EXTENDED_NODE_COUNT] {
     let az_first = extend(&values.a_first);
     let az_second = extend(&values.a_second);
@@ -716,7 +711,6 @@ fn extended_products(values: &RowGroupValues) -> [NodeProducts; EXTENDED_NODE_CO
     })
 }
 
-/// Sign and magnitude of `top·2^64 + low`.
 fn wide_value(top: i128, low: u64) -> S256 {
     let is_positive = top >= 0;
     let (top, low) = if is_positive {
@@ -736,7 +730,6 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], lo: &[i128], hi: &[i1
     let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
     for (((&weight, &guard), &lo), &hi) in weights.iter().zip(guards).zip(lo).zip(hi) {
         az.fmadd_i64(weight, guard);
-        // The same value as `top·2^64 + low` with `low ∈ [0, 2^64)`.
         let (top, low) = (hi + (lo >> 64), lo as u64);
         match top {
             0 => bz.fmadd_signed_u64(weight, low, true),
@@ -840,7 +833,6 @@ impl OptimizedOuterUniskip {
             // At most e_in.len() fmadds per accumulator: on 64-bit hosts the
             // split gives ≤ 2^32 terms. BN254 slots grow by < 2^66 per i128
             // term; fp128 slots by < 2^65, leaving ample carry headroom.
-            // Per node: the unshifted products, and the `hi` halves (× 2^64).
             let mut sums = [(
                 <F as WithAccumulator>::SignedProductAccumulator::default(),
                 <F as WithAccumulator>::SignedProductAccumulator::default(),
