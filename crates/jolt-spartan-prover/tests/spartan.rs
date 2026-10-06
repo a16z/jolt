@@ -14,9 +14,7 @@ use jolt_r1cs::ConstraintMatrices;
 use jolt_spartan_prover::prove;
 use jolt_spartan_verifier::{SpartanError, SpartanKey};
 use jolt_sumcheck::SumcheckError;
-use jolt_transcript::{
-    AppendToTranscript, Blake2bTranscript, Bn254WideBlake2bTranscript, Transcript,
-};
+use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
 fn matrices() -> ConstraintMatrices<Fr> {
     let one = Fr::one();
@@ -42,8 +40,8 @@ fn public() -> [Fr; 1] {
 fn witness() -> [Fr; 3] {
     [3, 9, 27].map(Fr::from_u64)
 }
-fn transcript() -> Bn254WideBlake2bTranscript {
-    Bn254WideBlake2bTranscript::new(b"spartan-test")
+fn transcript() -> Blake2bTranscript {
+    Blake2bTranscript::new(b"spartan-test")
 }
 
 fn hyperkzg_setup() -> (
@@ -274,28 +272,4 @@ fn unequal_row_and_witness_padding_accepts() {
     assert_eq!(proof.inner.round_polynomials.len(), 1);
     key.verify::<HyperKZGScheme>(&[], &proof, &vk, &mut transcript())
         .unwrap();
-}
-
-#[test]
-fn wide_policy_rejects_legacy_sampler_and_other_session_replay() {
-    let (pk, vk) = hyperkzg_setup();
-    let key = key();
-    let proof =
-        prove::<HyperKZGScheme>(&key, &public(), &witness(), &pk, &mut transcript()).unwrap();
-    assert!(key
-        .verify::<HyperKZGScheme>(
-            &public(),
-            &proof,
-            &vk,
-            &mut Blake2bTranscript::<Fr>::new(b"spartan-test")
-        )
-        .is_err());
-    assert!(key
-        .verify::<HyperKZGScheme>(
-            &public(),
-            &proof,
-            &vk,
-            &mut Bn254WideBlake2bTranscript::new(b"other-session")
-        )
-        .is_err());
 }
