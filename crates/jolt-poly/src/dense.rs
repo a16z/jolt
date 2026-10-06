@@ -195,9 +195,12 @@ impl<F: JoltField> Polynomial<F> {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
                 let (lo, hi) = self.evals.split_at_mut(half);
-                lo.par_iter_mut().zip(hi.par_iter()).for_each(|(a, b)| {
-                    *a = *a + scalar * (*b - *a);
-                });
+                lo.par_iter_mut()
+                    .zip(hi.par_iter())
+                    .with_min_len(PAR_THRESHOLD)
+                    .for_each(|(a, b)| {
+                        *a = *a + scalar * (*b - *a);
+                    });
             } else {
                 for i in 0..half {
                     let lo = self.evals[i];
@@ -233,6 +236,7 @@ impl<F: JoltField> Polynomial<F> {
                 let coeffs = &self.evals;
                 let new: Vec<F> = (0..half)
                     .into_par_iter()
+                    .with_min_len(PAR_THRESHOLD)
                     .map(|i| {
                         let lo = coeffs[2 * i];
                         let hi = coeffs[2 * i + 1];

@@ -175,9 +175,17 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 }
             }
             Self::Dense(mut polys) => {
-                for poly in &mut polys {
+                let bind = |poly: &mut Polynomial<F>| {
                     poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                };
+                #[cfg(feature = "parallel")]
+                if polys.first().is_some_and(|poly| poly.len() >= 1 << 10) {
+                    polys.par_iter_mut().for_each(bind);
+                } else {
+                    polys.iter_mut().for_each(bind);
                 }
+                #[cfg(not(feature = "parallel"))]
+                polys.iter_mut().for_each(bind);
                 Self::Dense(polys)
             }
         };
