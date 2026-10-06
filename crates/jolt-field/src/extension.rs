@@ -102,9 +102,7 @@ impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {}
 pub enum Ext2NonResidueKind {
     /// Any non-residue without a dedicated arithmetic formula.
     Generic,
-    /// The non-residue is exactly `-1`.
     NegOne,
-    /// The non-residue is exactly `2`.
     Two,
 }
 
@@ -139,7 +137,9 @@ pub trait Ext2Config<F: Ring> {
     }
 }
 
-/// [`Ext2Config`] with non-residue −1; valid when `p ≡ 3 (mod 4)`.
+/// [`Ext2Config`] with non-residue −1. `F[u]/(u² + 1)` is a field exactly
+/// when `p ≡ 3 (mod 4)`. No pseudo-Mersenne prime this crate exports
+/// satisfies that, so over them this is a ring used only for testing.
 pub struct NegOneNr;
 
 impl<F: Ring> Ext2Config<F> for NegOneNr {
@@ -151,8 +151,11 @@ impl<F: Ring> Ext2Config<F> for NegOneNr {
     }
 }
 
-/// [`Ext2Config`] with non-residue 2; valid when `p ≡ 5 (mod 8)`, which
-/// holds for every registered pseudo-Mersenne prime (`2^k − c`, `c ≡ 3 mod 8`).
+/// [`Ext2Config`] with non-residue 2. `F[u]/(u² − 2)` is a field exactly when
+/// `p ≡ ±3 (mod 8)`. Every registered pseudo-Mersenne prime (`2^k − c` with
+/// `c ≡ 3 (mod 8)`) has `p ≡ 5 (mod 8)`. `Prime128OffsetA7F7` is not
+/// registered and has `p ≡ 1 (mod 8)`: 2 is a square there, and this is not
+/// a field.
 pub struct TwoNr;
 
 impl<F: Ring> Ext2Config<F> for TwoNr {
@@ -163,7 +166,6 @@ impl<F: Ring> Ext2Config<F> for TwoNr {
         F::from_u64(2)
     }
 
-    /// Multiplication by 2 is a doubling: one add, no multiply.
     #[inline]
     fn mul_non_residue<A, B>(x: A, _from_base: B) -> A
     where

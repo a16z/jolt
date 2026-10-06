@@ -1,4 +1,3 @@
-//! Opening-claim projection for verifier-native prover proofs.
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]
@@ -10,6 +9,9 @@ use jolt_claims::protocols::jolt::{
         booleanity, bytecode,
         claim_reductions::instruction as instruction_claim_reduction,
         claim_reductions::registers as registers_claim_reduction,
+        claim_reductions::{
+            bytecode as bytecode_reduction, program_image as program_image_reduction,
+        },
         instruction, ram, registers, spartan,
         spartan::{outer_opening, outer_uniskip_opening, product_uniskip_opening},
     },
@@ -174,6 +176,30 @@ fn claim_mut_from_spartan_outer<F: JoltField>(
             CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
             CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
             CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAdd => Some(&mut claims.field_add),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldSub => Some(&mut claims.field_sub),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldMul => Some(&mut claims.field_mul),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldInv => Some(&mut claims.field_inv),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAssertEq => Some(&mut claims.field_assert_eq),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadAccumulateFromRegister => {
+                Some(&mut claims.field_load_accumulate_from_register)
+            }
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAssertZero => Some(&mut claims.field_assert_zero),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadImm => Some(&mut claims.field_load_imm),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadAccumulateFromMemory => {
+                Some(&mut claims.field_load_accumulate_from_memory)
+            }
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAdviceLimb => Some(&mut claims.field_advice_limb),
         },
         _ => None,
     }
@@ -331,6 +357,9 @@ fn claim_mut_from_stage4_outputs<F: JoltField>(
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
             claims.ram_val_check.trusted_advice.as_mut()
         }
+        id if id == program_image_reduction::ram_val_check_contribution_opening() => {
+            claims.ram_val_check.program_image.as_mut()
+        }
         id if id == registers_val => Some(&mut claims.registers_read_write.registers_val),
         id if id == rs1_ra => Some(&mut claims.registers_read_write.rs1_ra),
         id if id == rs2_ra => Some(&mut claims.registers_read_write.rs2_ra),
@@ -386,6 +415,31 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
     stage6b: &'a mut Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&'a mut F> {
+    if let Some(stage) = (0..stage6a.bytecode_read_raf.val_stages.len())
+        .find(|&stage| id == bytecode_reduction::bytecode_val_stage_opening(stage))
+    {
+        return stage6a.bytecode_read_raf.val_stages.get_mut(stage);
+    }
+    if let Some(reduction) = stage6b.bytecode_reduction.as_mut() {
+        if id == bytecode_reduction::cycle_phase_intermediate_opening() {
+            if let Some(intermediate) = reduction.intermediate.as_mut() {
+                return Some(intermediate);
+            }
+        }
+        // cycle-phase-only shapes emit the final chunk claims here
+        for (chunk, opening_claim) in reduction.chunks.iter_mut().enumerate() {
+            if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {
+                return Some(opening_claim);
+            }
+        }
+    }
+    if let Some(reduction) = stage6b.program_image_reduction.as_mut() {
+        if id == program_image_reduction::cycle_phase_program_image_opening()
+            || id == program_image_reduction::final_program_image_opening()
+        {
+            return Some(&mut reduction.program_image);
+        }
+    }
     for (index, opening_claim) in stage6b.bytecode_read_raf.bytecode_ra.iter_mut().enumerate() {
         if id
             == JoltOpeningId::committed(
@@ -526,6 +580,19 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
             )
         {
             return Some(opening);
+        }
+    }
+
+    if let Some(address_phase) = claims.bytecode_address_phase.as_mut() {
+        for (chunk, opening) in address_phase.chunks.iter_mut().enumerate() {
+            if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {
+                return Some(opening);
+            }
+        }
+    }
+    if let Some(address_phase) = claims.program_image_address_phase.as_mut() {
+        if id == program_image_reduction::final_program_image_opening() {
+            return Some(&mut address_phase.program_image);
         }
     }
 

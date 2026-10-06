@@ -21,10 +21,6 @@ pub const JOLT_PRINT_STRING: u32 = 1;
 /// Print string with newline
 pub const JOLT_PRINT_LINE: u32 = 2;
 
-// ============================================================================
-// VirtualHostIO-based printing for riscv targets
-// ============================================================================
-
 /// Write a buffer using Jolt's VirtualHostIO instruction.
 ///
 /// This instruction is handled directly by the Jolt emulator as a no-op
@@ -52,17 +48,19 @@ pub fn putchar(c: u8) {
     emit_jolt_print(buf.as_ptr(), 1);
 }
 
+/// Write a byte buffer to stdout (riscv) with a single host call, so that
+/// multi-byte UTF-8 sequences reach the host intact.
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+pub fn write_bytes(buf: &[u8]) {
+    emit_jolt_print(buf.as_ptr(), buf.len());
+}
+
 /// Write a string to stdout (riscv)
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub fn puts(s: &str) {
     emit_jolt_print(s.as_ptr(), s.len());
 }
 
-// ============================================================================
-// Writers implementing core::fmt::Write
-// ============================================================================
-
-/// Writer for stdout
 pub struct StdoutWriter;
 
 impl Write for StdoutWriter {
@@ -91,7 +89,6 @@ impl Write for StdoutWriter {
     }
 }
 
-/// Writer for stderr
 pub struct StderrWriter;
 
 impl Write for StderrWriter {
@@ -120,10 +117,6 @@ impl Write for StderrWriter {
         Ok(())
     }
 }
-
-// ============================================================================
-// Print macros
-// ============================================================================
 
 /// Print to stdout
 #[macro_export]

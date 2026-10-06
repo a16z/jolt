@@ -1,5 +1,5 @@
 #![no_main]
-use jolt_field::{Fr, Ring, Field, CanonicalEncoding};
+use jolt_field::{CanonicalEncoding, Field, Fr, Ring};
 use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;
 
@@ -10,25 +10,21 @@ fuzz_target!(|data: &[u8]| {
     let a = <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[..32]);
     let b = <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[32..64]);
 
-    // Arithmetic operations must not panic
     let sum = a + b;
     let diff = a - b;
     let prod = a * b;
     let sq = a * a;
 
-    // (a + b) - b == a
     assert_eq!(sum - b, a);
-    // (a - b) + b == a
     assert_eq!(diff + b, a);
-    // a * 0 == 0
     assert!((a * Fr::zero()).is_zero());
 
-    // inverse must not panic
+    // a·(a+b) == a² + a·b ties the otherwise-unchecked product and square
+    // into a distributivity identity.
+    assert_eq!(a * sum, sq + prod, "distributivity violated");
+
     if !a.is_zero() {
         let inv = a.inverse().expect("nonzero element must have inverse");
         assert_eq!(a * inv, Fr::from_u64(1));
     }
-
-    // Prevent optimizing away
-    let _ = (prod, sq);
 });

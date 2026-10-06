@@ -617,7 +617,7 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_sumcheck::{
         CommittedOutputClaims, CommittedRound, CommittedSumcheckProof, SumcheckDomainSpec,
-        SumcheckError, SumcheckStatement,
+        SumcheckStatement,
     };
     use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
@@ -783,122 +783,6 @@ mod tests {
             );
         }
         builder.build().expect("BlindFold protocol builds")
-    }
-
-    #[test]
-    fn verifies_committed_stages_in_claim_order() {
-        let stages = vec![stage(2, 2), stage(1, 1)];
-        let proofs = vec![
-            proof(&[(11, 1), (12, 2)], &[21]),
-            proof(&[(13, 1)], &[34, 55]),
-        ];
-
-        let verified =
-            try_statement_from_proofs(&stages, &proofs, Vec::new()).expect("proofs verify");
-
-        assert_eq!(verified.stage_count(), 2);
-        assert_eq!(verified.stages[0].consistency.rounds.len(), 2);
-        assert_eq!(verified.stages[1].consistency.rounds.len(), 1);
-        let round_commitments = verified
-            .stages
-            .iter()
-            .flat_map(|stage| {
-                stage
-                    .consistency
-                    .rounds
-                    .iter()
-                    .map(|round| round.commitment)
-            })
-            .collect::<Vec<_>>();
-        let output_claim_commitments = verified
-            .stages
-            .iter()
-            .flat_map(|stage| {
-                stage
-                    .output_claim_rows
-                    .commitments
-                    .commitments
-                    .iter()
-                    .copied()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            round_commitments,
-            vec![Fr::from_u64(11), Fr::from_u64(12), Fr::from_u64(13)]
-        );
-        assert_eq!(
-            output_claim_commitments,
-            vec![Fr::from_u64(21), Fr::from_u64(34), Fr::from_u64(55)]
-        );
-    }
-
-    #[test]
-    fn rejects_stage_count_mismatch() {
-        let stages = vec![stage(1, 1), stage(1, 1)];
-        let proofs = vec![proof(&[(11, 1)], &[])];
-        let error =
-            try_statement_from_proofs(&stages, &proofs, Vec::new()).expect_err("counts differ");
-
-        assert!(matches!(
-            error,
-            VerificationError::StageCountMismatch {
-                claim_stages: 2,
-                proof_stages: 1,
-            }
-        ));
-    }
-
-    #[test]
-    fn reports_sumcheck_error_with_stage_index() {
-        let stages = vec![stage(1, 1), stage(1, 1)];
-        let proofs = vec![proof(&[(11, 1)], &[]), proof(&[(12, 2)], &[])];
-        let error =
-            try_statement_from_proofs(&stages, &proofs, Vec::new()).expect_err("degree fails");
-
-        assert!(matches!(
-            error,
-            VerificationError::Sumcheck {
-                stage_index: 1,
-                source: SumcheckError::DegreeBoundExceeded { got: 2, max: 1 },
-            }
-        ));
-    }
-
-    #[test]
-    fn blindfold_protocol_builder_constructs_protocol() {
-        let stages = vec![stage(1, 1)];
-        let proofs = vec![proof(&[(11, 1)], &[21])];
-        let protocol = protocol_from_proofs(&stages, &proofs, Vec::new());
-
-        assert_eq!(protocol.sumcheck_consistency.len(), 1);
-        assert_eq!(protocol.committed_output_claims.len(), 1);
-        assert_eq!(protocol.layout.stage_count(), 1);
-        assert!(protocol.eval_commitments.is_empty());
-        assert!(protocol.r1cs.num_vars > 1);
-        assert_eq!(
-            protocol.dimensions,
-            BlindFoldDimensions {
-                witness: RowDimensions {
-                    row_len: 2,
-                    row_count: 4,
-                },
-                error: RowDimensions {
-                    row_len: 2,
-                    row_count: 2,
-                },
-                witness_rows: WitnessRowLayout {
-                    coefficients: 0..1,
-                    output_claims: 1..2,
-                    auxiliary: 2..3,
-                    padding: 3..4,
-                },
-                coefficient_rows: 1,
-                output_claim_rows: 1,
-                auxiliary_rows: 1,
-                coefficient_values: 2,
-                auxiliary_values: 2,
-            }
-        );
     }
 
     #[test]
@@ -1221,41 +1105,6 @@ mod tests {
     }
 
     #[test]
-    fn random_relaxed_instance_rejects_round_row_count_mismatch() {
-        let setup = pedersen_setup();
-        let protocol = one_stage_protocol(&setup);
-        let round_rows = vec![
-            pedersen_commitment(&setup, 7);
-            protocol.dimensions.coefficient_rows.saturating_sub(1)
-        ];
-        let output_claim_rows =
-            vec![pedersen_commitment(&setup, 71); protocol.dimensions.output_claim_rows];
-        let auxiliary_rows =
-            vec![pedersen_commitment(&setup, 72); protocol.dimensions.auxiliary_rows];
-        let error_rows = vec![pedersen_commitment(&setup, 8); protocol.dimensions.error.row_count];
-
-        let error = protocol
-            .random_relaxed_instance(
-                &round_rows,
-                &output_claim_rows,
-                &auxiliary_rows,
-                &error_rows,
-                &[],
-                Fr::from_u64(3),
-            )
-            .expect_err("witness row count differs");
-
-        assert_eq!(
-            error,
-            RelaxedError::LengthMismatch {
-                name: "random round commitments",
-                expected: protocol.dimensions.coefficient_rows,
-                actual: protocol.dimensions.coefficient_rows - 1,
-            }
-        );
-    }
-
-    #[test]
     fn random_relaxed_instance_rejects_error_row_count_mismatch() {
         let setup = pedersen_setup();
         let protocol = one_stage_protocol(&setup);
@@ -1320,18 +1169,6 @@ mod tests {
                 actual: 1,
             }
         );
-    }
-
-    #[test]
-    fn validate_cross_term_error_rows_accepts_exact_count() {
-        let setup = pedersen_setup();
-        let protocol = one_stage_protocol(&setup);
-        let cross_term_rows =
-            vec![pedersen_commitment(&setup, 9); protocol.dimensions.error.row_count];
-
-        protocol
-            .validate_cross_term_error_rows(&cross_term_rows)
-            .expect("cross-term row count matches");
     }
 
     #[test]

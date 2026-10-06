@@ -20,7 +20,6 @@ pub trait Terminal {
     fn get_input(&mut self) -> u8;
 }
 
-/// For the test or whatever.
 #[derive(Default)]
 pub struct DummyTerminal {}
 

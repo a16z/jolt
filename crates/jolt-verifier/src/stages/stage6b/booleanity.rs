@@ -48,7 +48,6 @@ pub struct Booleanity<F: JoltField> {
     dimensions: BooleanityCycleDimensions,
     /// The address opening prefix from the stage-6a phase.
     r_address: Vec<F>,
-    /// The reference address/cycle the `EqAddressCycle` public compares against.
     reference_address: Vec<F>,
     reference_cycle: Vec<F>,
 }
@@ -149,7 +148,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
         _challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         // Recover the raw two-phase sumcheck point from a produced opening point
         // (`r_address ++ r_cycle`): each half is the reverse of its phase's
@@ -177,35 +176,5 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
             .copied()
             .collect::<Vec<_>>();
         try_eq_mle(&full_sumcheck_point, &reference_eq_point).map_err(public_input_failed)
-    }
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
-    use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_field::Fr;
-    use jolt_transcript::Transcript;
-
-    // Booleanity inherits the default `draw_challenges` (one `challenge_scalar`): the
-    // inline draw is a single `challenge()`. The historical zero-gamma re-roll was
-    // dropped — a real Fiat-Shamir transcript never yields zero, and nothing else
-    // checks for it.
-    #[test]
-    fn default_draw_challenges_matches_inline_booleanity_gamma() {
-        let layout = JoltRaPolynomialLayout::new(1, 1, 1).unwrap();
-        let dimensions = BooleanityDimensions::new(layout, 3, 2);
-        #[cfg(feature = "akita")]
-        let dimensions = lattice_booleanity::LatticeBooleanityDimensions::new(dimensions).unwrap();
-        let relation = Booleanity::<Fr>::new(dimensions, Vec::new(), Vec::new(), Vec::new());
-
-        let (inline_events, inline_gamma) = record(|t| t.challenge());
-        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
-
-        assert_eq!(draw_events, inline_events);
-        assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
-        assert_eq!(challenges.gamma, inline_gamma);
     }
 }

@@ -5,8 +5,7 @@
 //! `T`-sized tables (two `eq+1` tables plus the five PC/flag columns) every
 //! round.
 //!
-//! Techniques ported from `jolt-prover-legacy/src/zkvm/spartan/shift.rs`
-//! (`ShiftSumcheckProver`, eprint 2025/611 Appendix A):
+//! Uses the prefix-suffix decomposition from eprint 2025/611, Appendix A:
 //!
 //! - **`eq+1` prefix–suffix decomposition** for the first half of the rounds:
 //!   `eq+1(r, (y_hi, y_lo)) = P_0(y_lo)·S_0(y_hi) + P_1(y_lo)·S_1(y_hi)`
@@ -93,7 +92,6 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
             });
         }
         let cycles = 1usize << log_t;
-        // Slice-backed witnesses re-extract rows without retaining a vector.
         let rows = BundleStore::<SpartanShiftRow>::resolve(witness, cycles)?;
         let access = rows.access();
 
@@ -103,9 +101,6 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let product = EqPlusOnePrefixSuffix::new(r_product);
         let prefix_vars = outer.prefix_0.len().trailing_zeros() as usize;
 
-        // Q_b(y_lo) = Σ_{y_hi} S_b(y_hi) · v(y_hi ‖ y_lo): the outer pair
-        // over the γ-combined PC/flag scalar, the product pair over
-        // `1 − is_noop` (γ⁴-scaled once at the end).
         const BLOCK: usize = 32;
         let suffix_rows: Vec<[F; 4]> = (0..outer.suffix_0.len())
             .map(|x_hi| {
@@ -212,19 +207,14 @@ struct ShiftKernel<F: JoltField> {
     log_t: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; 5],
-    /// The two `eq+1` points (big-endian) the summand factors fix.
     r_outer: Vec<F>,
     r_product: Vec<F>,
-    /// Raw values kept for phase-2 regeneration.
     rows: BundleStore<SpartanShiftRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
 
 impl<F: JoltField> ShiftKernel<F> {
-    /// Regenerate the dense phase from the raw values: the five columns
-    /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
-    /// table recombined from its suffix pair and bound-prefix evaluations.
     fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
@@ -270,7 +260,6 @@ impl<F: JoltField> ShiftKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let folds: Vec<[F; 5]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // Release retained raw values after regeneration.
         self.rows = BundleStore::Retained(Vec::new());
 
         let recombine = |point: &[F]| -> Vec<F> {
@@ -299,8 +288,6 @@ impl<F: JoltField> ShiftKernel<F> {
 
     fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         self.challenges.push(r);
-        // Last prefix variable: regenerate the dense phase from the raw
-        // values instead of binding the exhausted P·Q pairs.
         if matches!(&self.phase, Phase::PrefixSuffix { pairs } if pairs[0].0.len() == 2) {
             return self.transition_to_dense().map_err(|_| {
                 SumcheckError::MissingEvaluationSource {
@@ -536,10 +523,6 @@ mod tests {
         }
     }
 
-    /// A PC-varied trace: three bytecode addresses, one two-step virtual
-    /// sequence (exercising the `is_virtual` / `is_first_in_sequence`
-    /// columns), an explicit mid-trace no-op, and no-op padding to `2^log_t`
-    /// (exercising `is_noop`).
     fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) -> R {
         let plain_a = instruction(0x8000_0000, None, false);
         let virtual_first = instruction(0x8000_0004, Some(1), true);
@@ -670,8 +653,6 @@ mod tests {
 
     #[test]
     fn parity_minimal_single_round() {
-        // log_t = 1: the P·Q phase covers the single round and the dense
-        // phase materializes inside `finish_rounds`.
         run_parity(1, 229);
     }
 }

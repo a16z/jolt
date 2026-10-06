@@ -21,6 +21,7 @@ ark-bn254 = { workspace = true, features = ["curve"], optional = true }
 num-traits = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 allocative = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
 rand_core = { workspace = true }
 rayon = { workspace = true, optional = true }
 thiserror = { workspace = true }
@@ -33,7 +34,10 @@ asm = []
 fuzzing = ["asm"]
 parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
+# Byte views of `Fp128` for device buffers (`jolt-metal`).
+bytemuck = ["dep:bytemuck"]
 fp128-proof-linkage = ["asm"]
+fp64-proof-linkage = []
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires
@@ -65,3 +69,7 @@ required-features = ["solinas"]
 [[example]]
 name = "fp128_production_witness"
 required-features = ["solinas", "fp128-proof-linkage"]
+
+[[example]]
+name = "fp64_production_witness"
+required-features = ["solinas", "fp64-proof-linkage"]

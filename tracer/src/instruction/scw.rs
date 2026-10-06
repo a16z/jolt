@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -13,6 +14,7 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x1800202f,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = RAMWrite
 );
 
@@ -117,8 +119,8 @@ mod tests {
         let addr = DRAM_BASE;
         cpu.mmu.store_word(addr, 0xDEADBEEF).unwrap();
 
-        cpu.x[11] = addr as i64; // rs1 = address
-        cpu.x[12] = 0x12345678; // rs2 = value to store
+        cpu.x[11] = addr as i64;
+        cpu.x[12] = 0x12345678;
 
         let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1000, false).unwrap();
         let Instruction::SCW(scw) = decoded else {
@@ -141,7 +143,6 @@ mod tests {
 
         cpu.x[11] = addr as i64;
 
-        // LR.W: rd=10, rs1=11
         let decoded = Instruction::decode(encode_lrw(10, 11), 0x1000, false).unwrap();
         let Instruction::LRW(lrw) = decoded else {
             panic!("Expected LRW");
@@ -149,7 +150,6 @@ mod tests {
         let mut trace = Vec::new();
         lrw.trace(&mut cpu, Some(&mut trace));
 
-        // SC.W: rd=13, rs1=11, rs2=12
         let store_val: u32 = 0x12345678;
         cpu.x[12] = store_val as i64;
 
@@ -176,7 +176,6 @@ mod tests {
         cpu.mmu.store_word(addr_a, 0xAAAA_AAAA).unwrap();
         cpu.mmu.store_word(addr_b, 0xBBBB_BBBB).unwrap();
 
-        // LR.W to addr_a
         cpu.x[11] = addr_a as i64;
         let decoded = Instruction::decode(encode_lrw(10, 11), 0x1000, false).unwrap();
         let Instruction::LRW(lrw) = decoded else {
@@ -185,7 +184,6 @@ mod tests {
         let mut trace = Vec::new();
         lrw.trace(&mut cpu, Some(&mut trace));
 
-        // SC.W to addr_b (different address)
         cpu.x[14] = addr_b as i64;
         cpu.x[12] = 0x12345678;
         let decoded = Instruction::decode(encode_scw(13, 14, 12), 0x1004, false).unwrap();
@@ -230,7 +228,6 @@ mod tests {
         let mut trace = Vec::new();
         scw.trace(&mut cpu, Some(&mut trace));
 
-        // Inspect the trace: both reservation registers must be written to 0
         let cleared_regs: Vec<u8> = trace
             .iter()
             .filter_map(|cycle| cycle.rd_write())
@@ -309,7 +306,6 @@ mod tests {
         let decoded = Instruction::decode(encode_lrw(0, 1), 0x1000, false).unwrap();
         decoded.execute(&mut cpu);
 
-        // sc.w x26, x12, (x1) — store 32-bit low half of x12 at (x1); x26 = 0.
         let decoded = Instruction::decode(encode_scw(26, 1, 12), 0x1004, false).unwrap();
         decoded.execute(&mut cpu);
 
@@ -341,7 +337,7 @@ mod tests {
             .memory_layout
             .panic;
 
-        cpu.x[11] = panic_addr as i64; // rs1 points at the panic byte
+        cpu.x[11] = panic_addr as i64;
         cpu.x[12] = 0x12345678;
 
         let decoded = Instruction::decode(encode_scw(13, 11, 12), 0x1000, false).unwrap();
@@ -381,7 +377,6 @@ mod tests {
         let mut trace = Vec::new();
         decoded.trace(&mut cpu, Some(&mut trace));
 
-        // The store must have succeeded: memory should contain the new value.
         let (val, _) = cpu.mmu.load_word(addr).unwrap();
         assert_eq!(
             val, store_val,

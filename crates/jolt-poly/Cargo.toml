@@ -24,7 +24,7 @@ num-traits = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-jolt-field = { workspace = true, features = ["bn254"] }
+jolt-field = { workspace = true, features = ["bn254", "solinas"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 bincode = { workspace = true }

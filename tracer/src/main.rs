@@ -34,7 +34,6 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    // Initialize tracing
     tracing_subscriber::fmt()
         .compact()
         .with_target(false)
@@ -44,15 +43,12 @@ fn main() {
         .with_thread_names(false)
         .init();
 
-    // Read the ELF file
     let elf_path = Path::new(&args.elf);
     let elf_content = std::fs::read(elf_path).expect("Failed to read ELF file");
 
-    // Create and run the emulator
     let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
     emulator.setup_program(&elf_content);
 
-    // Setup JoltDevice for low memory access (addresses below RAM_START_ADDRESS)
     let memory_config = MemoryConfig {
         program_size: Some(elf_content.len() as u64),
         ..Default::default()
@@ -61,7 +57,6 @@ fn main() {
 
     let endcode = emulator.run_test(args.trace.unwrap_or(false), args.disassemble);
 
-    // If signature file is specified, write the signature with specified granularity
     if let Some(sig_path) = args.signature {
         let mut file = File::create(sig_path).expect("Failed to create signature file");
         if let Err(e) = emulator.write_signature(&mut file, args.signature_granularity) {

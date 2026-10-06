@@ -14,8 +14,6 @@ pub const MUL_I128: OptimizationObjective =
 
 const NUM_ITERS: usize = 10_000;
 
-// -- mul_u64 --
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulU64Objective;
 
@@ -48,8 +46,6 @@ impl Objective for MulU64Objective {
         Some("s")
     }
 }
-
-// -- mul_i64 --
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulI64Objective;
@@ -84,8 +80,6 @@ impl Objective for MulI64Objective {
     }
 }
 
-// -- mul_u128 --
-
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulU128Objective;
 
@@ -118,8 +112,6 @@ impl Objective for MulU128Objective {
         Some("s")
     }
 }
-
-// -- mul_i128 --
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct MulI128Objective;

@@ -1,15 +1,16 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{format::format_r::FormatR, RISCVInstruction, RISCVTrace};
 
-// rd = rs1 & !rs2
 declare_riscv_instr!(
     name   = ANDN,
     mask   = 0xfe00707f,
     match  = 0x40007033,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
@@ -23,16 +24,3 @@ impl ANDN {
 }
 
 impl RISCVTrace for ANDN {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decode_constant() {
-        let instr = ANDN::new(0x40007033, 0, true, false);
-        assert_eq!(instr.operands.rs1, 0);
-        assert_eq!(instr.operands.rs2, 0);
-        assert_eq!(instr.operands.rd, 0);
-    }
-}

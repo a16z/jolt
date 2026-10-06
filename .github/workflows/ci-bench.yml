@@ -19,11 +19,11 @@ jobs:
     name: Performance benchmarks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install RISC-V cross-compiler
         run: sudo apt-get install -y gcc-riscv64-unknown-elf
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
-      - uses: actions/cache@v6 # From: https://github.com/actions/cache/blob/main/examples.md#rust---cargo
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6; From: https://github.com/actions/cache/blob/main/examples.md#rust---cargo
         with:
           path: |
             ~/.cargo/bin/
@@ -48,7 +48,7 @@ jobs:
           cd ..
 
       - name: Publish benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1
         with:
           name: Benchmarks
           tool: "customSmallerIsBetter"

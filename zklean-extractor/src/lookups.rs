@@ -1,5 +1,4 @@
-use jolt_prover_legacy::zkvm::lookup_table::LookupTables;
-use strum::IntoEnumIterator as _;
+use jolt_lookup_tables::LookupTableKind;
 
 use crate::{
     modules::{AsModule, Module},
@@ -7,23 +6,19 @@ use crate::{
     DefaultMleAst,
 };
 
-/// Wrapper around a JoltInstructionRowData
-// TODO: Can we tie the XLEN to the JoltParameterSet somehow? Seem hard w/o const generic
-// exprs...
 #[derive(Debug, Clone)]
 pub struct ZkLeanLookupTable<const XLEN: usize> {
-    pub lookup_table: LookupTables<XLEN>,
+    pub lookup_table: LookupTableKind<XLEN>,
 }
 
-impl<const XLEN: usize> From<LookupTables<XLEN>> for ZkLeanLookupTable<XLEN> {
-    fn from(value: LookupTables<XLEN>) -> Self {
+impl<const XLEN: usize> From<LookupTableKind<XLEN>> for ZkLeanLookupTable<XLEN> {
+    fn from(value: LookupTableKind<XLEN>) -> Self {
         Self {
             lookup_table: value,
         }
     }
 }
 
-/// This structure is merely here to gather all the information needed for displaying a MLE.
 struct DisplayZkLean<F: ZkLeanReprField> {
     mle: F,
     name: String,
@@ -52,7 +47,7 @@ impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        LookupTables::<XLEN>::iter().map(Self::from)
+        LookupTableKind::<XLEN>::iter().map(Self::from)
     }
 
     /// Pretty print an instruction as a ZkLean `ComposedLookupTable`.
@@ -113,18 +108,18 @@ mod test {
     use super::*;
     use crate::util::{arb_field_elem, Environment};
 
-    use jolt_prover_legacy::field::JoltField;
+    use jolt_field::{Fr, JoltField};
 
     use proptest::{collection::vec, prelude::*};
 
-    type RefField = ark_bn254::Fr;
+    type RefField = Fr;
     type TestField = crate::mle_ast::DefaultMleAst;
 
     const XLEN: usize = 32;
 
     #[derive(Clone)]
     struct TestableLookupTable<const XLEN: usize> {
-        reference: LookupTables<XLEN>,
+        reference: LookupTableKind<XLEN>,
         test: ZkLeanLookupTable<XLEN>,
     }
 

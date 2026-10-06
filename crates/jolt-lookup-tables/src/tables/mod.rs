@@ -120,8 +120,7 @@ use xor::XorTable;
 /// declare which table they use via
 /// [`InstructionLookupTable::lookup_table`](crate::InstructionLookupTable::lookup_table).
 ///
-/// Variant indices match `jolt-prover-legacy::LookupTables` so lookup-table flags in
-/// core-produced proofs can be interpreted without an adapter.
+/// Variant indices are proof-format identifiers and must remain stable.
 #[expect(clippy::unsafe_derive_deserialize)]
 #[derive(
     Clone,
@@ -134,6 +133,7 @@ use xor::XorTable;
     Deserialize,
     strum::EnumCount,
     strum::EnumIter,
+    strum::IntoStaticStr,
 )]
 #[repr(u8)]
 pub enum LookupTableKind<const XLEN: usize> {
@@ -194,10 +194,6 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
-/// Dispatches a method call to the inner table for every
-/// [`LookupTableKind`] variant, binding the inner table to `$t` and
-/// evaluating `$expr`. Variants are listed once here so that
-/// [`LookupTableKind`]'s dispatch methods stay a single line each.
 macro_rules! dispatch {
     ($self:expr, $t:ident => $expr:expr) => {
         match $self {
@@ -316,10 +312,8 @@ impl<const XLEN: usize> LookupTableKind<XLEN> {
 /// where the sum is over a small number of prefix-suffix pairs.
 /// This enables the sumcheck prover to avoid materializing the entire table.
 pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Default {
-    /// The prefix types used in this table's decomposition.
     fn prefixes(&self) -> &'static [Prefixes];
 
-    /// The suffix types used in this table's decomposition.
     fn suffixes(&self) -> &'static [Suffixes];
 
     /// Recombine evaluated prefix and suffix values into the table's MLE evaluation.
@@ -346,3 +340,78 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
 
 #[cfg(test)]
 pub(crate) mod test_utils;
+
+#[cfg(test)]
+mod tests {
+    use super::LookupTableKind;
+
+    #[test]
+    fn proof_format_indices_are_stable() {
+        const EXPECTED: [&str; 55] = [
+            "RangeCheck",
+            "RangeCheckAligned",
+            "And",
+            "Andn",
+            "Or",
+            "Xor",
+            "Equal",
+            "SignedGreaterThanEqual",
+            "UnsignedGreaterThanEqual",
+            "NotEqual",
+            "SignedLessThan",
+            "UnsignedLessThan",
+            "SignMask",
+            "UpperWord",
+            "UnsignedLessThanEqual",
+            "ValidUnsignedRemainder",
+            "ValidDiv0",
+            "HalfwordAlignment",
+            "WordAlignment",
+            "LowerHalfWord",
+            "SignExtendWord",
+            "Pow2",
+            "Pow2W",
+            "ShiftRightBitmask",
+            "VirtualRev8W",
+            "VirtualSRL",
+            "VirtualSRA",
+            "VirtualROTR",
+            "VirtualROTRW",
+            "VirtualNegateIf",
+            "MulUNoOverflow",
+            "VirtualXORROT32",
+            "VirtualXORROT24",
+            "VirtualXORROT16",
+            "VirtualXORROT63",
+            "VirtualXORROTW16",
+            "VirtualXORROTW12",
+            "VirtualXORROTW8",
+            "VirtualXORROTW7",
+            "WindowMaskW",
+            "PextSigned",
+            "VirtualXORROTW22",
+            "VirtualXORROTW19",
+            "VirtualXORROTW6",
+            "ShiftRightBitmaskW",
+            "VirtualSRLW",
+            "VirtualSRAW",
+            "Pext",
+            "WindowMaskB",
+            "WindowMaskH",
+            "AlignAddr",
+            "ShiftDataB",
+            "ShiftDataH",
+            "ShiftDataW",
+            "VirtualXORROTL1",
+        ];
+
+        let actual = LookupTableKind::<64>::iter()
+            .enumerate()
+            .map(|(expected_index, table)| {
+                assert_eq!(table.index(), expected_index);
+                <&'static str>::from(table)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, EXPECTED);
+    }
+}

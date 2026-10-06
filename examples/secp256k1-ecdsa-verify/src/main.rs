@@ -11,12 +11,8 @@ pub fn main() {
         guest::preprocess_shared_secp256k1_ecdsa_verify(&mut program).unwrap();
     let prover_preprocessing =
         guest::preprocess_prover_secp256k1_ecdsa_verify(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let verifier_preprocessing = guest::preprocess_verifier_secp256k1_ecdsa_verify(
-        shared_preprocessing,
-        verifier_setup,
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_secp256k1_ecdsa_verify(&prover_preprocessing);
 
     let prove_secp256k1_ecdsa_verify =
         guest::build_prover_secp256k1_ecdsa_verify(program, prover_preprocessing);
@@ -31,7 +27,6 @@ pub fn main() {
         0xa52e52d7da7dabfa,
         0xb94d27b9934d3e08,
     ];
-    // signature (r, s)
     let r = [
         0xb8fc413b4b967ed8,
         0x248d4b0b2829ab00,

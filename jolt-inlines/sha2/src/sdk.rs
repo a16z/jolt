@@ -1,10 +1,5 @@
-//! SHA-256 hash function implementation optimized for Jolt zkVM.
-//!
-//! This module provides an API similar to the `sha2` crate.
-
 use core::mem::MaybeUninit;
 
-/// SHA-256 hasher state.
 #[repr(C, align(8))]
 pub struct Sha256 {
     /// Current hash state (8 x 32-bit words)
@@ -26,16 +21,12 @@ pub struct Sha256 {
     /// - Can be safely cast to `*mut u8` for byte-level operations
     /// - Must maintain u32 alignment for word-level access
     buffer: [MaybeUninit<u32>; 16],
-    /// Number of bytes in the buffer
     buffer_len: usize,
-    /// Total number of bytes processed
     total_len: u64,
-    /// Whether this is the initial block
     initial: bool,
 }
 
 impl Sha256 {
-    /// Creates a new SHA-256 hasher.
     #[inline(always)]
     pub fn new() -> Self {
         Self {
@@ -53,7 +44,6 @@ impl Sha256 {
         core::slice::from_raw_parts(self.state.as_ptr() as *const u32, 8)
     }
 
-    /// Writes data to the hasher.
     #[inline(always)]
     pub fn update(&mut self, input: &[u8]) {
         let input_len = input.len();
@@ -69,7 +59,6 @@ impl Sha256 {
         // `&mut self` calls below (`buffer_as_u32_mut`, `sha256_compress`)
         // would be aliasing UB.
 
-        // Handle partial buffer
         if self.buffer_len != 0 {
             let needed = 64 - self.buffer_len;
             let to_copy = needed.min(input_len);
@@ -96,13 +85,10 @@ impl Sha256 {
             }
         }
 
-        // Process complete blocks directly
-        let remaining_blocks = (input_len - offset) >> 6; // div by 64
+        let remaining_blocks = (input_len - offset) >> 6;
         let blocks_end = offset + (remaining_blocks << 6);
 
-        // Process blocks in batches to improve cache locality
         while offset < blocks_end {
-            // Load directly into aligned buffer
             // SAFETY: copies exactly one 64-byte block into the 64-byte buffer.
             unsafe {
                 core::ptr::copy_nonoverlapping(
@@ -119,7 +105,6 @@ impl Sha256 {
             offset += 64;
         }
 
-        // Buffer remaining bytes
         let remaining = input_len - offset;
         if remaining > 0 {
             // SAFETY: `remaining < 64` because all complete blocks were consumed above.
@@ -137,9 +122,8 @@ impl Sha256 {
     /// Reads hash digest and consumes the hasher.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; 32] {
-        let bit_len = self.total_len << 3; // * 8
+        let bit_len = self.total_len << 3;
 
-        // Add padding byte
         // SAFETY: `update` never leaves a full buffer, so `buffer_len < 64` and
         // the write is in bounds. Pointer derived fresh (see WARNING in `update`).
         unsafe {
@@ -149,19 +133,15 @@ impl Sha256 {
         }
         let padding_start = self.buffer_len + 1;
 
-        // Determine if we need an extra block
         if self.buffer_len < 56 {
-            // Single block case - zero padding and add length
             // SAFETY: `padding_start <= 56`, so the zero fill ends at byte 56 and
             // the length write covers bytes 56..64. The u64 store is 8-byte
             // aligned: the struct is `repr(C, align(8))` and `buffer` sits at
             // offset 32, so buffer byte 56 is 8-byte aligned.
             unsafe {
                 let buffer_ptr = self.buffer.as_mut_ptr() as *mut u8;
-                // Zero fill from padding_start to 56
                 core::ptr::write_bytes(buffer_ptr.add(padding_start), 0, 56 - padding_start);
 
-                // Write length as big-endian u64
                 (buffer_ptr.add(56) as *mut u64).write(bit_len.to_be());
             }
 
@@ -169,10 +149,8 @@ impl Sha256 {
                 self.sha256_compress();
             }
         } else {
-            // Two block case
             // SAFETY: `padding_start <= 64`; zero fill stays within the buffer.
             unsafe {
-                // Zero fill rest of first block
                 core::ptr::write_bytes(
                     (self.buffer.as_mut_ptr() as *mut u8).add(padding_start),
                     0,
@@ -201,7 +179,6 @@ impl Sha256 {
             self.buffer[12].write(0);
             self.buffer[13].write(0);
 
-            // Store the length with the same big-endian byte layout as message blocks.
             self.buffer[14].write(((bit_len >> 32) as u32).to_be());
             self.buffer[15].write((bit_len as u32).to_be());
 
@@ -213,7 +190,6 @@ impl Sha256 {
             }
         }
 
-        // Convert state to big-endian bytes
         // SAFETY: state is fully initialized (a compression ran above).
         let state = unsafe { self.state_as_u32() };
 
@@ -239,7 +215,6 @@ impl Sha256 {
         unsafe { core::mem::transmute::<[u32; 8], [u8; 32]>(words) }
     }
 
-    /// Computes SHA-256 hash of the input data in one call.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; 32] {
         let mut hasher = Self::new();

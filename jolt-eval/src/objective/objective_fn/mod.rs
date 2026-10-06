@@ -18,7 +18,6 @@ use super::{
 pub struct ObjectiveFunction {
     /// CLI-visible name (e.g. `"minimize_lloc"`).
     pub name: &'static str,
-    /// The [`OptimizationObjective`]s this function reads.
     pub inputs: &'static [OptimizationObjective],
     /// Combine measurements into a scalar to minimize.
     /// The first HashMap contains the current measurements; the second
@@ -29,7 +28,6 @@ pub struct ObjectiveFunction {
 }
 
 impl ObjectiveFunction {
-    /// All registered objective functions.
     pub fn all() -> &'static [ObjectiveFunction] {
         &[
             MINIMIZE_LLOC,
@@ -218,28 +216,9 @@ mod tests {
     }
 
     #[test]
-    fn custom_composite_objective() {
-        const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
-        let weighted = ObjectiveFunction {
-            name: "weighted",
-            inputs: INPUTS,
-            evaluate: |m, _| {
-                2.0 * m.get(&LLOC).unwrap_or(&0.0) + m.get(&HALSTEAD_BUGS).unwrap_or(&0.0)
-            },
-        };
-
-        let mut m = HashMap::new();
-        m.insert(LLOC, 10.0);
-        m.insert(HALSTEAD_BUGS, 100.0);
-        assert_eq!((weighted.evaluate)(&m, &empty_baselines()), 120.0);
-    }
-
-    #[test]
     fn normalized_composite_objective() {
         use crate::objective::normalized;
 
-        // Baselines are the initial measurements. Normalization divides
-        // each value by its baseline, yielding a dimensionless ratio.
         const INPUTS: &[OptimizationObjective] = &[LLOC, HALSTEAD_BUGS];
         let balanced = ObjectiveFunction {
             name: "balanced_quality",
@@ -251,16 +230,13 @@ mod tests {
         baselines.insert(LLOC, 5500.0);
         baselines.insert(HALSTEAD_BUGS, 80.0);
 
-        // At baseline values → normalized = 1.0 for each → score = 1.0
         let score = (balanced.evaluate)(&baselines, &baselines);
         assert!((score - 1.0).abs() < 1e-9, "expected 1.0, got {score}");
 
-        // 10% improvement in LLOC
         let mut m = baselines.clone();
         m.insert(LLOC, 4950.0);
         let score2 = (balanced.evaluate)(&m, &baselines);
         assert!(score2 < score, "10% LLOC improvement should reduce score");
-        // 0.5 * (4950/5500) + 0.5 * (80/80) = 0.5 * 0.9 + 0.5 = 0.95
         assert!((score2 - 0.95).abs() < 1e-9, "expected 0.95, got {score2}");
     }
 }

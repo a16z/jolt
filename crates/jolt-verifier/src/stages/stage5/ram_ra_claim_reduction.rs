@@ -35,8 +35,6 @@ pub fn ram_ra_claim_reduction_input_values_from_upstream<F: JoltField>(
     }
 }
 
-/// Wire this relation's consumed opening *points* from the upstream output-points
-/// aggregates.
 pub fn ram_ra_claim_reduction_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
@@ -145,7 +143,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         _challenges: &RamRaClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRaClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let output_cycle = output_points
             .ram_ra()

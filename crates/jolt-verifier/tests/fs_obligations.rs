@@ -165,7 +165,6 @@ fn production_sources(workspace: &Path) -> Vec<PackageSource> {
         .into_iter()
         .filter_map(|id| package_by_id.get(id))
         .filter(|package| package["source"].is_null())
-        .filter(|package| package["name"] != "jolt-prover-legacy")
         .filter_map(|package| {
             let manifest = PathBuf::from(
                 package["manifest_path"]

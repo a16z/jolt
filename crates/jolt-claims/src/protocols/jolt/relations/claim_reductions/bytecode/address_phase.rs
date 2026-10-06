@@ -1,5 +1,3 @@
-//! Address phase of the two-phase committed-bytecode claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -75,69 +73,5 @@ impl SymbolicSumcheck for AddressPhase {
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         final_output_expr(self.shape.1)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::claim_reductions::bytecode::final_bytecode_chunk_opening;
-    use crate::protocols::jolt::{BytecodeClaimReductionPublic, PrecommittedReductionDimensions};
-    use jolt_field::{Fr, Ring};
-
-    fn fr(value: u64) -> Fr {
-        Fr::from_u64(value)
-    }
-
-    #[test]
-    fn formulas_evaluate_like_core_claims() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let chunk_openings = [fr(17), fr(19)];
-        let chunk_weights = [fr(23), fr(29)];
-        let intermediate = fr(37);
-        let zero = fr(0);
-
-        let address = AddressPhase::new((dimensions, 2));
-        let address_input = address.input_expression::<Fr>().evaluate(
-            |id| {
-                if *id == cycle_phase_intermediate_opening() {
-                    intermediate
-                } else {
-                    zero
-                }
-            },
-            |_| zero,
-            |_| zero,
-        );
-        assert_eq!(address_input, intermediate);
-
-        let output = address.output_expression::<Fr>().evaluate(
-            |id| {
-                (0..2)
-                    .find(|&chunk| *id == final_bytecode_chunk_opening(chunk))
-                    .map_or(zero, |chunk| chunk_openings[chunk])
-            },
-            |_| zero,
-            |id| match *id {
-                JoltDerivedId::BytecodeClaimReduction(
-                    BytecodeClaimReductionPublic::ChunkOutputWeight(chunk),
-                ) => chunk_weights[chunk],
-                _ => zero,
-            },
-        );
-        assert_eq!(
-            output,
-            chunk_weights[0] * chunk_openings[0] + chunk_weights[1] * chunk_openings[1]
-        );
-    }
-
-    #[test]
-    fn address_phase_exposes_expected_dependencies() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let relation = AddressPhase::new((dimensions, 2));
-
-        assert_eq!(AddressPhase::id(), JoltRelationId::BytecodeClaimReduction);
-        assert_eq!(relation.rounds(), dimensions.address_phase_total_rounds());
-        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
     }
 }

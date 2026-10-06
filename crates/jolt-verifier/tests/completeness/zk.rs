@@ -137,10 +137,15 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         modular.eval_commitments
     );
 
-    assert_eq!(modular.coefficient_rows, 221);
-    assert_eq!(modular.output_claim_rows, 15);
+    // Golden shape of the muldiv fixture at trace_length 1024 / ram_K 8192.
+    // The config is pinned alongside so a drift here reads as a protocol
+    // change rather than a fixture change.
+    assert_eq!(case.proof.trace_length, 1024);
+    assert_eq!(case.proof.ram_K, 8192);
+    assert_eq!(modular.coefficient_rows, 227);
+    assert_eq!(modular.output_claim_rows, 16);
     assert_eq!(modular.eval_commitments, 1);
-    assert_eq!(modular.auxiliary_rows, 33);
+    assert_eq!(modular.auxiliary_rows, 37);
     assert_eq!(modular.error_row_count, 64);
 }
 
@@ -199,12 +204,3 @@ where
         .commitments
         .len()
 }
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), not(feature = "zk")))]
-#[ignore = "enable --features prover-fixtures,zk to live-generate this verifier ZK fixture"]
-fn zk_muldiv_verifier_proof_is_accepted() {}
-
-#[test]
-#[ignore = "prefix BlindFold fixture generation is not wired yet"]
-fn zk_stage1_prefix_is_accepted() {}

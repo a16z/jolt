@@ -15,7 +15,7 @@
 //! `PrepareKernel` impls reclaiming the carries
 //! ([`reference::precommitted_reduction`](crate::reference::precommitted_reduction)).
 //! The scalar kinds resolve intermediate-vs-final through
-//! [`CycleReductionKernel::scalar_claim`]; the bytecode kind's chunked shape
+//! `CycleReductionKernel::scalar_claim`; the bytecode kind's chunked shape
 //! spells its resolution out in its own impl.
 //!
 //! The summand in both phases is `Σ_j value(j) · eq(j)` over tables permuted
@@ -154,13 +154,10 @@ impl<F: JoltField> PrecommittedTables<F> {
         self.round_message(is_active(active_rounds, round), previous_claim)
     }
 
-    /// Ingest the final round's challenge for the phase's schedule.
     fn finish_rounds(&mut self, active_rounds: &[usize], total_rounds: usize, bind: F) {
         self.bind_round(is_active(active_rounds, total_rounds - 1), bind);
     }
 
-    /// Bind a round's challenge: on an active round bind every table, on an
-    /// inactive one fold the halving into the running `scale` instead.
     fn bind_round(&mut self, active: bool, challenge: F) {
         if !active {
             self.scale *= self.two_inv;
@@ -175,8 +172,6 @@ impl<F: JoltField> PrecommittedTables<F> {
         }
     }
 
-    /// The intermediate claim staged at the cycle→address handoff:
-    /// `Σ_i value(i) · eq(i) · scale` over the bound tables.
     fn intermediate_claim(&self) -> F {
         let value = self.value.evals();
         let eq = self.eq.evals();
@@ -259,7 +254,7 @@ pub struct CycleReductionKernel<F: JoltField, R> {
 }
 impl<F: JoltField, R> CycleReductionKernel<F, R> {
     /// Build a member from tables ALREADY permuted into Dory opening-round
-    /// order (see [`lsb_permutation`] / [`permute_coefficients`]).
+    /// order (see `lsb_permutation` / `permute_coefficients`).
     pub fn new(
         reduction: PrecommittedClaimReduction,
         value: Vec<F>,

@@ -1,5 +1,3 @@
-//! Variable binding order for sumcheck protocols.
-
 use serde::{Deserialize, Serialize};
 
 /// The order in which polynomial variables are bound during sumcheck.

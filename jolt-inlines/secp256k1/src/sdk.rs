@@ -1,5 +1,3 @@
-//! secp256k1 operations optimized for Jolt zkVM.
-
 use ark_ff::AdditiveGroup;
 #[cfg(feature = "host")]
 use ark_ff::Field;
@@ -44,16 +42,15 @@ fn is_fr_non_canonical(x: &[u64; 4]) -> bool {
 
 pub use jolt_inlines_sdk::{spoil_proof, UnwrapOrSpoilProof};
 
-/// Error types for secp256k1 operations
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Secp256k1Error {
-    InvalidFqElement, // input array does not correspond to a valid Fq element
-    InvalidFrElement, // input array does not correspond to a valid Fr element
-    NotOnCurve,       // point is not on the secp256k1 curve
-    QAtInfinity,      // public key is point at infinity
-    ROrSZero,         // one of the signature components is zero
+    InvalidFqElement,
+    InvalidFrElement,
+    NotOnCurve,
+    QAtInfinity,
+    ROrSZero,
     ZeroMessageHash,
-    RxMismatch, // computed R.x does not match r
+    RxMismatch,
     InvalidGlvSignWord(u64),
 }
 
@@ -103,31 +100,26 @@ impl Secp256k1Fq {
     pub fn e(&self) -> [u64; 4] {
         self.e
     }
-    /// returns the additive identity element (0)
     #[inline(always)]
     pub fn zero() -> Self {
         Secp256k1Fq { e: [0u64; 4] }
     }
-    /// returns seven
     #[inline(always)]
     pub fn seven() -> Self {
         Secp256k1Fq {
             e: [7u64, 0u64, 0u64, 0u64],
         }
     }
-    /// returns true if the element is zero
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
         self.e == [0u64; 4]
     }
-    /// returns -self
     #[inline(always)]
     pub fn neg(&self) -> Self {
         Secp256k1Fq {
             e: (-Fq::new_unchecked(BigInt(self.e))).0 .0,
         }
     }
-    /// returns self + other
     #[inline(always)]
     pub fn add(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
@@ -136,7 +128,6 @@ impl Secp256k1Fq {
                  .0,
         }
     }
-    /// returns self - other
     #[inline(always)]
     pub fn sub(&self, other: &Secp256k1Fq) -> Self {
         Secp256k1Fq {
@@ -145,14 +136,12 @@ impl Secp256k1Fq {
                  .0,
         }
     }
-    /// returns 2*self
     #[inline(always)]
     pub fn dbl(&self) -> Self {
         Secp256k1Fq {
             e: (Fq::new_unchecked(BigInt(self.e)).double()).0 .0,
         }
     }
-    /// returns 3*self
     #[inline(always)]
     pub fn tpl(&self) -> Self {
         self.dbl().add(self)
@@ -277,7 +266,6 @@ impl Secp256k1Fq {
     ))]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fq) -> Self {
-        // spoil proof if other == 0
         if other.is_zero() {
             spoil_proof();
         }
@@ -422,24 +410,20 @@ impl Secp256k1Fr {
         let high = self.e[2] as u128 + ((self.e[3] as u128) << 64);
         (low, high)
     }
-    /// returns the additive identity element (0)
     #[inline(always)]
     pub fn zero() -> Self {
         Secp256k1Fr { e: [0u64; 4] }
     }
-    /// returns true if the element is zero
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
         self.e == [0u64; 4]
     }
-    /// returns -self
     #[inline(always)]
     pub fn neg(&self) -> Self {
         Secp256k1Fr {
             e: (-Fr::new_unchecked(BigInt(self.e))).0 .0,
         }
     }
-    /// returns self + other
     #[inline(always)]
     pub fn add(&self, other: &Secp256k1Fr) -> Self {
         Secp256k1Fr {
@@ -448,7 +432,6 @@ impl Secp256k1Fr {
                  .0,
         }
     }
-    /// returns self - other
     #[inline(always)]
     pub fn sub(&self, other: &Secp256k1Fr) -> Self {
         Secp256k1Fr {
@@ -457,14 +440,12 @@ impl Secp256k1Fr {
                  .0,
         }
     }
-    /// returns 2*self
     #[inline(always)]
     pub fn dbl(&self) -> Self {
         Secp256k1Fr {
             e: (Fr::new_unchecked(BigInt(self.e)).double()).0 .0,
         }
     }
-    /// returns 3*self
     #[inline(always)]
     pub fn tpl(&self) -> Self {
         self.dbl().add(self)
@@ -589,7 +570,6 @@ impl Secp256k1Fr {
     ))]
     #[inline(always)]
     pub fn div(&self, other: &Secp256k1Fr) -> Self {
-        // spoil proof if other == 0
         if other.is_zero() {
             spoil_proof();
         }
@@ -798,8 +778,6 @@ fn decompose_scalar_impl(k: &Secp256k1Fr) -> [(bool, u128); 2] {
     crate::glv::decompose_scalar(k)
 }
 
-// ECDSA signature verification function + helpers
-
 #[inline(always)]
 fn scalars_to_index(scalars: &[u128; 4], bit_index: usize) -> usize {
     let mut idx = 0;
@@ -843,7 +821,6 @@ fn secp256k1_4x128_inner_scalar_mul(
     res
 }
 
-// if cond is true, negate x, otherwise return x unchanged
 #[inline(always)]
 fn conditional_negate(x: Secp256k1Point, cond: bool) -> Secp256k1Point {
     if cond {
@@ -868,7 +845,6 @@ pub fn ecdsa_verify(
     s: Secp256k1Fr,
     q: Secp256k1Point,
 ) -> Result<(), Secp256k1Error> {
-    // Validate scalar field ranges: z, r, s must be in [0, n)
     if is_fr_non_canonical(&z.e()) {
         return Err(Secp256k1Error::InvalidFrElement);
     }
@@ -878,18 +854,15 @@ pub fn ecdsa_verify(
     if is_fr_non_canonical(&s.e()) {
         return Err(Secp256k1Error::InvalidFrElement);
     }
-    // Validate base field ranges: q.x, q.y must be in [0, p)
     if is_fq_non_canonical(&q.x().e()) {
         return Err(Secp256k1Error::InvalidFqElement);
     }
     if is_fq_non_canonical(&q.y().e()) {
         return Err(Secp256k1Error::InvalidFqElement);
     }
-    // Validate q is on the curve
     if !q.is_on_curve() {
         return Err(Secp256k1Error::NotOnCurve);
     }
-    // Check that q is not infinity
     if q.is_infinity() {
         return Err(Secp256k1Error::QAtInfinity);
     }
@@ -899,21 +872,15 @@ pub fn ecdsa_verify(
     if z.is_zero() {
         return Err(Secp256k1Error::ZeroMessageHash);
     }
-    // step 2: compute u1 = z / s (mod r) and u2 = r / s (mod r)
     let u1 = z.div_assume_nonzero(&s);
     let u2 = r.div_assume_nonzero(&s);
-    // step 3: compute R = u1 * G + u2 * q
-    // 3.1: perform the glv scalar decomposition
     let decomp_u = u1.as_u128_pair();
     let decomp_v = u2.glv_decompose();
-    // 3.2: get decomposed scalars as a 4x128-bit array
     let scalars = [decomp_u.0, decomp_u.1, decomp_v[0].1, decomp_v[1].1];
-    // 3.3: prepare Q, and lambda*Q, appropriately negated
     let points = [
         conditional_negate(q.clone(), decomp_v[0].0),
         conditional_negate(q.endomorphism(), decomp_v[1].0),
     ];
-    // 3.4: perform the 4x128-bit scalar multiplication
     let r_claim = secp256k1_4x128_inner_scalar_mul(scalars, points);
     // step 4: check that r == R.x mod n.
     // We implement the `mod n` as a single conditional subtraction on the bigint:
@@ -925,6 +892,5 @@ pub fn ecdsa_verify(
     if rx.e() != r.e() {
         return Result::Err(Secp256k1Error::RxMismatch);
     }
-    // if all checks passed, return Ok(())
     Result::Ok(())
 }

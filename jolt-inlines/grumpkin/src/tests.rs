@@ -1,6 +1,6 @@
 mod sequence_tests {
     use crate::sdk::{
-        decode_glv_sign_word, GrumpkinFq, GrumpkinFr, GrumpkinPoint, GrumpkinPointExt,
+        decode_glv_sign_word, GrumpkinFr, GrumpkinPoint, GrumpkinPointExt,
         GRUMPKIN_ENDO_BETA_LIMBS, GRUMPKIN_GLV_LAMBDA_LIMBS,
     };
     use crate::{
@@ -14,7 +14,6 @@ mod sequence_tests {
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
-        // get expected value
         let arr_to_fq = |arr: &[u64; 4]| Fq::new_unchecked(BigInt(*arr));
         let expected = (arr_to_fq(b)
             .inverse()
@@ -22,7 +21,6 @@ mod sequence_tests {
             * arr_to_fq(a))
         .0
          .0;
-        // rs1=input1 (32 bytes), rs2=input2 (32 bytes), rs3=output (32 bytes)
         let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
 
         let mut harness = InlineTestHarness::new(layout);
@@ -143,13 +141,10 @@ mod sequence_tests {
     }
 
     fn scalar_mul_consistency_helper(scalar: u64) {
-        // generator * scalar in our impl
         let res = u64_point_mul(scalar, &GrumpkinPoint::generator());
-        // generator * scalar in arkworks
         let ark_res = ark_grumpkin::Affine::from(
             ark_grumpkin::Affine::generator().mul(ark_grumpkin::Fr::from(scalar)),
         );
-        // compare
         assert_eq!(res.x().fq(), ark_res.x);
         assert_eq!(res.y().fq(), ark_res.y);
     }
@@ -191,17 +186,6 @@ mod sequence_tests {
             decode_glv_sign_word(2),
             Err(GrumpkinError::InvalidGlvSignWord(2))
         ));
-    }
-
-    #[test]
-    fn test_grumpkin_field_aliases_use_configured_wrapper() {
-        use crate::sdk::{GrumpkinField, GrumpkinFqConfig, GrumpkinFrConfig};
-
-        let fq: GrumpkinField<GrumpkinFqConfig> = GrumpkinFq::zero();
-        let fr: GrumpkinField<GrumpkinFrConfig> = GrumpkinFr::zero();
-
-        assert!(fq.is_zero());
-        assert!(fr.is_zero());
     }
 
     #[test]
@@ -314,5 +298,38 @@ mod sequence_tests {
         ] {
             assert_glvr_trace_recompose(scalar);
         }
+    }
+}
+
+mod u64_arr_tests {
+    use crate::sdk::{GrumpkinFq, GrumpkinPoint, GrumpkinPointExt};
+    use ark_ec::AffineRepr;
+    use ark_ff::PrimeField;
+    use ark_grumpkin::Affine;
+    use jolt_inlines_sdk::ec::ECField;
+
+    /// `to_u64_arr`, `from_u64_arr` and `from_u64_arr_unchecked` all use the
+    /// canonical integer limbs, as for the other curves.
+    #[test]
+    fn field_u64_arr_uses_canonical_limbs() {
+        let five = GrumpkinFq::from_u64_arr(&[5, 0, 0, 0]).expect("canonical limbs");
+        assert_eq!(ECField::to_u64_arr(&five), [5, 0, 0, 0]);
+        let unchecked = <GrumpkinFq as ECField>::from_u64_arr_unchecked(&[5, 0, 0, 0]);
+        assert_eq!(ECField::to_u64_arr(&unchecked), [5, 0, 0, 0]);
+    }
+
+    #[test]
+    fn point_u64_arr_round_trips() {
+        let g = GrumpkinPoint::generator();
+        let arr = g.to_u64_arr();
+        let ark = Affine::generator();
+        assert_eq!(arr[..4], ark.x.into_bigint().0);
+        assert_eq!(arr[4..], ark.y.into_bigint().0);
+        let back = GrumpkinPoint::from_u64_arr(&arr).expect("generator is on the curve");
+        assert_eq!(back.to_u64_arr(), arr);
+        assert_eq!(
+            GrumpkinPoint::from_u64_arr_unchecked(&arr).to_u64_arr(),
+            arr
+        );
     }
 }

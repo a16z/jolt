@@ -15,7 +15,7 @@ workspace = true
 [features]
 # `summary` is a default so the crate's own dev loop (schema drift-lock
 # tests included) runs it; consumers that only need the subscriber stack
-# (jolt-prover-legacy's `host`, jolt-akita) opt out with
+# (the prover host path and jolt-akita) opt out with
 # `default-features = false` to keep schemars + serde_json out of standard
 # host builds.
 default = ["summary"]

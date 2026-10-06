@@ -115,8 +115,9 @@ Note the white boxes corresponding to the five components of Jolt under the CPU 
 In the diagaram above, sumchecks are color-coded based on "batch"; sumchecks in the same batch are "run in parallel" (see [Batched sumcheck](../optimizations/batched-sumcheck.md)).
 Note that a given component may include sumchecks in different batches. For example, the sumchecks under "Registers" span stages 3, 4, 5, and 6.
 
-The sumcheck stages are codified in `zkvm/prover.rs` (resp. `zkvm/verifier.rs`), which contain functions `prove_stage1`, `prove_stage2` (resp. `verify_stage1`, `verify_stage2`) etc.
-The function for a given stage declares which sumcheck instances the stage contains.
+The prover stages live in `crates/jolt-prover/src/stages/`, while the verifier
+stages live in `crates/jolt-verifier/src/stages/`. Each stage module declares
+the sumcheck instances it contains.
 
 Observe that the DAG defines a partial ordering over the nodes (sumchecks), which consequently defines the minimum number of batches -- two sumchecks cannot be batched together if one "depends" on the other.
 
