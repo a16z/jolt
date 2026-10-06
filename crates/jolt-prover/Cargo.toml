@@ -37,9 +37,9 @@ field-inline = [
   "tracer?/field-inline",
   "jolt-host?/field-inline",
 ]
-# The packed (lattice/Akita) protocol. Like jolt-verifier, one compiled
+# The Akita lattice protocol. Like jolt-verifier, one compiled
 # prover proves exactly one protocol: this feature swaps the proof shape to
-# the packed envelope, so the Dory (elliptic-curve) path `src/dory` is
+# the Akita envelope, so the Dory (elliptic-curve) path `src/dory` is
 # compiled out and the Akita (lattice) path `src/akita` replaces it.
 # Mutually exclusive with `zk` (compile error on the combination).
 akita = [
@@ -49,7 +49,7 @@ akita = [
   "jolt-claims/akita",
   "jolt-field/solinas",
   "jolt-kernels/akita",
-  # The packed axis proves over fp128, so field-inline execution and the value encoding
+  # The Akita axis proves over fp128, so field-inline execution and the value encoding
   # flip with it (inert while field-inline is off; the tracer forward is the
   # same weak edge the field-inline feature uses).
   "tracer?/fp128-field-inline",

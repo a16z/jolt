@@ -15,7 +15,7 @@
 //! Pipeline: guest compile/decode, modular preprocessing and trace
 //! (`TracerBackend`), derived `ProverConfig`, `TraceBackend` witness, the
 //! compiled protocol's prove over the selected backend — `dory::prove`, or
-//! `akita::prove` on the packed build (artifact names gain an `_akita`
+//! `akita::prove` on the Akita build (artifact names gain an `_akita`
 //! suffix so the two protocols' runs never collide) — and a full
 //! `jolt_verifier::verify` as the correctness gate. PCS setup, prove, and
 //! verifier latency under explicit host-parallel and single-threaded
@@ -100,7 +100,7 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
 }
 
 /// The compiled protocol's artifact-name suffix: one compiled harness proves
-/// exactly one protocol, and the packed runs must never collide with the
+/// exactly one protocol, and the Akita runs must never collide with the
 /// homomorphic runs' trace names, `latest_` links, or CSV rows (the Dory
 /// names stay unsuffixed — they are the paths existing consumers key on).
 #[cfg(not(feature = "akita"))]
@@ -959,7 +959,7 @@ fn prove_workload(
         ),
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     );
-    // --- The measured window: the full packed prove (OneHotTrace assembly
+    // --- The measured window: the full Akita prove (OneHotTrace assembly
     // and native commit, all sumcheck stages, and the native grouped opening).
     // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
@@ -972,22 +972,22 @@ fn prove_workload(
         &witness,
         &public_io,
     )
-    .expect("modular packed prove");
+    .expect("modular Akita prove");
     let duration = now.elapsed();
 
     let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
     let akita_opening_unframed_size = proof
         .joint_opening_proof
         .unframed_payload_size()
-        .expect("packed opening component lengths must fit usize");
+        .expect("Akita opening component lengths must fit usize");
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-        .expect("serialize packed proof")
+        .expect("serialize Akita proof")
         .len();
     tracing::info!(
         akita_proof_body_size,
         akita_opening_unframed_size,
         jolt_proof_wire_size = proof_size,
-        "packed proof sizes"
+        "Akita proof sizes"
     );
 
     let verify = || {
@@ -997,7 +997,7 @@ fn prove_workload(
             &proof,
             None,
         )
-        .expect("modular packed proof verifies");
+        .expect("modular Akita proof verifies");
     };
     let parallel_threads = jolt_akita::host_parallel_verifier_threads();
     let verifier_parallel = jolt_akita::with_host_parallel_verifier_backend(|| {

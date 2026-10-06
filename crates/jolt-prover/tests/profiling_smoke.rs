@@ -6,7 +6,7 @@
 //!
 //! Scale 2^13 — fibonacci's minimum guest scale. Label coverage is
 //! scale-independent. Compiled with the `akita` feature the same run drives
-//! the packed prover and asserts its presence set (and the `_akita`-suffixed
+//! the Akita prover and asserts its presence set (and the `_akita`-suffixed
 //! artifact names).
 //!
 //! NOT wired into CI yet: the reference backend's naive RAM kernels retain
@@ -75,7 +75,7 @@ fn profile_run_emits_conformant_artifacts() {
     // Every always-present current taxonomy label fired, for the mode this
     // prover was compiled in — the `zk` feature swaps the uni-skip and
     // stage-8 opening seams for their committed siblings, and the `akita`
-    // feature swaps the commitment seams for the packed set. (The advice
+    // feature swaps the commitment seams for the Akita set. (The advice
     // seams are exempt: fibonacci exercises no advice.)
     let mode = if cfg!(feature = "akita") {
         taxonomy::ProverMode::Akita

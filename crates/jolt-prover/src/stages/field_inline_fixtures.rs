@@ -865,7 +865,7 @@ pub(crate) mod twins {
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,
         );
-        // The packed shape folds the four reduced Inc claims into the
+        // The Akita shape folds the four reduced Inc claims into the
         // fused-inc consumer stage slots (stage6a::verify's own wrapper).
         #[cfg(feature = "akita")]
         let base_input_values = LatticeReadRafAddressPhaseInputClaims {

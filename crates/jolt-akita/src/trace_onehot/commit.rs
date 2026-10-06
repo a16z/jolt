@@ -2,7 +2,7 @@ use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
 use akita_pcs::custom_source::CommitInnerPlan;
 use akita_types::{AkitaExpandedSetup, RingVec};
-use jolt_field::Fp128x8i32;
+use jolt_field::{Fp128x8i32, Zero};
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
@@ -54,7 +54,7 @@ pub(super) fn commit_columns<const D: usize>(
     let max_per_ring = (D / source.one_hot_k).max(1);
     drop(_prepare_span);
 
-    let rows = if segment_rings >= plan.num_positions_per_block {
+    let coefficients = if segment_rings >= plan.num_positions_per_block {
         let blocks_per_column = segment_rings / plan.num_positions_per_block;
         debug_assert_eq!(
             blocks_per_column * plan.num_positions_per_block,
@@ -246,23 +246,28 @@ pub(super) fn commit_columns<const D: usize>(
             n_a = plan.n_a,
         )
         .entered();
-        let mut rows = vec![vec![CyclotomicRing::zero(); plan.n_a]; num_blocks];
+        let block_width = plan.n_a * D;
+        let mut coefficients =
+            vec![vec![AkitaField::zero(); blocks_per_column * block_width]; num_columns];
         for (task, block_rows) in partials.into_iter().enumerate() {
             let trace_block = task / schedule.parts;
             let part = task % schedule.parts;
-            for column in 0..num_columns {
-                let dst = &mut rows[column * blocks_per_column + trace_block];
-                let src = &block_rows[column * plan.n_a..(column + 1) * plan.n_a];
-                if part == 0 {
-                    dst.copy_from_slice(src);
-                } else {
-                    for (dst, src) in dst.iter_mut().zip(src) {
+            for (column, coefficients) in coefficients.iter_mut().enumerate() {
+                let start = trace_block * block_width;
+                let dst = &mut coefficients[start..start + block_width];
+                let src = block_rows[column * plan.n_a..(column + 1) * plan.n_a]
+                    .iter()
+                    .flat_map(|ring| ring.coefficients());
+                for (dst, src) in dst.iter_mut().zip(src) {
+                    if part == 0 {
+                        *dst = *src;
+                    } else {
                         *dst += *src;
                     }
                 }
             }
         }
-        rows
+        coefficients
     } else {
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate_flat",
@@ -293,20 +298,17 @@ pub(super) fn commit_columns<const D: usize>(
         if budget != 0 {
             flush_wide(&mut wide, &mut reduced);
         }
-        reduced
-            .chunks_exact(plan.n_a)
-            .map(<[CyclotomicRing<AkitaField, D>]>::to_vec)
-            .collect()
+        let mut coefficients = (0..source.num_columns)
+            .map(|_| Vec::with_capacity(plan.n_a * D))
+            .collect::<Vec<_>>();
+        for (index, ring) in reduced.into_iter().enumerate() {
+            coefficients[index / plan.n_a].extend_from_slice(ring.coefficients());
+        }
+        coefficients
     };
 
-    rows.chunks_exact(num_blocks / source.num_columns)
-        .map(|blocks| {
-            let coefficients = blocks
-                .iter()
-                .flatten()
-                .flat_map(|row| row.coefficients().iter().copied())
-                .collect();
-            RingVec::from_coeffs_with_ring_dim(coefficients, D)
-        })
+    coefficients
+        .into_iter()
+        .map(|coefficients| RingVec::from_coeffs_with_ring_dim(coefficients, D))
         .collect()
 }

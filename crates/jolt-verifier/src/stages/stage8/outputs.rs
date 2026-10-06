@@ -34,8 +34,8 @@ pub enum Stage8Output<F: JoltField, C, H> {
     #[cfg(not(feature = "akita"))]
     Clear(Stage8ClearOutput<F, C>),
     /// The akita build's clear stage 8 verifies to completion inside
-    /// [`super::verify`] (one packed OneHotTrace opening plus auxiliary packed
-    /// openings), so no per-opening payload survives it.
+    /// [`super::verify`] (one native batch opening over trace columns and
+    /// auxiliary objects), so no per-opening payload survives it.
     #[cfg(feature = "akita")]
     Clear,
     Zk(Stage8ZkOutput<F, C, H>),

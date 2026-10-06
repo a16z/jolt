@@ -208,6 +208,18 @@ fn akita_native_batching_rejects_tampered_verifier_inputs() {
     )
     .expect("black-box proof should be produced");
 
+    let mut verifier_transcript = Blake2bTranscript::new(b"akita-bb-tamper");
+    <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        &statement,
+        &proof,
+        &mut verifier_transcript,
+    )
+    .expect("original ordered evaluations must verify");
+    assert_ne!(eval_a, eval_b);
+    let swapped_values = native_statement(commitment.clone(), &point, [eval_b, eval_a]);
+    assert_native_verify_rejects(&verifier_setup, swapped_values, &proof);
+
     let mut tampered_value = statement.clone();
     tampered_value[0].evaluation.value += f(1);
     assert_native_verify_rejects(&verifier_setup, tampered_value, &proof);

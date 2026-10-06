@@ -200,12 +200,12 @@ pub(super) fn opening_fold_columns<const D: usize>(
             active_columns = num_columns,
         )
         .entered();
-        let mut folded = vec![CyclotomicRing::zero(); num_blocks];
+        let mut folded = vec![vec![CyclotomicRing::zero(); blocks_per_column]; num_columns];
         for (task, trace_folded) in partials.into_iter().enumerate() {
             let trace_block = task / schedule.parts;
             let part = task % schedule.parts;
             for column in 0..num_columns {
-                let dst = &mut folded[column * blocks_per_column + trace_block];
+                let dst = &mut folded[column][trace_block];
                 if part == 0 {
                     *dst = trace_folded[column];
                 } else {
@@ -222,7 +222,7 @@ pub(super) fn opening_fold_columns<const D: usize>(
             weight_kind,
         )
         .entered();
-        let mut folded = vec![CyclotomicRing::zero(); num_blocks];
+        let mut folded = vec![vec![CyclotomicRing::zero(); 1]; source.num_columns];
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
                 let block = column;
@@ -231,13 +231,13 @@ pub(super) fn opening_fold_columns<const D: usize>(
                     OpeningWeights::Base {
                         position_weights, ..
                     } => {
-                        folded[block].coeffs[coefficient] += position_weights[position];
+                        folded[block][0].coeffs[coefficient] += position_weights[position];
                     }
                     OpeningWeights::Subfield {
                         position_weights, ..
                     } => {
                         position_weights[position]
-                            .shift_accumulate_into(&mut folded[block], coefficient);
+                            .shift_accumulate_into(&mut folded[block][0], coefficient);
                     }
                 }
             }
@@ -251,7 +251,7 @@ pub(super) fn opening_fold_columns<const D: usize>(
     )
     .entered();
     Ok(folded
-        .chunks_exact(num_blocks / source.num_columns)
+        .into_iter()
         .map(|folded| {
             let eval = match &weights {
                 OpeningWeights::Base {
@@ -271,10 +271,7 @@ pub(super) fn opening_fold_columns<const D: usize>(
                         acc + *value * *weight
                     }),
             };
-            OpeningFoldOutput {
-                eval,
-                folded: folded.to_vec(),
-            }
+            OpeningFoldOutput { eval, folded }
         })
         .collect())
 }

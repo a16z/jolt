@@ -456,7 +456,7 @@ where
             JoltCommittedPolynomial::BalancedIncDigit(_)
             | JoltCommittedPolynomial::BalancedIncCarry => {
                 return Err(VerifierError::FinalOpeningBatchFailed {
-                    reason: "packed increments have no homomorphic embedding".to_string(),
+                    reason: "Akita increments have no homomorphic embedding".to_string(),
                 });
             }
         };

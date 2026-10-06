@@ -65,7 +65,7 @@ pub fn preprocess_full_with_advice(
     })
 }
 
-/// The grouped packed setup: the canonical `OneHotTrace` object plus every
+/// The grouped Akita setup: the canonical `OneHotTrace` object plus every
 /// auxiliary object (advice, field increments, then direct program objects)
 /// opened in one batch. Building it provisions the grouped schedule rows that
 /// commit, prove, and verify later resolve without planning.

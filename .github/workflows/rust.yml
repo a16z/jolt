@@ -109,10 +109,10 @@ jobs:
       - name: cargo clippy -p jolt-verifier --features akita
         run: cargo clippy -p jolt-verifier --all-targets --features akita
       # The akita fixture-driven tamper suite compiles under akita,prover-fixtures
-      # (the real packed prover generates its fixtures). Lint it explicitly.
+      # (the real Akita prover generates its fixtures). Lint it explicitly.
       - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
-      # The modular prover's packed (Akita) path: lint alone and with
+      # The modular prover's Akita path: lint alone and with
       # prover-fixtures so the acceptance suites keep compiling.
       - name: cargo clippy -p jolt-prover --features akita
         run: cargo clippy -p jolt-prover --all-targets --features akita
@@ -132,7 +132,7 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features profiling
       - name: cargo clippy -p jolt-prover --features profiling,allocative
         run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
-      # The packed profile harness: the same bin/smoke test driving
+      # The Akita profile harness: the same bin/smoke test driving
       # akita::prove. Lint both flamegraph modes, like the Dory pair above.
       - name: cargo clippy -p jolt-prover --features akita,profiling
         run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
@@ -178,7 +178,7 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
       - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
         run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
-      # The packed field-inline combination: the full-width increment group rides the
+      # The Akita field-inline combination: the full-width increment group rides the
       # dense-group heterogeneous batch beside advice.
       - name: cargo clippy -p jolt-verifier --features field-inline,akita
         run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
@@ -409,7 +409,7 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
-      # The Akita arm of the guest x mode matrix plus the packed-prover
+      # The Akita arm of the guest x mode matrix plus the Akita prover
       # specifics: forced K=256, advice, committed-program, and live tampers.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
@@ -466,7 +466,7 @@ jobs:
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
-    name: Test jolt-prover (packed field-inline matrix and e2e)
+    name: Test jolt-prover (Akita field-inline matrix and e2e)
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v2
@@ -495,19 +495,19 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       # The same field_ops and muldiv matrix table runs over fp128.
-      # The full package also runs packed field-inline parity and tamper suites.
-      - name: Run packed field-inline matrix and specialized suites
+      # The full package also runs Akita field-inline parity and tamper suites.
+      - name: Run Akita field-inline matrix and specialized suites
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
       # The combined-feature verifier unit suite (no fixtures).
       - name: Run jolt-verifier with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features field-inline,akita
-      # The combined-feature kernels unit suite: the composed packed field-inline
+      # The combined-feature kernels unit suite: the composed Akita field-inline
       # kernels (akita parity tests with the field-inline geometry attached) run only
       # under this pair.
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
-      # The packed field-inline provisioning checks and verifier fixture suite (the modular
-      # packed prover's eq-MLE proof; legacy-generated akita fixtures pin the
+      # The Akita field-inline provisioning checks and verifier fixture suite (the modular
+      # Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
       # field-inline axis disabled).
       - name: Run jolt-akita with field-inline
         run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
@@ -584,7 +584,7 @@ jobs:
       # The fixture-driven akita suites: valid-fixture acceptance
       # (completeness/akita.rs) and the typed clear-claim, commitment-byte,
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
-      # by fixtures the real packed prover generates at test time.
+      # by fixtures the real Akita prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
 
@@ -895,7 +895,7 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
-      # The packed chain's two-limb field value encoding on the tracer side.
+      # The Akita chain's two-limb field value encoding on the tracer side.
       - name: Run tracer tests with field-inline,fp128-field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
 

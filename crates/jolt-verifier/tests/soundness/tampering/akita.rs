@@ -1,6 +1,6 @@
 //! Fixture-driven tamper suite for the akita path.
 //!
-//! Three layers, all over real packed-prover fixtures:
+//! Three layers, all over real Akita-prover fixtures:
 //!
 //! - An exhaustive typed sweep ([`every_clear_claim_wire_rejects_offset`]):
 //!   every field-element leaf of the clear claims is offset by one, one at a
@@ -89,7 +89,7 @@ fn one() -> AkitaField {
 fn clear_claims_mut(proof: &mut AkitaJoltProof) -> &mut ClearProofClaims<AkitaField> {
     match &mut proof.claims {
         JoltProofClaims::Clear(claims) => claims,
-        JoltProofClaims::Zk { .. } => panic!("packed akita fixtures always carry clear claims"),
+        JoltProofClaims::Zk { .. } => panic!("Akita akita fixtures always carry clear claims"),
     }
 }
 

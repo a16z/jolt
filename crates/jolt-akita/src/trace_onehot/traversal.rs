@@ -325,9 +325,10 @@ where
     let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
         AkitaError::InvalidInput("coefficient-packing output length overflow".to_string())
     })?;
-    let mut coordinates = vec![AkitaField::zero(); output_len * num_columns];
+    let mut coordinates = vec![vec![AkitaField::zero(); output_len]; num_columns];
     for (packed_index, coefficient) in packed.into_iter().enumerate() {
-        let block = packed_index / subring_dimension;
+        let column = packed_index / packed_len;
+        let block = (packed_index % packed_len) / subring_dimension;
         let subring = packed_index % subring_dimension;
         let extension_coordinates = coefficient.ext_coords();
         if extension_coordinates.len() != geometry.extension_degree() {
@@ -338,13 +339,10 @@ where
         for (extension_coordinate, &coordinate) in extension_coordinates.iter().enumerate() {
             let local_index =
                 geometry.partial_base_field_coordinate_index(extension_coordinate, subring)?;
-            coordinates[block * partial_width + local_index] = coordinate;
+            coordinates[column][block * partial_width + local_index] = coordinate;
         }
     }
-    Ok(coordinates
-        .chunks_exact(output_len)
-        .map(<[AkitaField]>::to_vec)
-        .collect())
+    Ok(coordinates)
 }
 
 pub(super) fn flush_wide<const D: usize>(
