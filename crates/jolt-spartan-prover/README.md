@@ -8,7 +8,7 @@ and shared claim calculations. The prover crate supplies sumcheck kernels.
 HyperKZG and Dory are exercised as independent PCS implementations.
 
 This is a standalone library contract for applications supplying sparse R1CS.
-It is not yet an Akita verifier circuit or an EVM verifier. Verification
+It is not an Akita verifier circuit or an EVM verifier. Verification
 traverses the matrices; the baseline has no succinct matrix argument, no
 structured matrix evaluator, and no ZK masking.
 
@@ -16,8 +16,9 @@ structured matrix evaluator, and no ZK masking.
 
 Construct `SpartanKey::new(matrices, public_input_count, policy_id)` from an
 authenticated application relation. Columns are `[1, public inputs, private
-witness]`. The constructor checks all row counts and column bounds, nonempty
-constraint/private-witness sets, partition arithmetic, and padding overflow.
+witness]`. The constructor checks all row counts and column bounds
+(`ConstraintMatrices::validate`), nonempty constraint/private-witness sets,
+partition arithmetic, and padding overflow.
 Invalid input returns `SpartanError` in release builds as well.
 
 The key owns its matrices immutably and is not deserializable. Applications may
@@ -25,7 +26,7 @@ deserialize `ConstraintMatrices`, then invoke the checked constructor. Shape
 validation is not authentication: applications must select the intended
 matrices, public partition, transcript, and PCS setup independently of the
 proof. `policy_id` is the authenticated identifier of that application policy.
-Each proof also absorbs the key's relation digest: Blake2b-256 over the
+`SpartanKey::begin` absorbs the key's relation digest: Blake2b-256 over the
 dimensions, public partition, and exact matrix encoding, computed once by
 `SpartanKey::new` from the matrices it owns. No prover-supplied digest is read.
 
@@ -61,19 +62,18 @@ column carries, Dory verifier circuit, and shared-domain packing are excluded.
 The existing sumcheck engine owns coefficient compression, round labels,
 degree checks, transcript challenges, and binding order. Shared key methods
 own all protocol-level transcript operations and public-input subtraction.
-`SpartanProof` contains only the two compressed clear sumchecks, commitment,
-outer evaluations, witness evaluation, and PCS proof. There is no alternate
-proof mode or unchecked degree supplied by the prover.
+Sumcheck degrees (`OUTER_DEGREE`, `INNER_DEGREE`) and round counts come from
+the verifier and key; the proof supplies no mode or degree.
 
 ## Evidence and limits
 
 Permanent tests use the hand-computed relation `y=x^3+5` with `x=3,y=32`,
 including its unaligned row/witness counts, plus a one-row relation with no
-public input. Both PCS backends accept; transcript states match after proving
-and verification. Tests reject wrong public inputs, unsatisfied witnesses,
+public input, and a relation whose row and witness padding differ. Both PCS
+backends accept; transcript states match after proving and verification. Tests reject wrong public inputs, unsatisfied witnesses,
 malformed key shapes, altered claims/commitments/openings, changed matrix/policy
 encoding, excess degrees, and missing rounds. An independently calculated
-projection `[11,9,16]` checks the new sparse projection helper.
+projection `[11,9,16]` checks `ConstraintMatrices::project_column_range`.
 
 The consumer security assumption is a fixed witness extraction before `tau`
 and PCS openings consistent with it. For HyperKZG, see its README's distinction

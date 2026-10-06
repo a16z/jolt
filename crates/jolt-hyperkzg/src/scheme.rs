@@ -10,9 +10,8 @@ use crate::{
 
 /// Clear binary HyperKZG with high-to-low multilinear coordinates.
 ///
-/// The ordinary PCS API is the standalone external contract. The scheme binds
-/// the entire opening statement itself; callers may additionally bind it to
-/// their surrounding protocol. No hiding or homomorphic-batching API is exposed.
+/// The scheme binds the entire opening statement itself; callers may
+/// additionally bind it to their surrounding protocol.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HyperKZGScheme;
 

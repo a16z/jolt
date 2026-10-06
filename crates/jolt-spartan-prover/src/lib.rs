@@ -19,9 +19,8 @@ use rounds::{InnerRounds, OuterRounds};
 
 /// Proves `A z * B z = C z` for `z = [1, public_inputs, witness]`.
 ///
-/// Both setup and key policy are supplied by the application. This is a clear
-/// argument; it reveals sumcheck coefficients and evaluations. The caller must
-/// not interpret it as a zero-knowledge wrapper.
+/// This is a clear argument; it reveals sumcheck coefficients and evaluations.
+/// The caller must not interpret it as a zero-knowledge wrapper.
 #[expect(
     clippy::type_complexity,
     reason = "the PCS determines field, commitment, and opening proof types"

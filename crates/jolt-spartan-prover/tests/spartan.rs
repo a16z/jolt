@@ -251,7 +251,6 @@ fn exact_round_counts_and_degrees_are_enforced() {
 
 #[test]
 fn unequal_row_and_witness_padding_accepts() {
-    // Three rows, one private value: x*x=9, x*1=3, 1*1=1.
     let one = Fr::one();
     let m = ConstraintMatrices::new(
         3,

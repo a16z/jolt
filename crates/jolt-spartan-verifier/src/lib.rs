@@ -25,7 +25,6 @@ pub use key::SpartanKey;
 pub const OUTER_DEGREE: usize = 3;
 pub const INNER_DEGREE: usize = 2;
 
-/// Wire proof: only clear sumcheck rounds and one ordinary PCS opening.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "F: Serialize, C: Serialize, O: Serialize",

@@ -1,9 +1,9 @@
 # Clear binary HyperKZG
 
 This crate implements ordinary BN254 multilinear commitment/opening through
-`jolt_openings::CommitmentScheme`. The standalone public API is its first
-external contract; the planned generic Spartan prover/verifier will consume
-it. There is no hiding, committed-round protocol, or batch/homomorphic API.
+`jolt_openings::CommitmentScheme`; `jolt-spartan-prover` and
+`jolt-spartan-verifier` consume it. There is no hiding, committed-round
+protocol, or batch/homomorphic API.
 
 ## Statement and setup contract
 
@@ -25,6 +25,11 @@ point decoding, including subgroup validation. Applications own bounded
 container decoding and rejection of trailing serialized container bytes.
 Identity proof points are allowed because zero polynomials are legitimate;
 identity setup powers are rejected.
+
+The opening hint is the commitment returned by `commit`; `open` binds it into
+the statement and recomputes the commitment only when no hint is supplied. A
+hint that is not the polynomial's commitment yields a proof the verifier
+rejects.
 
 Imported capacity is an honest-prover/API bound, not an adversarial degree
 bound: **all** public powers under the same trapdoor count, not only the
@@ -58,19 +63,20 @@ The clear binary construction is adapted from Jolt donor
 | Suffix binary fold; last fold equals claimed value | `HyperKZGScheme::open_table`, `verify_opening` | Independent multilinear evaluation oracle at arities 1–6; false claims rejected |
 | Fold relation `2r P_next(r²) = r(1-x)(P(r)+P(-r)) + x(P(r)-P(-r))` | `verify_opening` | All transmitted evaluation/fold components individually tampered |
 | Univariate synthetic division and KZG batching | `kzg.rs` | Explicit quotient coefficients; wrong statement, witness, and key rejection |
-| Exact shape and nonzero fold challenge | `check_arity`, `verify_opening` | Malformed lengths and out-of-range arities; challenge rejection implemented |
+| Exact shape and nonzero fold challenge | `check_arity`, `verify_opening` | Malformed lengths and out-of-range arities; zero challenge rejected by prover and verifier |
 | Commitment/query/claim fixed before opening challenges | `append_statement` | Statement/key-policy tampering and final transcript agreement |
 | Global-degree extraction and complete FS reduction | Consumer security contract above | **Not established by these tests** |
 
-The scheme owns a versioned prefix binding setup policy, imported capacity,
-G1/G2/beta-G2, commitment, query length/coordinates, and claimed value. The subsequent order preserves the donor: fold commitments,
-challenge `r`, evaluations at `[r,-r,r²]`, polynomial batching challenge,
-three witnesses, pairing batching challenge. Zero `r` rejects without retries.
+`HyperKZGVerifierSetup::append_statement` absorbs a versioned prefix binding
+setup policy, imported capacity, G1/G2/beta-G2, commitment, query
+length/coordinates, and claimed value. Then come fold commitments, challenge
+`r`, evaluations at `[r,-r,r²]`, polynomial batching challenge, three
+witnesses, pairing batching challenge. Zero `r` rejects without retries.
 Distinct point checks are unnecessary for separate single-point KZG openings.
-This prefix intentionally changes the historical proof format.
 
 Proving is not constant-time. This clear protocol reveals its evaluation
 messages; callers needing ZK must use a separately specified construction.
+No speed, EVM gas, or zero-knowledge claim is made.
 
 ## Validation
 
@@ -79,9 +85,3 @@ cargo nextest run -p jolt-hyperkzg --cargo-quiet
 cargo clippy -p jolt-hyperkzg --all-targets -- -D warnings
 cargo fmt -p jolt-hyperkzg --check
 ```
-
-No speed, EVM gas, or zero-knowledge claim is made. The implementation uses
-the existing group MSM and pairing backend. The opening hint is the
-commitment returned by `commit`; `open` binds it into the statement and
-recomputes the commitment only when no hint is supplied. A hint that is not
-the polynomial's commitment yields a proof the verifier rejects.

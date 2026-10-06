@@ -92,7 +92,7 @@ impl<F: JoltField> SpartanKey<F> {
         })
     }
 
-    /// Original unpadded matrices, available immutably to the prover.
+    /// Original unpadded matrices.
     pub fn matrices(&self) -> &ConstraintMatrices<F> {
         &self.matrices
     }
@@ -121,7 +121,6 @@ impl<F: JoltField> SpartanKey<F> {
         self.padded_witness.trailing_zeros() as usize
     }
 
-    /// Checks the public vector length against this key's fixed partition.
     pub fn validate_public_inputs(&self, public_inputs: &[F]) -> Result<(), SpartanError<F>> {
         if public_inputs.len() != self.public_columns - 1 {
             return Err(SpartanError::PublicInputs);

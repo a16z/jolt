@@ -263,7 +263,6 @@ impl<F: Field> ConstraintMatrices<F> {
     }
 
     /// Projects a contiguous column range against row and matrix weights.
-    /// Visits every sparse term once per matrix, without per-column rescans.
     pub fn project_column_range(
         &self,
         row_weights: &[F],
