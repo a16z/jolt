@@ -34,10 +34,10 @@ use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
-// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the jolt-claims RV64-only
+// The COMPOSED R1CS shapes (feature-aware): identical to the jolt-claims RV64-only
 // constants without field-inline, the field-inline-extended row/column composition
 // under `field-inline` — the shapes the composed verifier checks.
-use jolt_r1cs::constraints::jolt::{
+use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
@@ -215,7 +215,7 @@ impl<F: JoltField> SpartanOuterKernel<F> {
     /// uni-skip round's challenge is drawn: a plain naive member over the
     /// joint `(cycle ‖ stream)` domain, `index = (t << 1) | s`. The
     /// per-stream `Az`/`Bz` linear forms are single-sourced from the same
-    /// jolt-r1cs functions the verifier's coefficient build uses; each is
+    /// jolt-claims functions the verifier's coefficient build uses; each is
     /// linear in the stream variable, so every derived leaf materializes as
     /// one multilinear table.
     fn into_remainder(

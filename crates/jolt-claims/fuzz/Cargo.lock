@@ -416,6 +416,7 @@ dependencies = [
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-riscv",
  "jolt-utils",
  "serde",
@@ -429,6 +430,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "jolt-claims-fuzz"
+version = "0.0.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-field",
+ "jolt-r1cs",
+ "libfuzzer-sys",
 ]
 
 [[package]]
@@ -507,24 +518,9 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
- "jolt-claims",
  "jolt-field",
- "jolt-poly",
- "jolt-riscv",
- "num-traits",
  "serde",
  "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "jolt-r1cs-fuzz"
-version = "0.0.0"
-dependencies = [
- "jolt-claims",
- "jolt-field",
- "jolt-r1cs",
- "libfuzzer-sys",
 ]
 
 [[package]]
