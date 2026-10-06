@@ -24,7 +24,7 @@
 //! alternating order, and the fraction is the median per-round ratio of
 //! their rates.
 //!
-//! The field kernels are checked against the CPU in `benches/fp128.rs`; the
+//! The field kernels are checked against the CPU in `benches/field.rs`; the
 //! kernels only this benchmark runs are checked here before they are timed.
 
 #[cfg(target_os = "macos")]
@@ -40,10 +40,14 @@ mod metal {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
+    use jolt_field::solinas::Prime128OffsetA7F7;
     use jolt_field::Zero;
     use jolt_metal::runtime::{Batch, Binding, Device, DeviceBuffer, Grid};
 
-    use super::support::{dispatch, elements, library, pipeline, threadgroup, words, F};
+    use super::support::{dispatch, elements, library, pipeline, threadgroup, words};
+
+    /// The field whose kernels the limits bound.
+    type F = Prime128OffsetA7F7;
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");
@@ -225,7 +229,7 @@ mod metal {
 
     pub fn main() {
         let device = Device::system_default().expect("a supported Metal device");
-        let library = library(
+        let library = library::<F>(
             &device,
             &[
                 ("field_ops.metal", FIELD_OPS),
@@ -246,7 +250,7 @@ mod metal {
         println!();
 
         let len = 1usize << FRACTION_LOG;
-        let (a, b) = (elements(1, len), elements(2, len));
+        let (a, b) = (elements::<F>(1, len), elements::<F>(2, len));
         let a_dev = DeviceBuffer::from_slice(&device, &a).expect("upload");
         let b_dev = DeviceBuffer::from_slice(&device, &b).expect("upload");
         let field_out = DeviceBuffer::<F>::zeroed(&device, len).expect("allocate");
@@ -259,7 +263,7 @@ mod metal {
 
         // The kernels in limits.metal exist only here: check them.
         let memory_grid = |kind: Memory, len: usize| {
-            let pipeline = pipeline(&library, kind.kernel());
+            let pipeline = pipeline::<F>(&library, kind.kernel());
             Grid::linear(kind.threads(len), threadgroup(pipeline))
         };
         for kind in [Memory::Copy, Memory::Read] {
@@ -269,7 +273,7 @@ mod metal {
             let _ = unsafe {
                 dispatch(
                     &device,
-                    pipeline(&library, kind.kernel()),
+                    pipeline::<F>(&library, kind.kernel()),
                     &bindings,
                     grid,
                     1,
@@ -293,7 +297,7 @@ mod metal {
                 kind.kernel()
             );
         }
-        let tile_pipeline = pipeline(&library, THREADGROUP_LOAD);
+        let tile_pipeline = pipeline::<F>(&library, THREADGROUP_LOAD);
         assert!(tile_pipeline.max_total_threads_per_threadgroup() >= TILE_WORDS);
         let tile_grid = Grid::linear(THREADS, TILE_WORDS);
         let tile_bindings = [Binding::buffer(&source_dev), Binding::buffer(&tile_out)];
@@ -320,7 +324,7 @@ mod metal {
             (&device, &a_dev, &b_dev, &field_out, &partials);
         let (source_dev, copy_dev, tile_out) = (&source_dev, &copy_dev, &tile_out);
         let multiply = {
-            let pipeline = pipeline(&library, MUL_CHAIN4);
+            let pipeline = pipeline::<F>(&library, MUL_CHAIN4);
             let grid = Grid::linear(THREADS, threadgroup(pipeline));
             Case {
                 work: (THREADS * 4) as f64 * f64::from(CHAIN_ROUNDS),
@@ -337,7 +341,7 @@ mod metal {
             }
         };
         let fmadd = {
-            let pipeline = pipeline(&library, ACCUM_FMADD);
+            let pipeline = pipeline::<F>(&library, ACCUM_FMADD);
             let grid = Grid::linear(THREADS, threadgroup(pipeline));
             Case {
                 work: (THREADS * FMADD_ROUNDS * 4) as f64,
@@ -355,7 +359,10 @@ mod metal {
         let memory = |kind: Memory, log: u32| {
             let len = 1usize << log;
             let repeats = (MIN_SAMPLE_ELEMENTS / len).max(1);
-            let (pipeline, grid) = (pipeline(&library, kind.kernel()), memory_grid(kind, len));
+            let (pipeline, grid) = (
+                pipeline::<F>(&library, kind.kernel()),
+                memory_grid(kind, len),
+            );
             Case {
                 work: (kind.bytes(len) * repeats) as f64,
                 run: Box::new(move || {
@@ -415,7 +422,7 @@ mod metal {
             "| round trip (µs, wall) | empty batch | {} |",
             empty.row(1e6, 0)
         );
-        let reduce_pipeline = pipeline(&library, ACCUM_INNER_PRODUCT);
+        let reduce_pipeline = pipeline::<F>(&library, ACCUM_INNER_PRODUCT);
         let n = ROUND_TRIP_ELEMENTS as u32;
         let mut sum_dev = DeviceBuffer::<F>::zeroed(device, 1).expect("allocate");
         let expected = a[..ROUND_TRIP_ELEMENTS]
@@ -478,7 +485,7 @@ mod metal {
             memory(Memory::Read, FRACTION_LOG),
         ];
         let stream_mul = {
-            let pipeline = pipeline(&library, MUL);
+            let pipeline = pipeline::<F>(&library, MUL);
             let grid = Grid::linear(len, threadgroup(pipeline));
             Case {
                 work: (3 * ELEMENT_BYTES * len) as f64,
@@ -494,7 +501,7 @@ mod metal {
             }
         };
         let inner_product = |kernel: &str| {
-            let pipeline = pipeline(&library, kernel);
+            let pipeline = pipeline::<F>(&library, kernel);
             let grid = Grid::linear(
                 INNER_PRODUCT_GROUPS * INNER_PRODUCT_GROUP,
                 INNER_PRODUCT_GROUP,
