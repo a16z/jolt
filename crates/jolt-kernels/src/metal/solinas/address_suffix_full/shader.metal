@@ -364,6 +364,7 @@ kernel void solinas_address_suffix_full_tile(
     threadgroup atomic_uint* sums [[threadgroup(0)]],
     uint job_index [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
     uint threads [[threads_per_threadgroup]])
 {
     for (uint counter = tid; counter < ADDRESS_SUFFIX_FULL_FIELDS * ADDRESS_SUFFIX_FULL_WORDS; counter += threads) {
@@ -373,23 +374,41 @@ kernel void solinas_address_suffix_full_tile(
 
     AddressSuffixFullJob job = jobs[job_index];
     uint suffix_count = suffix_counts[job.table];
+    SolinasLazySum chunk_zero[ADDRESS_SUFFIX_FULL_MAX_SUFFIXES];
+    for (uint suffix = 0; suffix < ADDRESS_SUFFIX_FULL_MAX_SUFFIXES; suffix++) {
+        chunk_zero[suffix] = solinas_lazy_zero();
+    }
     for (uint row = job.start + tid; row < job.end; row += threads) {
         AddressSuffixFullLookup lookup = lookups[row];
         AddressSuffixFullBits bits = address_suffix_full_bits(lookup, params.suffix_len);
         uint chunk = address_suffix_full_lookup_byte(lookup, params.suffix_len);
         SolinasFp128 weight = weights[row];
-        for (uint suffix = 0; suffix < suffix_count; suffix++) {
+        // A constant trip count keeps chunk_zero indexed statically (in registers).
+        for (uint suffix = 0; suffix < ADDRESS_SUFFIX_FULL_MAX_SUFFIXES; suffix++) {
+            if (suffix >= suffix_count) {
+                break;
+            }
             uchar kind = suffix_kinds[job.table * ADDRESS_SUFFIX_FULL_MAX_SUFFIXES + suffix];
             ulong scalar = address_suffix_full_evaluate(kind, bits);
             if (scalar != 0) {
                 SolinasFp128 contribution = scalar == 1
                     ? weight
                     : solinas_mul_wide(weight, address_suffix_full_field_from_u64(scalar));
-                address_suffix_full_atomic_add(
-                    sums,
-                    suffix * ADDRESS_SUFFIX_FULL_BINS + chunk,
-                    contribution);
+                if (chunk == 0) {
+                    solinas_lazy_add(chunk_zero[suffix], contribution);
+                } else {
+                    address_suffix_full_atomic_add(
+                        sums,
+                        suffix * ADDRESS_SUFFIX_FULL_BINS + chunk,
+                        contribution);
+                }
             }
+        }
+    }
+    for (uint suffix = 0; suffix < ADDRESS_SUFFIX_FULL_MAX_SUFFIXES; suffix++) {
+        if (suffix < suffix_count) {
+            solinas_deferred_atomic_flush_simd(
+                sums, suffix * ADDRESS_SUFFIX_FULL_BINS, chunk_zero[suffix], lane);
         }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);

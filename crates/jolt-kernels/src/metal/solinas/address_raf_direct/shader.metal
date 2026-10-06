@@ -58,6 +58,7 @@ kernel void solinas_address_raf_direct_tile(
     threadgroup atomic_uint* sums [[threadgroup(0)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
     uint threads [[threads_per_threadgroup]])
 {
     uint counters = ADDRESS_RAF_DIRECT_FIELDS * ADDRESS_RAF_DIRECT_WORDS;
@@ -66,6 +67,12 @@ kernel void solinas_address_raf_direct_tile(
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
+    // Chunk 0 dominates (padding rows, the high chunks of 64-bit lookups);
+    // its six fields are summed per thread instead of contended atomics.
+    SolinasLazySum chunk_zero[2 * ADDRESS_RAF_DIRECT_LANES];
+    for (uint slot = 0; slot < 2 * ADDRESS_RAF_DIRECT_LANES; slot++) {
+        chunk_zero[slot] = solinas_lazy_zero();
+    }
     uint start = group * params.rows_per_threadgroup;
     uint end = min(start + params.rows_per_threadgroup, params.rows);
     for (uint row = start + tid; row < end; row += threads) {
@@ -97,39 +104,53 @@ kernel void solinas_address_raf_direct_tile(
         }
 
         uint first_field = key * ADDRESS_RAF_DIRECT_LANES;
-        solinas_deferred_atomic_add_5(sums, first_field, weight);
+        bool local = (key & (ADDRESS_RAF_DIRECT_BINS - 1u)) == 0u;
+        uint first_slot = raf_flag * ADDRESS_RAF_DIRECT_LANES;
+        SolinasFp128 contributions[ADDRESS_RAF_DIRECT_LANES];
+        bool present[ADDRESS_RAF_DIRECT_LANES];
+        contributions[0] = weight;
+        present[0] = true;
         if (key < ADDRESS_RAF_DIRECT_BINS) {
             ulong left = address_direct_compact_even_bits(suffix_lo >> 1)
                 | (address_direct_compact_even_bits(suffix_hi >> 1) << 32);
             ulong right = address_direct_compact_even_bits(suffix_lo)
                 | (address_direct_compact_even_bits(suffix_hi) << 32);
-            if (left != 0) {
-                solinas_deferred_atomic_add_5(
-                    sums,
-                    first_field + 1,
-                    solinas_mul_wide(weight, address_direct_field_from_u128(left, 0)));
-            }
-            if (right != 0) {
-                solinas_deferred_atomic_add_5(
-                    sums,
-                    first_field + 2,
-                    solinas_mul_wide(weight, address_direct_field_from_u128(right, 0)));
-            }
+            present[1] = left != 0;
+            present[2] = right != 0;
+            contributions[1] = present[1]
+                ? solinas_mul_wide(weight, address_direct_field_from_u128(left, 0))
+                : solinas_zero();
+            contributions[2] = present[2]
+                ? solinas_mul_wide(weight, address_direct_field_from_u128(right, 0))
+                : solinas_zero();
         } else {
-            if (suffix_lo != 0 || suffix_hi != 0) {
-                solinas_deferred_atomic_add_5(
-                    sums,
-                    first_field + 1,
-                    solinas_mul_wide(
-                        weight,
-                        address_direct_field_from_u128(suffix_lo, suffix_hi)));
-            }
+            present[1] = suffix_lo != 0 || suffix_hi != 0;
+            contributions[1] = present[1]
+                ? solinas_mul_wide(weight, address_direct_field_from_u128(suffix_lo, suffix_hi))
+                : solinas_zero();
             uint upper_bits = params.suffix_len > 64 ? params.suffix_len - 64 : 0;
-            bool upper_all_ones = upper_bits == 0
-                || suffix_hi == ((1ul << upper_bits) - 1ul);
-            if (upper_all_ones) {
-                solinas_deferred_atomic_add_5(sums, first_field + 2, weight);
+            present[2] = upper_bits == 0 || suffix_hi == ((1ul << upper_bits) - 1ul);
+            contributions[2] = weight;
+        }
+        for (uint output_lane = 0; output_lane < ADDRESS_RAF_DIRECT_LANES; output_lane++) {
+            if (!present[output_lane]) {
+                continue;
             }
+            if (local) {
+                solinas_lazy_add(chunk_zero[first_slot + output_lane], contributions[output_lane]);
+            } else {
+                solinas_deferred_atomic_add_5(
+                    sums, first_field + output_lane, contributions[output_lane]);
+            }
+        }
+    }
+    for (uint flag = 0; flag < 2; flag++) {
+        for (uint output_lane = 0; output_lane < ADDRESS_RAF_DIRECT_LANES; output_lane++) {
+            solinas_deferred_atomic_flush_simd(
+                sums,
+                flag * ADDRESS_RAF_DIRECT_BINS * ADDRESS_RAF_DIRECT_LANES + output_lane,
+                chunk_zero[flag * ADDRESS_RAF_DIRECT_LANES + output_lane],
+                lane);
         }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
