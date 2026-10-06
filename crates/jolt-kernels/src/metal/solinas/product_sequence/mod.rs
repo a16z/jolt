@@ -1,7 +1,10 @@
-use std::{mem::size_of, slice};
+use std::{ffi::c_void, mem::size_of, slice};
 
 use jolt_field::Prime128OffsetA7F7 as AkitaField;
-use metal::{objc::rc::autoreleasepool, Buffer, ComputePipelineState, MTLResourceOptions, MTLSize};
+use metal::{
+    objc::rc::autoreleasepool, Buffer, ComputePipelineState, FunctionConstantValues, MTLDataType,
+    MTLResourceOptions, MTLSize,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -10,39 +13,39 @@ use super::{
     PipelineLimits, SolinasMetal,
 };
 
-pub const PRODUCT5_FACTORS: usize = 5;
-
-const PRODUCT5_SIMD_WIDTH: usize = 32;
+const PRODUCT_SEQUENCE_SIMD_WIDTH: usize = 32;
 const MESSAGE_DEFAULT_SIMDGROUPS: usize = 4;
 const TRANSITION_DEFAULT_SIMDGROUPS: usize = 2;
-const MESSAGE_PIPELINE: &str = "solinas_product5_message";
-const TRANSITION_PIPELINE: &str = "solinas_product5_fused_transition";
-const REDUCE_PIPELINE: &str = "solinas_product5_reduce";
+const MESSAGE_PIPELINE: &str = "solinas_product_sequence_message";
+const TRANSITION_PIPELINE: &str = "solinas_product_sequence_fused_transition";
+const REDUCE_PIPELINE: &str = "solinas_product_sequence_reduce";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Product5SequenceConfig {
+pub struct ProductSequenceConfig {
     pub message_threads_per_threadgroup: Option<usize>,
     pub transition_threads_per_threadgroup: Option<usize>,
 }
 
-impl Default for Product5SequenceConfig {
+impl Default for ProductSequenceConfig {
     fn default() -> Self {
         Self {
-            message_threads_per_threadgroup: Some(PRODUCT5_SIMD_WIDTH * MESSAGE_DEFAULT_SIMDGROUPS),
+            message_threads_per_threadgroup: Some(
+                PRODUCT_SEQUENCE_SIMD_WIDTH * MESSAGE_DEFAULT_SIMDGROUPS,
+            ),
             transition_threads_per_threadgroup: Some(
-                PRODUCT5_SIMD_WIDTH * TRANSITION_DEFAULT_SIMDGROUPS,
+                PRODUCT_SEQUENCE_SIMD_WIDTH * TRANSITION_DEFAULT_SIMDGROUPS,
             ),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Product5Mode {
+enum ProductSequenceMode {
     Message,
     FusedTransition,
 }
 
-impl Product5Mode {
+impl ProductSequenceMode {
     const fn minimum_elements(self) -> usize {
         match self {
             Self::Message => 2,
@@ -60,7 +63,7 @@ impl Product5Mode {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct Product5Params {
+struct ProductSequenceParams {
     source_elements: u32,
     e_in_length: u32,
     e_out_length: u32,
@@ -74,7 +77,7 @@ fn buffer_bytes(elements: usize) -> Result<u64, MetalError> {
     u64::try_from(bytes).map_err(|_| MetalError::InputTooLong(elements))
 }
 
-struct Product5SequenceBuffers {
+struct ProductSequenceBuffers {
     tables_a: Buffer,
     tables_b: Buffer,
     e_in: Buffer,
@@ -83,14 +86,14 @@ struct Product5SequenceBuffers {
     partial_b: Buffer,
 }
 
-/// Five factor tables retained in Metal buffers across a sumcheck tail.
-pub struct Product5Sequence {
+/// Factor tables retained in Metal buffers across a sumcheck tail.
+pub struct ProductSequence {
     context: SolinasMetal,
     message_pipeline: ComputePipelineState,
     transition_pipeline: ComputePipelineState,
     reduction_pipeline: ComputePipelineState,
     reduction_limits: PipelineLimits,
-    buffers: Product5SequenceBuffers,
+    buffers: ProductSequenceBuffers,
     message_threads_per_threadgroup: usize,
     transition_threads_per_threadgroup: usize,
     initial_elements: usize,
@@ -98,29 +101,31 @@ pub struct Product5Sequence {
     e_in_capacity: usize,
     e_out_capacity: usize,
     source_in_a: bool,
+    factors: usize,
 }
 
 impl SolinasMetal {
-    /// Allocates the buffers used by a complete five-factor sumcheck tail.
-    pub fn prepare_product5_sequence(
+    /// Allocates the buffers used by a complete product sumcheck tail.
+    pub fn prepare_product_sequence(
         &self,
         tables: &[AkitaField],
         elements_per_table: usize,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-        config: Product5SequenceConfig,
-    ) -> Result<Product5Sequence, MetalError> {
+        config: ProductSequenceConfig,
+    ) -> Result<ProductSequence, MetalError> {
         if elements_per_table < 2 || !elements_per_table.is_power_of_two() {
-            return Err(MetalError::InvalidProduct5TableLength {
+            return Err(MetalError::InvalidProductSequenceTableLength {
                 minimum: 2,
                 got: elements_per_table,
             });
         }
-        let table_elements = PRODUCT5_FACTORS
+        let factors = tables.len() / elements_per_table;
+        let table_elements = factors
             .checked_mul(elements_per_table)
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
         if tables.len() != table_elements {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::ProductSequenceStorageLength {
                 expected: table_elements,
                 got: tables.len(),
             });
@@ -130,44 +135,51 @@ impl SolinasMetal {
             .checked_mul(e_out.len())
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
         if e_in.is_empty() || e_out.is_empty() || covered != elements_per_table / 2 {
-            return Err(MetalError::Product5WeightShape {
+            return Err(MetalError::ProductSequenceWeightShape {
                 expected: elements_per_table / 2,
                 covered,
             });
         }
 
         let sequence =
-            self.prepare_empty_product5_sequence(elements_per_table, e_in, e_out, config)?;
+            self.prepare_empty_product_sequence(elements_per_table, factors, e_in, e_out, config)?;
         write_akita_fields(&sequence.buffers.tables_a, table_elements, tables)?;
         Ok(sequence)
     }
 
-    pub(crate) fn prepare_product5_sequence_from_fn(
+    pub(crate) fn prepare_product_sequence_from_fn(
         &self,
         elements_per_table: usize,
+        factors: usize,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-        config: Product5SequenceConfig,
-        value: impl Fn(usize) -> AkitaField + Send + Sync,
-    ) -> Result<Product5Sequence, MetalError> {
+        config: ProductSequenceConfig,
+        value: impl Fn(usize, usize) -> AkitaField + Send + Sync,
+    ) -> Result<ProductSequence, MetalError> {
         let sequence =
-            self.prepare_empty_product5_sequence(elements_per_table, e_in, e_out, config)?;
-        let table_elements = PRODUCT5_FACTORS
+            self.prepare_empty_product_sequence(elements_per_table, factors, e_in, e_out, config)?;
+        let table_elements = factors
             .checked_mul(elements_per_table)
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
-        write_akita_fields_from_fn(&sequence.buffers.tables_a, table_elements, value);
+        write_akita_fields_from_fn(
+            &sequence.buffers.tables_a,
+            table_elements,
+            elements_per_table,
+            value,
+        );
         Ok(sequence)
     }
 
-    fn prepare_empty_product5_sequence(
+    fn prepare_empty_product_sequence(
         &self,
         elements_per_table: usize,
+        factors: usize,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-        config: Product5SequenceConfig,
-    ) -> Result<Product5Sequence, MetalError> {
+        config: ProductSequenceConfig,
+    ) -> Result<ProductSequence, MetalError> {
         if elements_per_table < 2 || !elements_per_table.is_power_of_two() {
-            return Err(MetalError::InvalidProduct5TableLength {
+            return Err(MetalError::InvalidProductSequenceTableLength {
                 minimum: 2,
                 got: elements_per_table,
             });
@@ -177,14 +189,15 @@ impl SolinasMetal {
             .checked_mul(e_out.len())
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
         if e_in.is_empty() || e_out.is_empty() || covered != elements_per_table / 2 {
-            return Err(MetalError::Product5WeightShape {
+            return Err(MetalError::ProductSequenceWeightShape {
                 expected: elements_per_table / 2,
                 covered,
             });
         }
 
-        let sequence = self.prepare_product5_sequence_storage(
+        let sequence = self.prepare_product_sequence_storage(
             elements_per_table,
+            factors,
             e_in.len(),
             e_out.len(),
             config,
@@ -194,35 +207,39 @@ impl SolinasMetal {
         Ok(sequence)
     }
 
-    pub(super) fn prepare_product5_sequence_storage(
+    pub(super) fn prepare_product_sequence_storage(
         &self,
         elements_per_table: usize,
+        factors: usize,
         e_in_capacity: usize,
         e_out_capacity: usize,
-        config: Product5SequenceConfig,
-    ) -> Result<Product5Sequence, MetalError> {
+        config: ProductSequenceConfig,
+    ) -> Result<ProductSequence, MetalError> {
+        if !matches!(factors, 5 | 9) {
+            return Err(MetalError::UnsupportedProductFactorCount { got: factors });
+        }
         if elements_per_table < 2 || !elements_per_table.is_power_of_two() {
-            return Err(MetalError::InvalidProduct5TableLength {
+            return Err(MetalError::InvalidProductSequenceTableLength {
                 minimum: 2,
                 got: elements_per_table,
             });
         }
-        let table_elements = PRODUCT5_FACTORS
+        let table_elements = factors
             .checked_mul(elements_per_table)
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
         let covered = e_in_capacity
             .checked_mul(e_out_capacity)
             .ok_or(MetalError::InputTooLong(elements_per_table))?;
         if e_in_capacity == 0 || e_out_capacity == 0 || covered != elements_per_table / 2 {
-            return Err(MetalError::Product5WeightShape {
+            return Err(MetalError::ProductSequenceWeightShape {
                 expected: elements_per_table / 2,
                 covered,
             });
         }
 
-        let message_pipeline = self.compile_named_pipeline(MESSAGE_PIPELINE)?;
-        let transition_pipeline = self.compile_named_pipeline(TRANSITION_PIPELINE)?;
-        let reduction_pipeline = self.compile_named_pipeline(REDUCE_PIPELINE)?;
+        let message_pipeline = self.compile_product_pipeline(MESSAGE_PIPELINE, factors)?;
+        let transition_pipeline = self.compile_product_pipeline(TRANSITION_PIPELINE, factors)?;
+        let reduction_pipeline = self.compile_product_pipeline(REDUCE_PIPELINE, factors)?;
         let message_limits = Self::limits(&message_pipeline);
         let transition_limits = Self::limits(&transition_pipeline);
         let reduction_limits = Self::limits(&reduction_pipeline);
@@ -231,10 +248,10 @@ impl SolinasMetal {
             (TRANSITION_PIPELINE, transition_limits),
             (REDUCE_PIPELINE, reduction_limits),
         ] {
-            if limits.thread_execution_width != PRODUCT5_SIMD_WIDTH {
-                return Err(MetalError::UnsupportedProduct5ExecutionWidth {
+            if limits.thread_execution_width != PRODUCT_SEQUENCE_SIMD_WIDTH {
+                return Err(MetalError::UnsupportedProductSequenceExecutionWidth {
                     pipeline,
-                    expected: PRODUCT5_SIMD_WIDTH,
+                    expected: PRODUCT_SEQUENCE_SIMD_WIDTH,
                     got: limits.thread_execution_width,
                 });
             }
@@ -248,23 +265,23 @@ impl SolinasMetal {
             transition_limits,
         )?;
 
-        let tables_a = self.new_product5_buffer(table_elements)?;
-        let tables_b = self.new_product5_buffer(table_elements / 2)?;
-        let e_in_buffer = self.new_product5_buffer(e_in_capacity)?;
-        let e_out_buffer = self.new_product5_buffer(e_out_capacity)?;
-        let partial_elements = PRODUCT5_FACTORS
+        let tables_a = self.new_product_sequence_buffer(table_elements)?;
+        let tables_b = self.new_product_sequence_buffer(table_elements / 2)?;
+        let e_in_buffer = self.new_product_sequence_buffer(e_in_capacity)?;
+        let e_out_buffer = self.new_product_sequence_buffer(e_out_capacity)?;
+        let partial_elements = factors
             .checked_mul(e_out_capacity)
             .ok_or(MetalError::InputTooLong(e_out_capacity))?;
-        let partial_a = self.new_product5_buffer(partial_elements)?;
-        let partial_b = self.new_product5_buffer(partial_elements)?;
+        let partial_a = self.new_product_sequence_buffer(partial_elements)?;
+        let partial_b = self.new_product_sequence_buffer(partial_elements)?;
 
-        Ok(Product5Sequence {
+        Ok(ProductSequence {
             context: self.clone(),
             message_pipeline,
             transition_pipeline,
             reduction_pipeline,
             reduction_limits,
-            buffers: Product5SequenceBuffers {
+            buffers: ProductSequenceBuffers {
                 tables_a,
                 tables_b,
                 e_in: e_in_buffer,
@@ -279,10 +296,43 @@ impl SolinasMetal {
             e_in_capacity,
             e_out_capacity,
             source_in_a: true,
+            factors,
         })
     }
 
-    fn new_product5_buffer(&self, elements: usize) -> Result<Buffer, MetalError> {
+    pub(super) fn compile_product_pipeline(
+        &self,
+        name: &'static str,
+        factors: usize,
+    ) -> Result<ComputePipelineState, MetalError> {
+        let factors = u32::try_from(factors).map_err(|_| MetalError::InputTooLong(factors))?;
+        let key = (name, Some(factors));
+        let mut cache = self
+            .pipeline_cache
+            .lock()
+            .map_err(|_| MetalError::PipelineCachePoisoned)?;
+        if let Some(pipeline) = cache.get(&key) {
+            return Ok(pipeline.clone());
+        }
+        let constants = FunctionConstantValues::new();
+        constants.set_constant_value_at_index(
+            std::ptr::from_ref(&factors).cast::<c_void>(),
+            MTLDataType::UInt,
+            24,
+        );
+        let function = self
+            .library
+            .get_function(name, Some(constants))
+            .map_err(|message| MetalError::FunctionLookup { name, message })?;
+        let pipeline = self
+            .device
+            .new_compute_pipeline_state_with_function(&function)
+            .map_err(|message| MetalError::PipelineCompilation { name, message })?;
+        let _ = cache.insert(key, pipeline.clone());
+        Ok(pipeline)
+    }
+
+    fn new_product_sequence_buffer(&self, elements: usize) -> Result<Buffer, MetalError> {
         let bytes = buffer_bytes(elements)?;
         self.validate_buffer_length(bytes)?;
         Ok(self
@@ -291,16 +341,16 @@ impl SolinasMetal {
     }
 }
 
-impl Product5Sequence {
+impl ProductSequence {
     pub(super) fn initial_table_buffer(&self) -> &Buffer {
         &self.buffers.tables_a
     }
 
     /// Restores the initial tables without reallocating device buffers.
     pub fn reset(&mut self, tables: &[AkitaField]) -> Result<(), MetalError> {
-        let expected = PRODUCT5_FACTORS * self.initial_elements;
+        let expected = self.factors * self.initial_elements;
         if tables.len() != expected {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::ProductSequenceStorageLength {
                 expected,
                 got: tables.len(),
             });
@@ -316,8 +366,8 @@ impl Product5Sequence {
         &mut self,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-    ) -> Result<[AkitaField; PRODUCT5_FACTORS], MetalError> {
-        self.execute_round(Product5Mode::Message, None, e_in, e_out)
+    ) -> Result<Vec<AkitaField>, MetalError> {
+        self.execute_round(ProductSequenceMode::Message, None, e_in, e_out)
     }
 
     /// Binds every resident table and computes the following round message.
@@ -326,15 +376,20 @@ impl Product5Sequence {
         challenge: AkitaField,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-    ) -> Result<[AkitaField; PRODUCT5_FACTORS], MetalError> {
-        self.execute_round(Product5Mode::FusedTransition, Some(challenge), e_in, e_out)
+    ) -> Result<Vec<AkitaField>, MetalError> {
+        self.execute_round(
+            ProductSequenceMode::FusedTransition,
+            Some(challenge),
+            e_in,
+            e_out,
+        )
     }
 
     /// Copies the current resident factor tables into an existing host slice.
     pub fn read_current_tables(&self, output: &mut [AkitaField]) -> Result<(), MetalError> {
-        let elements = PRODUCT5_FACTORS * self.current_elements;
+        let elements = self.factors * self.current_elements;
         if output.len() != elements {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::ProductSequenceStorageLength {
                 expected: elements,
                 got: output.len(),
             });
@@ -344,7 +399,7 @@ impl Product5Sequence {
         // `Fp128` values and all writes finish before this method returns.
         let values = unsafe { slice::from_raw_parts(source.contents().cast::<Fp128>(), elements) };
         self.context
-            .validate_inputs("product5 resident tables", values)?;
+            .validate_inputs("product_sequence resident tables", values)?;
         for (output, value) in output.iter_mut().zip(values) {
             *output = value.into_jolt_field();
         }
@@ -353,24 +408,30 @@ impl Product5Sequence {
 
     pub(crate) fn read_current_factor_tables(
         &self,
-        output: &mut [Vec<AkitaField>; PRODUCT5_FACTORS],
+        output: &mut [Vec<AkitaField>],
     ) -> Result<(), MetalError> {
+        if output.len() != self.factors {
+            return Err(MetalError::ProductSequenceStorageLength {
+                expected: self.factors,
+                got: output.len(),
+            });
+        }
         if output
             .iter()
             .any(|table| table.len() < self.current_elements)
         {
-            return Err(MetalError::Product5StorageLength {
+            return Err(MetalError::ProductSequenceStorageLength {
                 expected: self.current_elements,
                 got: output.iter().map(Vec::len).min().unwrap_or(0),
             });
         }
         let source = self.source_buffer();
-        let elements = PRODUCT5_FACTORS * self.current_elements;
+        let elements = self.factors * self.current_elements;
         // SAFETY: the source buffer was allocated for at least `elements`
         // values and the preceding command completed before returning.
         let values = unsafe { slice::from_raw_parts(source.contents().cast::<Fp128>(), elements) };
         self.context
-            .validate_inputs("product5 resident tables", values)?;
+            .validate_inputs("product_sequence resident tables", values)?;
         for (factor, table) in output.iter_mut().enumerate() {
             let source =
                 &values[factor * self.current_elements..(factor + 1) * self.current_elements];
@@ -394,14 +455,14 @@ impl Product5Sequence {
 
     fn execute_round(
         &mut self,
-        mode: Product5Mode,
+        mode: ProductSequenceMode,
         challenge: Option<AkitaField>,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-    ) -> Result<[AkitaField; PRODUCT5_FACTORS], MetalError> {
+    ) -> Result<Vec<AkitaField>, MetalError> {
         let minimum = mode.minimum_elements();
         if self.current_elements < minimum {
-            return Err(MetalError::InvalidProduct5TableLength {
+            return Err(MetalError::InvalidProductSequenceTableLength {
                 minimum,
                 got: self.current_elements,
             });
@@ -412,14 +473,14 @@ impl Product5Sequence {
             .ok_or(MetalError::InputTooLong(self.current_elements))?;
         let expected = mode.message_pairs(self.current_elements);
         if e_in.is_empty() || e_out.is_empty() || covered != expected {
-            return Err(MetalError::Product5WeightShape { expected, covered });
+            return Err(MetalError::ProductSequenceWeightShape { expected, covered });
         }
         write_akita_fields(&self.buffers.e_in, self.e_in_capacity, e_in)?;
         write_akita_fields(&self.buffers.e_out, self.e_out_capacity, e_out)?;
 
         let source_elements = u32::try_from(self.current_elements)
             .map_err(|_| MetalError::InputTooLong(self.current_elements))?;
-        let params = Product5Params {
+        let params = ProductSequenceParams {
             source_elements,
             e_in_length: u32::try_from(e_in.len())
                 .map_err(|_| MetalError::InputTooLong(e_in.len()))?,
@@ -428,11 +489,11 @@ impl Product5Sequence {
             _reserved: 0,
         };
         let (pipeline, threads_per_threadgroup) = match mode {
-            Product5Mode::Message => (
+            ProductSequenceMode::Message => (
                 self.message_pipeline.clone(),
                 self.message_threads_per_threadgroup,
             ),
-            Product5Mode::FusedTransition => (
+            ProductSequenceMode::FusedTransition => (
                 self.transition_pipeline.clone(),
                 self.transition_threads_per_threadgroup,
             ),
@@ -445,19 +506,19 @@ impl Product5Sequence {
             encoder.set_compute_pipeline_state(&pipeline);
             encoder.set_buffer(0, Some(self.source_buffer()), 0);
             match mode {
-                Product5Mode::Message => {
+                ProductSequenceMode::Message => {
                     encoder.set_buffer(1, Some(&self.buffers.e_in), 0);
                     encoder.set_buffer(2, Some(&self.buffers.e_out), 0);
                     encoder.set_buffer(3, Some(&self.buffers.partial_a), 0);
                     set_inline_bytes(encoder, 4, &params);
                 }
-                Product5Mode::FusedTransition => {
+                ProductSequenceMode::FusedTransition => {
                     encoder.set_buffer(1, Some(self.destination_buffer()), 0);
                     encoder.set_buffer(2, Some(&self.buffers.e_in), 0);
                     encoder.set_buffer(3, Some(&self.buffers.e_out), 0);
                     encoder.set_buffer(4, Some(&self.buffers.partial_a), 0);
                     let challenge = Fp128::from_jolt_field(&challenge.ok_or(
-                        MetalError::InvalidProduct5TableLength {
+                        MetalError::InvalidProductSequenceTableLength {
                             minimum: 4,
                             got: self.current_elements,
                         },
@@ -466,8 +527,8 @@ impl Product5Sequence {
                     set_inline_bytes(encoder, 6, &params);
                 }
             }
-            let dynamic_memory = PRODUCT5_FACTORS
-                * (threads_per_threadgroup / PRODUCT5_SIMD_WIDTH)
+            let dynamic_memory = self.factors
+                * (threads_per_threadgroup / PRODUCT_SEQUENCE_SIMD_WIDTH)
                 * size_of::<Fp128>();
             encoder.set_threadgroup_memory_length(0, dynamic_memory as u64);
             encoder.dispatch_thread_groups(
@@ -489,7 +550,7 @@ impl Product5Sequence {
                 &self.buffers.partial_a,
                 &self.buffers.partial_b,
                 e_out.len(),
-                PRODUCT5_FACTORS,
+                self.factors,
                 self.reduction_limits.thread_execution_width,
             )?;
             encoder.end_encoding();
@@ -501,15 +562,15 @@ impl Product5Sequence {
             } else {
                 &self.buffers.partial_b
             };
-            // SAFETY: the main dispatch and reductions wrote five values and
+            // SAFETY: the main dispatch and reductions wrote one value per factor and
             // the command buffer completed successfully.
             let values = unsafe {
-                slice::from_raw_parts(final_buffer.contents().cast::<Fp128>(), PRODUCT5_FACTORS)
+                slice::from_raw_parts(final_buffer.contents().cast::<Fp128>(), self.factors)
             };
             self.context
-                .validate_inputs("product5 sequence message", values)?;
-            let message = std::array::from_fn(|index| values[index].into_jolt_field());
-            if mode == Product5Mode::FusedTransition {
+                .validate_inputs("product_sequence sequence message", values)?;
+            let message = values.iter().map(|value| value.into_jolt_field()).collect();
+            if mode == ProductSequenceMode::FusedTransition {
                 self.current_elements /= 2;
                 self.source_in_a = !self.source_in_a;
             }
@@ -540,7 +601,7 @@ fn write_akita_fields(
     values: &[AkitaField],
 ) -> Result<(), MetalError> {
     if values.len() > capacity {
-        return Err(MetalError::Product5StorageLength {
+        return Err(MetalError::ProductSequenceStorageLength {
             expected: capacity,
             got: values.len(),
         });
@@ -557,18 +618,31 @@ fn write_akita_fields(
 fn write_akita_fields_from_fn(
     buffer: &Buffer,
     elements: usize,
-    value: impl Fn(usize) -> AkitaField + Send + Sync,
+    elements_per_table: usize,
+    value: impl Fn(usize, usize) -> AkitaField + Send + Sync,
 ) {
     // SAFETY: the buffer has `elements * size_of::<Fp128>()` bytes and is not
     // visible to a command buffer while the initial table is populated.
     let output = unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<Fp128>(), elements) };
     #[cfg(feature = "parallel")]
     output
-        .par_iter_mut()
+        .par_chunks_mut(elements_per_table)
         .enumerate()
-        .for_each(|(index, output)| *output = Fp128::from_jolt_field(&value(index)));
+        .for_each(|(factor, table)| {
+            table
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(position, output)| {
+                    *output = Fp128::from_jolt_field(&value(factor, position));
+                });
+        });
     #[cfg(not(feature = "parallel"))]
-    for (index, output) in output.iter_mut().enumerate() {
-        *output = Fp128::from_jolt_field(&value(index));
+    for (factor, table) in output.chunks_mut(elements_per_table).enumerate() {
+        for (position, output) in table.iter_mut().enumerate() {
+            *output = Fp128::from_jolt_field(&value(factor, position));
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

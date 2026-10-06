@@ -56,8 +56,8 @@ mod instruction_input;
 mod instruction_ra_sequence;
 mod instruction_read_raf;
 mod outer_remainder;
-mod product5;
 mod product_remainder;
+mod product_sequence;
 mod product_uniskip;
 #[doc(hidden)]
 pub mod ram_cycle_family;
@@ -84,6 +84,7 @@ pub use runtime::{DeviceInfo, PipelineLimits, SolinasMetal};
 
 pub use address_raf::{AddressRafScanRow, AddressRafSums, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES};
 pub(crate) use address_sequence::ResidentLookupIndexPlane;
+pub use address_sequence::ADDRESS_CYCLE_FACTORS;
 pub use address_sequence::{AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums};
 pub use address_suffix_full::{AddressSuffixFullSums, ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES};
 pub use booleanity::BooleanityRows;
@@ -146,7 +147,6 @@ pub use outer_remainder::{
     OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
     OuterRemainderStorageInitialization, OuterRemainderStorageStats, OUTER_REMAINDER_OPENINGS,
 };
-pub use product5::{Product5Sequence, Product5SequenceConfig, PRODUCT5_FACTORS};
 #[cfg(feature = "test-utils")]
 pub use product_remainder::reference as product_remainder_reference;
 pub(crate) use product_remainder::PendingProductRemainderInitialMessage;
@@ -156,6 +156,7 @@ pub use product_remainder::{
     ProductRemainderStorageLayout, PRODUCT_REMAINDER_MESSAGE_COLUMNS, PRODUCT_REMAINDER_OPENINGS,
     PRODUCT_REMAINDER_SIMD_WIDTH,
 };
+pub use product_sequence::{ProductSequence, ProductSequenceConfig};
 #[cfg(feature = "test-utils")]
 pub use product_uniskip::reference as product_uniskip_reference;
 pub use product_uniskip::{
@@ -631,19 +632,21 @@ pub enum MetalError {
     )]
     BytecodeCycleRowThreadgroups { required: usize, maximum: usize },
     #[error(
-        "five-factor kernels require a power-of-two table length of at least {minimum}, got {got}"
+        "product kernels require a power-of-two table length of at least {minimum}, got {got}"
     )]
-    InvalidProduct5TableLength { minimum: usize, got: usize },
-    #[error("five-factor table storage has length {got}, expected {expected}")]
-    Product5StorageLength { expected: usize, got: usize },
+    InvalidProductSequenceTableLength { minimum: usize, got: usize },
+    #[error("product sequence supports five or nine factors, got {got}")]
+    UnsupportedProductFactorCount { got: usize },
+    #[error("product table storage has length {got}, expected {expected}")]
+    ProductSequenceStorageLength { expected: usize, got: usize },
     #[error(
-        "split equality tables cover {covered} pairs, but the five-factor kernel needs {expected}"
+        "split equality tables cover {covered} pairs, but the product kernel needs {expected}"
     )]
-    Product5WeightShape { expected: usize, covered: usize },
+    ProductSequenceWeightShape { expected: usize, covered: usize },
     #[error(
-        "five-factor pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
+        "product pipeline `{pipeline}` requires SIMD width {expected}, but the device reports {got}"
     )]
-    UnsupportedProduct5ExecutionWidth {
+    UnsupportedProductSequenceExecutionWidth {
         pipeline: &'static str,
         expected: usize,
         got: usize,

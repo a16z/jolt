@@ -41,7 +41,7 @@ use std::sync::Arc;
 use crate::metal::solinas::{
     AddressPhaseSequence, AddressPhaseSequenceConfig, AddressPhaseSums, AddressRafScanRow,
     BooleanityRow, BooleanityRows, Fp128, InstructionReadRafStage1Lease, MetalError,
-    Product5Sequence, Product5SequenceConfig, SolinasMetal, PRODUCT5_FACTORS,
+    ProductSequence, ProductSequenceConfig, SolinasMetal, ADDRESS_CYCLE_FACTORS,
 };
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
@@ -1636,9 +1636,9 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
                 reason: "virtual RA chunk width must be a multiple of the phase width",
             });
         }
-        if ra_count + 1 != PRODUCT5_FACTORS {
+        if ra_count + 1 != ADDRESS_CYCLE_FACTORS {
             return Err(KernelError::Unsupported {
-                reason: "resident instruction read-RAF requires the four-RA Product5 geometry",
+                reason: "resident instruction read-RAF requires the four-RA address geometry",
             });
         }
         if log_t >= 32 {
@@ -1873,15 +1873,15 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
     }
 
     pub(crate) fn metal_resident_cycle_available(&self) -> bool {
-        self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
+        self.dimensions.num_virtual_ra_polys() + 1 == ADDRESS_CYCLE_FACTORS
     }
 
     pub(crate) fn metal_offload_resident_bind(
         &mut self,
         challenge: AkitaField,
         sequence: AddressPhaseSequence,
-        config: Product5SequenceConfig,
-    ) -> Result<(Product5Sequence, [AkitaField; PRODUCT5_FACTORS]), SumcheckError<AkitaField>> {
+        config: ProductSequenceConfig,
+    ) -> Result<(ProductSequence, Vec<AkitaField>), SumcheckError<AkitaField>> {
         let pending = {
             let cycle = self
                 .cycle
@@ -1919,8 +1919,13 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
         Ok(result)
     }
 
+    pub(crate) fn metal_factor_count(&self) -> usize {
+        self.dimensions.num_virtual_ra_polys() + 1
+    }
+
     pub(crate) fn metal_handoff_available(&self, cutoff: usize) -> bool {
-        self.dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS
+        (self.dimensions.num_virtual_ra_polys() + 1 == ADDRESS_CYCLE_FACTORS
+            || (self.dimensions.num_virtual_ra_polys() == 8 && self.dimensions.log_t() == 21))
             && !self.claim_columns.is_stage1()
             && self.claim_columns.len() / 2 > cutoff
             && self
@@ -1933,8 +1938,8 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
         &mut self,
         challenge: AkitaField,
         context: &SolinasMetal,
-        config: Product5SequenceConfig,
-    ) -> Result<Product5Sequence, SumcheckError<AkitaField>> {
+        config: ProductSequenceConfig,
+    ) -> Result<ProductSequence, SumcheckError<AkitaField>> {
         if self.claim_columns.is_stage1() {
             return Err(metal_state_error(
                 "resident Stage-1 state cannot use the CPU pending-table handoff",
@@ -1965,23 +1970,28 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
             .ok_or_else(|| metal_state_error("cycle claim columns are absent"))?;
         let elements = claim_columns.len() / 2;
         let sequence = context
-            .prepare_product5_sequence_from_fn(elements, &e_in, &e_out, config, |index| {
-                let factor = index / elements;
-                let position = index % elements;
-                let source = 2 * position;
-                let (lo, hi) = if factor == 0 {
-                    (
-                        Self::pending_combined_base(&pending, claim_columns, source),
-                        Self::pending_combined_base(&pending, claim_columns, source + 1),
-                    )
-                } else {
-                    (
-                        self.pending_ra_base(factor - 1, source),
-                        self.pending_ra_base(factor - 1, source + 1),
-                    )
-                };
-                lo + challenge * (hi - lo)
-            })
+            .prepare_product_sequence_from_fn(
+                elements,
+                self.metal_factor_count(),
+                &e_in,
+                &e_out,
+                config,
+                |factor, position| {
+                    let source = 2 * position;
+                    let (lo, hi) = if factor == 0 {
+                        (
+                            Self::pending_combined_base(&pending, claim_columns, source),
+                            Self::pending_combined_base(&pending, claim_columns, source + 1),
+                        )
+                    } else {
+                        (
+                            self.pending_ra_base(factor - 1, source),
+                            self.pending_ra_base(factor - 1, source + 1),
+                        )
+                    };
+                    lo + challenge * (hi - lo)
+                },
+            )
             .map_err(metal_sumcheck_error)?;
 
         self.rows = Arc::new(Vec::new());
@@ -2022,7 +2032,7 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
 
     pub(crate) fn metal_cycle_message(
         &self,
-        q_evals: &[AkitaField; PRODUCT5_FACTORS],
+        q_evals: &[AkitaField],
         previous_claim: AkitaField,
     ) -> Result<UnivariatePoly<AkitaField>, SumcheckError<AkitaField>> {
         let cycle = self
@@ -2039,8 +2049,13 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
 
     pub(crate) fn metal_restore_dense(
         &mut self,
-        tables: [Vec<AkitaField>; PRODUCT5_FACTORS],
+        tables: Vec<Vec<AkitaField>>,
     ) -> Result<(), SumcheckError<AkitaField>> {
+        if tables.len() != self.metal_factor_count() {
+            return Err(metal_state_error(
+                "device readback factor count is incorrect",
+            ));
+        }
         let cycle = self
             .cycle
             .as_mut()
@@ -2050,15 +2065,13 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
                 "device readback requires offloaded cycle tables",
             ));
         }
-        let [combined_val, ra_0, ra_1, ra_2, ra_3] = tables;
+        let mut tables = tables.into_iter();
+        let combined_val = tables
+            .next()
+            .ok_or_else(|| metal_state_error("missing combined value table"))?;
         cycle.tables = CycleTables::Dense {
             combined_val: Polynomial::new(combined_val),
-            ra: vec![
-                Polynomial::new(ra_0),
-                Polynomial::new(ra_1),
-                Polynomial::new(ra_2),
-                Polynomial::new(ra_3),
-            ],
+            ra: tables.map(Polynomial::new).collect(),
         };
         Ok(())
     }

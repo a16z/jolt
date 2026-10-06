@@ -12,7 +12,7 @@ const INSTRUCTION_CLAIM_REDUCTION_SOURCE: &str = super::instruction_claim_reduct
 const ADDRESS_RAF_DIRECT_SOURCE: &str = include_str!("address_raf_direct/shader.metal");
 const ADDRESS_SUFFIX_FULL_SOURCE: &str = include_str!("address_suffix_full/shader.metal");
 const ADDRESS_CYCLE_SOURCE: &str = include_str!("address_sequence/shader.metal");
-const PRODUCT5_SOURCE: &str = include_str!("product5/shader.metal");
+const PRODUCT_SEQUENCE_SOURCE: &str = include_str!("product_sequence/shader.metal");
 const PRODUCT_REMAINDER_SOURCE: &str = super::product_remainder::SOURCE;
 const PRODUCT_INSTRUCTION_SERVICE_SOURCE: &str =
     super::instruction_claim_reduction_successor::SOURCE;
@@ -92,7 +92,7 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     ),
     SourceFragment::new("address_raf_direct", ADDRESS_RAF_DIRECT_SOURCE),
     SourceFragment::new("address_suffix_full", ADDRESS_SUFFIX_FULL_SOURCE),
-    SourceFragment::new("product5", PRODUCT5_SOURCE),
+    SourceFragment::new("product_sequence", PRODUCT_SEQUENCE_SOURCE),
     SourceFragment::new("product_remainder", PRODUCT_REMAINDER_SOURCE),
     SourceFragment::new(
         "product_instruction_round_service",

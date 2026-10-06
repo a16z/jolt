@@ -1,3 +1,5 @@
+#define ADDRESS_CYCLE_FACTORS 5u
+
 #define ADDRESS_CYCLE_PHASE_BINS 256u
 #define ADDRESS_CYCLE_RA_FACTORS 4u
 
@@ -77,16 +79,16 @@ kernel void solinas_address_cycle_message(
     uint simdgroup [[simdgroup_index_in_threadgroup]],
     uint threads_per_threadgroup [[threads_per_threadgroup]])
 {
-    SolinasFp128 lanes[PRODUCT5_FACTORS];
-    for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
+    SolinasFp128 lanes[ADDRESS_CYCLE_FACTORS];
+    for (uint sample = 0; sample < ADDRESS_CYCLE_FACTORS; sample++) {
         lanes[sample] = solinas_zero();
     }
 
     for (uint x_in = x_in_thread; x_in < params.e_in_length;
          x_in += threads_per_threadgroup) {
         uint pair = x_out * params.e_in_length + x_in;
-        SolinasFp128 lo[PRODUCT5_FACTORS];
-        SolinasFp128 hi[PRODUCT5_FACTORS];
+        SolinasFp128 lo[ADDRESS_CYCLE_FACTORS];
+        SolinasFp128 hi[ADDRESS_CYCLE_FACTORS];
         address_cycle_factors(
             2u * pair,
             packed_rows,
@@ -108,9 +110,9 @@ kernel void solinas_address_cycle_message(
             raf_identity,
             hi);
 
-        SolinasFp128 evals[PRODUCT5_FACTORS];
-        SolinasFp128 steps[PRODUCT5_FACTORS];
-        for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        SolinasFp128 evals[ADDRESS_CYCLE_FACTORS];
+        SolinasFp128 steps[ADDRESS_CYCLE_FACTORS];
+        for (uint factor = 0; factor < ADDRESS_CYCLE_FACTORS; factor++) {
             if (factor == 0) {
                 lo[factor] = solinas_mul_wide(e_in[x_in], lo[factor]);
                 hi[factor] = solinas_mul_wide(e_in[x_in], hi[factor]);
@@ -118,20 +120,20 @@ kernel void solinas_address_cycle_message(
             evals[factor] = hi[factor];
             steps[factor] = solinas_sub(hi[factor], lo[factor]);
         }
-        for (uint sample = 0; sample < PRODUCT5_FACTORS - 1; sample++) {
-            lanes[sample] = solinas_add(lanes[sample], product5_product(evals));
-            if (sample + 1 < PRODUCT5_FACTORS - 1) {
-                for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        for (uint sample = 0; sample < ADDRESS_CYCLE_FACTORS - 1; sample++) {
+            lanes[sample] = solinas_add(lanes[sample], product_sequence_product(evals));
+            if (sample + 1 < ADDRESS_CYCLE_FACTORS - 1) {
+                for (uint factor = 0; factor < ADDRESS_CYCLE_FACTORS; factor++) {
                     evals[factor] = solinas_add(evals[factor], steps[factor]);
                 }
             }
         }
-        lanes[PRODUCT5_FACTORS - 1] = solinas_add(
-            lanes[PRODUCT5_FACTORS - 1],
-            product5_product(steps));
+        lanes[ADDRESS_CYCLE_FACTORS - 1] = solinas_add(
+            lanes[ADDRESS_CYCLE_FACTORS - 1],
+            product_sequence_product(steps));
     }
 
-    product5_finish_block(
+    product_sequence_finish_block(
         lanes,
         e_out[x_out],
         partials,
@@ -160,8 +162,8 @@ kernel void solinas_address_cycle_bind(
     if (position >= bound_elements) {
         return;
     }
-    SolinasFp128 lo[PRODUCT5_FACTORS];
-    SolinasFp128 hi[PRODUCT5_FACTORS];
+    SolinasFp128 lo[ADDRESS_CYCLE_FACTORS];
+    SolinasFp128 hi[ADDRESS_CYCLE_FACTORS];
     address_cycle_factors(
         2u * position,
         packed_rows,
@@ -182,7 +184,7 @@ kernel void solinas_address_cycle_bind(
         raf_interleaved,
         raf_identity,
         hi);
-    for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+    for (uint factor = 0; factor < ADDRESS_CYCLE_FACTORS; factor++) {
         bound[factor * bound_elements + position] = solinas_add(
             lo[factor],
             solinas_mul_wide(challenge, solinas_sub(hi[factor], lo[factor])));
@@ -210,8 +212,8 @@ kernel void solinas_address_cycle_fused_transition(
     uint simdgroup [[simdgroup_index_in_threadgroup]],
     uint threads_per_threadgroup [[threads_per_threadgroup]])
 {
-    SolinasFp128 lanes[PRODUCT5_FACTORS];
-    for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
+    SolinasFp128 lanes[ADDRESS_CYCLE_FACTORS];
+    for (uint sample = 0; sample < ADDRESS_CYCLE_FACTORS; sample++) {
         lanes[sample] = solinas_zero();
     }
     uint bound_elements = params.rows / 2u;
@@ -219,7 +221,7 @@ kernel void solinas_address_cycle_fused_transition(
     for (uint x_in = x_in_thread; x_in < params.e_in_length;
          x_in += threads_per_threadgroup) {
         uint pair = x_out * params.e_in_length + x_in;
-        SolinasFp128 rows[4][PRODUCT5_FACTORS];
+        SolinasFp128 rows[4][ADDRESS_CYCLE_FACTORS];
         for (uint row = 0; row < 4; row++) {
             address_cycle_factors(
                 4u * pair + row,
@@ -233,9 +235,9 @@ kernel void solinas_address_cycle_fused_transition(
                 rows[row]);
         }
 
-        SolinasFp128 evals[PRODUCT5_FACTORS];
-        SolinasFp128 steps[PRODUCT5_FACTORS];
-        for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        SolinasFp128 evals[ADDRESS_CYCLE_FACTORS];
+        SolinasFp128 steps[ADDRESS_CYCLE_FACTORS];
+        for (uint factor = 0; factor < ADDRESS_CYCLE_FACTORS; factor++) {
             SolinasFp128 bound_0 = solinas_add(
                 rows[0][factor],
                 solinas_mul_wide(
@@ -256,20 +258,20 @@ kernel void solinas_address_cycle_fused_transition(
             evals[factor] = bound_1;
             steps[factor] = solinas_sub(bound_1, bound_0);
         }
-        for (uint sample = 0; sample < PRODUCT5_FACTORS - 1; sample++) {
-            lanes[sample] = solinas_add(lanes[sample], product5_product(evals));
-            if (sample + 1 < PRODUCT5_FACTORS - 1) {
-                for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        for (uint sample = 0; sample < ADDRESS_CYCLE_FACTORS - 1; sample++) {
+            lanes[sample] = solinas_add(lanes[sample], product_sequence_product(evals));
+            if (sample + 1 < ADDRESS_CYCLE_FACTORS - 1) {
+                for (uint factor = 0; factor < ADDRESS_CYCLE_FACTORS; factor++) {
                     evals[factor] = solinas_add(evals[factor], steps[factor]);
                 }
             }
         }
-        lanes[PRODUCT5_FACTORS - 1] = solinas_add(
-            lanes[PRODUCT5_FACTORS - 1],
-            product5_product(steps));
+        lanes[ADDRESS_CYCLE_FACTORS - 1] = solinas_add(
+            lanes[ADDRESS_CYCLE_FACTORS - 1],
+            product_sequence_product(steps));
     }
 
-    product5_finish_block(
+    product_sequence_finish_block(
         lanes,
         e_out[x_out],
         partials,

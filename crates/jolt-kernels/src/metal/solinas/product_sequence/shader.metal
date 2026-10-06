@@ -1,27 +1,27 @@
-#define PRODUCT5_FACTORS 5u
+constant uint PRODUCT_FACTORS [[function_constant(24)]];
 
-struct Product5Params {
+struct ProductSequenceParams {
     uint source_elements;
     uint e_in_length;
     uint e_out_length;
     uint reserved;
 };
 
-struct Product5ReductionParams {
+struct ProductSequenceReductionParams {
     uint input_count;
     uint output_count;
     uint2 reserved;
 };
 
-inline SolinasFp128 product5_product(thread const SolinasFp128* factors) {
+inline SolinasFp128 product_sequence_product(thread const SolinasFp128* factors) {
     SolinasFp128 product = factors[0];
-    for (uint factor = 1; factor < PRODUCT5_FACTORS; factor++) {
+    for (uint factor = 1; factor < PRODUCT_FACTORS; factor++) {
         product = solinas_mul_wide(product, factors[factor]);
     }
     return product;
 }
 
-inline void product5_finish_block(
+inline void product_sequence_finish_block(
     thread SolinasFp128* lanes,
     SolinasFp128 outer_weight,
     device SolinasFp128* partials,
@@ -32,7 +32,7 @@ inline void product5_finish_block(
     uint simdgroup,
     uint simdgroups)
 {
-    for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
+    for (uint sample = 0; sample < PRODUCT_FACTORS; sample++) {
         SolinasFp128 sum = solinas_simd_sum_32(lanes[sample]);
         if (lane_in_simd == 0) {
             shared[sample * simdgroups + simdgroup] = sum;
@@ -41,7 +41,7 @@ inline void product5_finish_block(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (simdgroup == 0) {
-        for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
+        for (uint sample = 0; sample < PRODUCT_FACTORS; sample++) {
             SolinasFp128 sum = lane_in_simd < simdgroups
                 ? shared[sample * simdgroups + lane_in_simd]
                 : solinas_zero();
@@ -54,12 +54,12 @@ inline void product5_finish_block(
     }
 }
 
-kernel void solinas_product5_message(
+kernel void solinas_product_sequence_message(
     device const SolinasFp128* tables [[buffer(0)]],
     device const SolinasFp128* e_in [[buffer(1)]],
     device const SolinasFp128* e_out [[buffer(2)]],
     device SolinasFp128* partials [[buffer(3)]],
-    constant Product5Params& params [[buffer(4)]],
+    constant ProductSequenceParams& params [[buffer(4)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_in_thread [[thread_index_in_threadgroup]],
     uint x_out [[threadgroup_position_in_grid]],
@@ -67,17 +67,17 @@ kernel void solinas_product5_message(
     uint simdgroup [[simdgroup_index_in_threadgroup]],
     uint threads_per_threadgroup [[threads_per_threadgroup]])
 {
-    SolinasFp128 lanes[PRODUCT5_FACTORS];
-    for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
+    SolinasFp128 lanes[9];
+    for (uint sample = 0; sample < PRODUCT_FACTORS; sample++) {
         lanes[sample] = solinas_zero();
     }
 
     for (uint x_in = x_in_thread; x_in < params.e_in_length;
          x_in += threads_per_threadgroup) {
         uint pair = x_out * params.e_in_length + x_in;
-        SolinasFp128 evals[PRODUCT5_FACTORS];
-        SolinasFp128 steps[PRODUCT5_FACTORS];
-        for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        SolinasFp128 evals[9];
+        SolinasFp128 steps[9];
+        for (uint factor = 0; factor < PRODUCT_FACTORS; factor++) {
             uint base = factor * params.source_elements + 2 * pair;
             SolinasFp128 lo = tables[base];
             SolinasFp128 hi = tables[base + 1];
@@ -88,20 +88,20 @@ kernel void solinas_product5_message(
             evals[factor] = hi;
             steps[factor] = solinas_sub(hi, lo);
         }
-        for (uint sample = 0; sample < PRODUCT5_FACTORS - 1; sample++) {
-            lanes[sample] = solinas_add(lanes[sample], product5_product(evals));
-            if (sample + 1 < PRODUCT5_FACTORS - 1) {
-                for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        for (uint sample = 0; sample < PRODUCT_FACTORS - 1; sample++) {
+            lanes[sample] = solinas_add(lanes[sample], product_sequence_product(evals));
+            if (sample + 1 < PRODUCT_FACTORS - 1) {
+                for (uint factor = 0; factor < PRODUCT_FACTORS; factor++) {
                     evals[factor] = solinas_add(evals[factor], steps[factor]);
                 }
             }
         }
-        lanes[PRODUCT5_FACTORS - 1] = solinas_add(
-            lanes[PRODUCT5_FACTORS - 1],
-            product5_product(steps));
+        lanes[PRODUCT_FACTORS - 1] = solinas_add(
+            lanes[PRODUCT_FACTORS - 1],
+            product_sequence_product(steps));
     }
 
-    product5_finish_block(
+    product_sequence_finish_block(
         lanes,
         e_out[x_out],
         partials,
@@ -113,14 +113,14 @@ kernel void solinas_product5_message(
         threads_per_threadgroup / 32);
 }
 
-kernel void solinas_product5_fused_transition(
+kernel void solinas_product_sequence_fused_transition(
     device const SolinasFp128* tables [[buffer(0)]],
     device SolinasFp128* bound [[buffer(1)]],
     device const SolinasFp128* e_in [[buffer(2)]],
     device const SolinasFp128* e_out [[buffer(3)]],
     device SolinasFp128* partials [[buffer(4)]],
     constant SolinasFp128& challenge [[buffer(5)]],
-    constant Product5Params& params [[buffer(6)]],
+    constant ProductSequenceParams& params [[buffer(6)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_in_thread [[thread_index_in_threadgroup]],
     uint x_out [[threadgroup_position_in_grid]],
@@ -128,8 +128,8 @@ kernel void solinas_product5_fused_transition(
     uint simdgroup [[simdgroup_index_in_threadgroup]],
     uint threads_per_threadgroup [[threads_per_threadgroup]])
 {
-    SolinasFp128 lanes[PRODUCT5_FACTORS];
-    for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
+    SolinasFp128 lanes[9];
+    for (uint sample = 0; sample < PRODUCT_FACTORS; sample++) {
         lanes[sample] = solinas_zero();
     }
     uint bound_elements = params.source_elements / 2;
@@ -137,9 +137,9 @@ kernel void solinas_product5_fused_transition(
     for (uint x_in = x_in_thread; x_in < params.e_in_length;
          x_in += threads_per_threadgroup) {
         uint pair = x_out * params.e_in_length + x_in;
-        SolinasFp128 evals[PRODUCT5_FACTORS];
-        SolinasFp128 steps[PRODUCT5_FACTORS];
-        for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        SolinasFp128 evals[9];
+        SolinasFp128 steps[9];
+        for (uint factor = 0; factor < PRODUCT_FACTORS; factor++) {
             uint source = factor * params.source_elements + 4 * pair;
             SolinasFp128 lo_0 = tables[source];
             SolinasFp128 hi_0 = tables[source + 1];
@@ -161,20 +161,20 @@ kernel void solinas_product5_fused_transition(
             evals[factor] = bound_1;
             steps[factor] = solinas_sub(bound_1, bound_0);
         }
-        for (uint sample = 0; sample < PRODUCT5_FACTORS - 1; sample++) {
-            lanes[sample] = solinas_add(lanes[sample], product5_product(evals));
-            if (sample + 1 < PRODUCT5_FACTORS - 1) {
-                for (uint factor = 0; factor < PRODUCT5_FACTORS; factor++) {
+        for (uint sample = 0; sample < PRODUCT_FACTORS - 1; sample++) {
+            lanes[sample] = solinas_add(lanes[sample], product_sequence_product(evals));
+            if (sample + 1 < PRODUCT_FACTORS - 1) {
+                for (uint factor = 0; factor < PRODUCT_FACTORS; factor++) {
                     evals[factor] = solinas_add(evals[factor], steps[factor]);
                 }
             }
         }
-        lanes[PRODUCT5_FACTORS - 1] = solinas_add(
-            lanes[PRODUCT5_FACTORS - 1],
-            product5_product(steps));
+        lanes[PRODUCT_FACTORS - 1] = solinas_add(
+            lanes[PRODUCT_FACTORS - 1],
+            product_sequence_product(steps));
     }
 
-    product5_finish_block(
+    product_sequence_finish_block(
         lanes,
         e_out[x_out],
         partials,
@@ -186,14 +186,14 @@ kernel void solinas_product5_fused_transition(
         threads_per_threadgroup / 32);
 }
 
-kernel void solinas_product5_reduce(
+kernel void solinas_product_sequence_reduce(
     device const SolinasFp128* input [[buffer(0)]],
     device SolinasFp128* output [[buffer(1)]],
-    constant Product5ReductionParams& params [[buffer(2)]],
+    constant ProductSequenceReductionParams& params [[buffer(2)]],
     uint gid [[thread_position_in_grid]],
     uint lane_in_simd [[thread_index_in_simdgroup]])
 {
-    for (uint sample = 0; sample < PRODUCT5_FACTORS; sample++) {
+    for (uint sample = 0; sample < PRODUCT_FACTORS; sample++) {
         SolinasFp128 value = gid < params.input_count
             ? input[sample * params.input_count + gid]
             : solinas_zero();

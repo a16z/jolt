@@ -1898,11 +1898,11 @@ mod tests {
         );
         assert_eq!(
             working_set(1 << 26, true, true, true, false, true, true, true),
-            23_722_266_960
+            24_259_137_872
         );
         assert_eq!(
             working_set(1 << 27, true, true, true, false, true, true, true),
-            47_438_500_176
+            48_512_242_000
         );
         assert_eq!(
             working_set(1 << 26, false, true, false, false, false, false, false),

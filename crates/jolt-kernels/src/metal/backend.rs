@@ -267,9 +267,13 @@ impl MetalBackend {
                 "Outer-residual InstructionInput storage requires an active OuterRemainder producer",
             ));
         }
-        let cutoff = config.instruction_read_raf.cutoff_elements;
-        if cutoff < 2 || !cutoff.is_power_of_two() {
-            return Err(MetalError::InvalidHybridCutoff(cutoff));
+        for cutoff in [
+            config.instruction_read_raf.cutoff_elements,
+            config.instruction_read_raf.small_k16_cutoff_elements,
+        ] {
+            if cutoff < 2 || !cutoff.is_power_of_two() {
+                return Err(MetalError::InvalidHybridCutoff(cutoff));
+            }
         }
         let address_cutoff = config.instruction_read_raf.address_cutoff_elements;
         if address_cutoff < 2 || !address_cutoff.is_power_of_two() {

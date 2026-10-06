@@ -19,9 +19,9 @@ use super::solinas::{
     InstructionReadRafCompatibilityScatterConfig, InstructionReadRafDenseGroupedPlanes,
     InstructionReadRafDenseGroupedReceipt, InstructionReadRafFusedBytecodeReceipt,
     InstructionReadRafStage1Owner, InstructionReadRafStage1Receipt,
-    PendingInstructionReadRafSourcePrimer, Product5Sequence, Product5SequenceConfig,
+    PendingInstructionReadRafSourcePrimer, ProductSequence, ProductSequenceConfig,
     RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest,
-    ResidentLookupIndexPlane, SolinasMetal, PRODUCT5_FACTORS,
+    ResidentLookupIndexPlane, SolinasMetal, ADDRESS_CYCLE_FACTORS,
 };
 use crate::optimized::instruction_read_raf::{
     prepare_metal_instruction_read_raf, OptimizedInstructionReadRafKernel,
@@ -42,8 +42,10 @@ pub struct InstructionReadRafMetalConfig {
     pub address_dispatch: AddressPhaseSequenceConfig,
     /// First table length whose next round runs on the CPU.
     pub cutoff_elements: usize,
+    /// CPU crossover for the qualified K16 nine-factor cycle tail.
+    pub small_k16_cutoff_elements: usize,
     /// Threadgroup widths for the initial message and fused transitions.
-    pub dispatch: Product5SequenceConfig,
+    pub dispatch: ProductSequenceConfig,
 }
 
 impl Default for InstructionReadRafMetalConfig {
@@ -53,7 +55,8 @@ impl Default for InstructionReadRafMetalConfig {
             stage1_scatter_threads_per_threadgroup: 256,
             address_dispatch: AddressPhaseSequenceConfig::default(),
             cutoff_elements: 1 << 16,
-            dispatch: Product5SequenceConfig::default(),
+            small_k16_cutoff_elements: 1 << 10,
+            dispatch: ProductSequenceConfig::default(),
         }
     }
 }
@@ -375,7 +378,7 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 .instruction_ra_virtualization
                 .trace_cutoff_elements;
         let stage1_owner = (use_metal_address
-            && dimensions.num_virtual_ra_polys() + 1 == PRODUCT5_FACTORS)
+            && dimensions.num_virtual_ra_polys() + 1 == ADDRESS_CYCLE_FACTORS)
             .then(|| session.take::<InstructionReadRafStage1Owner>())
             .flatten();
         if prefetched_scatter.is_some() && stage1_owner.is_none() {
@@ -668,8 +671,8 @@ pub(crate) struct MetalInstructionReadRafKernel {
     config: InstructionReadRafMetalConfig,
     address_sequence: Option<Box<AddressPhaseSequence>>,
     resident_lookup_plane: Option<ResidentLookupIndexPlane>,
-    sequence: Option<Product5Sequence>,
-    host_tail: Option<[Vec<AkitaField>; PRODUCT5_FACTORS]>,
+    sequence: Option<ProductSequence>,
+    host_tail: Option<Vec<Vec<AkitaField>>>,
     metal_rounds: usize,
     metal_address_phases: usize,
 }
@@ -686,11 +689,15 @@ impl MetalInstructionReadRafKernel {
     pub(crate) fn new(
         cpu: OptimizedInstructionReadRafKernel<AkitaField>,
         context: Arc<SolinasMetal>,
-        config: InstructionReadRafMetalConfig,
+        mut config: InstructionReadRafMetalConfig,
         use_metal_address: bool,
         retain_lookup_plane: bool,
         resident_grouped_input: Option<ResidentGroupedInput>,
     ) -> Result<Self, SumcheckError<AkitaField>> {
+        let factors = cpu.metal_factor_count();
+        if factors == 9 {
+            config.cutoff_elements = config.small_k16_cutoff_elements;
+        }
         let mut kernel = Self {
             cpu,
             context,
@@ -698,9 +705,11 @@ impl MetalInstructionReadRafKernel {
             address_sequence: None,
             resident_lookup_plane: None,
             sequence: None,
-            host_tail: Some(std::array::from_fn(|_| {
-                vec![AkitaField::zero(); config.cutoff_elements]
-            })),
+            host_tail: Some(
+                (0..factors)
+                    .map(|_| vec![AkitaField::zero(); config.cutoff_elements])
+                    .collect(),
+            ),
             metal_rounds: 0,
             metal_address_phases: 0,
         };

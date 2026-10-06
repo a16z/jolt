@@ -14,9 +14,11 @@ use super::{
     address_suffix_full::AddressSuffixFullSums,
     buffer_from_slice, set_inline_bytes, validate_completed_command, Fp128,
     InstructionReadRafCountOrder, InstructionReadRafDenseGroupedPlanes, MetalError, PipelineLimits,
-    Product5Sequence, Product5SequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
-    ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES, INSTRUCTION_READ_RAF_SEGMENTS, PRODUCT5_FACTORS,
+    ProductSequence, ProductSequenceConfig, SolinasMetal, ADDRESS_RAF_BINS, ADDRESS_RAF_LANES,
+    ADDRESS_SUFFIX_BINS, ADDRESS_SUFFIX_TABLES, INSTRUCTION_READ_RAF_SEGMENTS,
 };
+
+pub const ADDRESS_CYCLE_FACTORS: usize = 5;
 
 const RAF_KEYS: usize = 2 * ADDRESS_RAF_BINS;
 const RAF_PARTIAL_LANES: usize = 3;
@@ -32,7 +34,7 @@ const SUFFIX_FINALIZE_PIPELINE: &str = "solinas_address_suffix_full_finalize";
 const CYCLE_MESSAGE_PIPELINE: &str = "solinas_address_cycle_message";
 const CYCLE_BIND_PIPELINE: &str = "solinas_address_cycle_bind";
 const CYCLE_TRANSITION_PIPELINE: &str = "solinas_address_cycle_fused_transition";
-const PRODUCT_REDUCE_PIPELINE: &str = "solinas_product5_reduce";
+const PRODUCT_REDUCE_PIPELINE: &str = "solinas_product_sequence_reduce";
 const CYCLE_PHASES: usize = 16;
 const CYCLE_PHASE_ELEMENTS: usize = CYCLE_PHASES * ADDRESS_RAF_BINS;
 const CYCLE_THREADS_PER_THREADGROUP: usize = 128;
@@ -610,10 +612,13 @@ impl SolinasMetal {
         let raf_finalize_pipeline = self.compile_named_pipeline(RAF_FINALIZE_PIPELINE)?;
         let suffix_tile_pipeline = self.compile_named_pipeline(SUFFIX_TILE_PIPELINE)?;
         let suffix_finalize_pipeline = self.compile_named_pipeline(SUFFIX_FINALIZE_PIPELINE)?;
-        let cycle_message_pipeline = self.compile_named_pipeline(CYCLE_MESSAGE_PIPELINE)?;
+        let cycle_message_pipeline =
+            self.compile_product_pipeline(CYCLE_MESSAGE_PIPELINE, ADDRESS_CYCLE_FACTORS)?;
         let cycle_bind_pipeline = self.compile_named_pipeline(CYCLE_BIND_PIPELINE)?;
-        let cycle_transition_pipeline = self.compile_named_pipeline(CYCLE_TRANSITION_PIPELINE)?;
-        let cycle_reduce_pipeline = self.compile_named_pipeline(PRODUCT_REDUCE_PIPELINE)?;
+        let cycle_transition_pipeline =
+            self.compile_product_pipeline(CYCLE_TRANSITION_PIPELINE, ADDRESS_CYCLE_FACTORS)?;
+        let cycle_reduce_pipeline =
+            self.compile_product_pipeline(PRODUCT_REDUCE_PIPELINE, ADDRESS_CYCLE_FACTORS)?;
         let limits = [
             (RAF_TILE_PIPELINE, Self::limits(&raf_tile_pipeline)),
             (RAF_FINALIZE_PIPELINE, Self::limits(&raf_finalize_pipeline)),
@@ -732,7 +737,7 @@ impl SolinasMetal {
         let cycle_pairs = (rows / 2).max(1);
         let cycle_e_out_capacity = 1usize << ((rows.ilog2() as usize) / 2);
         let cycle_e_in_capacity = cycle_pairs.div_ceil(cycle_e_out_capacity).max(1);
-        let cycle_partial_elements = PRODUCT5_FACTORS
+        let cycle_partial_elements = ADDRESS_CYCLE_FACTORS
             .checked_mul(cycle_e_out_capacity)
             .ok_or(MetalError::InputTooLong(cycle_e_out_capacity))?;
         let buffer_lengths = [
@@ -1054,7 +1059,7 @@ impl AddressPhaseSequence {
         raf_identity: AkitaField,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-    ) -> Result<[AkitaField; PRODUCT5_FACTORS], MetalError> {
+    ) -> Result<[AkitaField; ADDRESS_CYCLE_FACTORS], MetalError> {
         self.execute_cycle(
             phase_tables,
             table_values,
@@ -1079,11 +1084,12 @@ impl AddressPhaseSequence {
         challenge: AkitaField,
         e_in: &[AkitaField],
         e_out: &[AkitaField],
-        config: Product5SequenceConfig,
-    ) -> Result<(Product5Sequence, [AkitaField; PRODUCT5_FACTORS]), MetalError> {
+        config: ProductSequenceConfig,
+    ) -> Result<(ProductSequence, Vec<AkitaField>), MetalError> {
         let elements = self.rows / 2;
-        let mut sequence = self.context.prepare_product5_sequence_storage(
+        let mut sequence = self.context.prepare_product_sequence_storage(
             elements,
+            ADDRESS_CYCLE_FACTORS,
             e_in.len(),
             e_out.len(),
             config,
@@ -1110,7 +1116,7 @@ impl AddressPhaseSequence {
         bound: &Buffer,
     ) -> Result<(), MetalError> {
         if self.rows < 4 || !self.rows.is_power_of_two() {
-            return Err(MetalError::InvalidProduct5TableLength {
+            return Err(MetalError::InvalidProductSequenceTableLength {
                 minimum: 4,
                 got: self.rows,
             });
@@ -1191,9 +1197,9 @@ impl AddressPhaseSequence {
         e_in: &[AkitaField],
         e_out: &[AkitaField],
         transition: Option<(AkitaField, &Buffer)>,
-    ) -> Result<[AkitaField; PRODUCT5_FACTORS], MetalError> {
+    ) -> Result<[AkitaField; ADDRESS_CYCLE_FACTORS], MetalError> {
         if self.rows < 4 || !self.rows.is_power_of_two() {
-            return Err(MetalError::InvalidProduct5TableLength {
+            return Err(MetalError::InvalidProductSequenceTableLength {
                 minimum: 4,
                 got: self.rows,
             });
@@ -1230,7 +1236,7 @@ impl AddressPhaseSequence {
             || e_out.len() > self.cycle_e_out_capacity
             || covered != expected_pairs
         {
-            return Err(MetalError::Product5WeightShape {
+            return Err(MetalError::ProductSequenceWeightShape {
                 expected: expected_pairs,
                 covered,
             });
@@ -1284,7 +1290,7 @@ impl AddressPhaseSequence {
             }
             encoder.set_threadgroup_memory_length(
                 0,
-                (PRODUCT5_FACTORS
+                (ADDRESS_CYCLE_FACTORS
                     * (self.cycle_threads_per_threadgroup / SIMD_WIDTH)
                     * size_of::<Fp128>()) as u64,
             );
@@ -1346,8 +1352,9 @@ impl AddressPhaseSequence {
         };
         // SAFETY: recursive reduction leaves five canonical fields at the
         // front of the selected shared buffer before the command completes.
-        let values =
-            unsafe { slice::from_raw_parts(output.contents().cast::<Fp128>(), PRODUCT5_FACTORS) };
+        let values = unsafe {
+            slice::from_raw_parts(output.contents().cast::<Fp128>(), ADDRESS_CYCLE_FACTORS)
+        };
         self.context
             .validate_inputs("resident address cycle message", values)?;
         Ok(std::array::from_fn(|index| values[index].into_jolt_field()))

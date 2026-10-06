@@ -14,7 +14,7 @@
     "instruction_claim_reduction",
     "address_raf_direct",
     "address_suffix_full",
-    "product5",
+    "product_sequence",
     "product_remainder",
     "product_instruction_round_service",
     "product_uniskip",

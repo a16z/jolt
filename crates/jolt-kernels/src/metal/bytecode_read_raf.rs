@@ -680,6 +680,7 @@ fn bytecode_prepare_can_fallback(error: &MetalError) -> bool {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal bytecode parity setup")]
 mod tests {
+    use crate::metal::solinas::BOOLEANITY_SOURCE_ROW_BYTES;
     use jolt_field::{One as _, Ring as _};
     use std::num::NonZeroUsize;
 
@@ -1113,7 +1114,10 @@ mod tests {
                 .state::<InstructionReadRafStage1Owner>()
                 .unwrap()
                 .receipt();
-            assert_eq!(source_receipt.row_bytes(), 32 * (1 << log_t));
+            assert_eq!(
+                source_receipt.row_bytes(),
+                (BOOLEANITY_SOURCE_ROW_BYTES as u64) * (1 << log_t)
+            );
             assert!(session
                 .state::<BytecodeAddressStage1TopologyOwner>()
                 .is_some());

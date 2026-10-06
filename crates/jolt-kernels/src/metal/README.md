@@ -143,6 +143,19 @@ shared stage-5 lookup indices when a resident address plane is unavailable;
 the existing K256 route continues to consume that plane directly. Both routes
 use the same lazy-prefix, dense-transition, and CPU-tail machinery.
 
+Instruction Read-RAF also admits the nine-factor cycle tail at `2^21` rows.
+The address phase and first cycle message remain on the CPU; the first cycle
+bind fills shared Metal storage directly, and subsequent rounds retain those
+tables on the GPU. `instruction_read_raf.small_k16_cutoff_elements` controls
+readback to the CPU and defaults to 1,024 rows. The existing five-factor route
+keeps its separate 65,536-row default. Nine-factor cycle tails at other trace sizes stay on CPU.
+
+The five- and nine-factor arithmetic and binding regression is:
+
+```sh
+cargo nextest run --release -p jolt-kernels --features metal product_messages_and_bindings_match_direct_field_evaluation
+```
+
 Production instruction-input, registers claim-reduction, and RAM value-check
 routes now admit traces from `2^21` cycles. Their existing shape and source
 checks still apply. Other PIOP cutoffs, proof parameters, and verifier code
@@ -198,3 +211,14 @@ rounds improved; all 30 proofs verified and 15 altered-output checks rejected.
 The same fresh-process warmup and rotating-order procedure was used. Separate
 profiles put the packed fold at 94 ms on CPU and 28 ms on Metal. These figures
 qualify this small workload, not larger K16 traces or general GPU throughput.
+
+The nine-factor Instruction Read-RAF follow-up reduced an eight-round
+Metal-only comparison from 1.625 s to 1.596 s median (1.8%); all eight matched
+pairs improved. A separate ten-round comparison interleaving CPU proving
+measured 1.646 s previous Metal, 1.601 s new Metal, and 3.207 s CPU (2.7% lower
+Metal median, six of ten pairs improved). Both used fresh-process warmups and
+rotating order. These are warm proving times; absolute timings drifted during
+the runs. Separate profiles reduced Instruction Read-RAF round time from
+175 ms to 155 ms. All 200 Metal kernel tests and 92 untraced benchmark proofs
+passed, with 46 altered-output rejections; four additional profiling proofs
+and two altered-output checks also passed.
