@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-error",
  "akita-transcript",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -145,7 +145,7 @@ dependencies = [
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -153,7 +153,7 @@ dependencies = [
 [[package]]
 name = "akita-metal"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -191,7 +191,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -225,7 +225,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -237,7 +237,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "jolt-field",
  "thiserror 2.0.18",
@@ -246,7 +246,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -261,7 +261,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -275,7 +275,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-serialization",
  "blake2 0.10.6",
@@ -286,7 +286,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -307,7 +307,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/GUJustin/akita?rev=a309eb487aa7d1d0d0ae656c5db40ab41a941b36#a309eb487aa7d1d0d0ae656c5db40ab41a941b36"
+source = "git+https://github.com/GUJustin/akita?rev=79f09e2d393ff51d39e26f4be26ae42de08803c7#79f09e2d393ff51d39e26f4be26ae42de08803c7"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -1732,7 +1732,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2518,7 +2518,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5876,7 +5876,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6702,7 +6702,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7351,7 +7351,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

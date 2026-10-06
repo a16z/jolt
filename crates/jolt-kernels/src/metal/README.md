@@ -122,6 +122,14 @@ qualification. PIOP kernels keep their independent shape and size checks, and
 K16 packed decomposition uses Metal for the qualified resident `2^20`- and
 `2^21`-row, D512/capacity64 shapes; other K16 shapes retain CPU routing.
 
+K16 root commitment accumulates radix-26 digits and propagates carries after
+at most 16 signed contributions. It shares the bounded accumulator and final
+field reducer with the D128/rank-3 route. Two D512 positions fit in five shared
+memory planes, within the existing kernel's buffer and dispatch geometry.
+The committed-zero mask and certified zero suffix keep their existing meaning;
+K256 continues to use its coefficient-panel path. CPU commitment parity covers
+dense K16 selectors as well as sparse selectors and zero suffixes.
+
 The shared instruction source stores the full 56-bit logical bytecode PC in a
 separate column. Its five `u64` columns cost 40 bytes per row, an increase of
 16 MiB at `2^21` rows (2 GiB at `2^28`) over the old four-column representation.
@@ -251,3 +259,26 @@ before and 329 ms after, and stage 5 at 214 ms before and 144 ms after.
 These profiles explain the reduction in work; the quoted end-to-end gain
 comes from the untraced paired campaign. This is a warm non-ZK result for
 this workload and padding transition, not a general GPU throughput claim.
+
+A subsequent 12-round, rotating-order comparison held that optimized guest
+fixed and measured the radix-26 K16 commitment change separately from thread
+count. Each of four configurations produced one warmup and one measured proof
+per fresh process, with the same timing boundary and default Metal policy:
+
+| Configuration | Before kernel change | After kernel change | Less wall time |
+| --- | ---: | ---: | ---: |
+| 18 Rayon threads | 1.032 s | 0.994 s | 3.6% |
+| 8 Rayon threads | 0.962 s | 0.924 s | 4.0% |
+
+The kernel improved 11/12 pairs at 18 threads and 12/12 at 8 threads. Combining
+the kernel change with `RAYON_NUM_THREADS=8` reduced time by **10.5%** against
+the prior 18-thread configuration, improving all 12 pairs. That combined
+number includes thread tuning; it is not the kernel-only gain. Both the Jolt
+and Akita pools used the stated thread count. Eight threads is a measured
+choice for this workload on the M5 Max, not a new backend default.
+
+All 96 untraced and eight profiling proofs verified, and all 52 altered-output
+checks rejected. The program still executes 1,040,282 cycles, pads to `2^20`,
+and produces 90,647-byte proofs. Single 18-thread profiles measured packed
+Metal commitment dispatch at 123 → 85 ms and stage 0 at 165 → 125 ms. The
+kernel uses the existing field, schedule, commitment and verifier equations.
