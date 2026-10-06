@@ -208,11 +208,11 @@ clear, ZK, and verifier-fixture tests.
 
 ### Tests
 
-- Commit a test only when it adds a distinct failure signal beyond existing tests, golden fixtures, verifier fixtures, or CI. One focused test per stated behavior.
+- Add tests for distinct failure signals beyond existing tests, golden fixtures, verifier fixtures, or CI; no test required for every low-impact edit. Prefer one focused test per stated behavior.
 - Permanent tests assert against independent ground truth: spec vectors, frozen wire digests, verifier fixtures, `jolt-kernels`' reference tier, or algebraic properties. Never a second implementation of the rule under test.
 - No old-vs-new equivalence tests and no `#[cfg(test)]` copy of superseded code kept as the oracle; transition validation belongs in the PR, not the suite.
-- Before PR handoff, remove development-only probes, ignored tests, temporary benchmarks, diagnostic counters, and parity or fuzz scaffolding. A worthwhile manual diagnostic becomes a tool or benchmark with a documented command.
-- Locally, run only the touched crates' tests (`cargo nextest run -p <crate> -E 'test(<name>)'`); the full suite is CI's job. Broaden only after further changes or failures.
+- Before PR handoff, audit every added test and helper; remove development-only probes, ignored tests without a documented run condition, temporary benchmarks, diagnostic counters or histograms, and one-off parity or fuzz scaffolding. A worthwhile manual diagnostic becomes a tool or benchmark with a documented command.
+- Match verification to changed behavior and complete applicable checks above and in the invoked workflow. Locally select affected Rust tests with `cargo nextest run -p <crate> --cargo-quiet -E 'test(<name>)'` and required features; Python: `uv run python -m unittest scripts.tests.<module> -v`. Full suites run in CI; broaden passed checks only for further changes, failures, or unresolved concerns.
 - Cleanup pass on a diff: `.claude/skills/test-policy/SKILL.md`.
 
 ### Lint Policy
@@ -224,11 +224,9 @@ clear, ZK, and verifier-fixture tests.
 
 ### Comments
 
-A comment survives only if it carries what the code cannot:
-- invariants or contracts the types cannot express, naming where each is enforced;
-- why-not notes that stop a known bug or soundness regression from returning;
-- pointers to non-local coupling (keep-in-sync with another crate, file, or wire format);
-- soundness or security reasoning; behavior forced by an external dependency, platform, or protocol;
-- public API docs, paper/spec links, `TODO(#issue)`, `SAFETY:` on `unsafe`.
-
-Delete narration, section banners, commented-out code, and history or migration notes. Lint suppressions only for style/pedantic rules or a stated real justification (see Lint Policy). Cleanup pass on a diff: `.claude/skills/comment-policy/SKILL.md`.
+- Keep comment density low; a comment must carry information the code cannot (except required legal headers and tool directives).
+- Keep invariants/contracts the types cannot express, naming enforcement; why-not notes and non-obvious warnings preventing bugs; non-local coupling pointers.
+- Keep soundness/security reasoning, `SAFETY:` on `unsafe`, and behavior forced by an external dependency, platform, or protocol.
+- Keep public API contracts and algorithm explanations (paper/spec links where applicable); issue/RFC links and `TODO(#issue)` only when they explain a constraint.
+- Delete narration of code or assertions, section banners, commented-out code, stale descriptions, and history/migration notes. Refactor confusing code in implementation work; cleanup passes only flag it.
+- Judge lint suppressions under Lint Policy above; a justification must be verified, not merely stated. Cleanup procedure and keep criteria: `.claude/skills/comment-policy/SKILL.md`.
