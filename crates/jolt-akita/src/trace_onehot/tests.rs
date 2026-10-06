@@ -9,16 +9,14 @@ use std::sync::Arc;
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
+use akita_params::{BasisMode, SetupMatrixCapacity, SubringCoefficientPackingGeometry};
 use akita_pcs::custom_source::{
     CommitInnerPlan, DecomposeFoldPlan, OneHotBatchView, OpeningFoldKernel, OpeningFoldPlan,
     RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients,
     SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPlan,
 };
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
-use akita_types::{
-    BasisMode, PreparedSubringCoefficientPackingPoint, SetupMatrixCapacity,
-    SubringCoefficientPackingGeometry,
-};
+use akita_types::PreparedSubringCoefficientPackingPoint;
 use jolt_field::{Fp128x8i32, One, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -12,7 +12,7 @@
 )]
 mod support;
 
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_akita::{
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
 };
@@ -94,7 +94,7 @@ fn deep_recursive_fold_schedule_roundtrips() {
     let depth = AkitaScheduleArtifacts::shared_from_default_directory()
         .dense_catalog()
         .expect("dense catalog")
-        .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+        .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
             NUM_VARS, 1,
         )))
         .expect("deep fixture row must resolve")

@@ -14,12 +14,12 @@ pub mod emit {
     use std::path::PathBuf;
 
     use akita_config::{policy_of, CommitmentConfig};
+    use akita_params::{
+        FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
+    };
     use akita_pcs::AkitaError;
     use akita_planner::emit::GroupedGenerationRequest;
     use akita_planner::EmitSpec;
-    use akita_types::{
-        AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
-    };
 
     use crate::configs::{
         JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16Direct, JoltOneHotK256,
@@ -56,7 +56,7 @@ pub mod emit {
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
+        plan_schedule::<Cfg>(&ScheduleLookupKey::single(key), &[])
     }
 
     fn regen_one_hot_k16(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {

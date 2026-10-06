@@ -1,6 +1,12 @@
 use std::any::Any;
 
 use akita_error::AkitaError;
+use akita_params::dispatch_for_field;
+#[expect(
+    unused_imports,
+    reason = "dispatch_for_field matches these nominal slot tokens without resolving them"
+)]
+use akita_params::{ProtocolDispatchSlot, RingRole};
 use akita_pcs::custom_source::{
     cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup, CommitInnerPlan,
     CpuFoldResponses, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
@@ -10,12 +16,7 @@ use akita_pcs::custom_source::{
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use akita_pcs::CpuBackend;
-use akita_types::{dispatch_for_field, FpExtEncoding, RingVec};
-#[expect(
-    unused_imports,
-    reason = "dispatch_for_field matches these nominal slot tokens without resolving them"
-)]
-use akita_types::{ProtocolDispatchSlot, RingRole};
+use akita_types::{FpExtEncoding, RingVec};
 use jolt_field::ExtField;
 use rayon::prelude::*;
 
@@ -98,6 +99,19 @@ impl<E, const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaFie
 impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, D>
     for CpuBackend<AkitaField, E>
 {
+    fn evaluate_and_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: OpeningFoldPlan<'_, AkitaField>,
+    ) -> Result<Vec<OpeningFoldOutput<AkitaField, D>>, AkitaError> {
+        source
+            .sources
+            .iter()
+            .map(|source| opening_fold_packed(source, plan))
+            .collect()
+    }
+
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,

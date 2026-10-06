@@ -9,11 +9,9 @@ use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::path::PathBuf;
 
 use akita_config::{SetupRequirements, TrustedScheduleCatalog};
+use akita_params::{commit_only_setup_field_elements, setup_matrix_capacity_for_schedule};
+use akita_params::{FoldSchedule, PolynomialGroupLayout, ScheduleLookupKey};
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
-use akita_types::{
-    commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    FoldSchedule, PolynomialGroupLayout,
-};
 use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{
     dense_group_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
@@ -55,7 +53,7 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
         assert!(!grid.is_empty());
         for key in &grid {
             let resolved = catalog
-                .resolve_key(&AkitaScheduleLookupKey::single(*key))
+                .resolve_key(&ScheduleLookupKey::single(*key))
                 .expect("reachable scalar shape must resolve");
             assert!(resolved.profiles().precommitteds.is_empty());
         }
@@ -65,7 +63,7 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
 
 fn scalar_schedule(catalog: &ValidatedScheduleCatalog, num_vars: usize) -> FoldSchedule {
     catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+        .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
             num_vars, 1,
         )))
         .expect("cutover row must resolve")
@@ -101,10 +99,10 @@ fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
 const TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(20, 1);
 const TRUSTED_ADVICE_K256_FINAL_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(39, 1);
 
-fn trusted_advice_grouped_key(dense: &ValidatedScheduleCatalog) -> AkitaScheduleLookupKey {
+fn trusted_advice_grouped_key(dense: &ValidatedScheduleCatalog) -> ScheduleLookupKey {
     let trusted_profile = dense_group_profile(dense, TRUSTED_ADVICE_GROUP)
         .expect("trusted advice standalone row must resolve");
-    AkitaScheduleLookupKey {
+    ScheduleLookupKey {
         final_group: TRUSTED_ADVICE_K256_FINAL_GROUP,
         precommitteds: vec![trusted_profile],
     }
@@ -116,7 +114,7 @@ fn assert_adaptation_preserves_main_skeleton(
     final_group: PolynomialGroupLayout,
 ) {
     let main = base
-        .resolve_key(&AkitaScheduleLookupKey::single(final_group))
+        .resolve_key(&ScheduleLookupKey::single(final_group))
         .expect("main scalar row");
     assert_eq!(
         resolved.schedule().root.params.own_group(),
@@ -206,7 +204,7 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
                 .expect("freeze adapted K=16 catalog");
         let final_group = PolynomialGroupLayout::new(final_num_vars, 1);
         let resolved = setup_catalog
-            .resolve_key(&AkitaScheduleLookupKey {
+            .resolve_key(&ScheduleLookupKey {
                 final_group,
                 precommitteds: vec![precommit],
             })
@@ -270,7 +268,7 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
         vec![trusted_profile, trusted_profile],
     ] {
         for num_vars in FIXTURE_K16_FINAL_NUM_VARS.0..=FIXTURE_K16_FINAL_NUM_VARS.1 {
-            let key = AkitaScheduleLookupKey {
+            let key = ScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(num_vars, 1),
                 precommitteds: precommitteds.clone(),
             };
@@ -366,7 +364,7 @@ mod field_inc {
     )]
 
     use akita_config::CommitmentConfig;
-    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+    use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::GroupedScheduleParams;
     use jolt_akita::schedule_registry::{
@@ -413,7 +411,7 @@ mod field_inc {
                 1,
                 "K={one_hot_k} final arity {final_num_vars} must plan its field-inline row"
             );
-            let key = AkitaScheduleLookupKey {
+            let key = ScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                 precommitteds: vec![dense_group_profile(
                     &full_dense,
@@ -448,8 +446,12 @@ mod field_inc {
         );
     }
 
+    // The full-planner fallback admits only one full-width increment plus at
+    // most two advice groups (schedule_registry.rs). These shapes fall outside
+    // it, so they provision only through the guided planner, which keeps its
+    // opening-assignment budget.
     #[test]
-    fn full_width_replanning_is_limited_to_one_inc_and_two_advice_groups() {
+    fn batches_outside_the_full_planner_fallback_use_guided_planning() {
         let full = DenseGroupLayout::FullWidth { num_vars: 30 };
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
@@ -471,8 +473,8 @@ mod field_inc {
                     &GroupedScheduleParams::new(None, None, layouts, 43),
                     AKITA_ONE_HOT_K256
                 )
-                .is_err(),
-                "unsupported batch shapes must retain the guided-planning rejection"
+                .is_ok(),
+                "guided planning admits batches outside the full-planner fallback"
             );
         }
     }
@@ -516,7 +518,7 @@ mod field_inc {
                 dense_group_profile(&full_dense, PolynomialGroupLayout::new(num_vars, 1))
                     .expect("full-width advice-shaped profile");
             assert!(catalog
-                .resolve_key(&AkitaScheduleLookupKey {
+                .resolve_key(&ScheduleLookupKey {
                     final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                     precommitteds: vec![widened_advice, inc],
                 })

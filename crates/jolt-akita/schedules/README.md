@@ -57,8 +57,9 @@ A full-width field increment can require different trace fold geometry. If
 guided planning returns `UnsupportedSchedule` for the supported field batch—
 exactly one full-width field increment and at most two bounded advice groups—
 preprocessing runs the full planner under the same audited policy. Larger
-batches and batches with multiple full-width objects retain the guided-planning
-rejection, including its opening-assignment budget. Every auxiliary commitment's
+batches and batches with multiple full-width objects never fall back to it;
+they keep the guided planner's result or rejection, including its
+opening-assignment budget. Every auxiliary commitment's
 profile stays fixed, and the resulting grouped row passes the usual schedule
 audit before entering the setup-owned catalog. Other errors propagate. The
 checked-in base catalogs are unchanged; proving and verification use the

@@ -8,12 +8,12 @@
 //! selected row's own grammar.
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
-use akita_pcs::AkitaError;
-use akita_schedules::ResolvedScheduleRow;
-use akita_types::{
+use akita_params::{
     CompressionChainPlan, GroupCommitPhaseParams, OpeningClaimsLayout, OpeningScheduleSelection,
     PolynomialGroupLayout,
 };
+use akita_pcs::AkitaError;
+use akita_schedules::ResolvedScheduleRow;
 use jolt_field::Zero;
 use jolt_openings::OpeningsError;
 
@@ -157,7 +157,7 @@ mod tests {
 
     use super::*;
     use akita_config::TrustedScheduleCatalog;
-    use akita_types::AkitaScheduleLookupKey;
+    use akita_params::ScheduleLookupKey;
     use jolt_field::Ring;
 
     use crate::{
@@ -195,7 +195,7 @@ mod tests {
         poly_count: usize,
     ) -> OpeningScheduleSelection {
         schedules
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars, poly_count,
             )))
             .expect("test schedule")

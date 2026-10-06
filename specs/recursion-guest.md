@@ -164,7 +164,7 @@ With `--embed` the host also:
 
 Fibonacci, one inner proof, `--features akita,field-inline,ntt-inline`,
 `trace --embed`, release guest, `RAYON_NUM_THREADS=1`. The final
-two rows were measured on freshly generated proofs with the pinned companion;
+three rows were measured on freshly generated proofs with the pinned companion;
 each other row is the cumulative total after its change.
 
 | Build | Total rows |
@@ -182,12 +182,13 @@ each other row is the cumulative total after its change.
 | + doubleword NTT input stores, word-sized flag-class slots | 67,738,580 |
 | + inline proof-atom encoding | 66,554,373 |
 | Fresh proof, pinned companion (64,710,425 verification cycles) | 66,555,326 |
-| **Fresh proof after review simplifications** (64,276,851 verification cycles) | **66,116,859** |
+| Fresh proof after review simplifications (64,276,851 verification cycles) | 66,116,859 |
+| **Fresh proof, canonical Akita** (64,335,715 verification cycles) | **66,175,726** |
 
 The first row was rebuilt and re-measured from its archived sources and
 reproduces its recorded numbers exactly. Input mode, which reads the setup
-from the guest input, accepts at 73,166,474 rows; a proof with one tampered
-opening is rejected after 2,975,345 rows.
+from the guest input, accepts at 73,225,341 rows; a proof with one tampered
+opening is rejected after 2,975,377 rows.
 
 ## Levers not taken here
 

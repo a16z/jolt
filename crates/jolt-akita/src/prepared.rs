@@ -14,11 +14,12 @@
 //! the transcript binds. Callers must bind the payload bytes to the verifier
 //! program identity, for example by embedding them in the guest image.
 
+use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_pcs::{
     build_riscv64_terminal_ntt_cache, AkitaDeserialize, AkitaSerialize, Compress,
     TrustedTerminalCache, Validate,
 };
-use akita_types::{AkitaExpandedSetup, OpeningScheduleSelection, ScheduleRowDigest};
+use akita_types::AkitaExpandedSetup;
 use jolt_openings::OpeningsError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_bytes::{ByteBuf, Bytes};
