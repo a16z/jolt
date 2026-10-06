@@ -61,62 +61,26 @@ where
     let mode = ProofMode::<VC>::new(None)?;
     let mut session = backend.begin_proof();
     let log_t = config.trace_length.ilog2() as usize;
-    // Backend witness preparation only reads the witness and parks owners in
-    // the session, which stage 0 never touches, so it runs on its own thread
-    // under the trace commitment. It starts once the one-hot rows are
-    // assembled: assembly is CPU-bound, the commit leaves the CPU mostly idle.
-    // The thread then waits for the commit to return and runs the backend's
-    // post-commit step under the rest of stage 0.
-    let (prepare_signal_sender, prepare_signal_receiver) = std::sync::mpsc::channel::<()>();
-    let (stage0, witness_prepare) = std::thread::scope(|scope| {
-        let prepare_kernel = backend.base.spartan_outer_uniskip.as_ref();
-        let prepare_session = &mut session;
-        let prepare = scope.spawn(move || -> Result<(), ProverError<F>> {
-            // A dropped sender means stage 0 failed before assembling rows;
-            // the stage 0 error is reported first, so just run to completion.
-            let _ = prepare_signal_receiver.recv();
-            let span = tracing::info_span!(
-                "jolt_prover::backend_witness_prepare_async",
-                log_t,
-                cycles = 1usize << log_t,
-                complete = tracing::field::Empty,
-            );
-            let result =
-                span.in_scope(|| prepare_kernel.prepare_witness(prepare_session, log_t, witness));
-            let _ = span.record("complete", result.is_ok());
-            result?;
-            if prepare_signal_receiver.recv().is_ok() {
-                tracing::info_span!("jolt_prover::backend_after_trace_commit")
-                    .in_scope(|| prepare_kernel.after_trace_commit(prepare_session));
-            }
-            Ok(())
-        });
-        let stage0 = prove_stage0::<F, PCS, VC, T, W>(
-            backend,
-            preprocessing,
-            config,
-            trusted_advice,
-            witness,
-            public_io,
-            Some(&prepare_signal_sender),
-        );
-        drop(prepare_signal_sender);
-        let completed_before_join = prepare.is_finished();
-        let _span = tracing::info_span!(
-            "jolt_prover::backend_witness_prepare",
-            completed_before_join
-        )
-        .entered();
-        let witness_prepare = prepare
-            .join()
-            .map_err(|_| ProverError::InvariantViolation {
-                reason: "asynchronous backend witness preparation panicked",
-            })
-            .and_then(|result| result);
-        (stage0, witness_prepare)
-    });
-    let stage0 = stage0?;
-    witness_prepare?;
+    let stage0 = prove_stage0::<F, PCS, VC, T, W>(
+        backend,
+        preprocessing,
+        config,
+        trusted_advice,
+        witness,
+        public_io,
+    )?;
+    // Preparation fills the Stage-1 rows only after stage 0 has released the
+    // one-hot selectors and the commit's device set: overlapping the two
+    // pushed the 2^29 stage-0 footprint past physical memory.
+    let prepare_kernel = backend.base.spartan_outer_uniskip.as_ref();
+    tracing::info_span!(
+        "jolt_prover::backend_witness_prepare",
+        log_t,
+        cycles = 1usize << log_t
+    )
+    .in_scope(|| prepare_kernel.prepare_witness(&mut session, log_t, witness))?;
+    tracing::info_span!("jolt_prover::backend_after_trace_commit")
+        .in_scope(|| prepare_kernel.after_trace_commit(&session));
     tracing::info_span!("release_retained_memory", stage = "stage0")
         .in_scope(|| jolt_kernels::mem::purge_retained_memory(log_t));
     let checked = stage0.checked;
