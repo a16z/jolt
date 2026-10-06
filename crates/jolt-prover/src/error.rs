@@ -1,3 +1,4 @@
+use common::jolt_device::MemoryLayoutError;
 use jolt_field::JoltField;
 use jolt_kernels::{KernelError, SumcheckKernelError};
 use jolt_openings::OpeningsError;
@@ -30,6 +31,9 @@ pub enum PreprocessingError {
     /// digest could not be computed.
     #[error(transparent)]
     Verifier(#[from] VerifierError),
+
+    #[error(transparent)]
+    MemoryLayout(#[from] MemoryLayoutError),
 }
 
 /// Errors surfaced while proving. The engine-level failures come through
