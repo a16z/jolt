@@ -16,10 +16,10 @@ jolt-hyperkzg::scheme.rs::HyperKZGScheme::verify_opening::challenge#1
 jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenge_vector#7
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_scalar_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_scalar_powers#0
-jolt-spartan-verifier::key.rs::SpartanKey<F>::begin::challenge_vector#3
-jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#0
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin::challenge_vector#4
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#1
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#2
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#3
 jolt-sumcheck::r1cs.rs::append_sumcheck_r1cs_constraints_for_domain::challenge#0
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F,C>::absorb_round::challenge#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::challenge#1
