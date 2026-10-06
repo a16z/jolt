@@ -145,14 +145,14 @@ cargo nextest run --release -p jolt-kernels --features metal product_cap_fallbac
 ```
 
 The instruction-RA sequence supports four-factor groups with either 4-bit
-or 8-bit committed chunks. The production K16 route is qualified at `2^20`
-and `2^21` cycles and can be disabled with
+or 8-bit committed chunks. The production K16 route is qualified at `2^18`
+through `2^22` cycles and can be disabled with
 `instruction_ra_virtualization.enable_small_k16 = false`. It uploads the
 shared stage-5 lookup indices when a resident address plane is unavailable;
 the existing K256 route continues to consume that plane directly. Both routes
 use the same lazy-prefix, dense-transition, and CPU-tail machinery.
 
-Instruction Read-RAF also admits the nine-factor cycle tail at `2^20` and `2^21` rows.
+Instruction Read-RAF also admits the nine-factor cycle tail at `2^18` through `2^22` rows.
 The address phase and first cycle message remain on the CPU; the first cycle
 bind fills shared Metal storage directly, and subsequent rounds retain those
 tables on the GPU. `instruction_read_raf.small_k16_cutoff_elements` controls

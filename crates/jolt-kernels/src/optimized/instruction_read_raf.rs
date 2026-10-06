@@ -1926,7 +1926,7 @@ impl OptimizedInstructionReadRafKernel<AkitaField> {
     pub(crate) fn metal_handoff_available(&self, cutoff: usize) -> bool {
         (self.dimensions.num_virtual_ra_polys() + 1 == ADDRESS_CYCLE_FACTORS
             || (self.dimensions.num_virtual_ra_polys() == 8
-                && matches!(self.dimensions.log_t(), 20 | 21)))
+                && matches!(self.dimensions.log_t(), 18..=22)))
             && !self.claim_columns.is_stage1()
             && self.claim_columns.len() / 2 > cutoff
             && self
