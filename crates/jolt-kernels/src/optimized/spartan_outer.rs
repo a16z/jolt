@@ -639,6 +639,53 @@ const EXTENDED_POSITIONS: [usize; EXTENDED_NODE_COUNT] = {
     positions
 };
 
+/// `(Λ, max |L_i(node)|)` over the extended nodes, from the Lagrange product
+/// formula. The assertions below pin the `i128` exactness argument of
+/// [`extend`] and [`NodeProducts`] at compile time for the selected domain.
+const EXTENSION_GAIN: (u128, u128) = {
+    let (mut gain, mut max_coefficient) = (0u128, 0u128);
+    let mut slot = 0;
+    while slot < EXTENDED_NODE_COUNT {
+        let node = EXTENDED_START + EXTENDED_POSITIONS[slot] as i64;
+        let mut sum = 0u128;
+        let mut i = 0;
+        while i < DOMAIN {
+            let (mut numerator, mut denominator) = (1i128, 1i128);
+            let mut j = 0;
+            while j < DOMAIN {
+                if j != i {
+                    numerator *= (node - DOMAIN_START - j as i64) as i128;
+                    denominator *= i as i128 - j as i128;
+                }
+                j += 1;
+            }
+            assert!(numerator % denominator == 0);
+            let coefficient = (numerator / denominator).unsigned_abs();
+            sum += coefficient;
+            if coefficient > max_coefficient {
+                max_coefficient = coefficient;
+            }
+            i += 1;
+        }
+        if sum > gain {
+            gain = sum;
+        }
+        slot += 1;
+    }
+    (gain, max_coefficient)
+};
+
+const _: () = {
+    let (gain, max_coefficient) = EXTENSION_GAIN;
+    let difference_growth = 1u128 << (DOMAIN - 1);
+    let az = gain + 3 * max_coefficient;
+    let bz = gain * (1 << 65);
+    assert!(az < 1 << 63);
+    assert!(3 * gain * difference_growth < 1 << 63);
+    assert!(bz * difference_growth < 1 << 127);
+    assert!(az * bz < 1 << 126);
+};
+
 /// Exact extension of the degree-`< DOMAIN` interpolant of `values`
 /// (on the base window's consecutive nodes; missing top values are zero) to
 /// every extended node, in [`EXTENDED_POSITIONS`] order. Finite differences
@@ -690,7 +737,7 @@ where
 /// (difference-table intermediates below `2^94`) and products below `2^105`;
 /// on `field-inline`'s domain `|az| < 2^31`, B below `2^95` (intermediates
 /// below `2^109`) and products below `2^126` — exact `i128` arithmetic
-/// throughout, pinned by `extension_products_fit_i128`.
+/// throughout, pinned by the [`EXTENSION_GAIN`] assertions.
 #[derive(Clone, Copy)]
 struct NodeProducts {
     first: i128,
@@ -2104,11 +2151,11 @@ mod tests {
         }
     }
 
-    /// The range argument behind the `i128` extension, for the compiled
-    /// domain: guards of magnitude ≤ 1 except one ≤ 2 and one ≤ 3 per group,
+    /// The [`RowGroupValues`] ranges the [`EXTENSION_GAIN`] assertions
+    /// assume: guards of magnitude ≤ 1 except one ≤ 2 and one ≤ 3 per group,
     /// B values (or halves) below 2^65.
     #[test]
-    fn extension_products_fit_i128() {
+    fn group_values_within_extension_ranges() {
         for row in synthetic_rows(8, 0xB0_0D) {
             let values = row.group_values();
             for guards in [values.a_first.as_slice(), values.a_second.as_slice()] {
@@ -2125,23 +2172,6 @@ mod tests {
                 .chain(&values.b_second_hi)
                 .all(|b| b.unsigned_abs() < 1 << 65));
         }
-        let mut gain = [0u128; EXTENDED_NODE_COUNT];
-        let mut max_coefficient = 0u128;
-        for i in 0..DOMAIN {
-            let mut basis = [0i128; DOMAIN];
-            basis[i] = 1;
-            for (sum, coefficient) in gain.iter_mut().zip(extend(&basis)) {
-                *sum += coefficient.unsigned_abs();
-                max_coefficient = max_coefficient.max(coefficient.unsigned_abs());
-            }
-        }
-        let gain = gain.into_iter().max().unwrap();
-        let az = gain + 3 * max_coefficient;
-        let bz = gain << 65;
-        assert!(az < 1 << 63);
-        assert!((3 * gain) << (DOMAIN - 1) < 1 << 63);
-        assert!(bz << (DOMAIN - 1) < 1 << 127);
-        assert!(az.checked_mul(bz).unwrap() < 1 << 126);
     }
 
     /// The typed bundle's columns equal the oracle tables the reference
