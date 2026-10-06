@@ -114,6 +114,18 @@ python3 -m unittest discover -s scripts/tests -p test_akita_metal_matrix.py
 
 ## Small K16 traces
 
+CPU coefficient packing partitions the packed trace on row-aligned block
+boundaries. Columns in each block share precomputed position/packing-weight
+products, and bounded partial sums merge in canonical column order. The small
+layout fallback preserves blocks spanning columns or splitting a trace row;
+all routes read each trace row once. Materialized one-hot polynomial comparisons
+and the row-visit regression cover the CPU implementation:
+
+```sh
+cargo nextest run --release -p jolt-akita blockwise_opening_kernels_match_materialized_onehot
+cargo nextest run --release -p jolt-akita coefficient_packing
+```
+
 The Akita commitment and opening routes admit packed arities 26 and 28 through
 32 (`2^16`- and `2^18`- through `2^22`-row K16 traces with column capacity 64),
 in addition to their existing large-trace ranges. This uses the existing D512

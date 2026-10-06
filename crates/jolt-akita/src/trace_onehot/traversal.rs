@@ -4,6 +4,7 @@ use akita_prover::compute::SubringCoefficientPackingPlan;
 use akita_prover::RootPolyShape;
 use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalEncoding, ExtField, PseudoMersenne, Unreduced, Zero};
+use rayon::prelude::*;
 
 use super::source::{validate_dimension, TracePackedOneHot};
 use super::{K256_ROW_BATCH, NO_SELECTED_ROW, SHARED_SHIFT_MIN_COLUMNS, TASKS_PER_RAYON_WORKER};
@@ -375,6 +376,7 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
     Ok(())
 }
 
+#[tracing::instrument(skip_all, name = "TracePackedOneHot::coefficient_packing")]
 pub(super) fn coefficient_packing_partials_packed<E, const D: usize>(
     source: &TracePackedOneHot,
     plan: SubringCoefficientPackingPlan<'_, E>,
@@ -411,18 +413,88 @@ where
     let positions_per_block = point.num_positions_per_block();
     let segment_rings = source.segment_ring_elems::<D>()?;
 
-    visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
-        for &(column, coefficient) in contributions {
-            let position = column * segment_rings + ring;
-            let block = position / positions_per_block;
-            let position_in_block = position % positions_per_block;
-            let subring = coefficient / stride;
-            let low_coefficient = coefficient % stride;
-            packed[block * subring_dimension + subring] += point.position_weights()
-                [position_in_block]
-                * point.packing_weights()[low_coefficient];
+    // Columns share position weights when each column spans whole blocks.
+    // Partition on trace-row boundaries so each row is read exactly once.
+    let ring_alignment = (source.one_hot_k / D).max(1);
+    let blocked =
+        segment_rings >= positions_per_block && positions_per_block.is_multiple_of(ring_alignment);
+    let blocks_per_column = if blocked {
+        segment_rings / positions_per_block
+    } else {
+        1
+    };
+    let parts = if blocked {
+        trace_block_task_parts::<D>(source.one_hot_k, positions_per_block, blocks_per_column)
+    } else {
+        1
+    };
+    let num_columns = source.rows.num_columns();
+    let partials = (0..blocks_per_column * parts)
+        .into_par_iter()
+        .map(|task| {
+            let trace_block = task / parts;
+            let (start, end) = if blocked {
+                let (start, end) = trace_block_part_range(
+                    positions_per_block,
+                    ring_alignment,
+                    task % parts,
+                    parts,
+                );
+                (
+                    trace_block * positions_per_block + start,
+                    trace_block * positions_per_block + end,
+                )
+            } else {
+                (0, segment_rings)
+            };
+            let mut partial = vec![
+                E::zero();
+                if blocked {
+                    num_columns * subring_dimension
+                } else {
+                    packed_len
+                }
+            ];
+            let mut weights = vec![E::zero(); stride];
+            visit_segment_ring_range::<D>(source, start, end, |ring, contributions| {
+                if blocked {
+                    let position = point.position_weights()[ring % positions_per_block];
+                    for (weight, &packing) in weights.iter_mut().zip(point.packing_weights()) {
+                        *weight = position * packing;
+                    }
+                }
+                for &(column, coefficient) in contributions {
+                    let position = column * segment_rings + ring;
+                    let block = if blocked {
+                        column
+                    } else {
+                        position / positions_per_block
+                    };
+                    let subring = coefficient / stride;
+                    let low_coefficient = coefficient % stride;
+                    let value = if blocked {
+                        weights[low_coefficient]
+                    } else {
+                        point.position_weights()[position % positions_per_block]
+                            * point.packing_weights()[low_coefficient]
+                    };
+                    partial[block * subring_dimension + subring] += value;
+                }
+            })?;
+            Ok::<_, AkitaError>(partial)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for (task, partial) in partials.into_iter().enumerate() {
+        for (index, value) in partial.into_iter().enumerate() {
+            let destination = if blocked {
+                ((index / subring_dimension) * blocks_per_column + task / parts) * subring_dimension
+                    + index % subring_dimension
+            } else {
+                index
+            };
+            packed[destination] += value;
         }
-    })?;
+    }
 
     let partial_width = geometry.partial_base_field_width();
     let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
