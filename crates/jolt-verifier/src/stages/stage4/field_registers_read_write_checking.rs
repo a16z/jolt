@@ -170,7 +170,6 @@ mod tests {
             [expected_address, expected_cycle].concat()
         );
 
-        // All five openings share the point.
         assert_eq!(output_points.registers_val(), output_points.rs1_ra());
         assert_eq!(output_points.registers_val(), output_points.rs2_ra());
         assert_eq!(output_points.registers_val(), output_points.rd_wa());

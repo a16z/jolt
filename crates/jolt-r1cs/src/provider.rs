@@ -56,10 +56,6 @@ impl<'a, F: JoltField> R1csSource<'a, F> {
         self.challenges = Some(challenges);
     }
 
-    /// Sparse matrix-vector product for one R1CS matrix.
-    ///
-    /// For each cycle c and constraint k:
-    /// `Mz[c * K_pad + k] = Σ_v M_local[k][v] * witness[c * V_pad + v]`
     fn compute_matvec(&self, matrix: &[Vec<(usize, F)>]) -> Vec<F> {
         let k_pad = self.key.num_constraints_padded;
         let v_pad = self.key.num_vars_padded;
@@ -96,7 +92,6 @@ impl<'a, F: JoltField> R1csSource<'a, F> {
         result
     }
 
-    /// Compute an R1CS-derived polynomial by column.
     #[expect(
         clippy::expect_used,
         reason = "CombinedRow requires prior set_challenges() — enforced as an API contract"

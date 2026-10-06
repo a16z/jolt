@@ -29,7 +29,6 @@ pub struct JoltProgram {
     pub program_end: u64,
     /// ELF entry point.
     pub entry_address: u64,
-    /// Selected instruction legality/profile for this program.
     pub profile: JoltInstructionProfile,
 }
 

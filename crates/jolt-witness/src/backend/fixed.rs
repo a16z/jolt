@@ -145,7 +145,6 @@ impl<F> FixedBackend<F> {
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
 
-    /// Attach a field-inline view (see [`FixedFieldInline`]).
     #[cfg(feature = "field-inline")]
     pub fn set_field_inline(&mut self, field_inline: FixedFieldInline<F>) {
         self.field_inline = Some(field_inline);

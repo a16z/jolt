@@ -1,9 +1,5 @@
 #![no_main]
 
-//! Differential check of the optimized `Fr` accumulators against their naive
-//! counterparts: deferred signed reduction must agree with ordinary field
-//! arithmetic over the same operation sequence.
-
 use jolt_field::signed::S256;
 use jolt_field::{
     Accumulator, CanonicalEncoding, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator,

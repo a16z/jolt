@@ -5,8 +5,7 @@
 //! The easiest solution is to use the hint module (<https://doc.rust-lang.org/core/hint/index.html>),
 //! `black_box()` in particular can be used to prevent the compiler from moving your code.
 
-// Constants to signal the emulator
-pub const JOLT_CYCLE_TRACK_CALL_ID: u32 = 0xC7C1E; // "C Y C L E"
+pub const JOLT_CYCLE_TRACK_CALL_ID: u32 = 0xC7C1E;
 pub const JOLT_CYCLE_MARKER_START: u32 = 1;
 pub const JOLT_CYCLE_MARKER_END: u32 = 2;
 
@@ -34,7 +33,6 @@ mod riscv_specific {
         );
     }
 
-    // Inserts a VirtualHostIO instruction directly into the compiled code.
     #[inline(always)]
     fn emit_jolt_cycle_marker(marker_id: u32, marker_len: u32, event_type: u32) {
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]

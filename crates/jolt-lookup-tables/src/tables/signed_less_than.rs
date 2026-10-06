@@ -14,7 +14,6 @@ pub struct SignedLessThanTable<const XLEN: usize>;
 impl<const XLEN: usize> LookupTable for SignedLessThanTable<XLEN> {
     fn materialize_entry(&self, index: u128) -> u64 {
         let (x, y) = uninterleave_bits(index);
-        // Sign-extend the lower XLEN bits to a full i64 before comparing.
         let shift = 64 - XLEN;
         let x_signed = ((x as i64) << shift) >> shift;
         let y_signed = ((y as i64) << shift) >> shift;

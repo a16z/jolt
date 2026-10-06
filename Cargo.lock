@@ -3361,7 +3361,6 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
  "blake2 0.11.0",
- "hex-literal",
  "jolt-inlines-sdk",
  "rand 0.8.7",
  "tracer",
@@ -3800,7 +3799,6 @@ dependencies = [
  "digest 0.11.3",
  "jolt-field",
  "light-poseidon",
- "num-traits",
  "rand 0.8.7",
  "spongefish",
 ]

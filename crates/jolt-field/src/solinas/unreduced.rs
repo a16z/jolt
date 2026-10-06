@@ -33,7 +33,6 @@ use crate::{
     Unreduced, WithCommitAccumulator,
 };
 
-/// Splits a canonical value into its 16-bit digits, least significant first.
 #[inline(always)]
 fn split16<const N: usize>(v: u128) -> [u16; N] {
     std::array::from_fn(|i| (v >> (16 * i)) as u16)
@@ -81,12 +80,8 @@ macro_rules! wide_lanes {
 }
 
 wide_lanes! {
-    /// Wide unreduced accumulator for [`Fp32`]: 2 × `i32` lanes.
     Fp32x2i32: 2;
-    /// Wide unreduced accumulator for [`Fp64`]: 4 × `i32` lanes.
     Fp64x4i32: 4;
-    /// Wide unreduced accumulator for [`Fp128`]: 8 × `i32` lanes (one
-    /// 256-bit vector register on AVX2, two 128-bit on NEON).
     Fp128x8i32: 8;
 }
 
@@ -183,7 +178,6 @@ product_accum! {
     FpExt2Fp64ProductAccum: 4;
 }
 
-/// Lifts of a canonical element into its accumulator/lane shapes.
 macro_rules! impl_from {
     ($(impl[$($g:tt)*] $src:ty => $dst:ty { $x:ident => $body:expr })*) => {$(
         impl<$($g)*> From<$src> for $dst {
@@ -568,7 +562,6 @@ fn fp_ext2_mul_to_accum_fp64<const P: u64, C: Ext2Config<Fp64<P>>>(
         let hi_carry = (carry_add as u128) - (borrow as u128);
         fp64_accum_limbs(diff, hi_carry)
     } else {
-        // c0 = p00 + 2·p11.
         let (sum1, carry1) = p00.overflowing_add(p11);
         let (sum2, carry2) = sum1.overflowing_add(p11);
         fp64_accum_limbs(sum2, (carry1 as u128) + (carry2 as u128))
@@ -696,7 +689,6 @@ unreduced_identity!(impl[const P: u64] FpExt4<Fp64<P>>, base: Fp64<P>);
 unreduced_identity!(impl[const P: u128] FpExt4<Fp128<P>>, base: Fp128<P>);
 unreduced_identity!(impl[F: PseudoMersenne] FpExt8<F>, base: F);
 
-/// Default [`Fold`]: no precomputation, one generic multiply per pair.
 macro_rules! fold_default {
     (impl[$($g:tt)*] $ty:ty) => {
         impl<$($g)*> Fold for $ty {

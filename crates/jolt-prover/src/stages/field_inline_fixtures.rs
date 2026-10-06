@@ -429,7 +429,6 @@ pub(crate) fn test_memory_layout() -> MemoryLayout {
     })
 }
 
-/// The fixture traces' program I/O: empty, over [`test_memory_layout`].
 pub(crate) fn test_public_io() -> JoltDevice {
     JoltDevice {
         memory_layout: test_memory_layout(),
@@ -903,7 +902,6 @@ pub(crate) mod twins {
     }
 }
 
-/// Shared upstream proving for clear and committed stage tests.
 pub(crate) mod proving {
     use super::*;
     use crate::stages::stage1::{prove_stage1, Stage1ProverOutput};

@@ -122,8 +122,6 @@ pub struct SpartanOuterKernel<F: JoltField> {
     /// opening-column order: the relation's ordinary variables, then (under `field-inline`)
     /// the five field-inline columns.
     input_tables: Vec<Vec<F>>,
-    /// Per-constraint-row value tables over the cycle domain:
-    /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
     az_rows: Vec<Vec<F>>,
     bz_rows: Vec<Vec<F>>,
     /// eq(τ_low, ·) over the (cycle ∥ stream) index `j = (t << 1) | s`
@@ -159,13 +157,6 @@ impl<F: JoltField> SpartanOuterKernel<F> {
         })
     }
 
-    /// Brute-force the uni-skip first-round polynomial. The summand's
-    /// row-node polynomial
-    /// `t1(Y) = Σ_(s,t) eq(τ_low, (t,s)) · Az(Y,s,t) · Bz(Y,s,t)` vanishes on
-    /// the 10 in-domain nodes (each row is a satisfied
-    /// `guard · (left − right) = 0`), so `t1` is interpolated over the
-    /// 19-point centered domain from the 9 extended-node evaluations; the
-    /// transmitted polynomial is `LK(τ_high, ·) × t1`.
     fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let tau_high = self.tau[self.log_t + 1];
         let extended_size = 2 * SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE - 1;

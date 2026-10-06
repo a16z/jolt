@@ -147,7 +147,7 @@ impl JoltDevice {
         if self.is_panic(address) {
             self.panic as u8
         } else if self.is_termination(address) {
-            0 // Termination bit should never be loaded after it is set
+            0
         } else if self.is_input(address) {
             let internal_address = self.convert_read_address(address);
             self.inputs.get(internal_address).copied().unwrap_or(0)
@@ -168,7 +168,7 @@ impl JoltDevice {
             self.outputs.get(internal_address).copied().unwrap_or(0)
         } else {
             assert!(address <= RAM_START_ADDRESS - 8);
-            0 // zero-padding
+            0
         }
     }
 
@@ -441,14 +441,12 @@ impl MemoryLayout {
                 padded_bytes: io_bytes,
             })?;
 
-        // Place the larger or equal-sized advice region first in memory (at the lower address).
         let (
             trusted_advice_start,
             trusted_advice_end,
             untrusted_advice_start,
             untrusted_advice_end,
         ) = if max_trusted_advice_size >= max_untrusted_advice_size {
-            // Trusted advice goes first
             let trusted_start = io_start;
             let trusted_end = trusted_start.checked_add(max_trusted_advice_size).ok_or(
                 MemoryLayoutError::SizeOverflow {
@@ -463,7 +461,6 @@ impl MemoryLayout {
                 })?;
             (trusted_start, trusted_end, untrusted_start, untrusted_end)
         } else {
-            // Untrusted advice goes first
             let untrusted_start = io_start;
             let untrusted_end = untrusted_start
                 .checked_add(max_untrusted_advice_size)
@@ -535,7 +532,6 @@ impl MemoryLayout {
         })
     }
 
-    /// Returns the start address memory.
     pub fn get_lowest_address(&self) -> u64 {
         self.trusted_advice_start.min(self.untrusted_advice_start)
     }
@@ -720,9 +716,6 @@ mod tests {
 
     #[test]
     fn layout_packs_io_regions_contiguously_below_ram_start() {
-        // trusted (4096) < untrusted (8192) forces the untrusted-first branch.
-        // io_region_bytes = 4096 + 8192 + 4096 + 4096 + 16 = 20496 bytes
-        //   => 2562 words => padded to 4096 words => 32768 bytes below RAM_START.
         let layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             max_trusted_advice_size: 4096,

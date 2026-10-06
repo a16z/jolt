@@ -128,8 +128,6 @@ pub struct WitnessCommitment<PCS: CommitmentScheme> {
     pub hint: PCS::OpeningHint,
 }
 
-/// One committed field-inline witness polynomial, corresponding to
-/// [`WitnessCommitment`], keeping the two id namespaces disjoint.
 #[cfg(feature = "field-inline")]
 pub struct FieldInlineWitnessCommitment<PCS: CommitmentScheme> {
     pub id: FieldInlineCommittedPolynomial,

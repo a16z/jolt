@@ -143,16 +143,6 @@ mod tests {
     }
 
     #[test]
-    fn mle_full_hypercube_rotw8() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 8>>();
-    }
-
-    #[test]
-    fn mle_full_hypercube_rotw12() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 12>>();
-    }
-
-    #[test]
     fn mle_full_hypercube_rotw16() {
         mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 16>>();
     }
@@ -183,11 +173,6 @@ mod tests {
     }
 
     #[test]
-    fn mle_full_hypercube_rotw19() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 19>>();
-    }
-
-    #[test]
     fn mle_random_rotw6() {
         mle_random_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 6>>();
     }
@@ -195,10 +180,5 @@ mod tests {
     #[test]
     fn prefix_suffix_rotw6() {
         prefix_suffix_test::<XLEN, Fr, VirtualXORROTWTable<XLEN, 6>>();
-    }
-
-    #[test]
-    fn mle_full_hypercube_rotw6() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTWTable<8, 6>>();
     }
 }

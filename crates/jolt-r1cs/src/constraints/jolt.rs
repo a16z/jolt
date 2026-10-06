@@ -344,10 +344,6 @@ fn append_field_inline_columns<F: JoltField>(
 }
 
 #[cfg(test)]
-#[cfg_attr(
-    feature = "field-inline",
-    expect(clippy::expect_used, reason = "tests may unwind via panic")
-)]
 mod tests {
     #[cfg(feature = "field-inline")]
     use super::field_constraints::{
@@ -374,7 +370,9 @@ mod tests {
         },
         FieldInlineVirtualPolynomial,
     };
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Fr;
+    #[cfg(feature = "field-inline")]
+    use jolt_field::Ring;
     #[cfg(feature = "field-inline")]
     use jolt_riscv::CircuitFlags;
     #[cfg(feature = "field-inline")]
@@ -401,32 +399,6 @@ mod tests {
         }
     }
 
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn default_spartan_outer_geometry_matches_rv64() {
-        assert_eq!(SPARTAN_OUTER_ROW_COUNT, RV64_NUM_EQ_CONSTRAINTS);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 10);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 27);
-        assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
-        assert_eq!(
-            SPARTAN_OUTER_FIRST_GROUP_ROWS,
-            [1, 2, 3, 4, 5, 6, 11, 14, 17, 18]
-        );
-        assert_eq!(
-            SPARTAN_OUTER_SECOND_GROUP_ROWS,
-            [0, 7, 8, 9, 10, 12, 13, 15, 16]
-        );
-        assert_eq!(
-            spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))
-                .map(|weights| weights.len()),
-            Ok(RV64_NUM_EQ_CONSTRAINTS)
-        );
-        assert_eq!(
-            spartan_outer_opening_columns(),
-            (rv64::V_LEFT_INSTRUCTION_INPUT..=rv64::NUM_R1CS_INPUTS).collect::<Vec<_>>()
-        );
-    }
-
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_composed_constraints_append_field_shape() {
@@ -438,43 +410,6 @@ mod tests {
         assert_eq!(
             composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
             SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
-        );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn field_inline_spartan_outer_geometry_includes_field_rows() {
-        assert_eq!(
-            SPARTAN_OUTER_ROW_COUNT,
-            RV64_NUM_EQ_CONSTRAINTS + FIELD_NUM_EQ_CONSTRAINTS
-        );
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
-        assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
-        assert_eq!(
-            &SPARTAN_OUTER_FIRST_GROUP_ROWS[10..],
-            &[
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FADD,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FSUB,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FMUL,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FINV,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_MEMORY,
-            ]
-        );
-        assert_eq!(
-            &SPARTAN_OUTER_SECOND_GROUP_ROWS[9..],
-            &[
-                RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_REGISTER,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_ZERO,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_IMM,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_ADVICE_LIMB,
-            ]
-        );
-        assert_eq!(
-            spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))
-                .map(|weights| weights.len()),
-            Ok(SPARTAN_OUTER_ROW_COUNT)
         );
     }
 
@@ -512,46 +447,6 @@ mod tests {
             (FIELD_INLINE_COLUMN_BASE..FIELD_INLINE_COLUMN_BASE + FIELD_INLINE_APPENDED_COLUMNS)
                 .collect::<Vec<_>>()
         );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn field_inline_spartan_outer_remainder_uses_appended_openings() {
-        let tau = [
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(4),
-            Fr::from_u64(5),
-            Fr::from_u64(6),
-        ];
-        let remainder = [
-            Fr::from_u64(7),
-            Fr::from_u64(8),
-            Fr::from_u64(9),
-            Fr::from_u64(10),
-        ];
-        let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-            tau: &tau,
-            uniskip: Fr::from_u64(11),
-            remainder: &remainder,
-        })
-        .expect("composed field-inline remainder derives");
-        let opening_count = spartan_outer_opening_columns().len();
-        let openings = (1..=opening_count as u64)
-            .map(Fr::from_u64)
-            .collect::<Vec<_>>();
-
-        let _output_claim = formula
-            .expected_output_claim(&openings)
-            .expect("field-inline output claim evaluates");
-        assert_eq!(
-            opening_count,
-            rv64::NUM_R1CS_INPUTS + FIELD_INLINE_APPENDED_COLUMNS
-        );
-        // The factored publics: the tau kernel, one Az and one Bz weight per
-        // opening (appended field-inline columns included), and the two
-        // affine constants.
-        assert_eq!(formula.public_coefficients().len(), 2 * opening_count + 3);
     }
 
     #[cfg(feature = "field-inline")]

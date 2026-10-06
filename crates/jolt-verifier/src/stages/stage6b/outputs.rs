@@ -1,6 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 6b (cycle-phase)
-//! verification.
-
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -234,7 +231,6 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
                 .committed_instruction_ra
                 .len()
             + 2
-            // The field-register increment reduction's single reduced `FieldRdInc` cell.
             + usize::from(cfg!(feature = "field-inline"))
             + usize::from(self.trusted_advice.is_some())
             + usize::from(self.untrusted_advice.is_some())
@@ -380,8 +376,6 @@ pub struct Stage6bZkOutput<F: JoltField, C> {
     pub output_points: Stage6bOutputPoints<F>,
 }
 
-// The clear variant carries the located opening claims read on the hot path; the
-// ZK variant carries committed consistency plus the point-only `output_points`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage6bOutput<F: JoltField, C> {
     Clear(Stage6bClearOutput<F>),

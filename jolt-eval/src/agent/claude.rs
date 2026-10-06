@@ -248,10 +248,6 @@ fn accumulate_text(event: &Value, out: &mut String) {
     }
 }
 
-/// Pretty-print an event to stderr.
-///
-/// Always printed: assistant text, thinking blocks, and a one-line
-/// summary of tool-use calls. Only printed when `verbose`: tool results.
 fn print_event(event: &Value, verbose: bool) {
     let Some(ty) = event.get("type").and_then(Value::as_str) else {
         return;
@@ -330,8 +326,6 @@ fn print_result(event: &Value) {
     }
 }
 
-/// Render tool input as a one-line summary. Prefer a well-known field
-/// over dumping the whole JSON object.
 fn tool_input_summary(input: &Value) -> String {
     for key in [
         "file_path",
@@ -436,7 +430,6 @@ pub fn create_worktree(repo_dir: &Path) -> Result<PathBuf, AgentError> {
     Ok(worktree_dir)
 }
 
-/// Remove a git worktree.
 pub fn remove_worktree(repo_dir: &Path, worktree_dir: &Path) {
     let _ = Command::new("git")
         .current_dir(repo_dir)

@@ -36,7 +36,6 @@ jolt-field = { path = "../jolt-field", default-features = false }
 rand = { workspace = true, features = ["std_rng"], optional = true }
 
 [dev-dependencies]
-num-traits = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

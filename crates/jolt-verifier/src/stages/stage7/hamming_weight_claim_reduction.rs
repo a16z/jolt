@@ -64,9 +64,7 @@ mod mode {
 /// The active relation's shape. Public because the kernel seam reads it off the
 /// relation (`Self::dimensions`).
 pub use mode::Dimensions as HammingWeightClaimReductionDimensions;
-/// The claims the active relation consumes.
 pub use mode::InputClaims as HammingWeightClaimReductionInputClaims;
-/// The claims the active relation produces.
 pub use mode::OutputClaims as HammingWeightClaimReductionOutputClaims;
 
 type HammingWeightClaimReductionSymbolic = mode::Symbolic;

@@ -131,13 +131,10 @@ pub use solinas::{
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
-/// Backend-independent input and shape failures.
 #[derive(Debug, thiserror::Error)]
 pub enum FieldError {
-    /// Invalid input parameter or value.
     #[error("invalid input: {0}")]
     InvalidInput(String),
-    /// Length mismatch between an expected and provided shape.
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
 }

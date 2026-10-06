@@ -115,8 +115,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The reduced openings share one opening point; bind it against the low
-            // product remainder challenges (`tau_low`).
             InstructionClaimReductionPublic::EqSpartan => {
                 derivations::eq_at_point(output_points.left_lookup_operand(), &self.tau_low)
                     .map_err(public_input_failed)

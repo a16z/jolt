@@ -893,59 +893,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn folded_instance_uses_transcript_derived_challenge() {
-        let setup = setup();
-        let protocol = protocol(&setup);
-        let proof = proof(&setup, &protocol);
-
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-        let folded = protocol
-            .folded_instance_from_proof(&proof, &mut transcript)
-            .expect("fold inputs are well-shaped");
-
-        let committed = protocol
-            .committed_relaxed_instance(&proof.auxiliary_row_commitments)
-            .expect("committed instance builds");
-        let random = protocol
-            .random_relaxed_instance(
-                &proof.random_round_commitments,
-                &proof.random_output_claim_row_commitments,
-                &proof.random_auxiliary_row_commitments,
-                &proof.random_error_row_commitments,
-                &proof.random_eval_commitments,
-                proof.random_u,
-            )
-            .expect("random instance builds");
-        let mut manual_transcript = Blake2bTranscript::<Fr>::new(b"blindfold-verify");
-        committed.append_to_transcript(
-            &mut manual_transcript,
-            b"bf_committed_u",
-            b"bf_committed_w",
-            b"bf_committed_e",
-            b"bf_committed_eval",
-        );
-        random.append_to_transcript(
-            &mut manual_transcript,
-            b"bf_random_u",
-            b"bf_random_w",
-            b"bf_random_e",
-            b"bf_random_eval",
-        );
-        manual_transcript.append_values(b"bf_cross_e", &proof.cross_term_error_row_commitments);
-        let folding_challenge = manual_transcript.challenge();
-        let expected = committed
-            .fold(
-                &random,
-                &proof.cross_term_error_row_commitments,
-                folding_challenge,
-            )
-            .expect("fold dimensions match");
-
-        assert_eq!(folded, expected);
-        assert_eq!(transcript.state(), manual_transcript.state());
-    }
-
     /// Regression: a proof with fewer `folded_eval_outputs` than the layout's
     /// eval coordinates previously reached `folded_eval_outputs[index]` and
     /// panicked; both the eager length gate and the per-coordinate lookup

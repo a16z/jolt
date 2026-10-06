@@ -1,5 +1,3 @@
-//! Test-only Fiat-Shamir verifier scopes.
-
 use std::cell::Cell;
 
 /// Verifier region active when a transcript challenge is drawn.
@@ -10,25 +8,18 @@ pub enum FsScope {
     Preamble,
     /// Proof and preprocessing commitments.
     Commitments,
-    /// Stage 1.
     Stage1,
-    /// Stage 2.
     Stage2,
-    /// Stage 3.
     Stage3,
-    /// Stage 4.
     Stage4,
-    /// Stage 5.
     Stage5,
     /// Stage 6 address phase.
     Stage6a,
     /// Stage 6 cycle phase.
     Stage6b,
-    /// Stage 7.
     Stage7,
     /// Final opening checks.
     Stage8,
-    /// BlindFold verification.
     BlindFold,
 }
 

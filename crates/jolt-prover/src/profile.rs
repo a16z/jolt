@@ -91,7 +91,7 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
-const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
+const SAFETY_MARGIN: f64 = 0.9;
 const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
 const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
@@ -171,8 +171,6 @@ impl Workload {
         }
     }
 
-    /// The guest input targeting `target` trace cycles — the same mapping as
-    /// the legacy harness's `master_benchmark`.
     fn input(self, target: usize) -> Vec<u8> {
         match self {
             Self::Fibonacci => {
@@ -332,7 +330,6 @@ pub struct ProfileArtifacts {
 /// orders of magnitude past any provable trace.
 const MAX_SCALE: u32 = 40;
 
-/// Rejects out-of-range log2 trace lengths before they wrap a shift.
 fn validate_scale(scale: u32) {
     assert!(
         (1..=MAX_SCALE).contains(&scale),
@@ -578,7 +575,6 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
     failed.is_empty()
 }
 
-/// One proved workload, as the reporting tail consumes it.
 struct ProvenRun {
     duration: Duration,
     setup_duration: Duration,
@@ -657,7 +653,6 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
 
     let input = workload.input(bench_target);
 
-    // --- Guest compilation and trace sizing (unmeasured).
     let mut program = Program::new(&format!("{bench_name}-guest"));
     #[cfg(feature = "field-inline")]
     if workload.uses_field_inline() {
@@ -683,7 +678,6 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     )
     .expect("program preprocessing");
 
-    // --- Modular trace (unmeasured).
     let trace_output = trace_modular(
         &jolt_program,
         &memory_layout,
@@ -695,7 +689,6 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     #[cfg(feature = "field-inline")]
     let trace_length = trace_output.trace.rows().len();
 
-    // --- The compiled protocol's preprocessing + prove + verify.
     let run = prove_workload(&jolt_program, program_preprocessing, trace_output, backend);
     let (duration, proof_size) = (run.duration, run.proof_size);
 
@@ -778,7 +771,6 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     }
 }
 
-/// The Dory arm, with setup, proving, and verification measured separately.
 #[cfg(not(feature = "akita"))]
 fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
@@ -888,7 +880,6 @@ fn prove_workload(
     }
 }
 
-/// The Akita arm, with setup, proving, and verification measured separately.
 #[cfg(feature = "akita")]
 fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
@@ -1025,7 +1016,6 @@ fn prove_workload(
     }
 }
 
-/// Trace the guest through the modular stack (`TracerBackend`).
 fn trace_modular(
     program: &JoltProgram,
     memory_layout: &common::jolt_device::MemoryLayout,

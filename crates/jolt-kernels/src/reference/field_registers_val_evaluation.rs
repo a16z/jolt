@@ -1,5 +1,3 @@
-//! Dense witness tables for the symbolic `FieldRegistersValEvaluation` relation.
-
 use super::views::eq_table;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, ReferenceBackend,
@@ -42,8 +40,6 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>> for Referenc
         }
         let (r_address, r_cycle) = registers_val_point.split_at(FIELD_REGISTERS_LOG_K);
 
-        // The address-bound `rd_wa` slice, folded from the one-hot grid:
-        // `wa[j] = Σ_k eq(r_address, k) · grid[k·2^log_t + j]`.
         let wa_grid = oracle.oracle_table(FieldInlinePolynomialId::Virtual(
             FieldInlineVirtualPolynomial::FieldRdWa,
         ))?;

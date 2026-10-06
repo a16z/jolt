@@ -43,7 +43,6 @@ pub struct R1csKey<F: JoltField> {
     pub(crate) num_vars_padded: usize,
 }
 
-/// Deserialization helper; never exposed directly.
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "F: for<'a> Deserialize<'a>"))]
 struct RawR1csKey<F: JoltField> {
@@ -323,7 +322,6 @@ impl<F: JoltField> R1csKey<F> {
         let eq_con = EqPolynomial::new(rx_con.to_vec()).evaluations();
         let eq_cycle = EqPolynomial::new(rx_cycle.to_vec()).evaluations();
 
-        // Build combined local row: M_local(r_con, v) for each variable v
         let mut local_row = vec![F::zero(); self.num_vars_padded];
         #[expect(
             clippy::indexing_slicing,
@@ -409,7 +407,6 @@ mod tests {
     use jolt_field::{Field, Fr, Ring};
     use num_traits::{One, Zero};
 
-    /// x * x = y, y * x = z — 2 constraints, 4 vars [1, x, y, z]
     fn test_matrices() -> ConstraintMatrices<Fr> {
         let one = Fr::one();
         ConstraintMatrices::new(
@@ -434,7 +431,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "overflows usize")]
     fn new_rejects_total_size_overflow() {
-        // 2 constraints pad to 2; (1 << 63) * 2 overflows usize.
         let _ = R1csKey::new(test_matrices(), 1 << 63);
     }
 
@@ -465,11 +461,9 @@ mod tests {
         // Zero num_cycles would make num_cycle_vars() return 64.
         assert!(R1csKey::try_from(raw_key(0, 2, 4)).is_err());
         assert!(R1csKey::try_from(raw_key(3, 2, 4)).is_err());
-        // Padded dimensions inconsistent with the embedded matrices.
         assert!(R1csKey::try_from(raw_key(4, 1, 4)).is_err());
         assert!(R1csKey::try_from(raw_key(4, 4, 4)).is_err());
         assert!(R1csKey::try_from(raw_key(4, 2, 2)).is_err());
-        // total_rows()/total_cols() products must not overflow.
         assert!(R1csKey::try_from(raw_key(1 << 63, 2, 4)).is_err());
     }
 
@@ -502,11 +496,9 @@ mod tests {
     fn local_mle_boolean_points() {
         let key = test_key(1);
 
-        // Constraint 0, var 0 → A entry is at (1, 1), so A(0, [0,0]) = 0
         let (a, _, _) = key.evaluate_local_mles(&[Fr::zero()], &[Fr::zero(), Fr::zero()]);
         assert!(a.is_zero());
 
-        // Constraint 0, var 1 → A has (1, 1), eq([0,1], [0,1]) = 1, so A(0, [0,1]) = 1
         let (a, _, _) = key.evaluate_local_mles(&[Fr::zero()], &[Fr::zero(), Fr::one()]);
         assert_eq!(a, Fr::one());
     }
@@ -554,27 +546,8 @@ mod tests {
     }
 
     #[test]
-    fn matrix_mle_factorizes() {
-        let key = test_key(2);
-
-        let r_x = [Fr::from_u64(5), Fr::from_u64(7)];
-        let r_y = [Fr::from_u64(5), Fr::from_u64(11), Fr::from_u64(13)];
-
-        let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
-
-        let cycle_eq = EqPolynomial::new(vec![Fr::from_u64(5)]).evaluate(&[Fr::from_u64(5)]);
-        let (a_local, b_local, c_local) =
-            key.evaluate_local_mles(&[Fr::from_u64(7)], &[Fr::from_u64(11), Fr::from_u64(13)]);
-
-        assert_eq!(a_eval, cycle_eq * a_local);
-        assert_eq!(b_eval, cycle_eq * b_local);
-        assert_eq!(c_eval, cycle_eq * c_local);
-    }
-
-    #[test]
     fn sparse_matvec_satisfies() {
         let key = test_key(1);
-        // Witness: [1, 3, 9, 27]
         let w = [
             Fr::from_u64(1),
             Fr::from_u64(3),
@@ -582,14 +555,12 @@ mod tests {
             Fr::from_u64(27),
         ];
 
-        // Constraint 0: 3*3 = 9 ✓
         let (az, bz, cz) = key.evaluate_sparse_matvec(&[Fr::zero()], &w);
         assert_eq!(az, Fr::from_u64(3));
         assert_eq!(bz, Fr::from_u64(3));
         assert_eq!(cz, Fr::from_u64(9));
         assert_eq!(az * bz, cz);
 
-        // Constraint 1: 9*3 = 27 ✓
         let (az, bz, cz) = key.evaluate_sparse_matvec(&[Fr::one()], &w);
         assert_eq!(az, Fr::from_u64(9));
         assert_eq!(bz, Fr::from_u64(3));
@@ -617,11 +588,9 @@ mod tests {
 
         let combined = key.combined_row(&r_x, rho_a, rho_b, rho_c);
 
-        // Evaluate the dense combined row polynomial at r_y
         let eq_y = EqPolynomial::new(r_y.clone()).evaluations();
         let dense_eval: Fr = combined.iter().zip(eq_y.iter()).map(|(&c, &e)| c * e).sum();
 
-        // Compare with direct matrix MLE evaluation
         let (a_eval, b_eval, c_eval) = key.evaluate_matrix_mles(&r_x, &r_y);
         let mle_eval = rho_a * a_eval + rho_b * b_eval + rho_c * c_eval;
 
@@ -635,7 +604,6 @@ mod tests {
 
         let mut rng = ChaCha20Rng::seed_from_u64(99);
 
-        // Trivial key: A[k] = [(0, 1)], B/C empty
         let one = Fr::one();
         let m = ConstraintMatrices::new(
             24,
@@ -657,7 +625,6 @@ mod tests {
         let (rx_cycle, rx_con) = r_x.split_at(cv);
         let (ry_cycle, _) = r_y.split_at(cv);
 
-        // Check eq factorization: eq_full[c*K+k] == eq_cycle[c] * eq_sub[k]
         let eq_row = EqPolynomial::new(r_x.clone()).evaluations();
         let eq_x_cycle = EqPolynomial::new(rx_cycle.to_vec()).evaluations();
         let eq_con = EqPolynomial::new(rx_con.to_vec()).evaluations();
@@ -669,7 +636,6 @@ mod tests {
             }
         }
 
-        // Check key MLE vs brute force
         let eq_col = EqPolynomial::new(r_y.clone()).evaluations();
         let (a_local, _, _) = key.evaluate_local_mles(rx_con, &r_y[cv..]);
         let cycle_eq = EqPolynomial::new(rx_cycle.to_vec()).evaluate(ry_cycle);

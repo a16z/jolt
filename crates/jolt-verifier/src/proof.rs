@@ -1,5 +1,3 @@
-//! Verifier-owned proof model types.
-
 use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -269,7 +267,6 @@ pub struct ClearProofClaims<F: JoltField> {
 }
 
 impl<F: JoltField> ClearProofClaims<F> {
-    /// Assemble the clear claims from the stage outputs.
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per stage, mirroring the wire struct"

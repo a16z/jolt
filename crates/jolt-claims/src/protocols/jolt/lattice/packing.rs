@@ -110,7 +110,6 @@ pub const fn one_hot_trace_column_capacity(
     }
 }
 
-/// Canonical committed-program packing plan.
 pub fn precommitted_packing_plan(
     shape: &PrecommittedPackingShape,
 ) -> Result<PrecommittedPackingPlan, LatticeGeometryError> {
@@ -164,7 +163,6 @@ pub fn precommitted_packing_plan(
     })
 }
 
-/// Derives the direct committed-program layout from public program metadata.
 pub fn committed_program_packing_plan(
     bytecode_len: usize,
     bytecode_chunks: usize,
@@ -528,8 +526,6 @@ mod tests {
 
     #[test]
     fn tiny_precommitted_objects_pad_slot_capacity_to_the_planner_floor() {
-        // A one-coefficient advice polynomial is below the planner
-        // floor, so the plan widens its otherwise-empty selector capacity.
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
             let plan = advice_packing_plan(kind, 0).unwrap();
             assert_eq!(plan.packing().ids().len(), 1);
@@ -538,18 +534,15 @@ mod tests {
             assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
         }
 
-        // One variable below the floor, capacity doubles to reach it.
         let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 13).unwrap();
         assert_eq!(plan.packing().logical_num_vars(), 13);
         assert_eq!(plan.packing().slot_capacity(), 2);
         assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
 
-        // At the floor exactly, capacity stays a single slot.
         let plan = advice_packing_plan(JoltAdviceKind::Trusted, 14).unwrap();
         assert_eq!(plan.packing().slot_capacity(), 1);
         assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
 
-        // A two-word program image pads the same way.
         let shape = PrecommittedPackingShape {
             program_image_log_words: Some(1),
             ..precommitted_shape()

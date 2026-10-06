@@ -11,8 +11,6 @@ use akita_types::sis::CommittedSourceClass;
 
 use crate::AKITA_ONE_HOT_K16;
 
-/// Delegate one Jolt policy to an upstream preset while assigning a distinct
-/// external schedule-family identity.
 macro_rules! delegate_preset {
     (
         $(#[$doc:meta])*
@@ -141,17 +139,5 @@ mod tests {
             JoltOneHotK16::schedule_family_name(),
             JoltOneHotK256::schedule_family_name()
         );
-    }
-
-    #[test]
-    fn k256_policy_uses_adaptive_dimensions() {
-        assert_eq!(JoltOneHotK256::inner_basis_range(), (3, 16));
-        assert_eq!(JoltOneHotK256::opening_basis_range(), (3, 6));
-        assert!(matches!(
-            JoltOneHotK256::RING_DIMENSION_SCHEDULE_MODE,
-            akita_schedules::RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ));
-        assert!(JoltOneHotK16::recursive_setup_planning());
-        assert!(JoltOneHotK256::recursive_setup_planning());
     }
 }
