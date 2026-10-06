@@ -36,10 +36,10 @@ use jolt_claims::protocols::jolt::relations::spartan::{
 };
 use std::sync::OnceLock;
 
-use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
-use jolt_claims::protocols::jolt::r1cs::{
+use jolt_claims::protocols::composed::r1cs::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
 };
+use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderInputClaims, OuterRemainderOutputClaims,
 };
@@ -161,7 +161,7 @@ impl<F: JoltField> OuterRemainder<F> {
         // appended field-inline columns, and the weight vectors must match it. with
         // field-inline disabled, the two sources agree (35 columns).
         let variable_count =
-            jolt_claims::protocols::jolt::r1cs::spartan_outer_opening_columns().len();
+            jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         debug_assert!(variable_count >= dimensions.variables().len());
         Self {
             symbolic: SelectedSymbolic::new(dimensions),
@@ -432,7 +432,7 @@ mod tests {
         let uniskip_challenge = Fr::from_u64(17);
 
         let variable_count =
-            jolt_claims::protocols::jolt::r1cs::spartan_outer_opening_columns().len();
+            jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         let openings = (0..variable_count)
             .map(|i| Fr::from_u64(1_000 + i as u64))
             .collect::<Vec<_>>();

@@ -83,7 +83,7 @@ trace-recording bugs stand in the way (see Implementation notes).
 
 Key protocol anchors:
 
-- **R1CS (uniform, 22 constraints / 38 wires per cycle)**, `crates/jolt-claims/src/protocols/jolt/r1cs/rv64.rs`:
+- **R1CS (uniform, 22 constraints / 38 wires per cycle)**, `crates/jolt-claims/src/protocols/composed/r1cs/rv64.rs`:
   - `RamAddress = Rs1Value + Imm` when Load/Store (constraint 0) — the wire is the raw **byte**
     effective address; `RamAddress = 0` on idle cycles (constraint 1).
   - Loads: `rv = wv` and `rv = RdWriteValue` (constraints 2–3). Stores: `wv = Rs2Value`
@@ -417,7 +417,7 @@ Verified shape of the blast radius:
   (`zkvm/r1cs/{inputs,constraints}.rs` plus the *positionally index-addressed* evaluators in
   `r1cs/evaluation.rs` with hand-picked accumulator widths), `crates/jolt-claims`
   (`geometry/spartan.rs` — `SPARTAN_OUTER_RV64_ROW_COUNT`, `FIRST_GROUP_ROWS`, and the bare
-  `OUTER_UNISKIP_DOMAIN_SIZE = 10` literal), and `crates/jolt-claims` (`protocols/jolt/r1cs/rv64.rs`
+  `OUTER_UNISKIP_DOMAIN_SIZE = 10` literal), and `crates/jolt-claims` (`protocols/composed/r1cs/rv64.rs`
   `V_*` column indices + all rows re-implemented by integer index). Only tests, not types,
   enforce agreement.
 - **BlindFold is mostly generic** (the outer output-claim constraint scans constraint groups at

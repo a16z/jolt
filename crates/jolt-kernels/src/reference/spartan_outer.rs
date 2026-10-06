@@ -37,7 +37,7 @@ use jolt_r1cs::constraint::ConstraintMatrices;
 // The COMPOSED R1CS shapes (feature-aware): identical to the jolt-claims RV64-only
 // constants without field-inline, the field-inline-extended row/column composition
 // under `field-inline` — the shapes the composed verifier checks.
-use jolt_claims::protocols::jolt::r1cs::{
+use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };

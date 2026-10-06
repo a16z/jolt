@@ -175,7 +175,7 @@ mod tests {
         let ids = stage1_spartan_outer_opening_ids(&dimensions);
 
         let expected_len =
-            jolt_claims::protocols::jolt::r1cs::spartan_outer_opening_columns().len();
+            jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         assert_eq!(ids.len(), expected_len);
         #[cfg(not(feature = "field-inline"))]
         assert_eq!(ids.len(), 35);

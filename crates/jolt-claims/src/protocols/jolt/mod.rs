@@ -10,8 +10,6 @@
 
 pub mod geometry;
 pub mod lattice;
-#[cfg(feature = "r1cs")]
-pub mod r1cs;
 pub mod relations;
 mod unbatched;
 

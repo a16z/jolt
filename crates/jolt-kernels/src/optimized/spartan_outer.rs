@@ -48,21 +48,21 @@ use std::collections::BTreeMap;
 use std::ops::{Add, Sub};
 
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT;
-use jolt_claims::protocols::jolt::geometry::spartan::{
-    outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
-};
+use jolt_claims::protocols::composed::r1cs::field_constraints::limb_radix;
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::jolt::r1cs::field_constraints::limb_radix;
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::jolt::r1cs::field_constraints::{
+use jolt_claims::protocols::composed::r1cs::field_constraints::{
     ROW_ADVICE_LIMB, ROW_ASSERT_EQ, ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB,
     ROW_LOAD_ACCUMULATE_FROM_MEMORY, ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
 };
-use jolt_claims::protocols::jolt::r1cs::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
+use jolt_claims::protocols::composed::r1cs::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::jolt::r1cs::{
+use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_FIRST_GROUP_ROWS, SPARTAN_OUTER_SECOND_GROUP_ROWS,
+};
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT;
+use jolt_claims::protocols::jolt::geometry::spartan::{
+    outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
 };
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltPolynomialId, SpartanOuterPublic,
@@ -77,7 +77,7 @@ use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, 
 // The COMPOSED R1CS shapes (feature-aware): identical to the rv64-only constants
 // without field-inline, the field-inline-extended row/column composition under
 // `field-inline` — the same sources the reference kernel folds with.
-use jolt_claims::protocols::jolt::r1cs::{
+use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };

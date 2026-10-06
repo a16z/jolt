@@ -442,7 +442,7 @@ field-inline.
      through the first config-dependent challenge.
 
 2. Compose selected R1CS constraints.
-   - Add `jolt-claims::protocols::jolt::r1cs` as the compile-time selected R1CS
+   - Add `jolt-claims::protocols::composed::r1cs` as the compile-time selected R1CS
      composition point.
    - Without field-inline, selected constraints are exactly the RV64 constraints.
    - With field-inline, selected constraints append `field_constraints` rows
@@ -462,12 +462,12 @@ field-inline.
      the last point: ordinary RV64 Spartan openings first, then Spartan
      openings local to field-inline only when field inline is enabled.
    - Do not duplicate bridge openings for RV64 columns reused by
-     `jolt-claims::protocols::jolt::r1cs`: `Rs1Value`, `RdWriteValue`, and `Imm`
+     `jolt-claims::protocols::composed::r1cs`: `Rs1Value`, `RdWriteValue`, and `Imm`
      remain ordinary Jolt openings.
    - Field operation flags use the common `CircuitFlags` columns and Jolt
      Spartan openings. The five openings local to field-inline follow the
      appended-column order: field register operand values and product witnesses.
-   - Add a selected Spartan outer remainder helper in `jolt-claims::protocols::jolt::r1cs` that mirrors
+   - Add a selected Spartan outer remainder helper in `jolt-claims::protocols::composed::r1cs` that mirrors
      the existing RV64 helper but uses the selected equality constraints,
      selected row weights, and selected opening columns.
    - Transparent path: `jolt-verifier::stages::stage1::verify` uses the
