@@ -8,7 +8,7 @@ use super::source::TracePackedOneHot;
 use super::traversal::{
     flush_deferred_rank, flush_wide, row_is_committed, trace_block_part_range,
     trace_block_task_parts, try_shift_accumulate_full_rows, validate_block_geometry,
-    visit_segment_ring_range, visit_segment_ring_row_range, DeferredFp128Ring,
+    visit_segment_ring_range, visit_segment_ring_row_range, DeferredFp128Ring, K16ConstantRows,
     K16FourRowShiftGroups,
 };
 use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
@@ -157,6 +157,7 @@ pub(super) fn commit_packed<const D: usize>(
                             .collect::<Option<Vec<_>>>()
                     })
                     .flatten();
+                    let mut constant_rows = K16ConstantRows::new();
                     visit_segment_ring_row_range::<D>(
                         source,
                         ring_start,
@@ -164,33 +165,63 @@ pub(super) fn commit_packed<const D: usize>(
                         |ring, selected_rows, committed_zero_masks| {
                             let position = ring - block_ring_start;
                             let a_col = position * plan.num_digits_inner;
+                            if shift_groups.is_some() {
+                                constant_rows.build(
+                                    selected_rows,
+                                    committed_zero_masks,
+                                    num_columns,
+                                );
+                            }
                             let grouped = shift_groups.as_mut().is_some_and(|groups| {
                                 groups
                                     .iter_mut()
                                     .zip(selected_rows.chunks_exact(4 * num_columns))
                                     .zip(committed_zero_masks.chunks_exact(4))
                                     .all(|((groups, selected_rows), masks)| {
-                                        groups.build(selected_rows, masks, num_columns)
+                                        groups.build(
+                                            selected_rows,
+                                            masks,
+                                            num_columns,
+                                            constant_rows.mask,
+                                        )
                                     })
                             });
                             for (a, a_row) in a_rows.iter().enumerate() {
                                 let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
                                 if grouped {
+                                    constant_rows.accumulate(&a_wide, &mut wide, a, plan.n_a);
                                     if let Some(groups) = &shift_groups {
-                                        for ((groups, selected_rows), masks) in groups
-                                            .iter()
-                                            .zip(selected_rows.chunks_exact(4 * num_columns))
-                                            .zip(committed_zero_masks.chunks_exact(4))
-                                        {
-                                            groups.accumulate(
+                                        for group in groups {
+                                            group.accumulate_shared(
                                                 &a_wide,
                                                 &mut wide,
                                                 a,
                                                 plan.n_a,
-                                                selected_rows,
-                                                masks,
                                                 num_columns,
                                             );
+                                        }
+                                        // Finish each unshared column while its accumulator is cache-resident.
+                                        for column in 0..num_columns {
+                                            if column < 64
+                                                && constant_rows.mask & (1 << column) != 0
+                                            {
+                                                continue;
+                                            }
+                                            let dst = &mut wide[column * plan.n_a + a];
+                                            for ((group, selected_rows), masks) in groups
+                                                .iter()
+                                                .zip(selected_rows.chunks_exact(4 * num_columns))
+                                                .zip(committed_zero_masks.chunks_exact(4))
+                                            {
+                                                group.accumulate_column(
+                                                    &a_wide,
+                                                    dst,
+                                                    selected_rows,
+                                                    masks,
+                                                    num_columns,
+                                                    column,
+                                                );
+                                            }
                                         }
                                         continue;
                                     }

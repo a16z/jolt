@@ -18,7 +18,7 @@ use akita_prover::{CpuBackend, OneHotPoly, RootOpeningSource, RootPolyMeta, Root
 use akita_types::{
     BasisMode, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
-use jolt_field::{One, Ring};
+use jolt_field::{One, Ring, Zero};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::source::{TracePackedOneHotBatchView, TracePackedOneHotView};
@@ -145,10 +145,10 @@ fn committed_digit_zero_mapping_is_dimension_generic() {
 }
 
 fn assert_k16_shift_groups<const D: usize>() {
-    const COLUMNS: usize = 5;
+    const COLUMNS: usize = 10;
     let rows_per_ring = D / 16;
     let mut selected_rows = vec![NO_SELECTED_ROW; rows_per_ring * COLUMNS];
-    let committed_zero_masks = vec![0u64; rows_per_ring];
+    let mut committed_zero_masks = vec![1u64 << 5; rows_per_ring];
     for row in 0..rows_per_ring {
         let shared_hot = ((row + 1) % 15 + 1) as u8;
         selected_rows[row * COLUMNS] = shared_hot;
@@ -160,38 +160,72 @@ fn assert_k16_shift_groups<const D: usize>() {
         } else {
             ((3 * row + 5) % 15 + 1) as u8
         };
+        selected_rows[row * COLUMNS + 6] = 15;
+        selected_rows[row * COLUMNS + 9] = if row == 1 { 8 } else { 7 };
+        if row % 2 == 0 {
+            committed_zero_masks[row] |= 1 << 8;
+        }
     }
 
     let source: CyclotomicRing<AkitaField, D> =
         CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
-            AkitaField::from_u64((index + 1) as u64)
+            -AkitaField::from_u64((index + 1) as u64)
         }));
-    let source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
-    let mut actual = vec![AkitaWideRing::zero(); COLUMNS];
+    let wide_source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
+    let mut actual = vec![AkitaWideRing::zero(); 2 * COLUMNS];
+    let mut constant = K16ConstantRows::new();
+    constant.build(&selected_rows, &committed_zero_masks, COLUMNS);
+    assert_eq!(constant.mask, (1 << 5) | (1 << 6));
+    constant.accumulate(&wide_source, &mut actual, 1, 2);
     for (chunk, chunk_rows) in selected_rows.chunks_exact(4 * COLUMNS).enumerate() {
         let masks = &committed_zero_masks[4 * chunk..4 * chunk + 4];
         let mut groups = K16FourRowShiftGroups::new(COLUMNS, 4 * chunk).unwrap();
-        assert!(groups.build(chunk_rows, masks, COLUMNS));
-        groups.accumulate(&source, &mut actual, 0, 1, chunk_rows, masks, COLUMNS);
-    }
-
-    let mut expected = vec![AkitaWideRing::zero(); COLUMNS];
-    for (row, row_indices) in selected_rows.chunks_exact(COLUMNS).enumerate() {
-        for (column, &hot) in row_indices.iter().enumerate() {
-            if hot != NO_SELECTED_ROW {
-                source.shift_accumulate_into(&mut expected[column], 16 * row + usize::from(hot));
+        assert!(groups.build(chunk_rows, masks, COLUMNS, constant.mask));
+        groups.accumulate_shared(&wide_source, &mut actual, 1, 2, COLUMNS);
+        for column in 0..COLUMNS {
+            if constant.mask & (1 << column) == 0 {
+                groups.accumulate_column(
+                    &wide_source,
+                    &mut actual[2 * column + 1],
+                    chunk_rows,
+                    masks,
+                    COLUMNS,
+                    column,
+                );
             }
         }
+    }
+
+    let mut expected = vec![CyclotomicRing::zero(); 2 * COLUMNS];
+    for column in 0..COLUMNS {
+        let selector = CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+            let row = coefficient / 16;
+            let hot = selected_rows[row * COLUMNS + column];
+            let committed =
+                hot != NO_SELECTED_ROW || committed_zero_masks[row] & (1 << column) != 0;
+            if committed && coefficient % 16 == usize::from(hot) {
+                AkitaField::one()
+            } else {
+                AkitaField::zero()
+            }
+        }));
+        source.mul_accumulate_into(&selector, &mut expected[2 * column + 1]);
     }
     let actual = actual
         .into_iter()
         .map(|value| value.reduce::<AkitaField>())
         .collect::<Vec<_>>();
-    let expected = expected
-        .into_iter()
-        .map(|value| value.reduce::<AkitaField>())
-        .collect::<Vec<_>>();
     assert_eq!(actual, expected);
+
+    selected_rows.fill(NO_SELECTED_ROW);
+    committed_zero_masks.fill(0);
+    constant.build(&selected_rows, &committed_zero_masks, COLUMNS);
+    assert_eq!(constant.mask, 0);
+    let mut cold = vec![AkitaWideRing::zero(); 2 * COLUMNS];
+    constant.accumulate(&wide_source, &mut cold, 1, 2);
+    assert!(cold
+        .iter()
+        .all(|value| value.reduce::<AkitaField>().is_zero()));
 }
 
 #[test]
@@ -199,6 +233,7 @@ fn k16_shared_shift_groups_cover_adaptive_dimensions() {
     assert_k16_shift_groups::<64>();
     assert_k16_shift_groups::<128>();
     assert_k16_shift_groups::<256>();
+    assert_k16_shift_groups::<512>();
 }
 
 #[test]

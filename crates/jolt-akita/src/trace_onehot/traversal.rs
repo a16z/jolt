@@ -92,6 +92,64 @@ impl<const D: usize> DeferredFp128Ring<D> {
     }
 }
 
+/// Constant hot addresses factor as `X^hot * (1 + X^16 + ... + X^(D-16))`.
+/// Share the geometric key across columns, building it in log2(D/16) shifts.
+pub(super) struct K16ConstantRows {
+    columns: Vec<(usize, usize)>,
+    pub(super) mask: u64,
+    rows: usize,
+}
+
+impl K16ConstantRows {
+    pub(super) fn new() -> Self {
+        Self {
+            columns: Vec::new(),
+            mask: 0,
+            rows: 0,
+        }
+    }
+
+    pub(super) fn build(&mut self, selected: &[u8], masks: &[u64], columns: usize) {
+        self.columns.clear();
+        self.mask = 0;
+        self.rows = masks.len();
+        if columns > 64 || !self.rows.is_power_of_two() {
+            return;
+        }
+        for column in 0..columns {
+            let hot = selected[column];
+            if selected
+                .chunks_exact(columns)
+                .zip(masks)
+                .all(|(row, &mask)| row[column] == hot && row_is_committed(hot, mask, column))
+            {
+                self.columns.push((column, usize::from(hot)));
+                self.mask |= 1 << column;
+            }
+        }
+    }
+
+    pub(super) fn accumulate<const D: usize>(
+        &self,
+        src: &AkitaWideRing<D>,
+        dst: &mut [AkitaWideRing<D>],
+        a: usize,
+        n_a: usize,
+    ) {
+        if self.columns.is_empty() {
+            return;
+        }
+        let mut geometric = *src;
+        for bit in 0..self.rows.ilog2() {
+            let previous = geometric;
+            previous.shift_accumulate_into(&mut geometric, 16 << bit);
+        }
+        for &(column, hot) in &self.columns {
+            geometric.shift_accumulate_into(&mut dst[column * n_a + a], hot);
+        }
+    }
+}
+
 /// Groups columns that share four consecutive K=16 row shifts. Adaptive
 /// dimensions use one, two, or four of these groups per ring, preserving the
 /// useful four-row reuse pattern without dimension-specific implementations.
@@ -100,7 +158,7 @@ pub(super) struct K16FourRowShiftGroups {
     group_columns: Vec<u8>,
     group_counts: Vec<u8>,
     group_shifts: Vec<[usize; 4]>,
-    partial_columns: Vec<u8>,
+    column_groups: Vec<Option<u8>>,
     row_start: usize,
     num_groups: u8,
 }
@@ -116,7 +174,7 @@ impl K16FourRowShiftGroups {
             group_columns: vec![u8::MAX; num_columns * num_columns],
             group_counts: vec![0; num_columns],
             group_shifts: vec![[0; 4]; num_columns],
-            partial_columns: Vec::with_capacity(num_columns),
+            column_groups: vec![None; num_columns],
             row_start,
             num_groups: 0,
         })
@@ -127,15 +185,19 @@ impl K16FourRowShiftGroups {
         selected_rows: &[u8],
         committed_zero_masks: &[u64],
         num_columns: usize,
+        excluded: u64,
     ) -> bool {
         self.group_by_key.fill((0, u8::MAX));
-        self.partial_columns.clear();
+        self.column_groups.fill(None);
         self.num_groups = 0;
         if selected_rows.len() != 4 * num_columns || committed_zero_masks.len() != 4 {
             return false;
         }
 
         for column in 0..num_columns {
+            if column < 64 && excluded & (1 << column) != 0 {
+                continue;
+            }
             let mut key = 0u64;
             let mut shifts = [0usize; 4];
             let mut complete = true;
@@ -153,7 +215,6 @@ impl K16FourRowShiftGroups {
                 shifts[row_offset] = 16 * (self.row_start + row_offset) + usize::from(hot);
             }
             if !complete {
-                self.partial_columns.push(column as u8);
                 continue;
             }
             let slot_mask = self.group_by_key.len() - 1;
@@ -173,6 +234,7 @@ impl K16FourRowShiftGroups {
                 }
                 slot = (slot + 1) & slot_mask;
             };
+            self.column_groups[column] = Some(group);
             let group = usize::from(group);
             let count = usize::from(self.group_counts[group]);
             self.group_columns[group * num_columns + count] = column as u8;
@@ -181,55 +243,58 @@ impl K16FourRowShiftGroups {
         true
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the fused shift kernel keeps its source, destination, rank, and row views explicit"
-    )]
-    pub(super) fn accumulate<const D: usize>(
+    pub(super) fn accumulate_shared<const D: usize>(
         &self,
         src: &AkitaWideRing<D>,
         dst: &mut [AkitaWideRing<D>],
         a: usize,
         n_a: usize,
+        num_columns: usize,
+    ) {
+        for group in 0..usize::from(self.num_groups) {
+            let count = usize::from(self.group_counts[group]);
+            if self.group_counts[group] < SHARED_SHIFT_MIN_COLUMNS {
+                continue;
+            }
+            let mut shifted_sum = AkitaWideRing::zero();
+            for &shift in &self.group_shifts[group] {
+                src.shift_accumulate_into(&mut shifted_sum, shift);
+            }
+            for &column in &self.group_columns[group * num_columns..group * num_columns + count] {
+                dst[usize::from(column) * n_a + a] += shifted_sum;
+            }
+        }
+    }
+
+    pub(super) fn accumulate_column<const D: usize>(
+        &self,
+        src: &AkitaWideRing<D>,
+        dst: &mut AkitaWideRing<D>,
         selected_rows: &[u8],
         committed_zero_masks: &[u64],
         num_columns: usize,
+        column: usize,
     ) {
-        for group in 0..self.num_groups {
+        if let Some(group) = self.column_groups[column] {
             let group = usize::from(group);
-            let count = usize::from(self.group_counts[group]);
-            let columns = &self.group_columns[group * num_columns..group * num_columns + count];
-            if self.group_counts[group] >= SHARED_SHIFT_MIN_COLUMNS {
-                let mut shifted_sum = AkitaWideRing::zero();
+            if self.group_counts[group] < SHARED_SHIFT_MIN_COLUMNS {
                 for &shift in &self.group_shifts[group] {
-                    src.shift_accumulate_into(&mut shifted_sum, shift);
-                }
-                for &column in columns {
-                    dst[usize::from(column) * n_a + a] += shifted_sum;
-                }
-            } else {
-                for &column in columns {
-                    let dst = &mut dst[usize::from(column) * n_a + a];
-                    for &shift in &self.group_shifts[group] {
-                        src.shift_accumulate_into(dst, shift);
-                    }
+                    src.shift_accumulate_into(dst, shift);
                 }
             }
+            return;
         }
-        for &column in &self.partial_columns {
-            let column = usize::from(column);
-            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
-                .chunks_exact(num_columns)
-                .zip(committed_zero_masks)
-                .enumerate()
-            {
-                let hot = row_indices[column];
-                if row_is_committed(hot, committed_zero_mask, column) {
-                    src.shift_accumulate_into(
-                        &mut dst[column * n_a + a],
-                        (self.row_start + row_offset) * 16 + usize::from(hot),
-                    );
-                }
+        for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
+            .chunks_exact(num_columns)
+            .zip(committed_zero_masks)
+            .enumerate()
+        {
+            let hot = row_indices[column];
+            if row_is_committed(hot, committed_zero_mask, column) {
+                src.shift_accumulate_into(
+                    dst,
+                    (self.row_start + row_offset) * 16 + usize::from(hot),
+                );
             }
         }
     }

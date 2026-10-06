@@ -43,5 +43,5 @@ use decomposition::{
 #[cfg(test)]
 use traversal::{
     coefficient_packing_partials_packed, visit_segment_ring_range, AkitaWideRing,
-    DeferredFp128Ring, K16FourRowShiftGroups,
+    DeferredFp128Ring, K16ConstantRows, K16FourRowShiftGroups,
 };
