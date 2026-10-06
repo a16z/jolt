@@ -12,7 +12,7 @@
 use common::constants::STACK_CANARY_SIZE;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 use jolt_tracer_x86::harness::{
-    compile_program, memory_config, run_program, single_row_program, TEST_ADDR,
+    compile_program, memory_config, run_program, single_row_program, Outcome, TEST_ADDR,
 };
 
 const REGS: usize = common::constants::REGISTER_COUNT as usize;
@@ -126,7 +126,7 @@ fn out_of_bounds_store_reports_a_fault() {
 }
 
 /// Run a single `SD` of `0xdead_beef` to `address` in the harness layout.
-fn store_to(address: u64) -> jolt_tracer_x86::harness::Outcome {
+fn store_to(address: u64) -> Outcome {
     let mut store = row(JoltInstructionKind::SD, Some(1), None, 0);
     store.operands.rs2 = Some(3);
     let program = single_row_program(store);
