@@ -150,6 +150,8 @@ fn decode_op_32(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 
 fn decode_amo(word: u32) -> Result<SourceInstructionKind, ProgramError> {
     match (funct3(word), (word >> 27) & 0x1f) {
+        // LR has no rs2 operand; its encoding requires rs2 = 0.
+        (0b010 | 0b011, 0b00010) if rs2(word) != 0 => invalid("invalid LR rs2"),
         (0b010, 0b00010) => Ok(SourceInstructionKind::LRW),
         (0b011, 0b00010) => Ok(SourceInstructionKind::LRD),
         (0b010, 0b00011) => Ok(SourceInstructionKind::SCW),
@@ -652,7 +654,6 @@ mod tests {
         assert_eq!(sign_extend_i64(0x800, 12), -2048);
         assert_eq!(sign_extend_i64(0xfff, 12), -1);
         assert_eq!(sign_extend_i64(0, 12), 0);
-        // garbage above the extracted width must not leak into the result
         assert_eq!(sign_extend_i64(0xffff_f7ff, 12), 2047);
         assert_eq!(sign_extend_i64(1, 1), -1);
         assert_eq!(sign_extend_i64(0, 1), 0);
@@ -685,7 +686,6 @@ mod tests {
         );
         assert_eq!(format_b_operands(b_word(4094, 31, 15, 0b000)).imm, 4094);
         assert_eq!(format_b_operands(b_word(-2, 0, 0, 0b000)).imm, -2);
-        // one-hot sweep over every branch immediate bit position
         for b in 1..=11 {
             let offset = 1 << b;
             assert_eq!(
@@ -708,7 +708,7 @@ mod tests {
             format_j_operands(j_word(-1_048_576, 0)).imm,
             i128::from(-1_048_576i64 as u64)
         );
-        assert_eq!(format_j_operands(j_word(703_710, 0)).imm, 703_710); // 0xABCDE
+        assert_eq!(format_j_operands(j_word(703_710, 0)).imm, 703_710);
         for b in 1..=19 {
             let offset = 1 << b;
             assert_eq!(format_j_operands(j_word(offset, 5)).imm, i128::from(offset));
@@ -919,7 +919,6 @@ mod tests {
             i128::from(0xffff_ffff_ffff_fc00u64)
         );
 
-        // ecall with rd=1 is not the canonical 0x00000073 encoding
         assert!(matches!(
             decode_instruction(0x0000_00f3, 0x8000_0000, false, RV64IMAC_JOLT),
             Err(ProgramError::MalformedImage(
@@ -972,6 +971,14 @@ mod tests {
                 (0b00101 << 27) | (0b010 << 12) | 0x2f,
                 "invalid atomic memory operation",
             ),
+            (
+                (0b00010 << 27) | (1 << 20) | (0b010 << 12) | 0x2f,
+                "invalid LR rs2",
+            ),
+            (
+                (0b00010 << 27) | (0b11 << 25) | (31 << 20) | (0b011 << 12) | 0x2f,
+                "invalid LR rs2",
+            ),
             ((0x3f << 25) | 0x5b, "invalid custom instruction"),
             (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),
             (0x0f | (0b010 << 12), "invalid MISC-MEM funct3"),
@@ -994,7 +1001,6 @@ mod tests {
 
     #[test]
     fn rejects_source_instructions_outside_the_profile() {
-        // amoadd.w decodes but the A extension is absent from RV64IM_JOLT
         let word = (11 << 20) | (12 << 15) | (0b010 << 12) | (10 << 7) | 0x2f;
         match decode_instruction(word, 0x8000_0000, false, RV64IM_JOLT) {
             Err(ProgramError::IllegalSourceInstruction(kind)) => {

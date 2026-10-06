@@ -95,8 +95,6 @@ where
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
     let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some());
 
-    // The batch is built after the post-6a draws, directly from the upstream stage
-    // outputs; `build` derives every mode-agnostic constructor leg internally.
     let sumchecks = Stage6bSumchecks::build(
         checked,
         preprocessing,
@@ -307,8 +305,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.booleanity.ram_ra.len(),
     )?;
 
-    // The packed increment digit claims: one per chunk of the shared
-    // one-hot chunking.
     #[cfg(feature = "akita")]
     {
         let expected_chunks =
@@ -378,7 +374,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
     Ok(())
 }
 
-/// Reject a wire claim vector whose length disagrees with its formula-dimension count.
 fn require_claim_count(
     stage: JoltRelationId,
     label: &str,
@@ -529,8 +524,6 @@ pub fn stage6b_opening_values<F: JoltField>(
     values.extend(claims.inc_claim_reduction.opening_values());
     #[cfg(feature = "field-inline")]
     super::field_inline::splice_inc_values(&mut values, claims);
-    // Each advice member is a single-slot per-kind claims struct, so it
-    // contributes exactly its own kind's opening.
     #[cfg(not(feature = "akita"))]
     if let Some(advice) = &claims.trusted_advice {
         values.extend(advice.opening_values());
@@ -619,10 +612,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// Per-mode sample claims with sentinel values in the canonical append order: base
-    /// interleaves the inc member after the RA virtualizations (and, under `field-inline`, the
-    /// field-inline inc member after it); Akita carries the read-raf `FusedInc` cell and the
-    /// lattice booleanity digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
         let last = 10;
@@ -712,7 +701,6 @@ mod tests {
         .unwrap()
     }
 
-    /// Claims whose every wire vector length matches `formula_dimensions` exactly.
     fn shape_matched_claims(formula_dimensions: &JoltFormulaDimensions) -> Stage6bOutputClaims<Fr> {
         let bytecode_ra_len =
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf)

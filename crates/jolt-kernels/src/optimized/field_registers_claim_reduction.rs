@@ -46,7 +46,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// One active field-inline cycle's combined-column cell.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SparseCell<F> {
@@ -147,7 +146,6 @@ struct FieldClaimReductionKernel<F: JoltField> {
 }
 
 impl<F: JoltField> FieldClaimReductionKernel<F> {
-    /// Equality-weighted sparse value at the selected Boolean endpoint.
     fn q_endpoint(&self, at_one: bool) -> F {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
@@ -198,8 +196,6 @@ impl<F: JoltField> FieldClaimReductionKernel<F> {
         self.challenges.push(r);
     }
 
-    /// The three produced opening values at the bound cycle point: one
-    /// split-eq walk over the retained triples.
     fn claimed_values(&self) -> [F; 3] {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let hi_bits = reversed.len() / 2;
@@ -298,8 +294,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent field-inline traces,
-/// plus the degenerate case without field-inline activity (an empty sparse column).
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

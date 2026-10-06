@@ -57,6 +57,7 @@ use jolt_field::JoltField;
 use jolt_poly::BindingOrder;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
@@ -79,8 +80,6 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// Per-stage cycle-eq pushforwards onto the bytecode address domain. Base and
-/// row-weighted stages share one trace walk over the split-eq decomposition.
 fn stage_pushforwards<F: JoltField, R: Sync>(
     base_cycle_points: &[Vec<F>],
     weighted_cycle_points: &[Vec<F>],
@@ -456,9 +455,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let row_weight = |_: &InstructionCycleRow| F::one();
         #[cfg(feature = "akita")]
         let row_weight = InstructionCycleRow::fused_inc::<F>;
-        // One walk computes every pushforward: the base stages (packed: plus the fused
-        // stages) and, with field-inline enabled, the two field-inline cycle sub-points
-        // appended as unweighted base stages.
         #[cfg(feature = "field-inline")]
         let active_legs = field_inline_values
             .into_iter()
@@ -669,7 +665,6 @@ impl<F: JoltField> AddressKernel<F> {
         self.progress.advance();
     }
 
-    /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
         let (int_lo, int_hi) = pair(&self.int_table, y);
@@ -815,7 +810,7 @@ impl<F: JoltField> LazyFusedInc<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        *self = match std::mem::replace(self, Self::Dense(Polynomial::zeros(0))) {
+        match self {
             Self::Lazy {
                 branch_weights,
                 rows,
@@ -825,10 +820,7 @@ impl<F: JoltField> LazyFusedInc<F> {
                 next.extend(branch_weights.iter().map(|weight| one_minus * *weight));
                 next.extend(branch_weights.iter().map(|weight| challenge * *weight));
                 if next.len() < 16 {
-                    Self::Lazy {
-                        branch_weights: next,
-                        rows,
-                    }
+                    *branch_weights = next;
                 } else {
                     let len = rows.len() / next.len();
                     let evaluate = |index: usize| {
@@ -842,14 +834,13 @@ impl<F: JoltField> LazyFusedInc<F> {
                     let evals = (0..len).into_par_iter().map(evaluate).collect();
                     #[cfg(not(feature = "parallel"))]
                     let evals = (0..len).map(evaluate).collect();
-                    Self::Dense(Polynomial::new(evals))
+                    *self = Self::Dense(Polynomial::new(evals));
                 }
             }
-            Self::Dense(mut polynomial) => {
+            Self::Dense(polynomial) => {
                 polynomial.bind_with_order(challenge, BindingOrder::LowToHigh);
-                Self::Dense(polynomial)
             }
-        };
+        }
     }
 }
 
@@ -942,7 +933,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             }
         }
 
-        let mut combined = vec![F::zero(); cycles];
+        let mut combined = unsafe_allocate_zero_vec(cycles);
         for (point, weight) in stage_cycle_points[..base_stages].iter().zip(stage_weights) {
             let scaled = scaled_eq_table(point, weight);
             #[cfg(feature = "parallel")]
@@ -992,7 +983,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         #[cfg(feature = "akita")]
         let fused_combined = {
             let store = stage_values[base_stages];
-            let mut combined = vec![F::zero(); cycles];
+            let mut combined = unsafe_allocate_zero_vec(cycles);
             for stage in base_stages..num_stages {
                 let value = if stage < base_stages + 2 {
                     store
@@ -1087,41 +1078,56 @@ impl<F: JoltField> CycleKernel<F> {
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
-    /// group `y`, written into `acc` (length `degree`); `ra_pairs` is the
-    /// caller's per-group `(lo, hi)` scratch (each RA pair is gathered once
-    /// per group, not once per sample point).
+    /// group `y`, written into `acc` (length `degree`). `ra_pairs` is the
+    /// caller's per-group scratch: each RA pair is gathered once per group,
+    /// then held as the factor's running `(value, step)`, so every factor
+    /// advances by one addition per sample point instead of a
+    /// `t · (hi − lo)` multiplication.
     #[inline]
     fn accumulate_group(&self, y: usize, acc: &mut [F], ra_pairs: &mut [(F, F)]) {
         let (c_lo, c_hi) = pair(&self.combined, y);
-        let c_delta = c_hi - c_lo;
-        #[cfg(feature = "akita")]
-        let (fused_coefficient_lo, fused_coefficient_hi) = pair(&self.fused_combined, y);
-        #[cfg(feature = "akita")]
-        let fused_coefficient_delta = fused_coefficient_hi - fused_coefficient_lo;
-        #[cfg(feature = "akita")]
-        let (fused_inc_lo, fused_inc_hi) = self.fused_inc.lo_hi(y);
-        #[cfg(feature = "akita")]
-        let fused_inc_delta = fused_inc_hi - fused_inc_lo;
-        for (i, slot) in ra_pairs.iter_mut().enumerate() {
-            *slot = self.ra.lo_hi(i, y);
-        }
         #[cfg(not(feature = "akita"))]
         let coefficient_at_zero = c_lo;
+        #[cfg(not(feature = "akita"))]
+        let coefficient_delta = c_hi - c_lo;
         #[cfg(feature = "akita")]
-        let coefficient_at_zero = c_lo + fused_inc_lo * fused_coefficient_lo;
+        let (coefficient_at_zero, mut coefficient_delta, second_difference) = {
+            let (fused_coefficient_lo, fused_coefficient_hi) = pair(&self.fused_combined, y);
+            let (fused_inc_lo, fused_inc_hi) = self.fused_inc.lo_hi(y);
+            let at_zero = c_lo + fused_inc_lo * fused_coefficient_lo;
+            let at_one = c_hi + fused_inc_hi * fused_coefficient_hi;
+            let leading =
+                (fused_inc_hi - fused_inc_lo) * (fused_coefficient_hi - fused_coefficient_lo);
+            (at_zero, at_one - at_zero, leading + leading)
+        };
+        self.ra.lo_hi_all(y, ra_pairs);
+        for (lo, hi) in ra_pairs.iter_mut() {
+            *hi -= *lo;
+        }
         acc[0] += ra_pairs
             .iter()
-            .fold(coefficient_at_zero, |acc, (lo, _)| acc * *lo);
-        for (slot, t) in (2..=self.degree).enumerate() {
-            let t_value = F::from_u64(t as u64);
-            let coefficient = c_lo + t_value * c_delta;
+            .fold(coefficient_at_zero, |acc, (value, _)| acc * *value);
+        let mut coefficient = coefficient_at_zero + coefficient_delta + coefficient_delta;
+        #[cfg(feature = "akita")]
+        {
+            coefficient += second_difference;
+            coefficient_delta += second_difference + second_difference;
+        }
+        for (value, step) in ra_pairs.iter_mut() {
+            *value += *step + *step;
+        }
+        for value in &mut acc[1..] {
+            *value += ra_pairs
+                .iter()
+                .fold(coefficient, |acc, (factor, _)| acc * *factor);
+            coefficient += coefficient_delta;
             #[cfg(feature = "akita")]
-            let coefficient = coefficient
-                + (fused_inc_lo + t_value * fused_inc_delta)
-                    * (fused_coefficient_lo + t_value * fused_coefficient_delta);
-            acc[slot + 1] += ra_pairs.iter().fold(coefficient, |acc, (lo, hi)| {
-                acc * (*lo + t_value * (*hi - *lo))
-            });
+            {
+                coefficient_delta += second_difference;
+            }
+            for (factor, step) in ra_pairs.iter_mut() {
+                *factor += *step;
+            }
         }
     }
 }
@@ -1432,7 +1438,6 @@ mod tests {
             #[cfg(feature = "field-inline")]
             let field_val_evaluation_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 43);
 
-            // ---- Stage 6a: address phase.
             let address_relation = BytecodeReadRafAddressPhase::new(
                 dimensions,
                 committed_program,
@@ -1893,5 +1898,69 @@ mod akita_tests {
     #[test]
     fn bytecode_address_matches_reference_k256_committed() {
         address_parity(3, 8, true);
+    }
+}
+
+/// The cycle phase steps every factor of a group by its slope from one
+/// sample point to the next; these tests recompute each sample from scratch.
+#[cfg(test)]
+mod cycle_group_tests {
+    use jolt_field::{Field, Fr, Ring, Zero};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::*;
+
+    const GROUPS: usize = 4;
+
+    fn random_poly(rng: &mut ChaCha20Rng) -> Polynomial<Fr> {
+        Polynomial::new((0..2 * GROUPS).map(|_| Fr::random(rng)).collect())
+    }
+
+    fn at(poly: &Polynomial<Fr>, y: usize, t: Fr) -> Fr {
+        let (lo, hi) = pair(poly, y);
+        lo + t * (hi - lo)
+    }
+
+    #[test]
+    fn stepped_group_samples_match_recomputed_samples() {
+        let mut rng = ChaCha20Rng::seed_from_u64(1966);
+        for num_ra in 1..=8 {
+            let ra: Vec<Polynomial<Fr>> = (0..num_ra).map(|_| random_poly(&mut rng)).collect();
+            let combined = random_poly(&mut rng);
+            #[cfg(feature = "akita")]
+            let (fused_inc, fused_combined) = (random_poly(&mut rng), random_poly(&mut rng));
+            // One sample per degree: the RA product times the coefficient,
+            // which is quadratic once the fused term is present.
+            let degree = num_ra + if cfg!(feature = "akita") { 2 } else { 1 };
+            let kernel = CycleKernel {
+                progress: RoundProgress::new(GROUPS.ilog2() as usize + 1),
+                degree,
+                ra: LazyFoldedRa::Dense(ra.clone()),
+                combined: combined.clone(),
+                #[cfg(feature = "akita")]
+                fused_inc: LazyFusedInc::Dense(fused_inc.clone()),
+                #[cfg(feature = "akita")]
+                fused_combined: fused_combined.clone(),
+                output_openings: Vec::new(),
+            };
+            let mut pairs = vec![(Fr::zero(), Fr::zero()); num_ra];
+            for y in 0..GROUPS {
+                let start: Vec<Fr> = (0..degree).map(|_| Fr::random(&mut rng)).collect();
+                let mut acc = start.clone();
+                kernel.accumulate_group(y, &mut acc, &mut pairs);
+                for (slot, (acc, start)) in acc.iter().zip(&start).enumerate() {
+                    let t = Fr::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
+                    let coefficient = at(&combined, y, t);
+                    #[cfg(feature = "akita")]
+                    let coefficient =
+                        coefficient + at(&fused_inc, y, t) * at(&fused_combined, y, t);
+                    let expected = ra
+                        .iter()
+                        .fold(coefficient, |product, poly| product * at(poly, y, t));
+                    assert_eq!(*acc - *start, expected, "{num_ra} factors, slot {slot}");
+                }
+            }
+        }
     }
 }

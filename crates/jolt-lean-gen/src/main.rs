@@ -28,7 +28,6 @@ const DEFAULT_LEAN_OUTPUT: &str =
     "/Users/ari.biswas/Lean/lz-qed/JoltBytecode/JoltISA/ExpansionsAutomated.lean";
 const SOURCE_ADDRESS: usize = 0x8000_0000;
 
-// We hard code rd = x1, rs1 to x2 and rs2 to x3
 const SOURCE_RD: u8 = 1;
 const SOURCE_RS1: u8 = 2;
 const SOURCE_RS2: u8 = 3;
@@ -96,7 +95,6 @@ fn imm_is_nat(name: &str) -> bool {
     )
 }
 
-// The width of the immediate in the full 32 bit instruction description.
 fn imm_width(name: &str) -> u32 {
     match name {
         "BEQ" | "BNE" | "BLT" | "BGE" | "BLTU" | "BGEU" | "VirtualAssertEQ" => 13,
@@ -398,11 +396,6 @@ fn source_imm_flags(
                 ));
             }
 
-            // if the row.operands.imm is sample_imm
-            // and check_row.operands.imm is check_imm
-            // then the imm in this instruction is NOT hardcoded, and it's the user specified imm.
-            // In this case the lean generator should use "imm" instead of the actual hard-coded
-            // constant in this case.
             let tracks_source_imm =
                 row.operands.imm == sample_imm && check_row.operands.imm == check_imm;
             if row.operands.imm == sample_imm && !tracks_source_imm {
@@ -422,7 +415,6 @@ fn expansion_arm(
     kind: SourceInstructionKind,
     rd: u8,
 ) -> Result<ExpansionArm, Box<dyn std::error::Error>> {
-    // Get the values to put into the instruction.
     let sample_imm = source_sample_imm(kind);
     let check_imm = source_check_imm(kind);
     let rows = expand_rows(kind, rd, sample_imm)?;
@@ -452,7 +444,6 @@ fn load_class_and_align_fault(kind: SourceInstructionKind) -> (&'static str, &'s
     (load_class, align_fault)
 }
 
-// Is this instruction an advice instruction.
 fn is_advice_row(name: &str) -> bool {
     matches!(
         name,
@@ -498,7 +489,7 @@ fn render_rows(
 
 fn emit_program(kind: SourceInstructionKind) -> Result<(), Box<dyn std::error::Error>> {
     let name = kind.name();
-    let shape = source_shape(kind); // TODO: (Ari): Make this more robust this later.
+    let shape = source_shape(kind);
     let (load_class, align_fault) = load_class_and_align_fault(kind);
 
     println!("--- {name} ---");
@@ -514,7 +505,6 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), Box<dyn std::error::E
             print!("{}", render_rows(kind, &arm, load_class, align_fault, 2)?);
         }
     } else {
-        // This instruction has no destination register.
         let arm = expansion_arm(kind, SOURCE_RD)?;
         println!("no rd:");
         print!("{}", render_rows(kind, &arm, load_class, align_fault, 2)?);
@@ -525,10 +515,6 @@ fn emit_program(kind: SourceInstructionKind) -> Result<(), Box<dyn std::error::E
 fn emit_all() -> Result<(), Box<dyn std::error::Error>> {
     let mut ok = 0usize;
     let mut failed = Vec::new();
-    // Iterate through every instruction in the guest program
-    // that Jolt can read.
-    // If the instruction is not natively supported, i.e it must be expanded
-    // Then emit lean expansion for the instruction.
     for &kind in SourceInstructionKind::ALL {
         if !matches!(classify(kind), Class::Expand) {
             continue;

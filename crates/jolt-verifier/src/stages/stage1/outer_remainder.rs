@@ -491,8 +491,6 @@ mod tests {
         let variable_count = dimensions.variables().len();
         assert_eq!(variable_count, 35);
 
-        // `tau` has `log_t + 2` entries; the remainder challenge vector has
-        // `1 + log_t` entries (so `tau.len() == remainder.len() + 1`).
         let tau_len = log_t + 2;
         let remainder_len = 1 + log_t;
         let tau = (0..tau_len)

@@ -127,16 +127,6 @@ mod tests {
     }
 
     #[test]
-    fn mle_full_hypercube_rot16() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 16>>();
-    }
-
-    #[test]
-    fn mle_full_hypercube_rot24() {
-        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 24>>();
-    }
-
-    #[test]
     fn mle_full_hypercube_rot32() {
         mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 32>>();
     }

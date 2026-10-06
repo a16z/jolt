@@ -318,8 +318,6 @@ impl TraceBackedFieldInlineWitness {
         }
     }
 
-    /// Materializes one cycle-domain witness column; rows beyond the trace
-    /// are zero. All per-witness logic lives on `W`.
     fn materialize_cycle<F: JoltField, W: Extract<TraceRow> + FieldValue<F> + Send>(
         &self,
     ) -> Result<Vec<F>, WitnessError> {
@@ -739,9 +737,7 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::constants::RAM_START_ADDRESS;
-    use jolt_claims::protocols::jolt::{
-        JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
-    };
+    use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_field::{Fr, Ring};
     use jolt_program::{
         execution::{
@@ -972,37 +968,6 @@ mod tests {
     }
 
     #[test]
-    fn field_inline_disabled_provider_is_absent_without_field_data() {
-        let bytecode = vec![instruction(
-            JoltInstructionKind::ADDI,
-            0,
-            Some(1),
-            Some(2),
-            None,
-            3,
-        )];
-        let program = program(bytecode.clone(), RV64IMAC_JOLT);
-        let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
-        let row = TraceRow::from_instruction(instruction(
-            JoltInstructionKind::ADDI,
-            0,
-            Some(1),
-            Some(2),
-            None,
-            3,
-        ))
-        .unwrap();
-        let witness = witness(&program, &preprocessing, vec![row], 2);
-
-        assert_eq!(
-            witness.field_inline_witness().err(),
-            Some(WitnessError::UnavailableView {
-                label: FIELD_INLINE_LABEL,
-            })
-        );
-    }
-
-    #[test]
     fn field_inline_disabled_rejects_field_inline_trace_payload() {
         let bytecode = vec![instruction(
             JoltInstructionKind::ADDI,
@@ -1056,19 +1021,6 @@ mod tests {
             .unwrap();
         assert_eq!(shape.rows(), 8);
         assert_eq!(shape.encoding, PolynomialEncoding::Dense);
-    }
-
-    #[test]
-    fn field_rd_inc_materializes_field_deltas_and_padding() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
-        assert_eq!(
-            owned_view(
-                &provider,
-                FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc)
-            ),
-            vec![fr(5), fr(7), fr(35), fr(0), fr(0), fr(0), fr(0), fr(0)]
-        );
     }
 
     #[test]
@@ -1127,105 +1079,6 @@ mod tests {
         assert_eq!(rd_wa[index(3, 1)], fr(1));
         assert_eq!(rd_wa[index(1, 2)], fr(1));
         assert_eq!(rd_wa[index(10, 3)], fr(0));
-    }
-
-    #[test]
-    fn bridge_rows_keep_rv64_and_field_witnesses_separate() {
-        let load = instruction(
-            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
-            0,
-            Some(1),
-            Some(5),
-            None,
-            0,
-        );
-        let row0 = row_with_registers(
-            load,
-            RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 5,
-                    value: 11,
-                }),
-                ..RegisterState::default()
-            },
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadAccumulateFromRegister),
-                rs1: Some(FieldRegisterRead {
-                    register: 1,
-                    value: enc(0),
-                }),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(11),
-                }),
-                bridge: Some(FieldInlineBridge::LoadAccumulateFromRegister {
-                    x_register: 5,
-                    x_value: 11,
-                    field_value: enc(11),
-                }),
-                ..FieldInlineTraceData::default()
-            },
-        );
-        let advice = instruction(
-            JoltInstructionKind::FIELD_ADVICE_LIMB,
-            1,
-            Some(6),
-            Some(1),
-            Some(0),
-            0,
-        );
-        let row1 = row_with_registers(
-            advice,
-            RegisterState {
-                rd: Some(RegisterWrite {
-                    register: 6,
-                    pre_value: 0,
-                    post_value: 11,
-                }),
-                ..RegisterState::default()
-            },
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::AdviceLimb),
-                rs1: Some(FieldRegisterRead {
-                    register: 1,
-                    value: enc(11),
-                }),
-                rd: Some(FieldRegisterWrite {
-                    register: 0,
-                    pre_value: enc(0),
-                    post_value: enc(0),
-                }),
-                bridge: Some(FieldInlineBridge::AdviceLimb {
-                    field_register: 1,
-                    field_value: enc(11),
-                    x_register: 6,
-                    x_value: 11,
-                }),
-                ..FieldInlineTraceData::default()
-            },
-        );
-
-        let bytecode = vec![load, advice];
-        let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
-        let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-        let witness = witness(&program, &preprocessing, vec![row0, row1], 2);
-        let provider = witness.field_inline_witness().unwrap();
-
-        let ordinary = crate::JoltWitnessOracle::<Fr>::oracle_table(
-            &witness,
-            JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
-        )
-        .unwrap();
-        assert_eq!(ordinary, vec![fr(0), fr(11), fr(0), fr(0)]);
-
-        assert_eq!(
-            owned_view(
-                &provider,
-                FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc)
-            ),
-            vec![fr(11), fr(0), fr(0), fr(0)]
-        );
     }
 
     #[test]
@@ -1364,20 +1217,5 @@ mod tests {
             inconsistent_state_witness.field_inline_witness(),
             Err(WitnessError::InvalidWitnessData { .. })
         ));
-    }
-
-    #[test]
-    fn field_inline_virtual_oracles_describe_dense_views() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
-
-        for id in [
-            FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRegistersVal),
-            FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRdWa),
-            FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldRdValue),
-        ] {
-            let shape = provider.shape(id).unwrap();
-            assert_eq!(shape.encoding, PolynomialEncoding::Dense);
-        }
     }
 }

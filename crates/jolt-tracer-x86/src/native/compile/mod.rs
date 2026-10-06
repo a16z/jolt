@@ -21,7 +21,6 @@ use super::state::{AdviceCompute, AdviceJob, GuestState};
 use emitter::EmitterSet;
 use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow};
 
-/// One compiled code body (fast or record) with its dispatch table.
 struct CompiledBody {
     buffer: dynasmrt::ExecutableBuffer,
     entry: AssemblyOffset,
@@ -39,7 +38,6 @@ struct CompiledBody {
 pub struct CompiledProgram {
     fast: CompiledBody,
     record: CompiledBody,
-    /// Same two bodies, with the chunk-boundary pause check emitted.
     fast_pausable: CompiledBody,
     record_pausable: CompiledBody,
     /// Advice computations, one per group that needs them; generated code
@@ -160,7 +158,6 @@ impl CompiledProgram {
     }
 }
 
-/// Which code body is being emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmitMode {
     /// No row materialization: execute only, for the fast pass.
@@ -172,7 +169,6 @@ pub enum EmitMode {
 /// Emission context handed to a [`RowEmitter`](emitter::RowEmitter): the
 /// assembler plus the per-group state a row template may need.
 pub struct Emitter {
-    /// Which body this emission belongs to.
     pub mode: EmitMode,
     /// Whether this body can pause at group boundaries. Only the chunked
     /// paths need that; the eager paths must not pay a per-group check.
@@ -191,9 +187,7 @@ pub struct Emitter {
     /// Index of the current group's advice job, until the group ends and its
     /// consumed-slot count is patched in (see [`Self::finish_advice_group`]).
     current_advice_job: Option<usize>,
-    /// Dynamic label per group-start guest address (branch/jump targets).
     labels: BTreeMap<u64, DynamicLabel>,
-    /// Guest addresses that start a compiled group, with their code offsets.
     group_offsets: Vec<(u64, AssemblyOffset)>,
     pub text_base: u64,
     pub text_span: u64,
@@ -247,7 +241,6 @@ impl CompiledBody {
         Ok(())
     }
 
-    /// Emit one code body over every expanded row.
     fn compile(
         rows: &[JoltInstructionRow],
         sources: &SourceMap,
@@ -354,7 +347,6 @@ impl CompiledBody {
 }
 
 impl AdviceCompute {
-    /// The advice computation a source instruction's group needs, if any.
     fn from_source(
         source: &jolt_riscv::SourceInstruction<jolt_riscv::SourceInstructionRow>,
     ) -> Result<Option<Self>, TraceError> {

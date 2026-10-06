@@ -1,10 +1,3 @@
-//! Backend-agnostic cryptographic group and commitment primitives for Jolt.
-//!
-//! | Module | Purpose |
-//! |--------|---------|
-//! | `ec` | Elliptic curve: `JoltGroup`, `PairingGroup`, `Pedersen` |
-//! | `commitment` | `Commitment`, `VectorCommitment`, `HomomorphicCommitment`, `DeriveSetup` |
-
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
 #![deny(unsafe_op_in_unsafe_fn)]

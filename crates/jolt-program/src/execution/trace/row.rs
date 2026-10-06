@@ -100,7 +100,6 @@ enum RamAccessKind {
     Write,
 }
 
-/// Presence bits, RAM access kind, and immediate sign packed into one byte.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 struct TraceRowMeta(u8);

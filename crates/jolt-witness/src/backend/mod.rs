@@ -1,5 +1,3 @@
-//! Witness backends: implementors of the id-indexed oracle surface.
-
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
 use jolt_program::preprocess::JoltProgramPreprocessing;

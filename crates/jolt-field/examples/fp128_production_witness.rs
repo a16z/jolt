@@ -1,5 +1,3 @@
-//! Stable symbols for inspecting production A7F7 arithmetic kernels.
-
 use jolt_field::Prime128OffsetA7F7;
 
 /// Two 64-bit limbs returned through the platform C calling convention.

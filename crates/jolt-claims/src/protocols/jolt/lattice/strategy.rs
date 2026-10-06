@@ -17,7 +17,6 @@ use super::packing::{one_hot_trace_column_capacity, one_hot_trace_columns, OneHo
 /// `OneHotTrace` is committed as one prefix-packed physical polynomial.
 pub const ONE_HOT_TRACE_LAYOUT: OneHotTraceLayout = OneHotTraceLayout;
 
-/// The one protocol layout for the per-proof `OneHotTrace` commitment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceLayout;
 
@@ -39,7 +38,6 @@ pub struct OneHotTraceLayoutPlan {
     layout_digest: [u8; 32],
 }
 
-/// The commitment-object setup shape the layout requires.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceSetupShape {
     pub num_vars: usize,
@@ -47,7 +45,6 @@ pub struct OneHotTraceSetupShape {
 }
 
 impl OneHotTraceLayout {
-    /// The canonical object layout for `shape`.
     pub fn plan(&self, shape: &OneHotTraceShape) -> Result<OneHotTraceLayoutPlan, OpeningsError> {
         let columns = one_hot_trace_columns(shape)
             .map_err(|error| OpeningsError::InvalidBatch(error.to_string()))?;
@@ -89,7 +86,6 @@ impl OneHotTraceLayout {
         })
     }
 
-    /// The commitment-object setup shape.
     pub fn setup_shape(
         &self,
         shape: &OneHotTraceShape,
@@ -148,7 +144,6 @@ impl OneHotTraceLayoutPlan {
         &self.packing
     }
 
-    /// Column-family ranges used when constructing the packed witness.
     pub const fn ranges(&self) -> &OneHotTraceColumnRanges {
         &self.ranges
     }
@@ -158,7 +153,6 @@ impl OneHotTraceLayoutPlan {
         self.layout_digest
     }
 
-    /// Constructs the semantic statement consumed by the generic reduction.
     pub fn packed_claims<F: Field>(
         &self,
         point: Vec<F>,

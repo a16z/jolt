@@ -61,8 +61,6 @@ pub const P256_DIVR_NAME: &str = "P256_DIVR";
 pub const P256_FAKE_GLV_ADV_FUNCT3: u32 = 0x07;
 pub const P256_FAKE_GLV_ADV_NAME: &str = "P256_FAKE_GLV_ADV";
 
-// P-256 curve parameters
-
 /// P-256 base field modulus (little-endian u64 limbs)
 /// p = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
 pub const P256_MODULUS: [u64; 4] = [

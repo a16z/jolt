@@ -23,6 +23,8 @@ use crate::{
     CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator, Ring,
     WithAccumulator,
 };
+#[cfg(feature = "bytemuck")]
+use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
 use rand_core::RngCore;
 #[cfg(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))]
 use std::arch::asm;
@@ -48,19 +50,16 @@ const X86_64_BMI2_ADX_BACKEND: u8 = 2;
 #[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
 static LAST_X86_64_MUL_BACKEND: AtomicU8 = AtomicU8::new(0);
 
-/// Pack two `u64` limbs into little-endian `[lo, hi]`.
 #[inline(always)]
 const fn pack(lo: u64, hi: u64) -> [u64; 2] {
     [lo, hi]
 }
 
-/// Split a `u128` into little-endian `[u64; 2]` limbs.
 #[inline(always)]
 const fn split(x: u128) -> [u64; 2] {
     [x as u64, (x >> 64) as u64]
 }
 
-/// Join little-endian `[u64; 2]` limbs into a `u128`.
 #[inline(always)]
 const fn join(x: [u64; 2]) -> u128 {
     x[0] as u128 | (x[1] as u128) << 64
@@ -194,7 +193,6 @@ impl<const P: u128> Fp128<P> {
         Self::fold2_canonicalize(t0, t1, t2)
     }
 
-    /// Adds a canonical 128-bit value to a 256-bit product.
     #[cfg(any(
         test,
         feature = "fuzzing",
@@ -337,9 +335,6 @@ impl<const P: u128> Fp128<P> {
         Self::reduce_4(r0, r1, r2, r3)
     }
 
-    /// x86-64 multiplication dispatch. Builds that enable both BMI2 and ADX
-    /// use the matching A7F7 specialization. Every other case uses the
-    /// parameterized baseline assembly sequence.
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
@@ -555,7 +550,6 @@ impl<const P: u128> Fp128<P> {
         // the same `C < 2^32` fold-2 invariant as the multiplication kernel.
         unsafe {
             asm!(
-                // Squaring schoolbook: 3 widening muls
                 "mul     {p00l}, {a0}, {a0}",
                 "umulh   {p00h}, {a0}, {a0}",
                 "mul     {p01l}, {a0}, {a1}",
@@ -575,7 +569,6 @@ impl<const P: u128> Fp128<P> {
 
                 // At this point: r0=p00l, r1=p00h, r2=p01h, r3=p11h
 
-                // Fold-1: [t0,t1,t2] = [r0,r1] + C·[r2,r3]
                 "mul    {t0}, {p01h}, {c}",
                 "umulh  {t1}, {p01h}, {c}",
                 "mul    {p01l}, {p11h}, {c}",
@@ -1191,8 +1184,62 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
     const OFFSET: u128 = Self::C;
 }
 
-// Cross-check the inline-asm kernels against the portable arithmetic on every
-// supported architecture.
+// Byte views for device buffers (`jolt-metal`). Upload is a byte copy;
+// read-back goes through `CheckedBitPattern`, which admits only canonical
+// limbs.
+
+// SAFETY: `Fp128<P>` is `repr(transparent)` over `[u64; 2]`, and all-zero
+// limbs are the canonical zero.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u128> Zeroable for Fp128<P> {}
+
+// SAFETY: `Fp128<P>` is `repr(transparent)` over `[u64; 2]`, which has no
+// padding or uninitialized bytes.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u128> NoUninit for Fp128<P> {}
+
+// SAFETY: `Bits` has the size and bit layout of `Fp128<P>` (`repr(transparent)`
+// over `[u64; 2]`), and the check admits exactly the canonical values `< P`.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u128> CheckedBitPattern for Fp128<P> {
+    type Bits = [u64; 2];
+
+    #[inline]
+    fn is_valid_bit_pattern(bits: &[u64; 2]) -> bool {
+        join(*bits) < P
+    }
+}
+
+#[cfg(all(test, feature = "bytemuck"))]
+mod bytemuck_tests {
+    use super::super::{Prime128Offset275, Prime128OffsetA7F7};
+    use super::split;
+    use bytemuck::checked::{self, CheckedCastError};
+    use bytemuck::CheckedBitPattern;
+
+    fn check<F: CheckedBitPattern<Bits = [u64; 2]>>(p: u128) {
+        for valid in [0, 1, 1 << 64, p - 1] {
+            assert!(
+                checked::try_cast::<[u64; 2], F>(split(valid)).is_ok(),
+                "{valid}"
+            );
+        }
+        for invalid in [p, p + 1, u128::MAX] {
+            assert_eq!(
+                checked::try_cast::<[u64; 2], F>(split(invalid)).err(),
+                Some(CheckedCastError::InvalidBitPattern),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_canonical_limbs_are_valid_bit_patterns() {
+        check::<Prime128OffsetA7F7>(0u128.wrapping_sub(0xFFFF_A7F7));
+        check::<Prime128Offset275>(0u128.wrapping_sub(275));
+    }
+}
+
 #[cfg(all(
     test,
     feature = "asm",
@@ -1253,7 +1300,7 @@ mod tests {
     #[test]
     fn fp128_asm_matches_portable() {
         check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
-        check::<{ u128::MAX - 274 }>(); // C = 275
+        check::<{ u128::MAX - 274 }>();
         check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
     }
 }

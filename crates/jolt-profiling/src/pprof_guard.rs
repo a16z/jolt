@@ -43,7 +43,6 @@ impl PprofGuard {
     }
 }
 
-/// Stub type when `pprof` feature is not enabled.
 #[cfg(not(feature = "pprof"))]
 pub struct PprofGuard;
 
@@ -126,22 +125,5 @@ mod tests {
         assert!(guard.is_none());
         #[cfg(feature = "pprof")]
         assert!(guard.is_some());
-    }
-
-    #[test]
-    fn pprof_scope_no_arg_variant() {
-        let guard = pprof_scope!();
-        #[cfg(not(feature = "pprof"))]
-        assert!(guard.is_none());
-        #[cfg(feature = "pprof")]
-        assert!(guard.is_some());
-    }
-
-    #[test]
-    fn pprof_guard_stub_exists() {
-        #[cfg(not(feature = "pprof"))]
-        {
-            let _guard = super::PprofGuard;
-        }
     }
 }

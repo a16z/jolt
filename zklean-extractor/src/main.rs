@@ -1,6 +1,3 @@
-//#![feature(iter_intersperse, generic_const_exprs, generic_const_items)]
-//#![allow(incomplete_features)] // Silence warnings for generic_const_exprs
-
 use std::path::PathBuf;
 
 use zklean_extractor::constants::*;

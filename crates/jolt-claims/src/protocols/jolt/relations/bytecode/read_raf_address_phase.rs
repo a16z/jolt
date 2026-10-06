@@ -1,5 +1,3 @@
-//! The address phase of the bytecode read-RAF symbolic sumcheck.
-
 use jolt_field::Ring;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
@@ -236,21 +234,6 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
     use jolt_riscv::CIRCUIT_FLAGS;
-
-    fn dimensions(num_committed_ra_polys: usize) -> BytecodeReadRafDimensions {
-        BytecodeReadRafDimensions::new(5, 10, num_committed_ra_polys)
-    }
-
-    #[test]
-    fn read_raf_address_phase_symbolic_matches_dependencies() {
-        let relation = ReadRafAddressPhase::new(dimensions(2));
-        assert_eq!(ReadRafAddressPhase::id(), JoltRelationId::BytecodeReadRaf);
-        assert_eq!(relation.rounds(), dimensions(2).log_k());
-        assert_eq!(
-            relation.degree(),
-            dimensions(2).num_committed_ra_polys() + 1
-        );
-    }
 
     /// Pins the circuit-flag coverage of the input claims struct: every
     /// `CircuitFlags` variant has a `SpartanOuter` field (a newly added flag

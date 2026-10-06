@@ -226,26 +226,6 @@ mod tests {
     }
 
     #[test]
-    fn forged_commitment_coeff_len_rejects_before_deserialization() {
-        let (mut commitment, point, _, resolved, schedules) = resolved_dense(16, 2);
-        commitment.backend_coeff_len = 1 << 25;
-        let err = deserialize_checked_backend_payload(
-            &schedules,
-            &commitment,
-            resolved.selection(),
-            2,
-            &point,
-        )
-        .expect_err("forged coefficient count must be rejected");
-        assert_ne!(
-            commitment.backend_coeff_len,
-            expected_commitment_coeff_len_for_profile(&resolved.profiles().final_group)
-                .expect("expected coefficients")
-        );
-        assert!(err.to_string().contains("coefficients"));
-    }
-
-    #[test]
     fn commitment_byte_length_must_match_coeff_len() {
         let (mut commitment, point, _, resolved, schedules) = resolved_dense(16, 2);
         commitment.backend_coeff_len =

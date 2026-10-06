@@ -10,10 +10,9 @@ use jolt_field::{Fp128x8i32, Unreduced};
 
 use crate::AkitaField;
 
-/// Coefficients per register tile. Four keeps the tile's `u32` sums within
-/// half of baseline x86-64's SSE2 register file and costs nothing on AVX2 or
-/// NEON.
-const TILE: usize = 4;
+/// Eight coefficients expose the larger NEON register file to the shift sum.
+/// Keep four on other targets to avoid spilling on baseline SSE2.
+const TILE: usize = if cfg!(target_arch = "aarch64") { 8 } else { 4 };
 
 /// One destination ring element as unreduced [`Fp128x8i32`] lanes.
 pub(super) type DigitAccumulator<const D: usize> = [Fp128x8i32; D];
@@ -39,7 +38,6 @@ impl<const D: usize> DigitWindows<D> {
         }
     }
 
-    /// Replaces the held entry with `src`.
     pub(super) fn load(&mut self, src: &CyclotomicRing<AkitaField, D>) {
         let (negative, positive) = self.digits.split_at_mut(D);
         for ((negative, positive), &value) in negative.iter_mut().zip(positive).zip(&src.coeffs) {
@@ -51,6 +49,9 @@ impl<const D: usize> DigitWindows<D> {
     /// `dst += a · Σ_k X^k` over `shifts`, each `< D`.
     pub(super) fn accumulate(&self, dst: &mut DigitAccumulator<D>, shifts: &[usize]) {
         debug_assert!(shifts.iter().all(|&shift| shift < D));
+        if shifts.is_empty() {
+            return;
+        }
         for (tile, out) in dst.chunks_exact_mut(TILE).enumerate() {
             let base = D + tile * TILE;
             let mut sums = [[0u32; 8]; TILE];

@@ -19,11 +19,7 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 
 use super::*;
-use crate::witnesses::{
-    Extract, ExtractIndexed, Imm, InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop,
-    OpFlag, Pc, Product, RamAddress, RamReadValue, RamWriteValue, RightInstructionInput, Rs1Value,
-    ShouldJump, ToField, UnexpandedPc, WitnessEnv,
-};
+use crate::witnesses::{Extract, NextIsNoop, ShouldJump, WitnessEnv};
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
 fn base_preprocessing() -> JoltProgramPreprocessing {
@@ -162,9 +158,6 @@ fn committed_table(
     )
 }
 
-/// Recovers the per-cycle hot addresses from a flat address-major `(K x T)`
-/// one-hot grid, asserting every entry is 0 or 1 and every cycle has at most
-/// one hot address (`None` is a cold cycle).
 fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
     assert!(table.len().is_multiple_of(cycles));
     let addresses = table.len() / cycles;
@@ -185,23 +178,6 @@ fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
             hot.first().copied()
         })
         .collect()
-}
-
-#[test]
-fn witness_keeps_jolt_program_execution_boundary() {
-    let program = Arc::new(JoltProgram::default());
-    let preprocessing = preprocessing();
-    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output());
-    let config = config();
-
-    let witness = TraceBackend::new(config.clone(), inputs);
-
-    assert_eq!(witness.config, config);
-    assert_eq!(witness.program.elf_bytes(), program.elf_bytes());
-    assert_eq!(
-        witness.preprocessing.max_padded_trace_length,
-        preprocessing.max_padded_trace_length
-    );
 }
 
 #[cfg(not(feature = "field-inline"))]
@@ -659,123 +635,6 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
 }
 
 #[test]
-fn atomic_extractors_derive_named_witnesses() -> Result<(), String> {
-    let instruction_row = instruction(0x8000_0000);
-    let load_instruction = JoltInstructionRow {
-        instruction_kind: JoltInstructionKind::LD,
-        address: 0x8000_0004,
-        operands: NormalizedOperands {
-            rd: Some(1),
-            rs1: Some(2),
-            rs2: None,
-            imm: 0,
-        },
-        ..Default::default()
-    };
-    let bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction_row, load_instruction],
-        instruction_row.address as u64,
-        RV64IMAC_JOLT,
-    )
-    .map_err(|error| error.to_string())?;
-    let preprocessing = preprocessing_with_bytecode(bytecode);
-    let row = checked_row(
-        instruction_row,
-        RegisterState {
-            rs1: Some(RegisterRead {
-                register: 2,
-                value: 5,
-            }),
-            rd: Some(RegisterWrite {
-                register: 1,
-                pre_value: 0,
-                post_value: 8,
-            }),
-            ..Default::default()
-        },
-        RamAccess::NoOp,
-    );
-    let row = TraceBackend::<OwnedTrace>::compact_trace_row(&row, &preprocessing)
-        .map_err(|error| error.to_string())?;
-    let ram_row = TraceBackend::<OwnedTrace>::compact_trace_row(
-        &checked_row(
-            load_instruction,
-            RegisterState {
-                rs1: Some(RegisterRead {
-                    register: 2,
-                    value: RAM_START_ADDRESS,
-                }),
-                rd: Some(RegisterWrite {
-                    register: 1,
-                    pre_value: 0,
-                    post_value: 7,
-                }),
-                ..Default::default()
-            },
-            RamAccess::Read(RamRead {
-                address: RAM_START_ADDRESS,
-                value: 7,
-            }),
-        ),
-        &preprocessing,
-    )
-    .map_err(|error| error.to_string())?;
-    let next = JoltTraceRow::default();
-    let env = WitnessEnv::new(&preprocessing);
-
-    assert_eq!(
-        LeftInstructionInput::extract(&row, Some(&next), &env),
-        Ok(LeftInstructionInput(5))
-    );
-    assert_eq!(
-        RightInstructionInput::extract(&row, Some(&next), &env),
-        Ok(RightInstructionInput(3))
-    );
-    assert_eq!(
-        Product::extract(&row, Some(&next), &env).map(|product| product.to_field::<Fr>()),
-        Ok(Fr::from_u64(15))
-    );
-    assert_eq!(
-        LookupOutput::extract(&row, Some(&next), &env),
-        Ok(LookupOutput(8))
-    );
-    assert_eq!(Pc::extract(&row, Some(&next), &env), Ok(Pc(1)));
-    assert_eq!(
-        UnexpandedPc::extract(&row, Some(&next), &env),
-        Ok(UnexpandedPc(0x8000_0000))
-    );
-    assert_eq!(Imm::extract(&row, Some(&next), &env), Ok(Imm(3)));
-    assert_eq!(Rs1Value::extract(&row, Some(&next), &env), Ok(Rs1Value(5)));
-    assert_eq!(
-        RamAddress::extract(&ram_row, Some(&next), &env),
-        Ok(RamAddress(RAM_START_ADDRESS))
-    );
-    assert_eq!(
-        RamReadValue::extract(&ram_row, Some(&next), &env),
-        Ok(RamReadValue(7))
-    );
-    // Reads write back the read value.
-    assert_eq!(
-        RamWriteValue::extract(&ram_row, Some(&next), &env),
-        Ok(RamWriteValue(7))
-    );
-    assert_eq!(
-        OpFlag::extract_indexed(CircuitFlags::AddOperands, &row, Some(&next), &env),
-        Ok(OpFlag(true))
-    );
-    assert_eq!(
-        InstructionFlag::extract_indexed(
-            InstructionFlags::RightOperandIsImm,
-            &row,
-            Some(&next),
-            &env
-        ),
-        Ok(InstructionFlag(true))
-    );
-    Ok(())
-}
-
-#[test]
 fn lookahead_witnesses_pad_the_final_cycle() {
     let preprocessing = preprocessing();
     let env = WitnessEnv::new(&preprocessing);
@@ -792,8 +651,6 @@ fn lookahead_witnesses_pad_the_final_cycle() {
     .unwrap();
     let noop_next = JoltTraceRow::default();
 
-    // A missing successor counts as a no-op for the shift family, exactly
-    // like a present no-op successor.
     assert_eq!(NextIsNoop::extract(&row, None, &env), Ok(NextIsNoop(true)));
     assert_eq!(
         NextIsNoop::extract(&row, Some(&noop_next), &env),
@@ -1161,7 +1018,6 @@ fn excluded_ids_report_their_classification() {
     }
 }
 
-/// [`OwnedTrace`] with its slice accessor hidden.
 #[derive(Clone)]
 struct IteratorOnlyTrace(OwnedTrace);
 

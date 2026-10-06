@@ -1,9 +1,3 @@
-//! Whole-guest fast-pass equivalence: run the fibonacci guest through the
-//! x86 backend's fast (non-recording) pass and compare row count, device
-//! outputs, and final memory against the reference interpreter.
-//!
-//! Native-only: on other targets this file compiles to nothing.
-
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
@@ -18,8 +12,6 @@ use tracer::TracerBackend;
 mod common;
 use common::setup;
 
-/// Run a guest through both engines and assert the fast pass agrees with the
-/// reference on everything the fast pass observes.
 fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
     // Pin the reference to serial mode (the tracer env-dispatches to the
     // parallel pipeline).
@@ -124,12 +116,6 @@ fn sha2_chain_record_matches_reference() {
     assert_record_matches("sha2-chain-guest", "sha2_chain", input);
 }
 
-/// Production-scale row-stream equality. The small-guest tests above pin
-/// semantics; this one exercises the same comparison over millions of rows
-/// with realistic memory and control-flow patterns, which is the substance
-/// AC7's proof byte-equality would provide (a proof is a deterministic
-/// function of the trace, so byte-identical rows imply byte-identical
-/// proofs). Ignored by default: it needs a few GB and ~10s.
 #[test]
 #[ignore = "scale test: several GB of trace rows"]
 fn fibonacci_scale_record_matches_reference() {

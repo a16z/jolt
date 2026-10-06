@@ -26,6 +26,7 @@ use jolt_riscv::{
     Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction, JoltInstructionRow,
     CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
+use jolt_utils::unsafe_allocate_zero_vec;
 
 use crate::KernelError;
 
@@ -40,7 +41,6 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
     InstructionFlags::IsNoop,
 ];
 
-/// The sparse `(lane, value)` encoding of one committed bytecode row.
 fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
@@ -113,7 +113,7 @@ pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     let chunk_cycle_len = bytecode_len / chunk_count;
     let lane_capacity = COMMITTED_BYTECODE_LANE_CAPACITY;
     let mut chunk_coeffs: Vec<Vec<F>> = (0..chunk_count)
-        .map(|_| vec![F::zero(); lane_capacity * chunk_cycle_len])
+        .map(|_| unsafe_allocate_zero_vec(lane_capacity * chunk_cycle_len))
         .collect();
 
     for (cycle, instruction) in instructions.iter().enumerate() {
@@ -150,7 +150,6 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     words
 }
 
-/// Sanity re-export target: the lane total the layout must fit.
 pub const fn committed_total_lanes() -> usize {
     total_lanes()
 }

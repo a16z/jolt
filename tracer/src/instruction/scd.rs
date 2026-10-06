@@ -142,7 +142,6 @@ mod tests {
 
         cpu.x[11] = addr as i64;
 
-        // LR.D: rd=10, rs1=11
         let decoded = Instruction::decode(encode_lrd(10, 11), 0x1000, false).unwrap();
         let Instruction::LRD(lrd) = decoded else {
             panic!("Expected LRD");
@@ -150,7 +149,6 @@ mod tests {
         let mut trace = Vec::new();
         lrd.trace(&mut cpu, Some(&mut trace));
 
-        // SC.D: rd=13, rs1=11, rs2=12
         let store_val: u64 = 0x1234_5678_9ABC_DEF0;
         cpu.x[12] = store_val as i64;
 
@@ -196,7 +194,6 @@ mod tests {
         let mut trace = Vec::new();
         scd.trace(&mut cpu, Some(&mut trace));
 
-        // Inspect the trace: both reservation registers must be written to 0
         let cleared_regs: Vec<u8> = trace
             .iter()
             .filter_map(|cycle| cycle.rd_write())
@@ -250,7 +247,6 @@ mod tests {
 
         cpu.x[11] = addr as i64;
 
-        // LR.W sets a word reservation
         let decoded = Instruction::decode(encode_lrw(10, 11), 0x1000, false).unwrap();
         let Instruction::LRW(lrw) = decoded else {
             panic!("Expected LRW");
