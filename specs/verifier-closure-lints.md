@@ -11,6 +11,11 @@
 > closure this spec hardened is now **18 crates**, not 19, and **14** of them carry
 > `#![forbid(unsafe_code)]`, not 15. The counts and survey table below are left exactly
 > as measured on 2026-07-26 and describe the campaign as executed.
+>
+> **Addendum (2026-10-06):** `jolt-hyperkzg` is restored to the workspace and
+> `jolt-spartan-verifier` is added to the closure; both carry the tier-1 deny set plus
+> `indexing_slicing` and `#![forbid(unsafe_code)]`. The closure is now **20 crates**, and
+> **15** of them carry `#![forbid(unsafe_code)]`.
 
 ## Summary
 
