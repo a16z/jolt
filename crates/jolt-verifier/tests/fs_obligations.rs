@@ -559,7 +559,10 @@ fn is_challenge_call(name: &str) -> bool {
 }
 
 fn is_absorb_method(name: &str) -> bool {
-    matches!(name, "append" | "append_bytes" | "append_to_transcript")
+    matches!(
+        name,
+        "append" | "append_bytes" | "append_to_transcript" | "append_values"
+    )
 }
 
 fn is_source_type(name: &str) -> bool {

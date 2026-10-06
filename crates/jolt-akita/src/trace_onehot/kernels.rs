@@ -22,7 +22,7 @@ use jolt_field::ExtField;
 
 use super::commit::commit_columns;
 use super::decomposition::{decompose_fold_columns_with_mode, DecomposeRotationMode};
-use super::opening::opening_fold_columns;
+use super::opening::{opening_fold_column, opening_fold_columns};
 use super::source::{
     validate_batch, TraceOneHotColumn, TraceOneHotColumnBatchView, TraceOneHotColumnView,
 };
@@ -79,7 +79,7 @@ impl<E, const D: usize> OpeningFoldKernel<TraceOneHotColumnView<'_, D>, AkitaFie
         source: TraceOneHotColumnView<'_, D>,
         plan: OpeningFoldPlan<'_, AkitaField>,
     ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
-        Ok(opening_fold_columns(source.source(), plan)?.swap_remove(source.source().column_index))
+        opening_fold_column(source.source(), plan)
     }
 
     fn decompose_fold(

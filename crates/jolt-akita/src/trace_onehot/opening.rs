@@ -25,6 +25,31 @@ pub(super) fn opening_fold_columns<const D: usize>(
     source: &TraceOneHotColumn,
     plan: OpeningFoldPlan<'_, AkitaField>,
 ) -> Result<Vec<OpeningFoldOutput<AkitaField, D>>, AkitaError> {
+    opening_fold_column_range(source, 0, source.num_columns, plan)
+}
+
+pub(super) fn opening_fold_column<const D: usize>(
+    source: &TraceOneHotColumn,
+    plan: OpeningFoldPlan<'_, AkitaField>,
+) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
+    let mut folded = opening_fold_column_range(source, source.column_index, 1, plan)?;
+    folded.pop().ok_or_else(|| {
+        AkitaError::InvalidInput("trace one-hot opening produced no column output".into())
+    })
+}
+
+fn opening_fold_column_range<const D: usize>(
+    source: &TraceOneHotColumn,
+    column_start: usize,
+    active_columns: usize,
+    plan: OpeningFoldPlan<'_, AkitaField>,
+) -> Result<Vec<OpeningFoldOutput<AkitaField, D>>, AkitaError> {
+    let column_end = column_start
+        .checked_add(active_columns)
+        .filter(|&end| active_columns != 0 && end <= source.num_columns)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("trace one-hot opening column range is invalid".into())
+        })?;
     let (num_positions, weights) = match plan {
         OpeningFoldPlan::Base {
             live_block_weights,
@@ -58,6 +83,7 @@ pub(super) fn opening_fold_columns<const D: usize>(
         one_hot_k = source.one_hot_k,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
+        active_columns,
         positions_per_block = num_positions,
         weight_kind,
     )
@@ -91,7 +117,7 @@ pub(super) fn opening_fold_columns<const D: usize>(
             blocks_per_column,
             task_parts = schedule.parts,
             tasks = blocks_per_column * schedule.parts,
-            active_columns = num_columns,
+            active_columns,
             rows_per_ring = (D / source.one_hot_k).max(1),
             weight_kind,
         )
@@ -105,7 +131,7 @@ pub(super) fn opening_fold_columns<const D: usize>(
                 let (part_start, part_end) = schedule.part_range(part);
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
-                let mut folded = vec![CyclotomicRing::zero(); num_columns];
+                let mut folded = vec![CyclotomicRing::zero(); active_columns];
                 if source.one_hot_k < D {
                     visit_segment_ring_row_range::<D>(
                         source,
@@ -125,9 +151,12 @@ pub(super) fn opening_fold_columns<const D: usize>(
                                             .enumerate()
                                     {
                                         let coefficient_base = row_offset * source.one_hot_k;
-                                        for (column, &hot) in row_indices.iter().enumerate() {
+                                        for (local_column, &hot) in
+                                            row_indices[column_start..column_end].iter().enumerate()
+                                        {
+                                            let column = column_start + local_column;
                                             if row_is_committed(hot, committed_zero_mask, column) {
-                                                folded[column].coeffs
+                                                folded[local_column].coeffs
                                                     [coefficient_base + usize::from(hot)] += weight;
                                             }
                                         }
@@ -144,10 +173,13 @@ pub(super) fn opening_fold_columns<const D: usize>(
                                             .enumerate()
                                     {
                                         let coefficient_base = row_offset * source.one_hot_k;
-                                        for (column, &hot) in row_indices.iter().enumerate() {
+                                        for (local_column, &hot) in
+                                            row_indices[column_start..column_end].iter().enumerate()
+                                        {
+                                            let column = column_start + local_column;
                                             if row_is_committed(hot, committed_zero_mask, column) {
                                                 weight.shift_accumulate_into(
-                                                    &mut folded[column],
+                                                    &mut folded[local_column],
                                                     coefficient_base + usize::from(hot),
                                                 );
                                             }
@@ -170,7 +202,10 @@ pub(super) fn opening_fold_columns<const D: usize>(
                                 } => {
                                     let weight = position_weights[position];
                                     for &(column, coefficient) in contributions {
-                                        folded[column].coeffs[coefficient] += weight;
+                                        if column_start <= column && column < column_end {
+                                            folded[column - column_start].coeffs[coefficient] +=
+                                                weight;
+                                        }
                                     }
                                 }
                                 OpeningWeights::Subfield {
@@ -178,10 +213,12 @@ pub(super) fn opening_fold_columns<const D: usize>(
                                 } => {
                                     let weight = position_weights[position];
                                     for &(column, coefficient) in contributions {
-                                        weight.shift_accumulate_into(
-                                            &mut folded[column],
-                                            coefficient,
-                                        );
+                                        if column_start <= column && column < column_end {
+                                            weight.shift_accumulate_into(
+                                                &mut folded[column - column_start],
+                                                coefficient,
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -197,14 +234,14 @@ pub(super) fn opening_fold_columns<const D: usize>(
             num_blocks,
             blocks_per_column,
             task_parts = schedule.parts,
-            active_columns = num_columns,
+            active_columns,
         )
         .entered();
-        let mut folded = vec![vec![CyclotomicRing::zero(); blocks_per_column]; num_columns];
+        let mut folded = vec![vec![CyclotomicRing::zero(); blocks_per_column]; active_columns];
         for (task, trace_folded) in partials.into_iter().enumerate() {
             let trace_block = task / schedule.parts;
             let part = task % schedule.parts;
-            for column in 0..num_columns {
+            for column in 0..active_columns {
                 let dst = &mut folded[column][trace_block];
                 if part == 0 {
                     *dst = trace_folded[column];
@@ -222,10 +259,13 @@ pub(super) fn opening_fold_columns<const D: usize>(
             weight_kind,
         )
         .entered();
-        let mut folded = vec![vec![CyclotomicRing::zero(); 1]; source.num_columns];
+        let mut folded = vec![vec![CyclotomicRing::zero(); 1]; active_columns];
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
-                let block = column;
+                if column < column_start || column >= column_end {
+                    continue;
+                }
+                let block = column - column_start;
                 let position = ring;
                 match &weights {
                     OpeningWeights::Base {
