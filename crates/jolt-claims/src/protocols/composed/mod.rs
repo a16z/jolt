@@ -4,7 +4,6 @@
 //! resolve both without depending on prover or verifier orchestration.
 
 pub mod geometry;
-#[cfg(feature = "r1cs")]
 pub mod r1cs;
 
 mod ids;

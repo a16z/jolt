@@ -14,7 +14,6 @@ akita = []
 # Heap flamegraph visitation of the relation claim structs (profile harness).
 allocative = ["dep:allocative"]
 field-inline = ["jolt-lookup-tables/field-inline"]
-r1cs = ["dep:jolt-r1cs"]
 test-utils = []
 
 [dependencies]
@@ -25,7 +24,7 @@ jolt-claims-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-poly.workspace = true
-jolt-r1cs = { workspace = true, optional = true }
+jolt-r1cs.workspace = true
 jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-utils.workspace = true

@@ -972,8 +972,8 @@ jolt-verifier::stages::stage1:
 The protocol families expose their own Spartan openings. The sibling
 `composed` module appends field-inline openings after the ordinary RV64
 openings when field inline is enabled and defines the symbolic relation over
-the combined claims. `jolt-claims` reaches `jolt-r1cs` only through its optional
-`r1cs` feature and never depends on `jolt-verifier`; concrete verification
+the combined claims. `jolt-claims` builds the R1CS with `jolt-r1cs` and never
+depends on `jolt-verifier`; concrete verification
 supplies R1CS coefficients to the symbolic relation.
 
 The selected R1CS layout uses the ordinary RV64 `Rs1Value`, `RdWriteValue`,

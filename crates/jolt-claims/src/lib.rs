@@ -29,7 +29,6 @@ mod formula_error;
 pub mod lattice;
 mod ops;
 pub mod protocols;
-#[cfg(feature = "r1cs")]
 pub mod r1cs;
 mod sumcheck;
 mod symbolic;

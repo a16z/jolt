@@ -98,7 +98,7 @@ allocative = [
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
-jolt-claims = { workspace = true, features = ["r1cs"] }
+jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
 jolt-field.workspace = true

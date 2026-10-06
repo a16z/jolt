@@ -26,7 +26,7 @@ allocative.workspace = true
 num-bigint = "0.4"
 
 jolt-field.workspace = true
-jolt-claims = { workspace = true, features = ["r1cs"] }
+jolt-claims.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-r1cs.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }

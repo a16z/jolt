@@ -38,7 +38,7 @@ field-inline = [
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-jolt-claims = { workspace = true, features = ["r1cs"] }
+jolt-claims.workspace = true
 jolt-field.workspace = true
 jolt-kernels-derive.workspace = true
 jolt-lookup-tables.workspace = true
