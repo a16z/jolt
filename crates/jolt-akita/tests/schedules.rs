@@ -3,8 +3,6 @@
     reason = "catalog tests should fail loudly when an artifact or grid is malformed"
 )]
 
-//! Coverage and setup-sizing guards for Jolt's external catalogs.
-
 use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::path::PathBuf;
 
@@ -559,8 +557,6 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
     }
 }
 
-/// Full-width field increments must compose with the trace and every
-/// combination of bounded advice objects.
 #[cfg(feature = "field-inline")]
 mod field_inc {
     #![expect(

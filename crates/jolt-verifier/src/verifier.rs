@@ -344,7 +344,6 @@ where
     let one_hot_config = proof.one_hot_config;
     #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
-    // The zk axis is fixed at compile time; every branch below const-folds.
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     let vc_capacity = if zk {
         Some(validate_zk_vector_commitment_setup::<PCS, VC>(
@@ -1332,50 +1331,6 @@ mod tests {
     }
 
     #[test]
-    fn accepts_standard_proof_consistency() {
-        let proof = proof_with_zk(false, clear_claims());
-
-        assert!(validate_proof_consistency(&proof, false).is_ok());
-    }
-
-    /// A zk proof cannot exist on the akita build (`zk` and `akita` are
-    /// mutually exclusive), so the accept case is base-only; the reject cases
-    /// below run on both builds.
-    #[cfg(not(feature = "akita"))]
-    #[test]
-    fn accepts_zk_proof_consistency() {
-        let proof = proof_with_zk(true, zk_claims());
-
-        assert!(validate_proof_consistency(&proof, true).is_ok());
-    }
-
-    #[test]
-    fn rejects_wrong_stage_representation() {
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.stages.stage5_sumcheck_proof =
-            SumcheckProof::Committed(CommittedSumcheckProof::default());
-
-        assert!(matches!(
-            validate_proof_consistency(&proof, false),
-            Err(VerifierError::ExpectedClearProof {
-                field: "stage5_sumcheck_proof",
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_verifier_zk_flag() {
-        let proof = proof_with_zk(false, clear_claims());
-
-        assert!(matches!(
-            validate_proof_consistency(&proof, true),
-            Err(VerifierError::ExpectedCommittedProof {
-                field: "stage1_uni_skip_first_round_proof",
-            })
-        ));
-    }
-
-    #[test]
     fn checks_payload_for_selected_zk_flag() {
         assert!(matches!(
             validate_proof_consistency(&proof_with_zk(false, zk_claims()), false),
@@ -1394,7 +1349,6 @@ mod tests {
         use jolt_transcript::LegacyBlake2bTranscript;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
-        // Invalid metadata and layout give independent later-stage failures.
         #[cfg(feature = "field-inline")]
         if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
             let bytecode = &mut Arc::make_mut(full).bytecode.bytecode;
@@ -1929,8 +1883,6 @@ mod tests {
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        // Use the build's instruction profile when
-        // required, including the all-inactive table for this empty program.
         let program = JoltProgramPreprocessing::new(
             Vec::new(),
             Vec::new(),

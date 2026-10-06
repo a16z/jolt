@@ -1,10 +1,3 @@
-//! BN254 Fr Montgomery/Barrett arithmetic kernel and the wide accumulator.
-//!
-//! Ported from jolt-field's `arkworks/bn254_ops.rs` + `wide_accumulator.rs`
-//! with identical algorithms: Barrett folding for scalar multiplication,
-//! a compile-time Montgomery table for small-integer conversion, and the
-//! folded 4×4 product accumulator with deferred Montgomery reduction.
-
 use crate::{signed::S256, Accumulator, Limbs};
 use ark_bn254::FrConfig;
 use ark_ff::{BigInt, Fp, MontConfig};
@@ -22,7 +15,6 @@ const R: BigInt<N> = <FrConfig as MontConfig<N>>::R;
 const MODULUS_HAS_SPARE_BIT: bool = MODULUS[N - 1] >> 63 == 0;
 const MODULUS_NUM_SPARE_BITS: u32 = MODULUS[N - 1].leading_zeros();
 
-/// a + b * c + carry → (result, new carry)
 #[inline(always)]
 fn mac_with_carry(a: u64, b: u64, c: u64, carry: &mut u64) -> u64 {
     let tmp = (a as u128) + (b as u128) * (c as u128) + (*carry as u128);
@@ -30,7 +22,6 @@ fn mac_with_carry(a: u64, b: u64, c: u64, carry: &mut u64) -> u64 {
     tmp as u64
 }
 
-/// *a += b + carry → new carry
 #[inline(always)]
 fn adc(a: &mut u64, b: u64, carry: u64) -> u64 {
     let tmp = (*a as u128) + (b as u128) + (carry as u128);
@@ -38,7 +29,6 @@ fn adc(a: &mut u64, b: u64, carry: u64) -> u64 {
     (tmp >> 64) as u64
 }
 
-/// *a -= b + borrow → new borrow (1 if underflow)
 #[inline(always)]
 fn sbb(a: &mut u64, b: u64, borrow: u64) -> u64 {
     let tmp = (1u128 << 64) + (*a as u128) - (b as u128) - (borrow as u128);
@@ -46,7 +36,6 @@ fn sbb(a: &mut u64, b: u64, borrow: u64) -> u64 {
     u64::from(tmp >> 64 == 0)
 }
 
-/// `k * p` for small `k`, as (low N limbs, carry limb).
 const fn modulus_times(k: u64) -> ([u64; N], u64) {
     let mut lo = [0u64; N];
     let mut carry = 0u64;
@@ -77,7 +66,6 @@ const BARRETT_MU: u64 = {
     } else {
         MODULUS[2]
     };
-    // Normalized dividend top limbs are [1 << 63, 0].
     let dividend_top = (1u128 << 63) << 64;
     let mut q = dividend_top / (p_hi as u128);
     let mut r = dividend_top - q * (p_hi as u128);
@@ -88,7 +76,6 @@ const BARRETT_MU: u64 = {
     q as u64
 };
 
-/// `PRECOMP_TABLE[i]` = Montgomery form of `i`, for fast small-int conversion.
 const PRECOMP_TABLE_SIZE: usize = 1 << 14;
 static PRECOMP_TABLE: [InnerFr; PRECOMP_TABLE_SIZE] = {
     let mut table = [Fp::new_unchecked(BigInt([0u64; N])); PRECOMP_TABLE_SIZE];
@@ -102,7 +89,6 @@ static PRECOMP_TABLE: [InnerFr; PRECOMP_TABLE_SIZE] = {
     table
 };
 
-/// Compare two 4-limb numbers.
 #[inline(always)]
 fn compare_4(a: [u64; N], b: [u64; N]) -> core::cmp::Ordering {
     let mut i = N;
@@ -151,7 +137,6 @@ fn barrett_cond_subtract(r_tmp: BigInt<5>) -> BigInt<N> {
     }
 }
 
-/// Barrett reduction kernel: reduce 5 limbs → 4 limbs (mod p).
 #[inline(always)]
 fn barrett_reduce_5_to_4(c: BigInt<5>) -> BigInt<N> {
     let tilde_c: u64 = if MODULUS_HAS_SPARE_BIT {
@@ -161,7 +146,6 @@ fn barrett_reduce_5_to_4(c: BigInt<5>) -> BigInt<N> {
     };
     let m: u64 = ((tilde_c as u128 * BARRETT_MU as u128) >> 64) as u64;
 
-    // r_tmp = c - m * 2p
     let (m2p_lo, m2p_hi) = MODULUS_TIMES_2;
     let mut m2p = BigInt([m2p_lo[0], m2p_lo[1], m2p_lo[2], m2p_lo[3], m2p_hi]);
     let mut carry = 0u64;
@@ -237,7 +221,6 @@ pub(crate) fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> In
     result
 }
 
-/// Multiply BigInt<4> by u64, producing BigInt<5>.
 #[inline(always)]
 fn bigint4_mul_u64(a: &BigInt<N>, b: u64) -> BigInt<5> {
     let mut res = BigInt::<5>([0u64; 5]);
@@ -249,7 +232,6 @@ fn bigint4_mul_u64(a: &BigInt<N>, b: u64) -> BigInt<5> {
     res
 }
 
-/// Multiply BigInt<4> by u128, producing BigInt<6>.
 #[inline(always)]
 fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
     let (b_lo, b_hi) = (b as u64, (b >> 64) as u64);
@@ -267,7 +249,6 @@ fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
     res
 }
 
-/// Barrett reduce BigInt<6> → Fr via two rounds.
 #[inline(always)]
 fn from_unchecked_nplus2(element: BigInt<6>) -> InnerFr {
     let c1 = BigInt::<5>([
@@ -282,7 +263,6 @@ fn from_unchecked_nplus2(element: BigInt<6>) -> InnerFr {
     Fp::new_unchecked(barrett_reduce_5_to_4(c2))
 }
 
-/// Multiply a field element by u64 via one Barrett round.
 #[inline(always)]
 pub(crate) fn mul_u64(a: InnerFr, b: u64) -> InnerFr {
     if b == 0 || Zero::is_zero(&a) {
@@ -294,7 +274,6 @@ pub(crate) fn mul_u64(a: InnerFr, b: u64) -> InnerFr {
     Fp::new_unchecked(barrett_reduce_5_to_4(bigint4_mul_u64(&a.0, b)))
 }
 
-/// Multiply a field element by u128 via up to two Barrett rounds.
 #[inline(always)]
 pub(crate) fn mul_u128(a: InnerFr, b: u128) -> InnerFr {
     if b >> 64 == 0 {
@@ -304,7 +283,6 @@ pub(crate) fn mul_u128(a: InnerFr, b: u128) -> InnerFr {
     }
 }
 
-/// Convert u64 → Fr: table lookup for small values, `mul_u64(R, n)` otherwise.
 #[inline(always)]
 pub(crate) fn from_u64(n: u64) -> InnerFr {
     if n < PRECOMP_TABLE_SIZE as u64 {
@@ -314,7 +292,6 @@ pub(crate) fn from_u64(n: u64) -> InnerFr {
     }
 }
 
-/// Convert u128 → Fr: table lookup for small values, `mul_u128(R, n)` otherwise.
 #[inline(always)]
 pub(crate) fn from_u128(n: u128) -> InnerFr {
     if n < PRECOMP_TABLE_SIZE as u128 {
@@ -557,7 +534,6 @@ impl Default for WideAccumulator {
 }
 
 impl WideAccumulator {
-    /// Carry-propagate the positional slots into a 9-limb integer.
     #[inline]
     fn normalize(self) -> BigInt<9> {
         let mut out = [0u64; 9];

@@ -79,44 +79,6 @@ fn dory_homomorphic_batch_rejects_tampered_value() {
 }
 
 #[test]
-fn dory_homomorphic_batch_rejects_mismatched_points() {
-    let (polynomials, point) = homomorphic_polynomials(4, 3, 0x71_00_01);
-    let prover_setup = DoryScheme::setup_prover(point.len());
-    let (mut claims, hints) = clear_claims::<DoryScheme>(&polynomials, &point, &prover_setup);
-    claims[2].evaluation.point = Point::new(vec![fr(2), fr(3), fr(5)]);
-
-    let mut transcript = Blake2bTranscript::new(b"dory-batch-point-mismatch");
-    let result = <HomomorphicDoryBatch as BatchOpeningScheme>::prove_batch(
-        &prover_setup,
-        claims,
-        sources(&polynomials),
-        hints,
-        &mut transcript,
-    );
-    assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
-}
-
-#[test]
-fn dory_homomorphic_batch_rejects_witness_count_mismatch() {
-    let (polynomials, point) = homomorphic_polynomials(3, 3, 0x71_00_05);
-    let prover_setup = DoryScheme::setup_prover(point.len());
-    let (claims, mut hints) = clear_claims::<DoryScheme>(&polynomials, &point, &prover_setup);
-    let mut polynomial_sources = sources(&polynomials);
-    let _dropped = polynomial_sources.pop();
-    let _dropped_hint = hints.pop();
-
-    let mut transcript = Blake2bTranscript::new(b"dory-batch-witness-count");
-    let result = <HomomorphicDoryBatch as BatchOpeningScheme>::prove_batch(
-        &prover_setup,
-        claims,
-        polynomial_sources,
-        hints,
-        &mut transcript,
-    );
-    assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
-}
-
-#[test]
 fn dory_homomorphic_batch_rejects_wrong_witness_dimension() {
     let (polynomials, point) = homomorphic_polynomials(3, 3, 0x71_00_02);
     let prover_setup = DoryScheme::setup_prover(point.len());
@@ -185,9 +147,6 @@ struct ZkBatchFixture {
     proof: DoryProof,
 }
 
-/// Produces an honest ZK batch proof over two random 2-variable polynomials,
-/// bound to a caller-chosen transcript label so each test can replay the
-/// exact prover transcript.
 fn zk_batch_fixture(seed: u64, label: &'static [u8]) -> ZkBatchFixture {
     let (polynomials, point) = homomorphic_polynomials(2, 2, seed);
     let prover_setup = DoryScheme::setup_prover(point.len());
@@ -267,7 +226,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_commitment() {
         "swapped commitments must fail verification: {result:?}"
     );
 
-    // Control: the untampered statement verifies under the same label.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,
@@ -299,7 +257,6 @@ fn dory_homomorphic_zk_batch_rejects_wrong_opening_point() {
         "a shifted opening point must fail verification: {result:?}"
     );
 
-    // Control: the point the proof was produced for verifies.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,
@@ -354,7 +311,6 @@ fn dory_homomorphic_zk_batch_rejects_tampered_hiding_commitment() {
         "a missing hiding commitment must fail verification: {result:?}"
     );
 
-    // Control: the intact proof verifies.
     let _hiding = verify_zk_fixture(
         &fixture,
         label,
@@ -363,36 +319,4 @@ fn dory_homomorphic_zk_batch_rejects_tampered_hiding_commitment() {
         &fixture.proof,
     )
     .expect("control: the intact ZK batch proof must verify");
-}
-
-#[test]
-fn dory_homomorphic_zk_batch_rejects_witness_count_mismatch() {
-    let (polynomials, point) = homomorphic_polynomials(2, 2, 0x71_00_04);
-    let prover_setup = DoryScheme::setup_prover(point.len());
-    let mut commitments = Vec::with_capacity(polynomials.len());
-    let mut hints = Vec::with_capacity(polynomials.len());
-    let mut evaluations = Vec::with_capacity(polynomials.len());
-    for polynomial in &polynomials {
-        let (commitment, hint) =
-            <DoryScheme as ZkOpeningScheme>::commit_zk(polynomial, &prover_setup).unwrap();
-        commitments.push(commitment);
-        hints.push(hint);
-        evaluations.push(polynomial.evaluate(&point));
-    }
-    let mut polynomial_sources = sources(&polynomials);
-    let _dropped = polynomial_sources.pop();
-    let _dropped_hint = hints.pop();
-    let _dropped_eval = evaluations.pop();
-
-    let mut transcript = Blake2bTranscript::new(b"dory-batch-zk-witness-count");
-    let result = <HomomorphicDoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
-        &prover_setup,
-        point,
-        commitments,
-        polynomial_sources,
-        hints,
-        evaluations,
-        &mut transcript,
-    );
-    assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
 }

@@ -114,8 +114,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for IncClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &IncClaimReductionInputClaims<Vec<F>>,
     ) -> Result<IncClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        // Both reduced openings share the cycle opening point (the reversed
-        // sumcheck point).
         let opening_point = derivations::reversed(sumcheck_point);
         Ok(IncClaimReductionOutputClaims {
             ram_inc: opening_point.clone(),

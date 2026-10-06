@@ -6,7 +6,6 @@ pub fn main() {
 
     let target_dir = "/tmp/jolt-guest-targets";
 
-    // int_to_string: max_trace_length = 65536
     info!("=== Int to String ===");
     let mut program = guest::compile_int_to_string(target_dir);
 
@@ -24,7 +23,6 @@ pub fn main() {
     info!("int to string valid: {is_valid}");
     assert!(is_valid, "int_to_string proof verification failed!");
 
-    // string_concat: max_trace_length = 131072
     info!("=== String Concat ===");
     let mut program = guest::compile_string_concat(target_dir);
 
@@ -45,8 +43,6 @@ pub fn main() {
     info!("string concat valid: {is_valid}");
     assert!(is_valid, "string_concat proof verification failed!");
 
-    // parallel_sum_of_squares: max_trace_length = 1048576
-    // Tests ZeroOS + Jolt threading with rayon
     info!("=== Parallel Sum of Squares (rayon) ===");
     let mut program = guest::compile_parallel_sum_of_squares(target_dir);
 

@@ -89,11 +89,9 @@ struct FieldSparseEntry<F> {
     next_val: F,
     /// Bound `γ·rs1_ra + γ²·rs2_ra` coefficient.
     ra: F,
-    /// Bound `rd_wa` coefficient.
     wa: F,
     /// Cycle-domain row index (before binding: the cycle).
     row: usize,
-    /// Field register index.
     col: u8,
 }
 
@@ -679,9 +677,6 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
             })
     }
 
-    /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
-    /// sparse rows; the final cycle bind collapses to the K-sized dense
-    /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
         if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
@@ -828,11 +823,6 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent field-inline traces:
-/// identical round polynomials at every round (cycle and address phases), equal typed
-/// output claims, and both kernels' derived-table validation — plus the degenerate case
-/// without field-inline activity, where the sparse state is empty and every round
-/// polynomial is honestly zero.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {

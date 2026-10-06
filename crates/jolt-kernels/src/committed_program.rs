@@ -41,7 +41,6 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
     InstructionFlags::IsNoop,
 ];
 
-/// The sparse `(lane, value)` encoding of one committed bytecode row.
 fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
@@ -151,7 +150,6 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     words
 }
 
-/// Sanity re-export target: the lane total the layout must fit.
 pub const fn committed_total_lanes() -> usize {
     total_lanes()
 }

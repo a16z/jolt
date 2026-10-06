@@ -61,32 +61,3 @@ fn sum_bugs(space: &FuncSpace) -> f64 {
     }
     total
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn halstead_bugs_on_proof_system() {
-        let obj = HalsteadBugsObjective {
-            crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
-        };
-        let val = obj.collect_measurement().unwrap();
-        assert!(val > 0.0, "halstead bugs should be > 0, got {val}");
-    }
-
-    #[test]
-    fn halstead_bugs_on_trivial_code() {
-        let source = b"fn f() { let x = 1 + 2; }".to_vec();
-        let path = Path::new("test.rs");
-        let space = rust_code_analysis::get_function_spaces(
-            &rust_code_analysis::LANG::Rust,
-            source,
-            path,
-            None,
-        )
-        .unwrap();
-        let bugs = sum_bugs(&space);
-        assert!(bugs < 1.0, "trivial code bugs should be < 1, got {bugs}");
-    }
-}

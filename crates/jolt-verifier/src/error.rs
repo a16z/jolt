@@ -1,5 +1,3 @@
-//! Verifier error types.
-
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_riscv::JoltInstructionKind;
 

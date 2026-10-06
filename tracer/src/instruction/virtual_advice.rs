@@ -8,7 +8,6 @@ use crate::{
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
-// Special case for VirtualAdvice as it has an extra 'advice' field
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub struct VirtualAdvice {
     pub address: u64,

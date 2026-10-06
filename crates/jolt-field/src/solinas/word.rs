@@ -49,7 +49,6 @@ macro_rules! define_solinas_prime {
         pub struct $name<const P: $word>(pub(crate) $word);
 
         impl<const P: $word> $name<P> {
-            /// Fold point: smallest `k` such that `P <= 2^k`.
             pub(crate) const BITS: u32 = <$word>::BITS - P.leading_zeros();
 
             /// Offset `c = 2^k − P`. Instantiating with a modulus that
@@ -73,7 +72,6 @@ macro_rules! define_solinas_prime {
                 c
             };
 
-            /// Mask for the low `BITS` bits of a double word.
             const MASK: $double = if Self::BITS == <$word>::BITS {
                 <$word>::MAX as $double
             } else {
@@ -82,7 +80,6 @@ macro_rules! define_solinas_prime {
 
             const MASK128: u128 = Self::MASK as u128;
 
-            /// Conditional subtract of a folded value down to `[0, P)`.
             #[inline(always)]
             fn canonicalize_folded(v: $double) -> $word {
                 if Self::BITS < <$word>::BITS {
@@ -95,7 +92,6 @@ macro_rules! define_solinas_prime {
                 }
             }
 
-            /// Loop-fold Solinas reduction of an arbitrary double word.
             #[inline(always)]
             fn reduce_double(x: $double) -> $word {
                 let mut v = x;
@@ -105,7 +101,6 @@ macro_rules! define_solinas_prime {
                 Self::canonicalize_folded(v)
             }
 
-            /// Loop-fold Solinas reduction of an arbitrary `u128`.
             #[inline(always)]
             fn reduce_u128(x: u128) -> $word {
                 let mut v = x;
@@ -456,7 +451,6 @@ impl<const P: u64> PseudoMersenne for Fp64<P> {
 }
 
 impl<const P: u64> Fp64<P> {
-    /// Mask for the low `BITS` bits in a word.
     pub(crate) const MASK64: u64 = if Self::BITS < 64 {
         (1u64 << Self::BITS) - 1
     } else {
@@ -467,7 +461,6 @@ impl<const P: u64> Fp64<P> {
     pub(crate) const FOLD_IN_U64: bool =
         Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
 
-    /// Reduces a product supplied as exact low and high words.
     #[inline(always)]
     pub(crate) fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
         if Self::FOLD_IN_U64 {

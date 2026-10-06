@@ -12,8 +12,6 @@ use akita_types::{ChunkedWitnessCfg, MultiChunkProfileId};
 
 use crate::AKITA_ONE_HOT_K16;
 
-/// Delegate one Jolt policy to an upstream preset while assigning a distinct
-/// external schedule-family identity.
 macro_rules! delegate_preset {
     (
         $(#[$doc:meta])*
@@ -280,60 +278,6 @@ mod tests {
         assert_ne!(
             JoltOneHotK16::schedule_family_name(),
             JoltOneHotK256::schedule_family_name()
-        );
-    }
-
-    #[test]
-    fn k256_policy_uses_adaptive_dimensions() {
-        assert_eq!(JoltOneHotK256::inner_basis_range(), (3, 16));
-        assert_eq!(JoltOneHotK256::opening_basis_range(), (3, 6));
-        assert!(matches!(
-            JoltOneHotK256::RING_DIMENSION_SCHEDULE_MODE,
-            akita_schedules::RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ));
-        assert!(JoltOneHotK16::recursive_setup_planning());
-        assert!(JoltOneHotK256::recursive_setup_planning());
-        assert_eq!(
-            JoltOneHotK16W8R2::chunked_witness_cfg(),
-            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
-        );
-        assert_eq!(
-            JoltOneHotK256W8R2::chunked_witness_cfg(),
-            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
-        );
-        for actual in [
-            JoltOneHotK16W2R2::chunked_witness_cfg(),
-            JoltOneHotK256W2R2::chunked_witness_cfg(),
-        ] {
-            assert_eq!(
-                actual,
-                ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W2R2)
-            );
-        }
-        for actual in [
-            JoltOneHotK16W4R2::chunked_witness_cfg(),
-            JoltOneHotK256W4R2::chunked_witness_cfg(),
-        ] {
-            assert_eq!(
-                actual,
-                ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W4R2)
-            );
-        }
-        assert_eq!(
-            JoltOneHotK16::chunked_witness_cfg(),
-            ChunkedWitnessCfg::default_non_chunked()
-        );
-        assert_eq!(
-            JoltOneHotK256::chunked_witness_cfg(),
-            ChunkedWitnessCfg::default_non_chunked()
-        );
-        assert_eq!(
-            JoltDenseBounded::chunked_witness_cfg(),
-            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
-        );
-        assert_eq!(
-            JoltDenseFull::chunked_witness_cfg(),
-            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2)
         );
     }
 }

@@ -250,7 +250,6 @@ pub fn commit_trusted_advice(
     })
 }
 
-/// The physical arity of an advice object sized to the program's advice capacity.
 fn advice_physical_num_vars(
     program: &JoltProgramPreprocessing,
     kind: JoltAdviceKind,

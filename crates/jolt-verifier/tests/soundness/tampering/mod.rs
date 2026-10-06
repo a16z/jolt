@@ -22,8 +22,6 @@
 pub mod akita;
 #[cfg(not(feature = "akita"))]
 pub mod commitments;
-#[cfg(not(feature = "akita"))]
-pub mod configs;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",

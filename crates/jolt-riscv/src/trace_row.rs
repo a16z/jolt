@@ -41,7 +41,6 @@ use crate::{
 /// storage-format detail, not a protocol fact.
 const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 
-/// Sentinel stored in a register-id byte for an absent (`None`) operand.
 const REGISTER_NONE: u8 = u8::MAX;
 
 /// Field-inline builds use 24 circuit-flag bits; base builds retain the original
@@ -57,7 +56,6 @@ const META_INSTRUCTION_FLAGS_MASK: u32 = (1u32 << (crate::NUM_INSTRUCTION_FLAGS 
 const META_IMM_NEGATIVE_SHIFT: u32 =
     META_INSTRUCTION_FLAGS_SHIFT + crate::NUM_INSTRUCTION_FLAGS as u32;
 
-/// Witness values for a non-memory row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NonMemoryState {
     pub rs1_value: u64,
@@ -109,8 +107,6 @@ impl Default for CapturedState {
 }
 
 impl CapturedState {
-    /// Pack into flat value slots, validating that the variant agrees with the
-    /// row's `Load`/`Store` circuit flags.
     fn into_value_slots(
         self,
         is_load: bool,
@@ -168,8 +164,6 @@ impl CapturedState {
 /// conversion, not here, since this crate has no notion of either.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TraceRowError {
-    /// A final-row immediate does not fit the chosen signed-magnitude `u64`
-    /// encoding.
     #[error("immediate |{imm}| does not fit the u64 magnitude encoding")]
     ImmTooWide { imm: i128 },
     /// A register id does not fit the compact `u8` storage (with `0xFF`
@@ -202,22 +196,16 @@ struct TraceValueSlots {
 #[repr(C)]
 pub struct JoltTraceRow {
     values: TraceValueSlots,
-    /// Source RV64 instruction address (guest architectural address).
     unexpanded_pc: u64,
-    /// Magnitude of the immediate; sign is bit `META_IMM_NEGATIVE_SHIFT` of `meta`.
     imm_abs: u64,
-    /// Compact local bytecode index (expanded "PC"); see [`JoltTraceRow::pc`].
     bytecode_pc: u32,
-    /// Packed circuit flags, instruction flags, and immediate sign.
     meta: u32,
     /// Final Jolt instruction tag (stable identity, not a dense index). The
     /// lookup-table routing is derived from this in `jolt-lookup-tables`.
     jolt_tag: u16,
-    /// `rs1`/`rs2`/`rd` register ids, or `0xFF` (None).
     rs1_id: u8,
     rs2_id: u8,
     rd_id: u8,
-    /// Reserved layout slots (kept zero).
     _reserved: [u8; 3],
 }
 
@@ -235,7 +223,6 @@ impl Default for JoltTraceRow {
 }
 
 impl JoltTraceRow {
-    /// Canonical no-op row.
     pub fn no_op() -> Self {
         let instruction = JoltInstructionRow::default();
         let (circuit_flags, instruction_flags) = row_flags(&instruction);
@@ -303,7 +290,6 @@ impl JoltTraceRow {
         })
     }
 
-    /// The per-cycle witness values, typed by row class.
     #[inline]
     pub fn captured_state(&self) -> CapturedState {
         if self.is_load() {
@@ -579,7 +565,6 @@ mod tests {
         assert_eq!(r.ram_address(), 0);
         assert_eq!(r.pc(), 7);
         assert_eq!(r.unexpanded_pc(), 0x8000_0000);
-        // Register indices come from the instruction operands.
         assert_eq!(r.rs1_index(), Some(2));
         assert_eq!(r.rs2_index(), Some(3));
         assert_eq!(r.rd_index(), Some(1));
@@ -657,13 +642,11 @@ mod tests {
 
     #[test]
     fn rejects_class_mismatch() {
-        // A load instruction with a non-memory captured state.
         let state = CapturedState::NonMemory(NonMemoryState::default());
         let instruction = row(JoltInstructionKind::LD, NormalizedOperands::default());
         let err = JoltTraceRow::from_components(state, &instruction, 0).unwrap_err();
         assert!(matches!(err, TraceRowError::StateClassMismatch { .. }));
 
-        // A non-memory instruction with a store captured state.
         let state = CapturedState::Store(StoreState::default());
         let instruction = row(JoltInstructionKind::ADD, NormalizedOperands::default());
         let err = JoltTraceRow::from_components(state, &instruction, 0).unwrap_err();

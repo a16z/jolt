@@ -28,9 +28,6 @@
 use core::alloc::Layout;
 use core::ptr;
 
-/// Size classes: 8, 16, 32, …, 2^(MIN_SHIFT + NUM_CLASSES − 1) bytes.
-/// The top class (8 GiB) comfortably exceeds any single allocation a guest
-/// heap can hold; larger requests simply fail.
 const MIN_SHIFT: u32 = 3;
 const NUM_CLASSES: usize = 31;
 
@@ -49,11 +46,10 @@ static mut ARENA: Arena = Arena {
     free: [0; NUM_CLASSES],
 };
 
-/// Size class index for a layout: ceil(log2(max(size, align, 8))) − 3.
 #[inline]
 fn class_of(layout: Layout) -> u32 {
     let needed = layout.size().max(layout.align()).max(8);
-    let shift = usize::BITS - (needed - 1).leading_zeros(); // ceil(log2)
+    let shift = usize::BITS - (needed - 1).leading_zeros();
     shift - MIN_SHIFT
 }
 
@@ -208,13 +204,11 @@ mod tests {
     #[test]
     fn size_class_allocator_end_to_end() {
         let heap = vec![0u8; 1 << 20].leak();
-        // Skew the base so class alignment is actually exercised.
         let base = (heap.as_ptr() as usize + 63) & !63;
         init(base, (1 << 20) - 128);
 
-        // Basic alloc: aligned to class size, distinct, writable.
-        let a = alloc(layout(24, 8)); // class 32
-        let b = alloc(layout(32, 8)); // class 32
+        let a = alloc(layout(24, 8));
+        let b = alloc(layout(32, 8));
         assert!(!a.is_null() && !b.is_null() && a != b);
         assert_eq!(a as usize % 32, 0);
         unsafe {
@@ -222,45 +216,37 @@ mod tests {
             ptr::write_bytes(b, 0xBB, 32);
         }
 
-        // Free-list reuse is LIFO within a class.
         dealloc(a, layout(24, 8));
-        let a2 = alloc(layout(25, 4)); // same class 32
+        let a2 = alloc(layout(25, 4));
         assert_eq!(a, a2);
 
-        // Alignment beyond size bumps the class.
         let c = alloc(layout(8, 64));
         assert_eq!(c as usize % 64, 0);
 
-        // Realloc within a class is a no-op pointer-wise.
-        let d = alloc(layout(20, 8)); // class 32
+        let d = alloc(layout(20, 8));
         let d2 = realloc(d, layout(20, 8), 30);
         assert_eq!(d, d2);
 
-        // Newest bump block grows in place.
         let e = alloc(layout(64, 8));
         let e2 = realloc(e, layout(64, 8), 128);
         assert_eq!(e, e2);
 
-        // Non-newest growth copies content.
         let f = alloc(layout(16, 8));
         unsafe { ptr::write_bytes(f, 0xCD, 16) };
-        let _g = alloc(layout(16, 8)); // f is no longer newest
+        let _g = alloc(layout(16, 8));
         let f2 = realloc(f, layout(16, 8), 64);
         assert_ne!(f, f2);
         for i in 0..16 {
             assert_eq!(unsafe { *f2.add(i) }, 0xCD);
         }
 
-        // Newest bump block shrinks in place: pointer stable, tail reclaimed.
         let h = alloc(layout(256, 8));
         assert_eq!(realloc(h, layout(256, 8), 16), h);
         let h_tail = alloc(layout(64, 8));
         assert!((h_tail as usize) < h as usize + 256);
 
-        // Non-newest cross-class shrink moves, preserves contents, and files
-        // the old block under its true (large) class for reuse.
         let s = alloc(layout(256, 8));
-        let _t = alloc(layout(8, 8)); // s is no longer newest
+        let _t = alloc(layout(8, 8));
         unsafe { ptr::write_bytes(s, 0x5A, 16) };
         let s2 = realloc(s, layout(256, 8), 16);
         assert_ne!(s, s2);
@@ -269,11 +255,9 @@ mod tests {
         }
         assert_eq!(alloc(layout(256, 8)), s);
 
-        // Oversize and exhaustion return null.
         assert!(alloc(layout(1 << 40, 8)).is_null());
-        assert!(alloc(layout(1 << 21, 8)).is_null()); // larger than arena
+        assert!(alloc(layout(1 << 21, 8)).is_null());
 
-        // Churn: repeated alloc/free cycles stay within the arena and recycle.
         let mut ptrs = vec![];
         for round in 0..50 {
             for i in 0..64 {

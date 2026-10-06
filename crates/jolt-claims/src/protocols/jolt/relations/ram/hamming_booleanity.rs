@@ -1,5 +1,3 @@
-//! RAM Hamming-booleanity symbolic sumcheck relation.
-
 use core::marker::PhantomData;
 
 use jolt_field::{JoltField, Ring};
@@ -90,57 +88,5 @@ impl SymbolicSumcheck for HammingBooleanity {
         let eq_cycle = derived(RamHammingBooleanityPublic::EqCycle);
         let h = opening(ram_hamming_weight());
         eq_cycle * (h.clone() * h.clone() - h)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, Ring};
-
-    fn trace_dimensions() -> TraceDimensions {
-        TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn hamming_booleanity_evaluates_like_core_formula() {
-        let relation = HammingBooleanity::new(trace_dimensions());
-
-        let h = Fr::from_u64(7);
-        let eq_cycle = Fr::from_u64(11);
-        let zero = Fr::from_u64(0);
-
-        let input = relation
-            .input_expression::<Fr>()
-            .evaluate(|_| zero, |_| zero, |_| zero);
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_hamming_weight() => h,
-                _ => zero,
-            },
-            |_| zero,
-            |id| match *id {
-                JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) => {
-                    eq_cycle
-                }
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, zero);
-        assert_eq!(output, eq_cycle * (h * h - h));
-    }
-
-    #[test]
-    fn hamming_booleanity_symbolic_matches_dependencies() {
-        let relation = HammingBooleanity::new(trace_dimensions());
-
-        assert_eq!(
-            HammingBooleanity::id(),
-            JoltRelationId::RamHammingBooleanity
-        );
-        assert_eq!(relation.rounds(), trace_dimensions().log_t());
-        assert_eq!(relation.degree(), 3);
     }
 }

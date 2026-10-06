@@ -46,7 +46,6 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for ReferenceBackend {
             });
         }
         let (r_address, r_cycle) = ram_val_point.split_at(relation.ram_log_k());
-        // The address-bound `ra` slice, folded from the full `(K × T)` grid.
         let ra_folded = address_fold(
             witness,
             ram_ra_val_check(),

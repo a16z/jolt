@@ -281,8 +281,6 @@ impl AkitaScheme {
                 "Akita grouped trace opening requires at least one auxiliary group",
             ));
         }
-        // Every auxiliary group plus the final trace group must fit the
-        // setup's total batch capacity.
         let required = group_hints
             .len()
             .checked_add(1)
@@ -311,7 +309,6 @@ impl AkitaScheme {
         PrecommittedGroupProfiles::from_profiles(profiles).map_err(akita_error)
     }
 
-    /// Validates the commitment shape before handing values to Akita.
     fn validate_commit_shape(
         setup: &AkitaProverSetup,
         num_vars: usize,
@@ -332,9 +329,6 @@ impl AkitaScheme {
         Ok(())
     }
 
-    /// Wraps a backend commitment and its opening data into the adapter's
-    /// commitment/hint pair; the flavor and polynomial count come from the
-    /// hint source shape.
     fn package_commitment(
         layout_digest: AkitaLayoutDigest,
         num_vars: usize,

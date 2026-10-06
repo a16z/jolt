@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
 use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 
-/// Upper bound on rows planned by one preprocessing request.
 const MAX_PROVISIONED_ROWS: usize = 128;
 
 /// Physical shape and admitted coefficient range of one dense commitment group.

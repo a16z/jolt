@@ -19,8 +19,6 @@ pub struct Pedersen<G: JoltGroup> {
     _marker: std::marker::PhantomData<G>,
 }
 
-/// Setup parameters for Pedersen commitments: a vector of message generators
-/// and a separate blinding generator.
 #[derive(Clone, Debug, Serialize)]
 #[serde(bound = "")]
 pub struct PedersenSetup<G: JoltGroup> {

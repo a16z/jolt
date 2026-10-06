@@ -150,8 +150,6 @@ fn validate_trace_batch_statement(
     Ok(())
 }
 
-/// Binds the grouped statement into Jolt's transcript and bridges a Jolt
-/// challenge into the Akita session bytes.
 fn bind_grouped_statement_transcripts<T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,
@@ -201,8 +199,6 @@ where
     ))
 }
 
-/// Runs the one-hot backend prover for an opening whose final group was
-/// committed under the setup's K-specific scheme.
 fn prove_one_hot_opening(
     setup: &AkitaProverSetup,
     opening: AkitaOpening<'_>,
@@ -225,8 +221,6 @@ fn prove_one_hot_opening(
     .map_err(prove_failed)
 }
 
-/// Replays the one-hot backend verifier for `statement` under the setup's
-/// K-specific catalog.
 fn verify_one_hot_statement(
     setup: &AkitaVerifierSetup,
     proof: &AkitaBatchProof,
@@ -411,8 +405,6 @@ struct ValidatedStatement<'a> {
     point: &'a [AkitaField],
 }
 
-/// Checks that the statement is a same-point batch over exactly one
-/// commitment group whose shape matches the setup.
 fn validate_statement(
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
     max_num_vars: usize,
@@ -548,9 +540,6 @@ where
     Ok(bridged_akita_session(transcript, b"jolt-akita/batch"))
 }
 
-/// Assembles the single-group opening data handed to Akita's native batched
-/// prover: the shared point, per-polynomial claimed values, the group
-/// commitment, and the commit-time handle retaining the source.
 fn single_group_batch<'a, Cfg>(
     schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],

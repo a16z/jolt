@@ -8,7 +8,6 @@ use common::constants::REGISTER_COUNT;
 use common::jolt_device::JoltDevice;
 use jolt_program::execution::TraceError;
 
-/// Why generated code returned to the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 pub enum ExitReason {
@@ -49,7 +48,6 @@ pub struct GuestState {
     pub mem_base: u64,
     /// Size in bytes of the RAM plane.
     pub mem_size: u64,
-    /// Host context for helper calls (device, advice tape, panic state).
     pub host: *mut HostContext,
     /// Runtime advice values for the group being executed, filled by the
     /// group's advice helper and read by its `VirtualAdvice` rows in order.
@@ -68,7 +66,6 @@ pub struct GuestState {
 }
 
 impl GuestState {
-    /// Translate the generated-code exit state into the backend error channel.
     #[expect(clippy::print_stderr)]
     pub fn check_exit(&self, host: &mut HostContext) -> Result<(), TraceError> {
         match self.exit {

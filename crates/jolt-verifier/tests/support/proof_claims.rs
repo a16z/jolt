@@ -1,4 +1,3 @@
-//! Opening-claim projection for verifier-native prover proofs.
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]

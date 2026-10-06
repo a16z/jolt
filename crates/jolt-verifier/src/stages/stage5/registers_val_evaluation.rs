@@ -1,5 +1,3 @@
-//! The stage 5 `RegistersValEvaluation` sumcheck instance.
-
 use core::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::relations;
@@ -92,7 +90,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RegistersValEvaluation<F> {
             .cycle_opening_point(sumcheck_point)
             .map_err(public_input_failed)?;
         let opening_point = [address, cycle.as_slice()].concat();
-        // rd_inc and rd_wa are opened at the same point.
         Ok(RegistersValEvaluationOutputClaims {
             rd_inc: opening_point.clone(),
             rd_wa: opening_point,

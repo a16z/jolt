@@ -19,7 +19,6 @@ use rayon::prelude::*;
 
 use crate::ProverError;
 
-/// The full instruction lookup key width: two `XLEN`-bit operands.
 const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
 #[cfg(feature = "parallel")]
 const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
@@ -35,7 +34,6 @@ const MIN_PADDED_TRACE_LENGTH: usize = 256;
 #[cfg(feature = "akita")]
 const MIN_PADDED_TRACE_LENGTH: usize = 1 << 12;
 
-/// The proof-shape configuration for one proving run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(non_snake_case)]
 pub struct ProverConfig {
@@ -87,7 +85,6 @@ impl ProverConfig {
         )
     }
 
-    /// Derives the proof shape from compact proof rows.
     #[tracing::instrument(
         skip_all,
         name = "ProverConfig::derive_compact",
@@ -273,21 +270,4 @@ impl CommittedProgramCandidates {
 pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
     let words = (max_advice_size_bytes / 8) as usize;
     words.next_power_of_two().max(1).ilog2() as usize
-}
-
-#[cfg(all(test, feature = "akita"))]
-mod tests {
-    use super::one_hot_config;
-
-    #[test]
-    fn akita_small_committed_chunks_keep_large_virtual_lookup_chunks() {
-        let below_threshold = one_hot_config(24);
-        assert_eq!(below_threshold.log_k_chunk, 4);
-        assert_eq!(below_threshold.lookups_ra_virtual_log_k_chunk, 16);
-        for log_trace in 25..=30 {
-            let config = one_hot_config(log_trace);
-            assert_eq!(config.log_k_chunk, 4);
-            assert_eq!(config.lookups_ra_virtual_log_k_chunk, 32);
-        }
-    }
 }

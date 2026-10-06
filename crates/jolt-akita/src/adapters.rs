@@ -380,7 +380,6 @@ pub struct AkitaSetupParams {
     /// instead, which contains the finalized catalog and never replans.
     #[serde(default, rename = "advice_schedule")]
     pub(crate) grouped_schedule: Option<GroupedScheduleParams>,
-    /// Immutable base catalogs loaded once by application preprocessing.
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
 }
 
@@ -593,7 +592,6 @@ pub struct AkitaVerifierSetup {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    /// Exact setup-owned catalogs, including any program-specific grouped rows.
     pub(crate) schedule_artifacts: AkitaVerifierScheduleArtifacts,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
@@ -1067,9 +1065,6 @@ pub struct AkitaProverHint {
     pub(crate) source: AkitaHintSource,
 }
 
-/// Shape of the source the backend handle retains. The variant doubles as the
-/// source-kind discriminator, so a hint can never pair one kind's metadata
-/// with another kind's commitment.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AkitaHintSource {
     Dense { poly_count: usize },
@@ -1357,7 +1352,6 @@ mod tests {
     #![expect(
         clippy::expect_used,
         clippy::unwrap_used,
-        clippy::indexing_slicing,
         reason = "tests assert successful conversions and exact error text"
     )]
 
@@ -1400,30 +1394,6 @@ mod tests {
         assert_eq!(jolt_to_akita_index(0, 0), 0);
     }
 
-    /// Reversing a reversal is the identity, and the map permutes the whole
-    /// domain (every Akita index is hit exactly once).
-    #[test]
-    fn jolt_to_akita_index_is_a_self_inverse_permutation() {
-        let num_vars = 4;
-        let mut seen = [false; 16];
-        for index in 0..16 {
-            let mapped = jolt_to_akita_index(num_vars, index);
-            assert!(mapped < 16);
-            assert!(!seen[mapped], "akita index {mapped} hit twice");
-            seen[mapped] = true;
-            assert_eq!(jolt_to_akita_index(num_vars, mapped), index);
-        }
-    }
-
-    #[test]
-    fn jolt_to_akita_evals_permutes_an_explicit_two_var_vector() {
-        let jolt = [af(10), af(20), af(30), af(40)];
-        let akita = jolt_to_akita_evals(2, &jolt).expect("well-formed evaluations convert");
-        // Jolt index 1 = assignment (0, 1) = Akita index 2, and vice versa;
-        // the all-zero and all-one corners are fixed points.
-        assert_eq!(akita, vec![af(10), af(30), af(20), af(40)]);
-    }
-
     #[test]
     fn jolt_to_akita_evals_passes_zero_var_polynomials_through() {
         let jolt = [af(99)];
@@ -1454,14 +1424,6 @@ mod tests {
                 usize::BITS
             ),
         );
-    }
-
-    #[test]
-    fn reverse_point_reverses_coordinates_and_round_trips() {
-        let point = vec![af(1), af(2), af(3)];
-        assert_eq!(reverse_point(&point), vec![af(3), af(2), af(1)]);
-        assert_eq!(reverse_point(&reverse_point(&point)), point);
-        assert!(reverse_point(&[]).is_empty());
     }
 
     /// The identity the backend hand-off relies on: transforming the

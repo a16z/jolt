@@ -240,8 +240,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The `Val_init` decomposition publics are input publics: the public
-            // initial-RAM evaluation and the negated committed-contribution selectors.
             RamValCheckPublic::InitEval => Ok(self.public_eval),
             RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => {
                 self.init_selectors
@@ -267,9 +265,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation of
-            // the produced cycle point against the fixed read-write cycle. Gamma comes
-            // from the drawn `challenges` (the value `draw_challenges` produced).
             RamValCheckPublic::LtCyclePlusGamma => {
                 let output_cycle =
                     output_points
@@ -585,8 +580,6 @@ mod tests {
             RamValCheckInit::from(Fr::from(0u64)),
         );
 
-        // Inline (stage4/verify.rs L125-126): domain-separator append, then
-        // `ram_val_check_gamma = challenge_scalar()`.
         let (inline_events, inline_gamma) = record(|t| {
             append_ram_val_check_gamma_domain_separator(t);
             t.challenge_scalar()
@@ -594,8 +587,6 @@ mod tests {
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        // The draw is the domain-separator append(s) followed by exactly one squeeze;
-        // no challenge is squeezed before the gamma.
         assert!(draw_events.len() >= 2);
         let (separator, last) = draw_events.split_at(draw_events.len() - 1);
         assert_eq!(last, [DrawEvent::Squeeze(1)]);

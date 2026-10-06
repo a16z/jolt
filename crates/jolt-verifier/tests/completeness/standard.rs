@@ -67,13 +67,3 @@ fn standard_address_major_verifier_proofs_are_accepted() {
             .verify(),
     );
 }
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate this verifier fixture"]
-fn standard_muldiv_verifier_proof_is_accepted() {}
-
-#[test]
-#[cfg(any(not(feature = "prover-fixtures"), feature = "zk"))]
-#[ignore = "enable --features prover-fixtures in a non-ZK build to load or live-generate diversified verifier fixtures"]
-fn diversified_standard_verifier_objects_are_accepted() {}
