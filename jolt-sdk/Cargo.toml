@@ -26,6 +26,9 @@ blake2-inline = [
 ]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
+# Akita-backed proving for the recursion flow. Not additive: it replaces the
+# Dory host helpers `#[jolt::provable]` expands to, so a build that unifies it
+# with a provable Dory guest does not compile.
 akita = [
   "jolt-prover?/akita",
   "jolt-verifier?/akita",

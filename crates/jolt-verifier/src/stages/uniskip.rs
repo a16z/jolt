@@ -19,7 +19,7 @@ use jolt_r1cs::constraints::jolt::{
 };
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
-    SumcheckStatement, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    SumcheckStatement, OPENING_CLAIM_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -161,7 +161,7 @@ where
     // Match the prover transcript: the uni-skip output is absorbed as an
     // opening claim before any post-uni-skip draw (the remainder batch's RLC
     // coefficient squeeze in particular).
-    transcript.append_labeled(b"opening_claim", &output_claim);
+    transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &output_claim);
 
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));

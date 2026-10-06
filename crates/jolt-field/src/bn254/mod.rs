@@ -394,7 +394,7 @@ impl InlineArith for Fq {
     }
     #[inline(always)]
     fn inverse(a: Self) -> Option<Self> {
-        <ark_bn254::Fq as ark_ff::Field>::inverse(&a.0).map(Fq)
+        <ArkFq as ark_ff::Field>::inverse(&a.0).map(Fq)
     }
 }
 

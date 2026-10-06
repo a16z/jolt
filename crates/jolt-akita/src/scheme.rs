@@ -1318,45 +1318,32 @@ mod tests {
             .catalog_digest();
         let encoded =
             bincode::serde::encode_to_vec(&prepared, bincode::config::standard()).unwrap();
-        let (transported, _): (AkitaVerifierSetup, _) =
+        let (mut transported, _): (AkitaVerifierSetup, _) =
             bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
-        for setup in [prepared, transported] {
-            // The view keeps the complete catalog's transcript identity.
-            assert_eq!(
-                setup.dense_scheme().unwrap().schedules().catalog_digest(),
-                full_digest
-            );
+        let verify = |setup: &AkitaVerifierSetup| {
             let mut transcript = Blake2bTranscript::<AkitaField>::new(b"prepared");
             <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-                &setup,
+                setup,
                 &statement,
                 &proof,
                 &mut transcript,
             )
-            .unwrap();
+        };
+        // The view keeps the complete catalog's transcript identity.
+        for setup in [&prepared, &transported] {
+            assert_eq!(
+                setup.dense_scheme().unwrap().schedules().catalog_digest(),
+                full_digest
+            );
         }
+        verify(&prepared).unwrap();
+        // A decoded record's inline key is never used unchecked.
+        assert!(verify(&transported).is_err());
 
-        let mut detached = verifier_setup;
-        detached
-            .prepare_verifier(proof.schedule_row_digest())
-            .unwrap();
-        let bodies = detached.detach_prepared_payloads().unwrap();
-        let mut transcript = Blake2bTranscript::<AkitaField>::new(b"prepared");
-        assert!(<AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-            &detached,
-            &statement,
-            &proof,
-            &mut transcript,
-        )
-        .is_err());
-        let leaked: Vec<&'static [u8]> = bodies
-            .into_iter()
-            .map(|body| &*Box::leak(body.into_boxed_slice()))
-            .collect();
-        assert!(detached
-            .clone()
-            .attach_prepared_payloads(&leaked[1..])
-            .is_err());
+        // Detached bodies serve again only once attached in place
+        // (`tests/prepared_transport.rs`).
+        let _ = transported.detach_prepared_payloads().unwrap();
+        assert!(verify(&transported).is_err());
     }
 
     #[test]

@@ -36,7 +36,9 @@ cfg_if::cfg_if! {
 
         #[cfg(feature = "guest-size-class-alloc")]
         // SAFETY: the arena is initialized in `__platform_bootstrap` before
-        // any Rust allocation, and the guest is single-threaded.
+        // any Rust allocation. The guest runs on one hart under cooperative
+        // scheduling, and alloc/dealloc make no syscall, so no other thread
+        // can run inside them.
         unsafe impl GlobalAlloc for SizeClassAllocator {
             unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
                 jolt_platform::size_class_alloc::alloc(layout)

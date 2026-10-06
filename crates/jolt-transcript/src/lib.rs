@@ -75,7 +75,10 @@ pub use prover::ProverTranscript;
 #[cfg(feature = "spongefish")]
 pub use verifier::VerifierTranscript;
 
-#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
+#[cfg(all(
+    feature = "transcript-blake2b",
+    not(all(feature = "blake2-inline", target_arch = "riscv64"))
+))]
 use blake2::{digest::consts::U32, Blake2b};
 #[cfg(all(
     feature = "bn254",
@@ -86,13 +89,28 @@ use blake2::{digest::consts::U32, Blake2b};
     )
 ))]
 use jolt_field::Fr;
-#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
+#[cfg(all(
+    feature = "transcript-blake2b",
+    feature = "blake2-inline",
+    target_arch = "riscv64"
+))]
 use jolt_inlines_blake2::digest_adapter::{Blake2b, U32, U64};
-#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
+#[cfg(all(
+    feature = "transcript-blake2b",
+    feature = "blake2-inline",
+    target_arch = "riscv64"
+))]
 use spongefish::instantiations::hash::Hash;
-#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
+#[cfg(all(
+    feature = "transcript-blake2b",
+    not(all(feature = "blake2-inline", target_arch = "riscv64"))
+))]
 use spongefish::instantiations::Blake2b512;
-#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
+#[cfg(all(
+    feature = "transcript-blake2b",
+    feature = "blake2-inline",
+    target_arch = "riscv64"
+))]
 type Blake2b512 = Hash<Blake2b<U64>>;
 #[cfg(feature = "transcript-keccak")]
 use spongefish::instantiations::Keccak;

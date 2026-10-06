@@ -11,6 +11,16 @@
 //! the result modulo the field characteristic. The field wrappers check
 //! that the returned integer is below the modulus before using it.
 //!
+//! The routed field's arithmetic owns FR registers 1 through 14 (the BN254
+//! Montgomery constants stay in 1 and 2 for the whole run); guest code that
+//! also emits field-inline instructions must not write them.
+//!
+//! The unit's modulus is fixed by the tracer, not checked here: a guest whose
+//! selector names a different field than the tracer's unit computes wrong
+//! results that still read out canonically. The selectors are exclusive (a
+//! compile error otherwise), and the recursion host derives the guest selector
+//! and the tracer's unit from the same `akita` feature.
+//!
 //! `Fr` keeps its Montgomery representation: a raw limb vector `aR` loaded
 //! as a field element differs from `a` by the constant `R`, which
 //! multiplication and inversion correct with one extra FR multiplication

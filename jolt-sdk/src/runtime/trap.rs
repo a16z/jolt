@@ -63,11 +63,15 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
 
             // write(2) to stdout or stderr: route the bytes to the host console,
             // so std guests' `println!` and panic messages reach the tracer
-            // instead of failing with ENOSYS and aborting silently.
+            // instead of failing with ENOSYS and aborting silently. Without the
+            // `stdout` feature ZeroOS has no console; with it, writing the bytes
+            // directly is equivalent and skips the VFS.
             if (*regs).a7 == SYS_WRITE && ((*regs).a0 == 1 || (*regs).a0 == 2) {
-                let bytes = core::slice::from_raw_parts((*regs).a1 as *const u8, (*regs).a2);
-                for &byte in bytes {
-                    jolt_platform::putchar(byte);
+                if (*regs).a2 != 0 {
+                    let bytes = core::slice::from_raw_parts((*regs).a1 as *const u8, (*regs).a2);
+                    for &byte in bytes {
+                        jolt_platform::putchar(byte);
+                    }
                 }
                 (*regs).a0 = (*regs).a2;
                 return;

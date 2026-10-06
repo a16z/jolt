@@ -110,6 +110,15 @@ pub use algebra::{
 };
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 mod fr_inline;
+#[cfg(all(
+    feature = "field-inline-guest-bn254",
+    feature = "field-inline-guest-fp128",
+    target_arch = "riscv64"
+))]
+compile_error!(
+    "the field-inline unit computes in one field: enable field-inline-guest-bn254 or \
+     field-inline-guest-fp128, not both"
+);
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};

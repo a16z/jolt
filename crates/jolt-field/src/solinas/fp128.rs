@@ -1452,24 +1452,23 @@ impl<const P: u128> Fp128<P> {
 #[cfg(test)]
 mod wide_tests {
     use super::*;
-    use crate::solinas::Prime128Offset275;
+    use crate::solinas::{Prime128Offset275, FIELD_INLINE_FP128_MODULUS as P};
     use rand_chacha::ChaCha20Rng;
     use rand_core::RngCore;
     use rand_core::SeedableRng;
 
     #[test]
     fn inline_readout_accepts_canonical_boundaries() {
-        type F = Fp128<{ u128::MAX - 0xffff_a7f6 }>;
+        type F = Fp128<P>;
         assert_eq!(F::from_inline_limbs([0; 2]).0, [0; 2]);
-        let largest = split(u128::MAX - 0xffff_a7f7);
+        let largest = split(P - 1);
         assert_eq!(F::from_inline_limbs(largest).0, largest);
     }
 
     #[test]
     #[should_panic(expected = "noncanonical field-inline result")]
     fn inline_readout_rejects_modulus_as_zero() {
-        let _ =
-            Fp128::<{ u128::MAX - 0xffff_a7f6 }>::from_inline_limbs(split(u128::MAX - 0xffff_a7f6));
+        let _ = Fp128::<P>::from_inline_limbs(split(P));
     }
 
     #[test]

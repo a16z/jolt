@@ -24,7 +24,8 @@ command also proves and verifies the outer execution.
 Add `--embed` to `trace` (or Dory `verify`) to bake the verifier setup into the
 guest image; proofs remain runtime inputs. The setup is trusted data, so in
 input mode the caller must authenticate it (see the trust model in
-[`specs/recursion-guest.md`](../../specs/recursion-guest.md)).
+[`specs/recursion-guest.md`](../../specs/recursion-guest.md)). The spec's row
+counts are for embedded mode.
 
 ### Acceptance and rejection
 

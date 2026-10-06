@@ -10,8 +10,9 @@ workspace = true
 
 [features]
 default = ["parallel"]
-# Rayon-backed Akita kernels and the backend thread pool. A single-core zkVM
-# guest builds without it.
+# Akita's rayon-backed kernels and backend thread pool. A single-core zkVM
+# guest builds without it; Jolt's own prover kernels in this crate still link
+# rayon, which a guest verifier never calls.
 parallel = ["akita-pcs/parallel"]
 # Akita's transcript and NTT kernels over the jolt-inlines Blake2b and NTT
 # inlines, for a RISC-V guest verifier.

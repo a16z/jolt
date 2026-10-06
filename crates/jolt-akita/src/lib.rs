@@ -31,7 +31,7 @@ mod scheme;
 mod shape_guard;
 mod trace_onehot;
 
-pub use akita_pcs::AkitaError;
+pub use akita_pcs::{AkitaError, TrustedBytes};
 
 #[cfg(feature = "profiling")]
 #[doc(hidden)]

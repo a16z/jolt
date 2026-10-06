@@ -1,8 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaField, AkitaScheme};
-#[cfg(feature = "akita")]
-use jolt_field::Ring;
+use jolt_akita::{AkitaField, AkitaScheme, TrustedBytes};
 use jolt_inlines_blake2 as _;
 use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
@@ -14,8 +12,6 @@ use jolt_sdk::host::Program;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
-#[cfg(feature = "akita")]
-use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -109,7 +105,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Write a parseable Akita proof with one deliberately invalid opening.
+    /// Write a parseable proof stream with one bit of its first Akita opening proof flipped.
     #[cfg(feature = "akita")]
     TamperOpening {
         #[arg(long)]
@@ -519,10 +515,9 @@ fn collect_guest_proofs(
         .pcs_setup
         .prepare_verifier(row_digest)
         .expect("prepare the Akita guest verifier");
-    // Rebuild skipped caches and verify every proof against the exact setup
-    // transported to the guest, including the restricted catalog coverage.
-    // The multi-megabyte payloads then travel out of line, so the guest reads
-    // them where they lie instead of copying them out of the bincode record.
+    // Verify every proof against exactly what the guest will hold: the
+    // transported record, with its multi-megabyte payloads detached out of
+    // line and attached back in place, as the guest reads them.
     let (mut verifier_preprocessing, _): (GuestVerifierPreprocessing, _) =
         bincode::serde::decode_from_slice(
             &bincode::serde::encode_to_vec(&verifier_preprocessing, bincode::config::standard())
@@ -530,20 +525,27 @@ fn collect_guest_proofs(
             bincode::config::standard(),
         )
         .unwrap();
-    for (proof, public_io) in &records {
-        jolt_sdk::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
-            &verifier_preprocessing,
-            public_io,
-            proof,
-            None,
-        )
-        .expect("verify proof against prepared guest setup");
-        info!("  Verification result: true");
-    }
     let payloads = verifier_preprocessing
         .pcs_setup
         .detach_prepared_payloads()
         .expect("detach prepared Akita payloads");
+    let mut attached = verifier_preprocessing.clone();
+    let bodies: Vec<TrustedBytes> = payloads
+        .iter()
+        // SAFETY: the bodies were detached from this host's own prepared setup.
+        .map(|payload| unsafe { TrustedBytes::new(Box::leak(payload.clone().into_boxed_slice())) })
+        .collect();
+    attached
+        .pcs_setup
+        .attach_prepared_payloads(&bodies)
+        .expect("attach prepared Akita payloads");
+    for (proof, public_io) in &records {
+        jolt_sdk::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            &attached, public_io, proof, None,
+        )
+        .expect("verify proof against prepared guest setup");
+        info!("  Verification result: true");
+    }
     push_record(&mut all_groups_data, &verifier_preprocessing);
     push_record(&mut all_groups_data, &(payloads.len() as u32));
     for payload in &payloads {
@@ -913,10 +915,17 @@ fn tamper_opening(guest: GuestProgram, workdir: &Path, output: &Path) {
         let mut proof: GuestProof = read_record(&bytes, &mut offset).unwrap();
         let device: JoltDevice = read_record(&bytes, &mut offset).unwrap();
         if index == 0 {
-            let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-                panic!("Akita fixture requires clear claims");
-            };
-            claims.stage1.outer.outer_remainder.left_instruction_input += AkitaField::from_u64(1);
+            // Flip one bit in the middle of the Akita opening proof body, so
+            // the proof still decodes and the guest rejects inside the PCS
+            // verifier rather than at an earlier stage.
+            let config = bincode::config::standard();
+            let mut encoded =
+                bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
+            let middle = encoded.len() / 2;
+            encoded[middle] ^= 1;
+            proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config)
+                .unwrap()
+                .0;
         }
         push_record(&mut tampered, &proof);
         push_record(&mut tampered, &device);

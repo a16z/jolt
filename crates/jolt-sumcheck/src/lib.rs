@@ -121,9 +121,10 @@ pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
 pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
 
 /// Absorbs produced opening claims in their canonical order as one message
-/// under [`OPENING_CLAIM_TRANSCRIPT_LABEL`]. The single home of the clear
-/// opening-claim absorption shared by the prover and verifier; an empty claim
-/// list absorbs nothing.
+/// under [`OPENING_CLAIM_TRANSCRIPT_LABEL`], shared by the prover and verifier
+/// for every clear relation's output claims; an empty claim list absorbs
+/// nothing. Message boundaries are part of the transcript format. The uni-skip
+/// output claim, a lone scalar, is absorbed by itself under the same label.
 pub fn append_opening_claims<F, T>(transcript: &mut T, values: &[F])
 where
     F: CanonicalBytes,

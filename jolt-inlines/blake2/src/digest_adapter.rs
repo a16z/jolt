@@ -10,7 +10,8 @@ use digest::array::ArraySize;
 use digest::common::BlockSizeUser;
 use digest::{FixedOutput, FixedOutputReset, HashMarker, Output, OutputSizeUser, Reset, Update};
 
-pub use digest::consts::{U128, U32, U64};
+use digest::consts::U128;
+pub use digest::consts::{U32, U64};
 
 use crate::sdk::Blake2b as Inline;
 

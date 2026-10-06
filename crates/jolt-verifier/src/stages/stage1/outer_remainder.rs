@@ -3,8 +3,11 @@
 //! The clear output check uses the factored R1CS evaluator. The symbolic
 //! quadratic expression remains available to BlindFold; both obtain their
 //! public coefficients from `JoltSpartanOuterRemainder`, and the two agree as
-//! polynomials (pinned by `factored_output_matches_symbolic_relation_on_rv64_shape`
-//! and `composed_factored_output_matches_symbolic_relation`).
+//! polynomials on shapes with affine terms, the only ones the check accepts
+//! (pinned by `factored_output_matches_symbolic_relation_on_rv64_shape` and
+//! `composed_factored_output_matches_symbolic_relation`). Its opening order is
+//! the claims' canonical order, which `append_order_matches_r1cs_input_order`
+//! pins to the R1CS input order the factored evaluator reads.
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedClaims;
@@ -126,6 +129,9 @@ impl<F: JoltField> OuterRemainderCoefficients<F> {
 pub struct OuterRemainder<F: JoltField> {
     symbolic: SelectedSymbolic,
     variable_count: usize,
+    /// The factored check adds the R1CS constants unconditionally, so it
+    /// matches the symbolic form only on shapes that carry the affine terms.
+    affine_terms: bool,
     /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
     /// three inputs to the `SpartanOuterPublic` coefficient table. Both exist
     /// before this relation is constructed (the uni-skip step completes first).
@@ -150,6 +156,7 @@ impl<F: JoltField> OuterRemainder<F> {
         let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
         debug_assert!(variable_count >= dimensions.variables().len());
         Self {
+            affine_terms: dimensions.include_affine_terms(),
             symbolic: SelectedSymbolic::new(dimensions),
             variable_count,
             tau,
@@ -309,6 +316,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
         _output_points: &SelectedOutputs<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
+        if !self.affine_terms {
+            return Err(public_input_failed(
+                "the factored Spartan outer check requires the affine-term shape",
+            ));
+        }
         self.formula()?
             .expected_output_claim(&output_values.opening_values())
             .map_err(public_input_failed)

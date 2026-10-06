@@ -10,6 +10,8 @@ use jolt::jolt_verifier::VerifierPreprocessingWire;
 #[cfg(feature = "akita")]
 use jolt::jolt_verifier::{JoltProof, JoltVerifierPreprocessing as GenericVerifierPreprocessing};
 #[cfg(feature = "akita")]
+use jolt_akita::TrustedBytes;
+#[cfg(feature = "akita")]
 use jolt_crypto::NoVectorCommitment;
 #[cfg(feature = "akita")]
 use jolt_transcript::LegacyBlake2bTranscript;
@@ -145,11 +147,15 @@ impl<'a> Records<'a> {
     }
 }
 
-/// The guest's input region and its own image are mapped for the whole run
-/// and never written or freed, so a slice of either outlives every use.
+/// Extend a slice of the guest's input region or its own image to `'static`.
+///
+/// # Safety
+///
+/// `bytes` must lie in the input region or the image, which are mapped for
+/// the whole run and never written or freed.
 #[cfg(feature = "akita")]
-fn assume_static(bytes: &[u8]) -> &'static [u8] {
-    // SAFETY: see above; the pointer and length are unchanged.
+unsafe fn assume_static(bytes: &[u8]) -> &'static [u8] {
+    // SAFETY: the caller's contract; the pointer and length are unchanged.
     unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) }
 }
 
@@ -176,8 +182,14 @@ fn verify(bytes: &[u8]) -> u32 {
     let payloads: Vec<&[u8]> = (0..payload_count).map(|_| setup.raw()).collect();
     #[cfg(feature = "akita")]
     {
-        let payloads: Vec<&'static [u8]> =
-            payloads.iter().map(|payload| assume_static(payload)).collect();
+        let payloads: Vec<TrustedBytes> = payloads
+            .iter()
+            // SAFETY: every payload slice lies in the image or input region,
+            // and is a body the recursion host detached from its own prepared
+            // setup, bound by this image (embedded mode) or by the statement
+            // that pins the guest input (input mode; see specs/recursion-guest.md).
+            .map(|payload| unsafe { TrustedBytes::new(assume_static(payload)) })
+            .collect();
         verifier_preprocessing
             .pcs_setup
             .attach_prepared_payloads(&payloads)

@@ -15,6 +15,8 @@ pub const DOT_FUNCT7: u32 = 9;
 /// residues. `pinv` is `p^-1 mod 2^32`. A shorter dot can pad with zero arrays.
 /// Other inputs follow explicit wrapping integer arithmetic. Unaligned arrays
 /// use the portable path; the inline requires doubleword-aligned paired loads.
+/// Unlike `forward_ntt64`, it does not copy to aligned buffers: copying thirteen
+/// arrays would cost more than the portable loop.
 #[inline]
 pub fn pointwise_dot64(
     acc: &mut [i32; DEGREE],

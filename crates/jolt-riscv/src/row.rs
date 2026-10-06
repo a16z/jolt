@@ -90,6 +90,10 @@ impl JoltInstructionRow {
     /// virtual-sequence state, `is_compressed`, and `is_first_in_sequence`, and
     /// the kind alone fixes its instruction type. Rows with equal classes
     /// therefore decode to the same flags, whatever their address and operands.
+    ///
+    /// WARNING: the verifier's folded read-RAF evaluation reads each class's
+    /// flags from one row, so a flag that depended on an operand would break
+    /// soundness. Only `flag_class_determines_read_raf_flag_terms` guards this.
     pub fn flag_class(&self) -> u32 {
         let sequence = match self.virtual_sequence_remaining {
             None => 0,

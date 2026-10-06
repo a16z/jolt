@@ -42,6 +42,7 @@ fp64-proof-linkage = []
 # Guest arithmetic on the field-inline unit (see `fr_inline`), which computes in
 # one field: a guest selects it with `-bn254` (`Fr`) or `-fp128`
 # (`Prime128OffsetA7F7`); other fields keep software arithmetic.
+# Internal: enable through exactly one field selector below.
 field-inline-guest = ["dep:jolt-riscv"]
 field-inline-guest-bn254 = ["field-inline-guest"]
 field-inline-guest-fp128 = ["field-inline-guest"]

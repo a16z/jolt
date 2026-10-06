@@ -50,7 +50,8 @@ dots, product sums, signed sums, multiplications, and inversions run through
 field-inline instructions (`fr_inline.rs`).
 
 - **Operand ingress** clears a field register (`FIELD_LOAD_IMM 0`), then folds
-  two words in with `FIELD_LOAD_ACCUMULATE_FROM_MEMORY`.
+  the operand's words in with `FIELD_LOAD_ACCUMULATE_FROM_MEMORY` (two for
+  Fp128, four for Fr).
 - **Readout** emits one range-bound `FIELD_ADVICE_LIMB` per limb and closes with
   `FIELD_ASSERT_ZERO` on the final quotient. The wrapper then rejects an integer
   at or above the modulus.
@@ -163,9 +164,9 @@ With `--embed` the host also:
 ## Measurements
 
 Fibonacci, one inner proof, `--features akita,field-inline,ntt-inline`,
-`trace --embed`, release guest, `RAYON_NUM_THREADS=1`. The final
-three rows were measured on freshly generated proofs with the pinned companion;
-each other row is the cumulative total after its change.
+`trace --embed`, release guest, `RAYON_NUM_THREADS=1`. The last row is a
+freshly generated proof at this revision with the pinned companion; each other
+row is the cumulative total after its change.
 
 | Build | Total rows |
 | --- | ---: |
@@ -181,14 +182,13 @@ each other row is the cumulative total after its change.
 | + in-place digest transcript, blocked sparse MLE | 68,530,020 |
 | + doubleword NTT input stores, word-sized flag-class slots | 67,738,580 |
 | + inline proof-atom encoding | 66,554,373 |
-| Fresh proof, pinned companion (64,710,425 verification cycles) | 66,555,326 |
-| Fresh proof after review simplifications (64,276,851 verification cycles) | 66,116,859 |
-| **Fresh proof, canonical Akita** (64,335,715 verification cycles) | **66,175,726** |
+| **Fresh proof, this revision** (64,433,863 verification cycles) | **66,273,665** |
 
 The first row was rebuilt and re-measured from its archived sources and
 reproduces its recorded numbers exactly. Input mode, which reads the setup
-from the guest input, accepts at 73,225,341 rows; a proof with one tampered
-opening is rejected after 2,975,377 rows.
+from the guest input, accepts at 73,311,922 rows. A proof with one bit flipped
+in its Akita opening proof is rejected after 47,763,416 rows, inside the PCS
+verifier.
 
 ## Levers not taken here
 
