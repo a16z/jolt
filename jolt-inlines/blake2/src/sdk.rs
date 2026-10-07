@@ -77,7 +77,7 @@ fn load_word(chunk: &[u8], aligned: bool) -> u64 {
 /// ORs `src` into `words` starting at byte `pos`. Bytes `pos..pos + src.len()`
 /// must be zero and lie within the block.
 #[inline(always)]
-fn absorb(words: &mut [u64; MSG_BLOCK_LEN], mut pos: usize, mut src: &[u8]) {
+fn or_into_words(words: &mut [u64; MSG_BLOCK_LEN], mut pos: usize, mut src: &[u8]) {
     while !pos.is_multiple_of(WORD_BYTES) {
         let Some((&byte, rest)) = src.split_first() else {
             return;
@@ -235,7 +235,7 @@ impl Blake2b {
         if self.buffer_len != 0 {
             let take = (BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len).min(input.len());
             let (head, rest) = input.split_at(take);
-            absorb(&mut self.buffer.words, self.buffer_len, head);
+            or_into_words(&mut self.buffer.words, self.buffer_len, head);
             self.buffer_len += take;
             input = rest;
             if input.is_empty() {
@@ -258,7 +258,7 @@ impl Blake2b {
             input = rest;
         }
 
-        absorb(&mut self.buffer.words, 0, input);
+        or_into_words(&mut self.buffer.words, 0, input);
         self.buffer_len = input.len();
     }
 
