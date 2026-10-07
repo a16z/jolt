@@ -154,7 +154,9 @@ impl<F: JoltField> JoltWitnessOracle<F> for FixedBackend<F> {
     }
 
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
-        Ok(Vec::new())
+        Err(WitnessError::UnavailableView {
+            label: "fixed committed order",
+        })
     }
 
     #[cfg(feature = "field-inline")]
