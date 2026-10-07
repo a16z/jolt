@@ -385,6 +385,10 @@ pub fn object_leaf_claims<F: JoltField>(
 /// precommitted reductions, and stage 7, keyed by committed polynomial. The
 /// canonical object plans check coverage, point arity, and suffix compatibility.
 /// Shared verbatim by the packed prover's stage 8.
+///
+/// Under the byte link the trace columns open only through the link over the
+/// routed stage-6b claims; both fronts stop here with
+/// [`VerifierError::ByteLinkNotWired`] once the routing succeeds.
 pub fn leaf_claims<F: JoltField>(
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<F>,
@@ -408,6 +412,7 @@ pub fn leaf_claims<F: JoltField>(
         }
         Ok(())
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     fn insert_indexed<F: JoltField>(
         leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
         values: &[F],
@@ -421,41 +426,44 @@ pub fn leaf_claims<F: JoltField>(
     }
     let mut leaves = BTreeMap::new();
 
-    let hamming_values = &stage7.output_values.hamming_weight_claim_reduction;
-    let hamming_points = &stage7.output_points.hamming_weight_claim_reduction;
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.instruction_ra,
-        &hamming_points.instruction_ra,
-        Poly::InstructionRa,
-    )?;
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.bytecode_ra,
-        &hamming_points.bytecode_ra,
-        Poly::BytecodeRa,
-    )?;
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.ram_ra,
-        &hamming_points.ram_ra,
-        Poly::RamRa,
-    )?;
+    #[cfg(not(feature = "akita-byte-link"))]
+    {
+        let hamming_values = &stage7.output_values.hamming_weight_claim_reduction;
+        let hamming_points = &stage7.output_points.hamming_weight_claim_reduction;
+        insert_indexed(
+            &mut leaves,
+            &hamming_values.instruction_ra,
+            &hamming_points.instruction_ra,
+            Poly::InstructionRa,
+        )?;
+        insert_indexed(
+            &mut leaves,
+            &hamming_values.bytecode_ra,
+            &hamming_points.bytecode_ra,
+            Poly::BytecodeRa,
+        )?;
+        insert_indexed(
+            &mut leaves,
+            &hamming_values.ram_ra,
+            &hamming_points.ram_ra,
+            Poly::RamRa,
+        )?;
 
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.balanced_inc_digits,
-        &hamming_points.balanced_inc_digits,
-        Poly::BalancedIncDigit,
-    )?;
-    insert(
-        &mut leaves,
-        Poly::BalancedIncCarry,
-        leaf(
-            hamming_values.balanced_inc_carry,
-            &hamming_points.balanced_inc_carry,
-        ),
-    )?;
+        insert_indexed(
+            &mut leaves,
+            &hamming_values.balanced_inc_digits,
+            &hamming_points.balanced_inc_digits,
+            Poly::BalancedIncDigit,
+        )?;
+        insert(
+            &mut leaves,
+            Poly::BalancedIncCarry,
+            leaf(
+                hamming_values.balanced_inc_carry,
+                &hamming_points.balanced_inc_carry,
+            ),
+        )?;
+    }
 
     #[cfg(feature = "akita")]
     for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
@@ -487,5 +495,13 @@ pub fn leaf_claims<F: JoltField>(
         insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
     }
 
-    Ok(leaves)
+    #[cfg(not(feature = "akita-byte-link"))]
+    {
+        Ok(leaves)
+    }
+    #[cfg(feature = "akita-byte-link")]
+    {
+        let _inputs = stage6b.byte_link_inputs()?;
+        Err(VerifierError::ByteLinkNotWired)
+    }
 }

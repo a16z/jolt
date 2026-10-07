@@ -3,9 +3,10 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
+#[cfg(not(feature = "akita-byte-link"))]
+use super::booleanity::BooleanityAddressPhaseInputClaims;
 use super::{
     batch::Stage6aBuildParts,
-    booleanity::BooleanityAddressPhaseInputClaims,
     bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream,
     outputs::{
         Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutput,
@@ -54,6 +55,7 @@ where
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let address_sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
         formula_dimensions,
+        #[cfg(not(feature = "akita-byte-link"))]
         committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
         committed_program: checked.precommitted.bytecode.is_some(),
         entry_bytecode_index,
@@ -69,8 +71,8 @@ where
     // inline `challenge_scalar_powers(..)` whose single squeeze's degree-1
     // power equals the squeezed scalar; byte- and value-equal, test-locked in
     // `bytecode_read_raf.rs` — stage 6b's folds expand the power vectors via
-    // `stage_gamma_powers`, test-locked below), then the booleanity member's
-    // override (the reference-address pad draw and the gamma; schedule-locked
+    // `stage_gamma_powers`, test-locked below), then, outside the byte link,
+    // the booleanity member's override (the reference-address pad draw and the gamma; schedule-locked
     // in the tests below). The booleanity draws feed 6b too: the prover's
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
@@ -132,6 +134,7 @@ where
         };
     let address_input_values = Stage6aInputClaims {
         bytecode_read_raf: base_input_values,
+        #[cfg(not(feature = "akita-byte-link"))]
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
@@ -158,7 +161,7 @@ where
     }))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "akita-byte-link")))]
 mod tests {
     use super::super::booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims};
     use super::super::bytecode_read_raf::{

@@ -35,7 +35,9 @@ use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
-use crate::stages::stage6b::outputs::{Stage6bOutputClaims, Stage6bOutputPoints};
+#[cfg(not(feature = "akita-byte-link"))]
+use crate::stages::stage6b::outputs::Stage6bOutputClaims;
+use crate::stages::stage6b::outputs::Stage6bOutputPoints;
 use crate::VerifierError;
 
 /// Base mode: the slot is a genuine Hamming-weight reduction over fully committed
@@ -94,6 +96,7 @@ pub fn hamming_weight_claim_reduction_dimensions(
 /// The hamming reduction's consumed opening *values*, wired from the stage-6b
 /// cycle-phase output claims. The relation reads only their values (its produced
 /// points are derived from its own sumcheck point), so no input points are needed.
+#[cfg(not(feature = "akita-byte-link"))]
 pub fn hamming_weight_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> HammingWeightClaimReductionInputClaims<F> {

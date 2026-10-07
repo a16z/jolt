@@ -25,9 +25,9 @@
 )]
 
 use jolt_akita::{AkitaField, AkitaScheme};
-use jolt_claims::protocols::jolt::lattice::relations::{
-    booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
-};
+#[cfg(not(feature = "akita-byte-link"))]
+use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims;
+use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::{JoltField, Ring};
 use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
@@ -54,23 +54,25 @@ use jolt_verifier::stages::{
         outputs::Stage5OutputClaims, InstructionReadRafOutputClaims,
         RamRaClaimReductionOutputClaims, RegistersValEvaluationOutputClaims,
     },
-    stage6a::outputs::{
-        BooleanityAddressPhaseOutputClaims, BytecodeReadRafAddressPhaseOutputClaims,
-        Stage6aOutputClaims,
-    },
+    stage6a::outputs::{BytecodeReadRafAddressPhaseOutputClaims, Stage6aOutputClaims},
     stage6b::outputs::{
         BytecodeReductionCyclePhaseOutputClaims, InstructionRaVirtualizationOutputClaims,
-        ProgramImageReductionCyclePhaseOutputClaims, RamHammingBooleanityOutputClaims,
-        RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
+        ProgramImageReductionCyclePhaseOutputClaims, RamRaVirtualizationOutputClaims,
+        Stage6bOutputClaims,
     },
     stage7::{
         committed_reduction_address_phase::{
             BytecodeReductionAddressPhaseOutputClaims,
             ProgramImageReductionAddressPhaseOutputClaims,
         },
-        hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
         outputs::Stage7OutputClaims,
     },
+};
+#[cfg(not(feature = "akita-byte-link"))]
+use jolt_verifier::stages::{
+    stage6a::outputs::BooleanityAddressPhaseOutputClaims,
+    stage6b::outputs::RamHammingBooleanityOutputClaims,
+    stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims,
 };
 use jolt_verifier::VerifierError;
 
@@ -375,6 +377,7 @@ fn visit_stage5<F: JoltField>(claims: &mut Stage5OutputClaims<F>, f: &mut dyn Fn
 fn visit_stage6a<F: JoltField>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6aOutputClaims {
         bytecode_read_raf,
+        #[cfg(not(feature = "akita-byte-link"))]
         booleanity,
     } = claims;
     let BytecodeReadRafAddressPhaseOutputClaims {
@@ -385,16 +388,21 @@ fn visit_stage6a<F: JoltField>(claims: &mut Stage6aOutputClaims<F>, f: &mut dyn 
     for scalar in val_stages.iter_mut() {
         f(scalar);
     }
-    let BooleanityAddressPhaseOutputClaims {
-        intermediate: booleanity_intermediate,
-    } = booleanity;
-    f(booleanity_intermediate);
+    #[cfg(not(feature = "akita-byte-link"))]
+    {
+        let BooleanityAddressPhaseOutputClaims {
+            intermediate: booleanity_intermediate,
+        } = booleanity;
+        f(booleanity_intermediate);
+    }
 }
 
 fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage6bOutputClaims {
         bytecode_read_raf,
+        #[cfg(not(feature = "akita-byte-link"))]
         booleanity,
+        #[cfg(not(feature = "akita-byte-link"))]
         ram_hamming_booleanity,
         ram_ra_virtualization,
         instruction_ra_virtualization,
@@ -409,28 +417,31 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
         f(scalar);
     }
     f(fused_inc);
-    let LatticeBooleanityOutputClaims {
-        instruction_ra,
-        bytecode_ra: booleanity_bytecode_ra,
-        ram_ra,
-        balanced_inc_digits,
-        balanced_inc_carry,
-    } = booleanity;
-    for scalar in instruction_ra.iter_mut() {
-        f(scalar);
+    #[cfg(not(feature = "akita-byte-link"))]
+    {
+        let LatticeBooleanityOutputClaims {
+            instruction_ra,
+            bytecode_ra: booleanity_bytecode_ra,
+            ram_ra,
+            balanced_inc_digits,
+            balanced_inc_carry,
+        } = booleanity;
+        for scalar in instruction_ra.iter_mut() {
+            f(scalar);
+        }
+        for scalar in booleanity_bytecode_ra.iter_mut() {
+            f(scalar);
+        }
+        for scalar in ram_ra.iter_mut() {
+            f(scalar);
+        }
+        for scalar in balanced_inc_digits.iter_mut() {
+            f(scalar);
+        }
+        f(balanced_inc_carry);
+        let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
+        f(ram_hamming_weight);
     }
-    for scalar in booleanity_bytecode_ra.iter_mut() {
-        f(scalar);
-    }
-    for scalar in ram_ra.iter_mut() {
-        f(scalar);
-    }
-    for scalar in balanced_inc_digits.iter_mut() {
-        f(scalar);
-    }
-    f(balanced_inc_carry);
-    let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
-    f(ram_hamming_weight);
     let RamRaVirtualizationOutputClaims {
         ram_ra: virt_ram_ra,
     } = ram_ra_virtualization;
@@ -464,30 +475,34 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
 
 fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage7OutputClaims {
+        #[cfg(not(feature = "akita-byte-link"))]
         hamming_weight_claim_reduction,
         bytecode_address_phase,
         program_image_address_phase,
     } = claims;
-    let HammingWeightClaimReductionOutputClaims {
-        instruction_ra,
-        bytecode_ra,
-        ram_ra,
-        balanced_inc_digits,
-        balanced_inc_carry,
-    } = hamming_weight_claim_reduction;
-    for scalar in instruction_ra.iter_mut() {
-        f(scalar);
+    #[cfg(not(feature = "akita-byte-link"))]
+    {
+        let HammingWeightClaimReductionOutputClaims {
+            instruction_ra,
+            bytecode_ra,
+            ram_ra,
+            balanced_inc_digits,
+            balanced_inc_carry,
+        } = hamming_weight_claim_reduction;
+        for scalar in instruction_ra.iter_mut() {
+            f(scalar);
+        }
+        for scalar in bytecode_ra.iter_mut() {
+            f(scalar);
+        }
+        for scalar in ram_ra.iter_mut() {
+            f(scalar);
+        }
+        for scalar in balanced_inc_digits.iter_mut() {
+            f(scalar);
+        }
+        f(balanced_inc_carry);
     }
-    for scalar in bytecode_ra.iter_mut() {
-        f(scalar);
-    }
-    for scalar in ram_ra.iter_mut() {
-        f(scalar);
-    }
-    for scalar in balanced_inc_digits.iter_mut() {
-        f(scalar);
-    }
-    f(balanced_inc_carry);
     if let Some(BytecodeReductionAddressPhaseOutputClaims { chunks }) = bytecode_address_phase {
         for scalar in chunks.iter_mut() {
             f(scalar);

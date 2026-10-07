@@ -1,6 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 6a (address-phase)
 //! verification.
 
+#[cfg(not(feature = "akita-byte-link"))]
 use jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::JoltField;
@@ -15,11 +16,12 @@ use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 pub use super::booleanity::BooleanityAddressPhaseOutputClaims;
 pub use super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
 
+#[cfg(not(feature = "akita-byte-link"))]
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 
-/// Source-of-truth for stage 6a's two-instance address-phase sumcheck batch
-/// (bytecode read-RAF, booleanity). `#[derive(SumcheckBatch)]` generates the
+/// Source-of-truth for stage 6a's address-phase sumcheck batch (bytecode
+/// read-RAF, then booleanity outside the byte link). `#[derive(SumcheckBatch)]` generates the
 /// `Stage6a{Input,Output}{Claims,Points}<F>` and `Stage6aChallenges<F>`
 /// aggregates — one field per instance, in this declaration order — plus the
 /// batched-verify drivers. No alias dedup in the address phase, so the generated
@@ -43,6 +45,9 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage6aSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
+    /// The byte link replaces it: a one-hot column decoded from a linked
+    /// byte is Boolean by construction (spec §3).
+    #[cfg(not(feature = "akita-byte-link"))]
     pub booleanity: BooleanityAddressPhase<F>,
 }
 
@@ -63,6 +68,7 @@ pub struct Stage6aCarriedChallenges<F: JoltField> {
     /// the gamma), verbatim. The reference cycle is not carried: it is
     /// construction geometry (the reversed stage-5 instruction cycle, no draw
     /// of its own), rederived by its consumers from the stage-5 point.
+    #[cfg(not(feature = "akita-byte-link"))]
     pub booleanity: BooleanityAddressPhaseChallenges<F>,
 }
 
@@ -70,6 +76,7 @@ impl<F: JoltField> From<&Stage6aChallenges<F>> for Stage6aCarriedChallenges<F> {
     fn from(challenges: &Stage6aChallenges<F>) -> Self {
         Self {
             bytecode_read_raf: challenges.bytecode_read_raf,
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity: challenges.booleanity.clone(),
         }
     }

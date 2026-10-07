@@ -1,9 +1,12 @@
+#[cfg(not(feature = "akita-byte-link"))]
 use crate::stages::relations::OutputAppend;
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
-    BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
-    PrecommittedReductionLayout,
+    BytecodeClaimReductionLayout, JoltRelationId, PrecommittedReductionLayout,
 };
+#[cfg(not(feature = "akita-byte-link"))]
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId};
+#[cfg(not(feature = "akita-byte-link"))]
 use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -21,10 +24,8 @@ use super::inc_claim_reduction::{
 };
 #[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
-use super::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 use super::{
     batch::Stage6bDraws,
-    booleanity::BooleanityInputClaims,
     bytecode_read_raf::BytecodeReadRafInputClaims,
     committed_reduction_cycle_phase::{
         program_image_reduction_cycle_phase_input_values_from_upstream,
@@ -42,6 +43,10 @@ use super::{
         ram_ra_virtualization_input_points_from_upstream,
         ram_ra_virtualization_input_values_from_upstream,
     },
+};
+#[cfg(not(feature = "akita-byte-link"))]
+use super::{
+    booleanity::BooleanityInputClaims, ram_hamming_booleanity::RamHammingBooleanityInputClaims,
 };
 #[cfg(not(feature = "akita"))]
 use crate::stages::zk::committed;
@@ -199,13 +204,11 @@ where
         claims.program_image_reduction.as_ref(),
     )?;
 
-    #[cfg(not(feature = "akita"))]
-    validate_cycle_phase_claim_shape(formula_dimensions, claims, bytecode_reduction_layout)?;
-    #[cfg(feature = "akita")]
     validate_cycle_phase_claim_shape(
         formula_dimensions,
         claims,
         bytecode_reduction_layout,
+        #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
         proof.one_hot_config.committed_chunk_bits(),
     )?;
 
@@ -226,24 +229,29 @@ where
         6,
     )?;
 
-    let booleanity_opening_point = cycle_points
-        .booleanity_opening_point()
-        .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::Booleanity,
-            reason: "Stage 6 booleanity produced no opening point".to_string(),
-        })?
-        .to_vec();
-    validate_bytecode_ra_aliases(
-        claims,
-        &cycle_points.bytecode_read_raf.bytecode_ra,
-        &booleanity_opening_point,
-    )?;
-    append_opening_claims(
-        transcript,
-        claims,
-        &cycle_points.bytecode_read_raf.bytecode_ra,
-        &booleanity_opening_point,
-    );
+    #[cfg(not(feature = "akita-byte-link"))]
+    {
+        let booleanity_opening_point = cycle_points
+            .booleanity_opening_point()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: "Stage 6 booleanity produced no opening point".to_string(),
+            })?
+            .to_vec();
+        validate_bytecode_ra_aliases(
+            claims,
+            &cycle_points.bytecode_read_raf.bytecode_ra,
+            &booleanity_opening_point,
+        )?;
+        append_opening_claims(
+            transcript,
+            claims,
+            &cycle_points.bytecode_read_raf.bytecode_ra,
+            &booleanity_opening_point,
+        );
+    }
+    #[cfg(feature = "akita-byte-link")]
+    sumchecks.append_output_claims(transcript, claims);
 
     Ok(Stage6bOutput::Clear(Stage6bClearOutput {
         output_values: claims.clone(),
@@ -270,7 +278,7 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
     formula_dimensions: &JoltFormulaDimensions,
     claims: &Stage6bOutputClaims<F>,
     bytecode_reduction_layout: Option<&BytecodeClaimReductionLayout>,
-    #[cfg(feature = "akita")] committed_chunk_bits: usize,
+    #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))] committed_chunk_bits: usize,
 ) -> Result<(), VerifierError> {
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
@@ -281,29 +289,32 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.bytecode_read_raf.bytecode_ra.len(),
     )?;
 
-    let ra_layout = formula_dimensions.ra_layout;
-    require_claim_count(
-        JoltRelationId::Booleanity,
-        "booleanity instruction RA",
-        ra_layout.instruction(),
-        claims.booleanity.instruction_ra.len(),
-    )?;
-    require_claim_count(
-        JoltRelationId::Booleanity,
-        "booleanity bytecode RA",
-        ra_layout.bytecode(),
-        claims.booleanity.bytecode_ra.len(),
-    )?;
-    require_claim_count(
-        JoltRelationId::Booleanity,
-        "booleanity RAM RA",
-        ra_layout.ram(),
-        claims.booleanity.ram_ra.len(),
-    )?;
+    #[cfg(not(feature = "akita-byte-link"))]
+    {
+        let ra_layout = formula_dimensions.ra_layout;
+        require_claim_count(
+            JoltRelationId::Booleanity,
+            "booleanity instruction RA",
+            ra_layout.instruction(),
+            claims.booleanity.instruction_ra.len(),
+        )?;
+        require_claim_count(
+            JoltRelationId::Booleanity,
+            "booleanity bytecode RA",
+            ra_layout.bytecode(),
+            claims.booleanity.bytecode_ra.len(),
+        )?;
+        require_claim_count(
+            JoltRelationId::Booleanity,
+            "booleanity RAM RA",
+            ra_layout.ram(),
+            claims.booleanity.ram_ra.len(),
+        )?;
+    }
 
     // The packed increment digit claims: one per chunk of the shared
     // one-hot chunking.
-    #[cfg(feature = "akita")]
+    #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
     {
         let expected_chunks =
             jolt_claims::protocols::jolt::lattice::geometry::BalancedIncChunking::new(
@@ -404,9 +415,11 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
         bytecode_read_raf: BytecodeReadRafInputClaims {
             address_phase: address_claims.bytecode_read_raf.intermediate,
         },
+        #[cfg(not(feature = "akita-byte-link"))]
         booleanity: BooleanityInputClaims {
             address_phase: address_claims.booleanity.intermediate,
         },
+        #[cfg(not(feature = "akita-byte-link"))]
         ram_hamming_booleanity: RamHammingBooleanityInputClaims::default(),
         ram_ra_virtualization: ram_ra_virtualization_input_values_from_upstream(stage5),
         instruction_ra_virtualization: instruction_ra_virtualization_input_values_from_upstream(
@@ -481,6 +494,7 @@ pub fn stage6b_input_points_from_upstream<F: JoltField>(
 /// against the bytecode-read-RAF points (a runtime point-equality the output
 /// `Expr`s cannot express). Public because the prover's recorder absorbs the
 /// same curated sequence.
+#[cfg(not(feature = "akita-byte-link"))]
 pub fn stage6b_opening_values<F: JoltField>(
     claims: &Stage6bOutputClaims<F>,
     bytecode_read_raf_points: &[Vec<F>],
@@ -527,6 +541,7 @@ pub fn stage6b_opening_values<F: JoltField>(
     values
 }
 
+#[cfg(not(feature = "akita-byte-link"))]
 fn validate_bytecode_ra_aliases<F: JoltField>(
     claims: &Stage6bOutputClaims<F>,
     bytecode_read_raf_points: &[Vec<F>],
@@ -558,6 +573,7 @@ fn validate_bytecode_ra_aliases<F: JoltField>(
     Ok(())
 }
 
+#[cfg(not(feature = "akita-byte-link"))]
 fn append_opening_claims<F, T>(
     transcript: &mut T,
     claims: &Stage6bOutputClaims<F>,
@@ -620,7 +636,7 @@ fn append_opening_claims<F, T>(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "akita-byte-link")))]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     #[cfg(not(feature = "akita"))]

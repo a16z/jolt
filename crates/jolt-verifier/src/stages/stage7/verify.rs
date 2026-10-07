@@ -22,6 +22,7 @@ use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, BytecodeReductionAddressPhaseInputClaims,
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseInputClaims,
 };
+#[cfg(not(feature = "akita-byte-link"))]
 use super::hamming_weight_claim_reduction::{
     hamming_weight_claim_reduction_dimensions, hamming_weight_input_values_from_upstream,
     stage7_hamming_virtualization_address_points, HammingWeightClaimReduction,
@@ -52,6 +53,7 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 pub fn verify<PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     proof: &JoltProof<PCS, VC, ZkProof>,
+    #[cfg_attr(feature = "akita-byte-link", expect(unused_variables))]
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
     stage4: &Stage4Output<PCS::Field, VC::Output>,
@@ -62,6 +64,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
+    #[cfg(not(feature = "akita-byte-link"))]
     let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
@@ -84,6 +87,7 @@ where
     // cycle-phase variables + clear-only reference aux. All point/challenge data is
     // read mode-agnostically off `stage6.output_points()`.
     let sumchecks = build_stage7_sumchecks(
+        #[cfg(not(feature = "akita-byte-link"))]
         hamming_dimensions,
         &checked.precommitted,
         stage6.output_points(),
@@ -159,34 +163,38 @@ where
 /// `derive_output_term` never runs). Advice reductions are skipped on Akita: the
 /// final grouped opening checks their direct stage-4 claims.
 pub fn build_stage7_sumchecks<F: JoltField>(
+    #[cfg(not(feature = "akita-byte-link"))]
     hamming_dimensions: HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
     clear: Option<(&Stage4ClearOutput<F>, &Stage6bClearOutput<F>)>,
 ) -> Result<Stage7Sumchecks<F>, VerifierError> {
-    let booleanity_opening = stage6_points.booleanity_opening_point().ok_or(
-        VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: "Stage 6 booleanity produced no opening point".to_string(),
-        },
-    )?;
-    let (booleanity_r_address, booleanity_r_cycle) =
-        booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
-    #[cfg(feature = "akita")]
-    if stage6_points.fused_inc_opening_point() != booleanity_r_cycle {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason:
-                "the read-raf FusedInc opening and Booleanity do not share the Stage 6b cycle point"
-                    .to_string(),
-        });
-    }
-    let hamming = HammingWeightClaimReduction::new(
-        hamming_dimensions,
-        booleanity_r_cycle.to_vec(),
-        booleanity_r_address.to_vec(),
-        stage7_hamming_virtualization_address_points(hamming_dimensions, stage6_points)?,
-    );
+    #[cfg(not(feature = "akita-byte-link"))]
+    let hamming = {
+        let booleanity_opening = stage6_points.booleanity_opening_point().ok_or(
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::HammingWeightClaimReduction,
+                reason: "Stage 6 booleanity produced no opening point".to_string(),
+            },
+        )?;
+        let (booleanity_r_address, booleanity_r_cycle) =
+            booleanity_opening.split_at(hamming_dimensions.log_k_chunk);
+        #[cfg(feature = "akita")]
+        if stage6_points.fused_inc_opening_point() != booleanity_r_cycle {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::HammingWeightClaimReduction,
+                reason:
+                    "the read-raf FusedInc opening and Booleanity do not share the Stage 6b cycle point"
+                        .to_string(),
+            });
+        }
+        HammingWeightClaimReduction::new(
+            hamming_dimensions,
+            booleanity_r_cycle.to_vec(),
+            booleanity_r_address.to_vec(),
+            stage7_hamming_virtualization_address_points(hamming_dimensions, stage6_points)?,
+        )
+    };
 
     // The staged advice RAM address point from stage 4's RAM value-check (`None`
     // in ZK), the clear-only reference the advice `FinalScale` term reads.
@@ -198,6 +206,7 @@ pub fn build_stage7_sumchecks<F: JoltField>(
     };
 
     Ok(Stage7Sumchecks {
+        #[cfg(not(feature = "akita-byte-link"))]
         hamming_weight_claim_reduction: hamming,
         #[cfg(not(feature = "akita"))]
         trusted_advice: address_phase_member(
@@ -290,6 +299,7 @@ pub fn stage7_input_values_from_upstream<F: JoltField>(
 ) -> Result<Stage7InputClaims<F>, VerifierError> {
     let cycle_phase = &stage6.output_values;
     Ok(Stage7InputClaims {
+        #[cfg(not(feature = "akita-byte-link"))]
         hamming_weight_claim_reduction: hamming_weight_input_values_from_upstream(cycle_phase),
         #[cfg(not(feature = "akita"))]
         trusted_advice: sumchecks

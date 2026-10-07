@@ -74,6 +74,7 @@ mod stage5 {
 }
 
 mod stage6a {
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
     use jolt_verifier::stages::stage6a::outputs::{
@@ -87,7 +88,9 @@ mod stage6a {
 }
 
 mod stage6b {
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_claims::protocols::jolt::JoltRelationId;
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_verifier::stages::stage6b::booleanity::Booleanity;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
@@ -106,16 +109,22 @@ mod stage6b {
         Stage6bChallenges, Stage6bInputClaims, Stage6bInputPoints, Stage6bOutputClaims,
         Stage6bOutputPoints, Stage6bSumchecks,
     };
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
     use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_verifier::stages::stage6b::stage6b_opening_values;
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
+    #[cfg(feature = "akita-byte-link")]
+    jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover);
     // The stage's `no_opening_values` curation: the promoted verifier
     // helper's canonical order, including the runtime dedup of booleanity's
     // `BytecodeRa` claims against the bytecode read-RAF points.
+    #[cfg(not(feature = "akita-byte-link"))]
     jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover
         curate = |_batch, claims, points| {
             let booleanity_opening_point =
@@ -142,6 +151,7 @@ mod stage7 {
     use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
         BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
     };
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
     use jolt_verifier::stages::stage7::outputs::{
         Stage7Challenges, Stage7InputClaims, Stage7InputPoints, Stage7OutputClaims,

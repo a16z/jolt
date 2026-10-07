@@ -110,4 +110,10 @@ pub enum VerifierError {
 
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
+
+    /// The byte trace opens only through the byte link, which consumes the
+    /// routed stage-6b claims; neither front implements the link yet.
+    #[cfg(feature = "akita-byte-link")]
+    #[error("the byte link is not wired: stage 8 cannot open the byte trace")]
+    ByteLinkNotWired,
 }

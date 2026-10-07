@@ -10,11 +10,12 @@
 //! exactly when their precommitted layout needs a cycle-phase reduction, so the
 //! batch's instance count matches the prover's.
 
+#[cfg(not(feature = "akita-byte-link"))]
+use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::{
     geometry::{
-        booleanity::BooleanityDimensions,
         claim_reductions::bytecode::BytecodeLaneWeightInputs,
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
     },
@@ -27,6 +28,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
 use jolt_transcript::Transcript;
 
+#[cfg(not(feature = "akita-byte-link"))]
 use super::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use super::bytecode_read_raf::{
     BytecodeReadRafCommittedCycleInputs, BytecodeReadRafCycle, BytecodeReadRafCycleInputs,
@@ -47,6 +49,7 @@ use super::instruction_ra_virtualization::{
     InstructionRaVirtualization, InstructionRaVirtualizationChallenges,
 };
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
+#[cfg(not(feature = "akita-byte-link"))]
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
@@ -261,6 +264,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             untrusted_advice_reference_point,
         } = parts;
         let log_t = formula_dimensions.trace.log_t();
+        #[cfg(not(feature = "akita-byte-link"))]
         let trace_dimensions = formula_dimensions.trace;
 
         #[cfg(not(feature = "akita"))]
@@ -271,6 +275,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let program_image_reduction_layout = precommitted.program_image.as_ref();
         let committed_program = bytecode_reduction_layout.is_some();
 
+        #[cfg(not(feature = "akita-byte-link"))]
         let booleanity_dimensions =
             BooleanityDimensions::new(formula_dimensions.ra_layout, log_t, committed_chunk_bits);
 
@@ -278,6 +283,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         // once here from the carried scalars.
         let stage_gamma_powers = carried.bytecode_read_raf.stage_gamma_powers();
         let bytecode_r_address = stage6a_points.bytecode_read_raf.intermediate.clone();
+        #[cfg(not(feature = "akita-byte-link"))]
         let booleanity_r_address = stage6a_points.booleanity.intermediate.clone();
 
         // Cycle-phase constructor legs, wired mode-agnostically off the upstream
@@ -413,7 +419,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             })?
         };
 
-        #[cfg(feature = "akita")]
+        #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
         let booleanity_dimensions =
             jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
                 booleanity_dimensions,
@@ -426,12 +432,14 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         // reversed stage-5 instruction cycle, no draw of its own), so it is
         // rederived from the stage-5 point rather than carried with the
         // stage-6a draws.
+        #[cfg(not(feature = "akita-byte-link"))]
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,
             carried.booleanity.reference_address.clone(),
             stage5_instruction_cycle.iter().rev().copied().collect(),
         );
+        #[cfg(not(feature = "akita-byte-link"))]
         let ram_hamming_booleanity =
             RamHammingBooleanity::new(trace_dimensions, stage1_cycle_binding);
         let ram_ra_virtualization = RamRaVirtualization::new(
@@ -470,7 +478,9 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 
         Ok(Self {
             bytecode_read_raf,
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity,
+            #[cfg(not(feature = "akita-byte-link"))]
             ram_hamming_booleanity,
             ram_ra_virtualization,
             instruction_ra_virtualization,
@@ -500,9 +510,11 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             bytecode_read_raf: BytecodeReadRafCyclePhaseCommittedChallenges {
                 gamma: carried.bytecode_read_raf.gamma,
             },
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity: BooleanityCyclePhaseChallenges {
                 gamma: carried.booleanity.gamma,
             },
+            #[cfg(not(feature = "akita-byte-link"))]
             ram_hamming_booleanity: NoChallenges::default(),
             ram_ra_virtualization: NoChallenges::default(),
             instruction_ra_virtualization: InstructionRaVirtualizationChallenges {

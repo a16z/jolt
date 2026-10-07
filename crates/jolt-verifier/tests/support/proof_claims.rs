@@ -1,4 +1,6 @@
 //! Opening-claim projection for verifier-native prover proofs.
+#[cfg(not(feature = "akita-byte-link"))]
+use jolt_claims::protocols::jolt::geometry::booleanity;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]
@@ -7,7 +9,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
     self as native,
     geometry::{
-        booleanity, bytecode,
+        bytecode,
         claim_reductions::instruction as instruction_claim_reduction,
         claim_reductions::registers as registers_claim_reduction,
         instruction, ram, registers, spartan,
@@ -396,6 +398,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
             return Some(opening_claim);
         }
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     for (index, opening_claim) in stage6b.booleanity.instruction_ra.iter_mut().enumerate() {
         if id
             == JoltOpeningId::committed(
@@ -406,6 +409,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
             return Some(opening_claim);
         }
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     for (index, opening_claim) in stage6b.booleanity.bytecode_ra.iter_mut().enumerate() {
         if id
             == JoltOpeningId::committed(
@@ -416,6 +420,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
             return Some(opening_claim);
         }
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     for (index, opening_claim) in stage6b.booleanity.ram_ra.iter_mut().enumerate() {
         if id
             == JoltOpeningId::committed(
@@ -426,6 +431,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
             return Some(opening_claim);
         }
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     if id == ram::ram_hamming_weight() {
         return Some(&mut stage6b.ram_hamming_booleanity.ram_hamming_weight);
     }
@@ -450,6 +456,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
         id if id == bytecode::bytecode_read_raf_address_phase_opening() => {
             Some(&mut stage6a.bytecode_read_raf.intermediate)
         }
+        #[cfg(not(feature = "akita-byte-link"))]
         id if id == booleanity::booleanity_address_phase_opening() => {
             Some(&mut stage6a.booleanity.intermediate)
         }
@@ -480,9 +487,11 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
 }
 
 fn claim_mut_from_stage7_outputs<F: JoltField>(
+    #[cfg_attr(feature = "akita-byte-link", expect(unused_variables))]
     claims: &mut Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
+    #[cfg(not(feature = "akita-byte-link"))]
     for (index, opening) in claims
         .hamming_weight_claim_reduction
         .instruction_ra
@@ -498,6 +507,7 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
             return Some(opening);
         }
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     for (index, opening) in claims
         .hamming_weight_claim_reduction
         .bytecode_ra
@@ -513,6 +523,7 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
             return Some(opening);
         }
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     for (index, opening) in claims
         .hamming_weight_claim_reduction
         .ram_ra

@@ -13,10 +13,11 @@ use super::advice_address_phase::{TrustedAdviceAddressPhase, UntrustedAdviceAddr
 use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
+#[cfg(not(feature = "akita-byte-link"))]
 use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 
 /// Source-of-truth for stage 7's sumcheck batch: the instances in Fiat-Shamir
-/// batch order (hamming-weight reduction, then the committed-program-only
+/// batch order (hamming-weight reduction outside the byte link, then the committed-program-only
 /// bytecode and program-image address phases on Akita; Dory additionally runs
 /// trusted then untrusted advice address phases before committed program — each
 /// address phase present only when its reduction runs one).
@@ -37,6 +38,9 @@ use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
 pub struct Stage7Sumchecks<F: JoltField> {
+    /// The byte link authenticates the stage-6b one-hot claims and `F(r)`
+    /// directly, so the trace needs no reduction to a common point (spec §3).
+    #[cfg(not(feature = "akita-byte-link"))]
     pub hamming_weight_claim_reduction: HammingWeightClaimReduction<F>,
     /// Final `TrustedAdvice` claim from the trusted advice reduction's address
     /// phase; present only when that phase runs. On the prove side the kernel
@@ -63,6 +67,7 @@ impl<F: JoltField> Stage7OutputPoints<F> {
     /// one-hot `Ra` polynomials): the first non-empty per-family RA cell. `None`
     /// only if the reduction produced no openings (never in practice — at least one
     /// RA family is always present).
+    #[cfg(not(feature = "akita-byte-link"))]
     pub fn hamming_weight_opening_point(&self) -> Option<&[F]> {
         self.hamming_weight_claim_reduction
             .instruction_ra

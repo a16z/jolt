@@ -1035,8 +1035,8 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     ),
 ];
 
-/// The Akita-path claim cells: the read-raf fused-inc opening, lattice
-/// Booleanity, and the fused Stage-7 Hamming reduction. All active: the fixture-driven sweep in
+/// The Akita-path claim cells: the read-raf fused-inc opening and, outside the
+/// byte link, lattice Booleanity and the fused Stage-7 Hamming reduction. All active: the fixture-driven sweep in
 /// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
 /// offsets every clear-claim scalar of the real packed-prover fixtures and
 /// asserts each offset rejects.
@@ -1050,6 +1050,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the lattice read-raf cycle output fold rejects an offset fused-inc opening",
     ),
+    #[cfg(not(feature = "akita-byte-link"))]
     checked_standard(
         "stage6.claims.booleanity.balanced_inc_digits",
         "claims.stage6b.booleanity.balanced_inc_digits",
@@ -1058,6 +1059,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the lattice booleanity output fold covers every chunk cell",
     ),
+    #[cfg(not(feature = "akita-byte-link"))]
     checked_standard(
         "stage6.claims.booleanity.balanced_inc_carry",
         "claims.stage6b.booleanity.balanced_inc_carry",
@@ -1066,6 +1068,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the lattice booleanity output fold covers the carry cell",
     ),
+    #[cfg(not(feature = "akita-byte-link"))]
     checked_standard(
         "stage7.claims.hamming_weight_claim_reduction.balanced_inc_digits",
         "claims.stage7.hamming_weight_claim_reduction.balanced_inc_digits",
@@ -1074,6 +1077,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the hamming-weight reduction final-claim fold covers every increment chunk",
     ),
+    #[cfg(not(feature = "akita-byte-link"))]
     checked_standard(
         "stage7.claims.hamming_weight_claim_reduction.balanced_inc_carry",
         "claims.stage7.hamming_weight_claim_reduction.balanced_inc_carry",
@@ -1454,6 +1458,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 intermediate: zero,
                 val_stages: Vec::new(),
             },
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
                 intermediate: zero,
             },
@@ -1475,7 +1480,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            #[cfg(feature = "akita")]
+            #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
             booleanity:
                 jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
                     instruction_ra: vec![zero],
@@ -1484,6 +1489,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     balanced_inc_digits: vec![zero],
                     balanced_inc_carry: zero,
                 },
+            #[cfg(not(feature = "akita-byte-link"))]
             ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
@@ -1520,6 +1526,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
             ),
         },
         stage7: stage7::outputs::Stage7OutputClaims {
+            #[cfg(not(feature = "akita-byte-link"))]
             hamming_weight_claim_reduction:
                 stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                     instruction_ra: vec![zero],

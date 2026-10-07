@@ -25,6 +25,7 @@ pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputC
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
 pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
+#[cfg(not(feature = "akita-byte-link"))]
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::BytecodeReadRafCycle;
 use super::committed_reduction_cycle_phase::{
@@ -35,6 +36,7 @@ use super::committed_reduction_cycle_phase::{TrustedAdviceCyclePhase, UntrustedA
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
+#[cfg(not(feature = "akita-byte-link"))]
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 
@@ -63,21 +65,23 @@ use super::ram_ra_virtualization::RamRaVirtualization;
 /// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
 /// absorb methods: booleanity's `bytecode_ra` openings
 /// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
-/// order is curated by [`stage6b_opening_values`](super::verify::stage6b_opening_values)
+/// order is curated by `stage6b_opening_values`
 /// which threads the dedup points (the verifier absorbs its output; the
-/// prover's recorder absorbs the same sequence). `no_output_shape`: shape methods are inapplicable — the committed
+/// prover's recorder absorbs the same sequence). The byte link has no
+/// booleanity member, so it absorbs in the generated order. `no_output_shape`: shape methods are inapplicable — the committed
 /// bytecode output `Expr` consumes the 6a-produced `BytecodeValClaim` openings
 /// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    no_opening_values,
-    no_draw_challenges,
-    no_output_shape,
-    crate = "crate"
-)]
+#[cfg_attr(not(feature = "akita-byte-link"), sumcheck_batch(no_opening_values))]
+#[sumcheck_batch(no_draw_challenges, no_output_shape, crate = "crate")]
 pub struct Stage6bSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
+    /// The byte link replaces both Booleanity members (spec §3): a one-hot
+    /// column decoded from a linked byte is Boolean, and the RAM table pins
+    /// the shared activity bit.
+    #[cfg(not(feature = "akita-byte-link"))]
     pub booleanity: Booleanity<F>,
+    #[cfg(not(feature = "akita-byte-link"))]
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
@@ -105,6 +109,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
+    #[cfg(not(feature = "akita-byte-link"))]
     pub fn booleanity_opening_point(&self) -> Option<&[F]> {
         #[cfg(not(feature = "akita"))]
         let chunk_fallback = None;

@@ -22,7 +22,9 @@ mod akita_tests {
     use jolt_prover::akita::{self, JoltAkitaBackend};
     use jolt_prover::ProverConfig;
     use jolt_riscv::JoltTraceRow;
-    use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+    #[cfg(not(feature = "akita-byte-link"))]
+    use jolt_verifier::proof::ClearProofClaims;
+    use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -198,6 +200,8 @@ mod akita_tests {
         (run, config)
     }
 
+    /// K=2^4 and the stage-7 Hamming reduction exist only outside the byte link.
+    #[cfg(not(feature = "akita-byte-link"))]
     #[test]
     fn muldiv_e2e_akita() {
         let (run, config) = muldiv_run();

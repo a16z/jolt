@@ -1579,6 +1579,7 @@ mod tests {
                     intermediate: zero,
                     val_stages: Vec::new(),
                 },
+                #[cfg(not(feature = "akita-byte-link"))]
                 booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
                     intermediate: zero,
                 },
@@ -1600,7 +1601,7 @@ mod tests {
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                #[cfg(feature = "akita")]
+                #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
                 booleanity:
                     jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
                         instruction_ra: Vec::new(),
@@ -1609,6 +1610,7 @@ mod tests {
                         balanced_inc_digits: Vec::new(),
                         balanced_inc_carry: zero,
                     },
+                #[cfg(not(feature = "akita-byte-link"))]
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
                 },
@@ -1632,6 +1634,7 @@ mod tests {
                 program_image_reduction: None,
             },
             stage7: stage7::outputs::Stage7OutputClaims {
+                #[cfg(not(feature = "akita-byte-link"))]
                 hamming_weight_claim_reduction:
                     stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
                         instruction_ra: Vec::new(),

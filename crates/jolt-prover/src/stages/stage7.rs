@@ -1,5 +1,6 @@
-//! Stage 7: the Hamming-weight claim-reduction batch plus the present
-//! precommitted address phases (advice, committed bytecode, program image).
+//! Stage 7: the Hamming-weight claim reduction (outside the byte link) plus
+//! the present precommitted address phases (advice, committed bytecode,
+//! program image).
 //!
 //! Pure orchestration mirroring `stage7::verify`: the whole batch is the
 //! verifier's own promoted `build_stage7_sumchecks` (an advice address phase
@@ -11,6 +12,7 @@
 //! proof session (`park_residue`) — each `prepare` reclaims its carry by
 //! move and mounts a fresh address-phase kernel over it.
 
+#[cfg(not(feature = "akita-byte-link"))]
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -22,6 +24,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
+#[cfg(not(feature = "akita-byte-link"))]
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
@@ -49,7 +52,8 @@ pub fn prove_stage7<F, PCS, VC, T>(
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
-    config: &ProverConfig,
+    #[cfg_attr(feature = "akita-byte-link", expect(unused_variables))] config: &ProverConfig,
+    #[cfg_attr(feature = "akita-byte-link", expect(unused_variables))]
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
@@ -63,18 +67,22 @@ where
     T: Transcript<Challenge = F>,
 {
     let precommitted = &checked.precommitted;
-    let formula_dimensions = super::formula_dimensions(
-        checked,
-        config,
-        preprocessing.verifier.program.bytecode_len(),
-        JoltRelationId::HammingWeightClaimReduction,
-    )?;
-    let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
-        formula_dimensions.ra_layout,
-        config.one_hot_config.committed_chunk_bits(),
-    )?;
+    #[cfg(not(feature = "akita-byte-link"))]
+    let hamming_dimensions = {
+        let formula_dimensions = super::formula_dimensions(
+            checked,
+            config,
+            preprocessing.verifier.program.bytecode_len(),
+            JoltRelationId::HammingWeightClaimReduction,
+        )?;
+        hamming_weight_claim_reduction_dimensions(
+            formula_dimensions.ra_layout,
+            config.one_hot_config.committed_chunk_bits(),
+        )?
+    };
 
     let sumchecks = build_stage7_sumchecks(
+        #[cfg(not(feature = "akita-byte-link"))]
         hamming_dimensions,
         precommitted,
         &stage6b.output_points,

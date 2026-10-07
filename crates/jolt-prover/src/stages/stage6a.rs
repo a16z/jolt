@@ -1,5 +1,5 @@
-//! Stage 6a: the two-member address-phase batch (bytecode read+RAF address
-//! phase, booleanity address phase).
+//! Stage 6a: the address-phase batch (bytecode read+RAF address phase, then
+//! the booleanity address phase outside the byte link).
 //!
 //! Pure orchestration mirroring `stage6a::verify`: the generated aggregate
 //! draw (the bytecode member's six gammas, then the booleanity member's
@@ -29,6 +29,7 @@ use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::batch::Stage6aBuildParts;
+#[cfg(not(feature = "akita-byte-link"))]
 use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseInputClaims;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream;
 use jolt_verifier::stages::stage6a::outputs::{
@@ -94,6 +95,7 @@ where
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
         formula_dimensions: &formula_dimensions,
+        #[cfg(not(feature = "akita-byte-link"))]
         committed_chunk_bits: config.one_hot_config.committed_chunk_bits(),
         committed_program: checked.precommitted.bytecode.is_some(),
         entry_bytecode_index,
@@ -134,6 +136,7 @@ where
         };
     let inputs = Stage6aInputClaims {
         bytecode_read_raf: bytecode_input_values,
+        #[cfg(not(feature = "akita-byte-link"))]
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 

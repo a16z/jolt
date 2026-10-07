@@ -1,16 +1,17 @@
 //! Construction of the stage-6a address-phase sumcheck batch.
 //!
-//! [`Stage6aSumchecks::build_from_parts`] assembles the two members over data
+//! [`Stage6aSumchecks::build_from_parts`] assembles the members over data
 //! both the verifier and the prover hold, so the member legs (the bytecode
 //! stage points, the booleanity dimensions, the stage-5 instruction points)
 //! are single-sourced across the two fronts — the same idiom as stage 6b's
 //! `Stage6bSumchecks::build_from_parts`.
 
-use jolt_claims::protocols::jolt::geometry::{
-    booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions,
-};
+#[cfg(not(feature = "akita-byte-link"))]
+use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_field::JoltField;
 
+#[cfg(not(feature = "akita-byte-link"))]
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::{bytecode_stage_points, BytecodeReadRafAddressPhase};
 use super::outputs::Stage6aSumchecks;
@@ -25,6 +26,7 @@ use crate::VerifierError;
 /// Every field is data both the verifier and the prover hold.
 pub struct Stage6aBuildParts<'a, F: JoltField> {
     pub formula_dimensions: &'a JoltFormulaDimensions,
+    #[cfg(not(feature = "akita-byte-link"))]
     pub committed_chunk_bits: usize,
     pub committed_program: bool,
     pub entry_bytecode_index: usize,
@@ -44,6 +46,7 @@ impl<F: JoltField> Stage6aSumchecks<F> {
     pub fn build_from_parts(parts: Stage6aBuildParts<'_, F>) -> Result<Self, VerifierError> {
         let Stage6aBuildParts {
             formula_dimensions,
+            #[cfg(not(feature = "akita-byte-link"))]
             committed_chunk_bits,
             committed_program,
             entry_bytecode_index,
@@ -60,11 +63,6 @@ impl<F: JoltField> Stage6aSumchecks<F> {
             stage4_points,
             stage5_points,
         )?;
-        let booleanity_dimensions = BooleanityDimensions::new(
-            formula_dimensions.ra_layout,
-            formula_dimensions.trace.log_t(),
-            committed_chunk_bits,
-        );
         Ok(Self {
             bytecode_read_raf: BytecodeReadRafAddressPhase::new(
                 formula_dimensions.bytecode_read_raf,
@@ -72,8 +70,13 @@ impl<F: JoltField> Stage6aSumchecks<F> {
                 stage_points,
                 entry_bytecode_index,
             ),
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity: BooleanityAddressPhase::new(
-                booleanity_dimensions,
+                BooleanityDimensions::new(
+                    formula_dimensions.ra_layout,
+                    formula_dimensions.trace.log_t(),
+                    committed_chunk_bits,
+                ),
                 stage5_points.instruction_r_address(),
                 stage5_points.instruction_r_cycle().to_vec(),
             ),
