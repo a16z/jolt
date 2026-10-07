@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 1 verification.
-
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};

@@ -28,6 +28,13 @@ mod keccak {
 
     #[test]
     fn muldiv_proves_and_verifies_on_keccak_only() {
+        #[cfg(feature = "zk")]
+        support::with_zk_stack(prove_and_verify_on_keccak_only);
+        #[cfg(not(feature = "zk"))]
+        prove_and_verify_on_keccak_only();
+    }
+
+    fn prove_and_verify_on_keccak_only() {
         let case = GuestCase {
             inputs: postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
             ..GuestCase::new("muldiv-guest")

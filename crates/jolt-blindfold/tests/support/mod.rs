@@ -9,13 +9,14 @@ use jolt_blindfold::{
     CommittedClaimRows, FinalOpeningBinding, ProverError, RowDimensions, VerificationError,
     WitnessCoordinate,
 };
+use jolt_claims::r1cs::ClaimSourceTable;
 use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
 use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
-use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
+use jolt_r1cs::{ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedSumcheckBuilder, CommittedSumcheckConsistency,
     CommittedSumcheckWitness, SumcheckDomainSpec, SumcheckR1csLayout, SumcheckStatement,

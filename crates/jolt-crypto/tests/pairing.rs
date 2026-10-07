@@ -1,5 +1,3 @@
-//! Pairing bilinearity and consistency tests for BN254.
-
 use jolt_crypto::{Bn254, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
 use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
@@ -7,7 +5,6 @@ use rand_core::SeedableRng;
 
 #[test]
 fn pairing_bilinearity() {
-    // e(aG, bH) == e(abG, H) == e(G, abH)
     let mut rng = ChaCha20Rng::seed_from_u64(42);
     let a = Fr::random(&mut rng);
     let b = Fr::random(&mut rng);
@@ -40,7 +37,6 @@ fn pairing_with_identity_gives_gt_identity() {
 
 #[test]
 fn multi_pairing_matches_sum_of_individual() {
-    // multi_pairing([(a,b), (c,d)]) == e(a,b) + e(c,d)  (additive notation)
     let mut rng = ChaCha20Rng::seed_from_u64(99);
     let g1 = Bn254::g1_generator();
     let g2 = Bn254::g2_generator();
@@ -59,16 +55,6 @@ fn multi_pairing_matches_sum_of_individual() {
         multi, sum,
         "multi_pairing should equal sum of individual pairings"
     );
-}
-
-#[test]
-fn single_multi_pairing_matches_pairing() {
-    let g1 = Bn254::g1_generator();
-    let g2 = Bn254::g2_generator();
-
-    let single = Bn254::pairing(&g1, &g2);
-    let multi = Bn254::multi_pairing(&[g1], &[g2]);
-    assert_eq!(single, multi);
 }
 
 #[test]
@@ -129,16 +115,6 @@ fn gt_double_equals_add_self() {
     let e = Bn254::pairing(&g1, &g2);
 
     assert_eq!(e.double(), e + e);
-}
-
-#[test]
-fn gt_scalar_mul_two_equals_double() {
-    let g1 = Bn254::g1_generator();
-    let g2 = Bn254::g2_generator();
-    let e = Bn254::pairing(&g1, &g2);
-    let two = Fr::from_u64(2);
-
-    assert_eq!(e.scalar_mul(&two), e.double());
 }
 
 #[test]

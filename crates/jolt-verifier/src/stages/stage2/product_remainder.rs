@@ -169,9 +169,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
             SpartanProductVirtualizationPublic::UniskipLagrangeWeight(_) => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
-            // The product opening point binds the uni-skip kernel (against
-            // `tau_high`) and the equality of the low remainder challenges
-            // (`tau_low`) with the produced product opening point.
             SpartanProductVirtualizationPublic::TauKernel => {
                 let product_opening = output_points.left_instruction_input();
                 let tau_high_bound = centered_lagrange_kernel(

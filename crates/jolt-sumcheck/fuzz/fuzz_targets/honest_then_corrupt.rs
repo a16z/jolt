@@ -47,12 +47,11 @@ fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
         return;
     }
-    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1; // 1..=5
+    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1;
     let n = 1usize << num_vars;
     let corruption = data[1];
     let corruption_round = data[2] as usize % num_vars;
     let corruption_coeff = data[3] as usize % (DEGREE + 1);
-    // Corruption scalar + the two evaluation tables.
     if data.len() < 4 + (1 + 2 * n) * SCALAR_BYTES {
         return;
     }
@@ -83,7 +82,6 @@ fuzz_target!(|data: &[u8]| {
             let (b0, b1) = (b[2 * j], b[2 * j + 1]);
             s0 += a0 * b0;
             s1 += a1 * b1;
-            // s(2) with a(2) = 2·a1 − a0 by multilinearity.
             s2 += (a1 + a1 - a0) * (b1 + b1 - b0);
         }
         let c2 = (s2 - s1 - s1 + s0) * two_inverse;
@@ -109,7 +107,6 @@ fuzz_target!(|data: &[u8]| {
     let mut narg = honest.clone();
     match corruption % 7 {
         0 => {
-            // False statement: honest proof, wrong claimed sum.
             if corruption_scalar.is_zero() {
                 return;
             }

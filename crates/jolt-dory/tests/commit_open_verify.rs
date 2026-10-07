@@ -1,8 +1,3 @@
-//! Integration tests for the Dory commitment scheme.
-//!
-//! Public-API-only tests — no `pub(crate)` imports. Exercises commit, open,
-//! verify, streaming, combine, and negative cases across transcript backends.
-
 #![expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 #![expect(
     clippy::unwrap_used,
@@ -42,7 +37,6 @@ fn round_trip<H: Sponge>(num_vars: usize, seed: u64, label: &'static [u8]) {
     let eval = poly.evaluate(&point);
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-    // With hint
     let mut pt = prover::<H>(label);
     DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt).unwrap();
 
@@ -51,7 +45,6 @@ fn round_trip<H: Sponge>(num_vars: usize, seed: u64, label: &'static [u8]) {
     DoryScheme::verify(&commitment, &point, eval, &verifier_setup, &mut vt)
         .expect("round-trip verification (with hint) must succeed");
 
-    // Without hint
     let mut pt2 = prover::<H>(label);
     DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut pt2).unwrap();
 
@@ -296,7 +289,6 @@ fn wrong_commitment_rejected() {
     let mut pt = prover::<Blake2b512>(b"wrong-commit");
     DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt).unwrap();
 
-    // Commit to a different polynomial
     let wrong_poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let (wrong_commitment, _) =
         DoryScheme::commit(wrong_poly.evaluations(), &prover_setup).unwrap();
@@ -613,7 +605,6 @@ fn ragged_hint_combination_verifies() {
     let combined_commitment = DoryScheme::combine(&[wide_commit, narrow_commit], &[c1, c2]);
     let combined_hint = DoryScheme::combine_hints(vec![wide_hint, narrow_hint], &[c1, c2]);
 
-    // The joint polynomial: wide + zero-embedded (low-index prefix) narrow.
     let mut narrow_embedded = narrow.evaluations().to_vec();
     narrow_embedded.resize(1 << wide_vars, Fr::from_u64(0));
     let joint = Polynomial::new(

@@ -19,9 +19,7 @@ enum MemoryBacking {
 
 #[derive(Clone, Debug)]
 pub struct MemoryData {
-    /// The underlying representation of memory, at the granularity of doublewords.
     backing: MemoryBacking,
-    /// The number of doublewords that can be stored in this memory.
     num_doublewords: usize,
     /// One past the highest doubleword index ever accessed through
     /// `access_u64` on a flat backing. Everything at or beyond this index is
@@ -39,7 +37,6 @@ fn out_of_bounds(index: usize, num_doublewords: usize) -> ! {
 }
 
 impl MemoryData {
-    /// Create an empty memory structure with a capacity of 0.
     fn empty() -> Self {
         Self {
             backing: MemoryBacking::Flat(Vec::new()),
@@ -49,14 +46,12 @@ impl MemoryData {
         }
     }
 
-    /// Set the capacity of the memory structure, allocating the flat backing.
     fn init_with_capacity(&mut self, capacity: u64) {
         self.num_doublewords = capacity.div_ceil(8) as usize;
         self.backing = MemoryBacking::Flat(vec![0; self.num_doublewords]);
         self.high_water = 0;
     }
 
-    /// Get the number of entries in the doubleword-aligned memory storage backend.
     pub fn get_num_doublewords(&self) -> usize {
         self.num_doublewords
     }
@@ -88,7 +83,6 @@ impl MemoryData {
                 if index >= self.num_doublewords {
                     out_of_bounds(index, self.num_doublewords);
                 }
-                // Unset entries are assumed to be zero-initialized.
                 let res = map.entry(index).or_insert(0);
                 if let Some(checkpoint) = self.checkpoint.as_mut() {
                     checkpoint.entry(index).or_insert(*res);
@@ -178,15 +172,12 @@ impl MemoryData {
     }
 }
 
-/// Emulates main memory.
 #[derive(Clone, Debug)]
 pub struct Memory {
-    /// Memory content
     pub data: MemoryData,
 }
 
 impl Memory {
-    /// Creates a new empty memory with a capacity of 0.
     pub(crate) fn empty() -> Self {
         Self {
             data: MemoryData::empty(),
@@ -202,10 +193,6 @@ impl Memory {
         self.data.init_with_capacity(capacity)
     }
 
-    /// Reads a byte from memory.
-    ///
-    /// # Arguments
-    /// * `address`
     #[inline]
     pub(crate) fn read_byte(&mut self, address: u64) -> u8 {
         let index = (address >> 3) as usize;
@@ -213,10 +200,6 @@ impl Memory {
         (*self.data.access_u64(index) >> pos) as u8
     }
 
-    /// Reads two bytes from memory.
-    ///
-    /// # Arguments
-    /// * `address`
     #[inline]
     pub(crate) fn read_halfword(&mut self, address: u64) -> u16 {
         if address.is_multiple_of(2) {
@@ -228,10 +211,6 @@ impl Memory {
         }
     }
 
-    /// Reads four bytes from memory.
-    ///
-    /// # Arguments
-    /// * `address`
     #[inline]
     pub(crate) fn read_word(&mut self, address: u64) -> u32 {
         if address.is_multiple_of(4) {
@@ -243,10 +222,6 @@ impl Memory {
         }
     }
 
-    /// Reads eight bytes from memory.
-    ///
-    /// # Arguments
-    /// * `address`
     #[inline]
     pub(crate) fn read_doubleword(&mut self, address: u64) -> u64 {
         if address.is_multiple_of(8) {
@@ -273,11 +248,6 @@ impl Memory {
         data
     }
 
-    /// Writes a byte to memory.
-    ///
-    /// # Arguments
-    /// * `address`
-    /// * `value`
     #[inline]
     pub(crate) fn write_byte(&mut self, address: u64, value: u8) {
         let index = (address >> 3) as usize;
@@ -286,11 +256,6 @@ impl Memory {
         *slot = (*slot & !(0xff << pos)) | ((value as u64) << pos);
     }
 
-    /// Writes two bytes to memory.
-    ///
-    /// # Arguments
-    /// * `address`
-    /// * `value`
     #[inline]
     pub(crate) fn write_halfword(&mut self, address: u64, value: u16) {
         if address.is_multiple_of(2) {
@@ -303,11 +268,6 @@ impl Memory {
         }
     }
 
-    /// Writes four bytes to memory.
-    ///
-    /// # Arguments
-    /// * `address`
-    /// * `value`
     #[inline]
     pub(crate) fn write_word(&mut self, address: u64, value: u32) {
         if address.is_multiple_of(4) {
@@ -320,11 +280,6 @@ impl Memory {
         }
     }
 
-    /// Writes eight bytes to memory.
-    ///
-    /// # Arguments
-    /// * `address`
-    /// * `value`
     #[inline]
     pub(crate) fn write_doubleword(&mut self, address: u64, value: u64) {
         if address.is_multiple_of(8) {
@@ -350,29 +305,17 @@ impl Memory {
         }
     }
 
-    /// Check if the address is valid memory address
-    ///
-    /// # Arguments
-    /// * `address`
     pub(crate) fn validate_address(&self, address: u64) -> bool {
         let word_index = (address >> 3) as usize;
         word_index < self.data.get_num_doublewords()
     }
 
-    /// Reads a byte from memory.
-    ///
-    /// # Arguments
-    /// * `address`
     pub fn get_byte(&self, address: u64) -> u8 {
         let index = (address >> 3) as usize;
         let pos = (address % 8) * 8;
         (self.data.get_u64(index) >> pos) as u8
     }
 
-    /// Reads four bytes from memory.
-    ///
-    /// # Arguments
-    /// * `address`
     pub fn get_word(&self, address: u64) -> u32 {
         if address.is_multiple_of(4) {
             let index = (address >> 3) as usize;
@@ -383,10 +326,6 @@ impl Memory {
         }
     }
 
-    /// Reads eight bytes from memory.
-    ///
-    /// # Arguments
-    /// * `address`
     pub fn get_doubleword(&self, address: u64) -> u64 {
         if address.is_multiple_of(8) {
             let index = (address >> 3) as usize;
@@ -477,8 +416,6 @@ mod tests {
     #[test]
     fn misaligned_accesses_agree_with_byte_wise_composition() {
         let mut memory = memory(64);
-        // Write a doubleword at an odd address; every read width must
-        // reassemble the same little-endian bytes.
         memory.write_doubleword(3, 0x1122_3344_5566_7788);
         assert_eq!(memory.read_doubleword(3), 0x1122_3344_5566_7788);
         assert_eq!(memory.read_word(3), 0x5566_7788);
@@ -488,11 +425,9 @@ mod tests {
         assert_eq!(memory.read_byte(3), 0x88);
         assert_eq!(memory.read_byte(10), 0x11);
 
-        // Word-aligned (but not doubleword-aligned) doubleword access
         memory.write_doubleword(4, 0xaabb_ccdd_eeff_0011);
         assert_eq!(memory.read_doubleword(4), 0xaabb_ccdd_eeff_0011);
 
-        // Misaligned halfword/word writes decompose into byte writes
         memory.write_halfword(17, 0xbeef);
         assert_eq!(memory.read_byte(17), 0xef);
         assert_eq!(memory.read_byte(18), 0xbe);
@@ -506,11 +441,10 @@ mod tests {
         memory.write_doubleword(8, 0x0102_0304_0506_0708);
         assert_eq!(memory.get_byte(8), 0x08);
         assert_eq!(memory.get_word(8), 0x0506_0708);
-        assert_eq!(memory.get_word(10), 0x0304_0506); // misaligned getter
+        assert_eq!(memory.get_word(10), 0x0304_0506);
         assert_eq!(memory.get_doubleword(8), 0x0102_0304_0506_0708);
-        assert_eq!(memory.get_doubleword(12), 0x0102_0304); // word-aligned getter
-        assert_eq!(memory.get_doubleword(9), 0x0001_0203_0405_0607); // byte path
-                                                                     // Untouched addresses read as zero
+        assert_eq!(memory.get_doubleword(12), 0x0102_0304);
+        assert_eq!(memory.get_doubleword(9), 0x0001_0203_0405_0607);
         assert_eq!(memory.get_doubleword(32), 0);
     }
 
@@ -520,7 +454,6 @@ mod tests {
         memory.write_byte(9, 0xAA);
         memory.write_byte(40, 0xBB);
         memory.write_byte(3, 0xCC);
-        // A doubleword written then zeroed again is skipped entirely
         memory.write_doubleword(16, 0x1234);
         memory.write_doubleword(16, 0);
 
@@ -540,7 +473,6 @@ mod tests {
         memory.data.start_saving_checkpoints();
         assert!(memory.data.is_saving_checkpoints());
 
-        // Touch index 0 (write) and index 1 (read); leave index 2 untouched
         memory.write_doubleword(0, 999);
         memory.write_doubleword(0, 1000); // second write must not overwrite the snapshot
         assert_eq!(memory.read_doubleword(8), 222);
@@ -554,7 +486,6 @@ mod tests {
         assert_eq!(snapshot.get(&2), None, "untouched word absent");
         assert_eq!(checkpoint.get_num_doublewords(), 8);
 
-        // Saving started a fresh chunk: only new accesses are recorded
         memory.write_doubleword(16, 5);
         let next = memory.data.save_checkpoint();
         let MemoryBacking::Sparse(snapshot) = &next.backing else {
@@ -571,15 +502,13 @@ mod tests {
         let taken = memory.take_memory();
         assert_eq!(taken.data.get_num_doublewords(), 8);
         assert_eq!(taken.data.get_u64(0), 42);
-        // The emptied source reports zero capacity, consistent with its
-        // empty backing; every address is now out of bounds.
         assert_eq!(memory.data.get_num_doublewords(), 0);
         assert!(!memory.validate_address(0), "content moved out");
     }
 
     #[test]
     fn out_of_bounds_accesses_panic_with_the_capacity() {
-        let mut memory = memory(16); // 2 doublewords
+        let mut memory = memory(16);
         assert!(memory.validate_address(15));
         assert!(!memory.validate_address(16));
         let err = std::panic::catch_unwind(AssertUnwindSafe(|| memory.read_byte(16)))

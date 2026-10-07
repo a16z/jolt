@@ -138,8 +138,6 @@ where
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 
-    // The field-register value-evaluation member (declared last, no instance challenge) and
-    // its baked `LtCycle` public, at the same source-values position as before.
     #[cfg(feature = "field-inline")]
     let field_registers_claims = super::field_inline::stage5_val_evaluation(
         values,

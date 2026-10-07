@@ -13,8 +13,8 @@ pub struct FormatB {
 impl InstructionFormat for FormatB {
     fn parse(word: u32) -> Self {
         FormatB {
-            rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
-            rs2: ((word >> 20) & 0x1f) as u8, // [24:20]
+            rs1: ((word >> 15) & 0x1f) as u8,
+            rs2: ((word >> 20) & 0x1f) as u8,
             imm: (
                 match word & 0x80000000 { // imm[31:12] = [31]
 				0x80000000 => 0xfffff000,

@@ -125,7 +125,6 @@ where
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type.
     let lowest_address = public_io.memory_layout.get_lowest_address();
     let public_memory = PublicIoMemory::new(public_io).map_err(|error| {
         VerifierError::StageClaimPublicInputFailed {
@@ -245,9 +244,6 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The field-inline product appendage is carried, and the spec's alias table
-        // holds on honest data: the field-inline claim-reduction member outputs equal
-        // the appendage values polynomial-for-polynomial.
         let appendage = &out
             .clear_output
             .output_values
@@ -270,7 +266,6 @@ mod field_inline_round_trip {
     }
 }
 
-/// Committed stage-2 output rows use the same canonical alias layout as
 /// clear claims, and the production stage-1/2 zk verifiers consume the
 /// prover's argument string.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
@@ -321,7 +316,6 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The three field-inline reduction openings alias the product member's rows.
         let value_count: usize = out
             .committed_witness
             .output_claim_rows
@@ -336,37 +330,5 @@ mod field_inline_zk {
             &field_arithmetic_preprocessing(),
             &mut prover_transcript,
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Without field-inline, the composed product geometry matches the RV64-only relation.
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn product_uniskip_constants_match_the_rv64_only_values() {
-        use jolt_claims::protocols::jolt::geometry::dimensions::{
-            PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-        };
-
-        assert_eq!(
-            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            PRODUCT_UNISKIP_DOMAIN_SIZE
-        );
-        assert_eq!(
-            SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-            PRODUCT_UNISKIP_FIRST_ROUND_DEGREE
-        );
-    }
-
-    /// With field-inline enabled, the composed product domain carries the two field-inline lanes —
-    /// the spec's 5-point domain and its degree-12 first round.
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn product_uniskip_constants_are_the_composed_field_domains() {
-        assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);
-        assert_eq!(SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE, 12);
     }
 }

@@ -1,10 +1,9 @@
 //! Canonical schedule planning for Jolt's Akita configurations.
 
 use akita_config::{policy_of, CommitmentConfig};
+use akita_params::{sis::CommittedSourceContract, FoldSchedule, ScheduleLookupKey};
 use akita_pcs::AkitaError;
 use akita_planner::find_schedule;
-use akita_types::sis::CommittedSourceContract;
-use akita_types::{FoldSchedule, ScheduleLookupKey};
 
 pub(crate) fn plan_schedule<Cfg: CommitmentConfig>(
     key: &ScheduleLookupKey,

@@ -36,11 +36,12 @@ use std::time::Duration;
 
 use akita_config::CommitmentConfig;
 use akita_config::TrustedScheduleCatalog;
+use akita_params::BasisMode;
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaProverSetup as BackendProverSetup, CommitmentHandle, CpuBackend,
     DensePoly, GroupContext, OneHotPoly, SelectedProverOpeningData, SourceHandle,
 };
-use akita_types::{BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims};
+use akita_types::{CommittedGroup, OpeningClaims, PolynomialGroupClaims};
 use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criterion};
 use jolt_akita::{
     configs::{JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},

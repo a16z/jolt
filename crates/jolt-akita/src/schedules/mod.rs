@@ -14,18 +14,17 @@ pub mod emit {
     use std::path::PathBuf;
 
     use akita_config::{policy_of, CommitmentConfig};
+    use akita_params::{
+        FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
+    };
     use akita_pcs::AkitaError;
     use akita_planner::emit::GroupedGenerationRequest;
     use akita_planner::EmitSpec;
-    use akita_types::{
-        FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
-    };
 
-    use crate::configs::{
-        JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16Direct, JoltOneHotK256,
-        JoltOneHotK256Direct,
-    };
+    use crate::configs::{JoltDenseBounded, JoltDenseFull};
+    use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
     use crate::planning::plan_schedule;
+    use crate::AKITA_ONE_HOT_K16;
 
     /// Prefix packing produces one physical polynomial; two-polynomial rows
     /// cover adapter and tamper-test shapes.
@@ -35,7 +34,7 @@ pub mod emit {
     pub const K16_NUM_VARS: (usize, usize) = (12, 40);
     /// K=256 adds five selector variables to column arity `8 + log_T`.
     pub const K256_NUM_VARS: (usize, usize) = (12, 43);
-    /// Dense advice, committed-program, and field-register increment objects.
+    /// Bounded-dense advice and committed-program byte objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 34);
 
     /// First Jolt trace exponent whose one-hot row uses setup offloading.
@@ -52,26 +51,29 @@ pub mod emit {
     /// Physical one-hot arity added to the logical trace exponent for K=256.
     pub const K256_PACKING_VARIABLES: usize = 13;
 
-    /// Pure DP regeneration for `Cfg`; never consults an artifact.
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
         plan_schedule::<Cfg>(&ScheduleLookupKey::single(key), &[])
     }
 
-    fn regen_one_hot_k16(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+    fn regen_one_hot_k16<Cfg: CommitmentConfig, DirectCfg: CommitmentConfig>(
+        key: PolynomialGroupLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         if key.num_vars() >= RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES {
-            regen::<JoltOneHotK16>(key)
+            regen::<Cfg>(key)
         } else {
-            regen::<JoltOneHotK16Direct>(key)
+            regen::<DirectCfg>(key)
         }
     }
 
-    fn regen_one_hot_k256(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+    fn regen_one_hot_k256<Cfg: CommitmentConfig, DirectCfg: CommitmentConfig>(
+        key: PolynomialGroupLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         if key.num_vars() >= RECURSIVE_TRACE_LOG_T_CUTOVER + K256_PACKING_VARIABLES {
-            regen::<JoltOneHotK256>(key)
+            regen::<Cfg>(key)
         } else {
-            regen::<JoltOneHotK256Direct>(key)
+            regen::<DirectCfg>(key)
         }
     }
 
@@ -125,22 +127,31 @@ pub mod emit {
     ///
     /// Instance-specific grouped advice/program rows are planned during setup
     /// and folded into the exact catalog serialized with that verifier setup.
-    pub fn family_specs(output_dir: PathBuf) -> Result<[EmitSpec; 4], AkitaError> {
-        Ok([
-            spec::<JoltOneHotK16>(
-                JoltOneHotK16::schedule_family_name(),
-                ONE_HOT_TRACE_NUM_POLYS,
-                K16_NUM_VARS,
-                regen_one_hot_k16,
-                output_dir.clone(),
-            )?,
-            spec::<JoltOneHotK256>(
-                JoltOneHotK256::schedule_family_name(),
-                ONE_HOT_TRACE_NUM_POLYS,
-                K256_NUM_VARS,
-                regen_one_hot_k256,
-                output_dir.clone(),
-            )?,
+    pub fn family_specs(output_dir: PathBuf) -> Result<Vec<EmitSpec>, AkitaError> {
+        let mut specs = Vec::with_capacity(OneHotFamily::ALL.len() + 2);
+        for family in OneHotFamily::ALL.iter().copied() {
+            let mut family_spec = with_one_hot_family!(family, |Cfg, DirectCfg| {
+                let regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> =
+                    if family.k() == AKITA_ONE_HOT_K16 {
+                        regen_one_hot_k16::<Cfg, DirectCfg>
+                    } else {
+                        regen_one_hot_k256::<Cfg, DirectCfg>
+                    };
+                spec::<Cfg>(
+                    family.family_name(),
+                    ONE_HOT_TRACE_NUM_POLYS,
+                    family.num_vars_range(1),
+                    regen,
+                    output_dir.clone(),
+                )
+            })?;
+            family_spec.keys = ONE_HOT_TRACE_NUM_POLYS
+                .iter()
+                .flat_map(|&num_polys| keys(&[num_polys], family.num_vars_range(num_polys)))
+                .collect();
+            specs.push(family_spec);
+        }
+        specs.extend([
             spec::<JoltDenseBounded>(
                 JoltDenseBounded::schedule_family_name(),
                 ONE_HOT_TRACE_NUM_POLYS,
@@ -155,6 +166,7 @@ pub mod emit {
                 regen::<JoltDenseFull>,
                 output_dir,
             )?,
-        ])
+        ]);
+        Ok(specs)
     }
 }

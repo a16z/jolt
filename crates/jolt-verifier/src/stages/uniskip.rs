@@ -12,15 +12,16 @@
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use jolt_claims::protocols::composed::r1cs::{
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_uniskip_opening, product_uniskip_opening,
 };
-use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
+use jolt_claims::protocols::jolt::JoltOpeningId;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::CanonicalDecode;
 use jolt_field::JoltField;
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckStatement,
     SumcheckVerifier,
@@ -32,7 +33,6 @@ use crate::stages::zk::outputs::{CommittedOutputClaimOutput, CommittedOutputClai
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
-/// A uni-skip round is always a single round reducing to a single challenge.
 const UNISKIP_ROUNDS: usize = 1;
 
 /// The per-stage uni-skip shape: the fixed first-round degree bound and
@@ -44,7 +44,6 @@ pub struct UniskipParams {
     stage: JoltRelationId,
     /// The round's single output opening.
     output_opening: JoltOpeningId,
-    /// The stage number reported by `StageClaimOutputMismatch`.
     stage_number: usize,
     degree: usize,
     domain_size: usize,

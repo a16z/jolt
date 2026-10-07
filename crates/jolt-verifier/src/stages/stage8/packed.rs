@@ -91,7 +91,6 @@ where
     Ok(())
 }
 
-/// Validate the layout identity and shape of an independently committed object.
 fn validate_group_commitment_metadata<C>(
     commitment: &C,
     layout_digest: [u8; 32],
@@ -137,7 +136,6 @@ where
     )
 }
 
-/// One resolved commitment object and its canonical packing.
 struct ResolvedObject<'a, PCS: CommitmentScheme> {
     plan: PrefixPackedObjectPlan,
     commitment: &'a PCS::Output,
@@ -161,7 +159,6 @@ where
         .map_err(batch_failed)
 }
 
-/// Resolve one advice object's packing and commitment when both are present.
 fn advice_object<'a, PCS: CommitmentScheme>(
     leaf: Option<&EvaluationClaim<PCS::Field>>,
     commitment: Option<&'a PCS::Output>,

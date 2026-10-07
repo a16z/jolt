@@ -1,5 +1,3 @@
-//! Akita prover artifacts backing verifier completeness and tamper tests.
-
 #![expect(
     clippy::expect_used,
     reason = "fixture generation should fail loudly when prover artifact construction breaks"

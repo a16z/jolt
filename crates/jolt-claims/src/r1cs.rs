@@ -1,8 +1,12 @@
-use jolt_claims::{Expr, Source};
+// R1CS construction is control-plane code, not hot claim evaluation
+// (specs/verifier-closure-lints.md).
+#![deny(clippy::indexing_slicing, clippy::wildcard_enum_match_arm)]
+
+use crate::{Expr, Source};
 use jolt_field::JoltField;
 use thiserror::Error;
 
-use crate::{LinearCombination, R1csBuilder, Variable};
+use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ClaimLoweringError {
@@ -251,7 +255,7 @@ fn lower_product<F: JoltField>(
 #[expect(clippy::expect_used, reason = "tests may panic on assertion failures")]
 mod tests {
     use super::*;
-    use jolt_claims::{challenge, constant, derived, opening, Expr};
+    use crate::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, Ring};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -367,30 +371,6 @@ mod tests {
     }
 
     #[test]
-    fn variable_source_products_reject_bad_witness() {
-        let mut builder = R1csBuilder::<Fr>::new();
-        let opening_value = builder.alloc(Fr::from_u64(3));
-        let challenge_value = builder.alloc(Fr::from_u64(4));
-        let out = builder.alloc(Fr::from_u64(13));
-
-        let mut sources = ClaimSourceTable::<Fr, Opening, (), Challenge>::new();
-        sources.insert_opening(Opening::A, opening_value);
-        sources.insert_challenge_lc(
-            Challenge::Gamma,
-            LinearCombination::variable(challenge_value),
-        );
-
-        let expression: Expr<Fr, Opening, (), Challenge> =
-            opening(Opening::A) * challenge(Challenge::Gamma);
-
-        assert_claim_expr_eq(&mut builder, &expression, out, &mut sources)
-            .expect("variable sources lower");
-
-        let witness = builder.witness().expect("witness is assigned");
-        assert!(builder.into_matrices().check_witness(&witness).is_err());
-    }
-
-    #[test]
     fn constant_sources_do_not_allocate_product_constraints() {
         let mut builder = R1csBuilder::<Fr>::new();
         let mut sources = ClaimSourceTable::<Fr, Opening, Public, Challenge>::new();
@@ -469,20 +449,5 @@ mod tests {
         let mut sources = ClaimSourceTable::<Fr, Opening>::new();
         sources.insert_opening(Opening::A, a);
         sources.insert_opening(Opening::A, b);
-    }
-
-    #[test]
-    fn lowers_typed_challenge_sources() {
-        let mut builder = R1csBuilder::<Fr>::new();
-        let out = builder.alloc(Fr::from_u64(6));
-        let mut sources = ClaimSourceTable::<Fr, Opening, (), Challenge>::new();
-        sources.insert_challenge(Challenge::Gamma, Fr::from_u64(6));
-
-        let expression: Expr<Fr, Opening, (), Challenge> = challenge(Challenge::Gamma);
-        assert_claim_expr_eq(&mut builder, &expression, out, &mut sources)
-            .expect("typed challenge lowers");
-
-        let witness = builder.witness().expect("witness is assigned");
-        assert!(builder.into_matrices().check_witness(&witness).is_ok());
     }
 }

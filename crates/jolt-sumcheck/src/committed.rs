@@ -1,4 +1,3 @@
-//! Committed sumcheck round messages.
 //!
 //! A committed round sends a vector commitment to the round polynomial's
 //! `degree + 1` coefficients (padded to the round's public degree bound, which

@@ -166,7 +166,8 @@ mod tests {
         let dimensions = SpartanOuterDimensions::rv64(3);
         let ids = stage1_committed_ids(3);
 
-        let expected_len = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        let expected_len =
+            jolt_claims::protocols::composed::r1cs::spartan_outer_opening_columns().len();
         assert_eq!(ids.len(), expected_len);
         #[cfg(not(feature = "field-inline"))]
         assert_eq!(ids.len(), 35);

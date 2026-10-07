@@ -33,7 +33,6 @@ const MAX_NUM_VARS: usize = 8;
 const MAX_DEGREE: usize = 6;
 
 fuzz_target!(|data: &[u8]| {
-    // Header: 1 byte num_vars + 1 byte degree + 1 byte valid_rounds + 32 bytes claimed_sum.
     if data.len() < 3 + SCALAR_BYTES {
         return;
     }

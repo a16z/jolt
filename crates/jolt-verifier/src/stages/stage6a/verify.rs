@@ -185,9 +185,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// A stage-6a batch whose booleanity member has committed chunk width 2, so
-    /// the reference-address draw pads a 1-variable stage-5 instruction address
-    /// and truncates a 3-variable one.
     #[expect(clippy::unwrap_used)]
     fn sumchecks(
         instruction_r_address: Vec<Fr>,

@@ -1,8 +1,6 @@
-//! Deep fold-schedule coverage. The rest of the suite stays at the
-//! 13/14-variable planner floor where schedules carry one to three recursive
-//! folds; this exercises a deeper recursion (17 variables, four recursive
-//! folds) end to end, plus the `valid_proof || garbage` rejection Akita's
-//! argument parser must enforce.
+//! Deep fold-schedule coverage at 17 variables, with at least four recursive
+//! folds, plus the `valid_proof || garbage` rejection Akita's argument parser
+//! must enforce.
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
@@ -12,7 +10,7 @@
 )]
 mod support;
 
-use akita_types::{PolynomialGroupLayout, ScheduleLookupKey};
+use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::TranscriptError;
@@ -86,10 +84,9 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
     }
 }
 
-/// 17 variables resolve to four recursive fold levels — deeper than any
-/// other single-polynomial suite fixture — and a tampered evaluation must
-/// still reject. The depth is asserted so a catalog regeneration cannot
-/// quietly shrink the fixture.
+/// A deep schedule must reject a tampered evaluation. Preserve the minimum
+/// recursive depth across catalog regeneration without pinning the optimizer's
+/// exact choice of fold count.
 #[test]
 fn deep_recursive_fold_schedule_roundtrips() {
     const NUM_VARS: usize = 17;
@@ -103,7 +100,7 @@ fn deep_recursive_fold_schedule_roundtrips() {
         .schedule()
         .recursive_folds
         .len();
-    assert_eq!(depth, 4, "the deep fixture must keep four recursive folds");
+    assert!(depth >= 4, "the fixture must exercise deep recursion");
     let fixture = fold_roundtrip(NUM_VARS, b"akita-fold-deep");
 
     let mut tampered_eval = fixture.eval;

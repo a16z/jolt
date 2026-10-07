@@ -48,8 +48,6 @@ where
         relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions())
     });
 
-    // The committed and uncommitted cycle-phase relations are distinct types, so
-    // collapse the active one into its domain and batch tuple here.
     let (bytecode_domain, bytecode_claim) = if bytecode_reduction_layout.is_some() {
         let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new((
             formula_dimensions.bytecode_read_raf,
@@ -177,7 +175,6 @@ mod field_inline_tests {
         };
         let entry_bytecode_index = 1usize;
 
-        // The clear composed relation.
         let relation = BytecodeReadRaf::new(BytecodeReadRafCycleInputs {
             dimensions,
             r_address: r_address.clone(),

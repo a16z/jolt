@@ -41,6 +41,9 @@ members = [
   "crates/jolt-witness",
   "crates/jolt-witness-derive",
   "crates/jolt-dory",
+  "crates/jolt-hyperkzg",
+  "crates/jolt-spartan-verifier",
+  "crates/jolt-spartan-prover",
   "crates/jolt-riscv",
   "crates/jolt-tracer-x86",
   "crates/jolt-transcript",
@@ -301,14 +304,15 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "zk",
 ] }
 # Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "c521f8f1b505beb9b5f5aacc0ecb86a7c70fce0a", default-features = false }
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e2c49ed450f1999a743e7fd4a648f230ce45472f", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -440,6 +444,9 @@ jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
+jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
+jolt-spartan-verifier = { path = "./crates/jolt-spartan-verifier" }
+jolt-spartan-prover = { path = "./crates/jolt-spartan-prover" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-host = { path = "./crates/jolt-host" }
 jolt-openings = { path = "./crates/jolt-openings" }

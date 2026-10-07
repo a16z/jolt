@@ -1,5 +1,3 @@
-//! PCS error types.
-
 use jolt_transcript::TranscriptError;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

@@ -135,7 +135,8 @@ pub(crate) fn grouped_setup_params(
         one_hot_k,
         grouped_schedule,
         Arc::clone(schedule_artifacts),
-    );
+    )
+    .with_akita_chunk_profile(config.akita_chunk_profile);
     Ok(params)
 }
 
@@ -247,7 +248,6 @@ pub fn commit_trusted_advice(
     })
 }
 
-/// The physical arity of an advice object sized to the program's advice capacity.
 fn advice_physical_num_vars(
     program: &JoltProgramPreprocessing,
     kind: JoltAdviceKind,

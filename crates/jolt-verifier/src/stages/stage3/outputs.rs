@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 3 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 

@@ -20,6 +20,7 @@ spongefish = { workspace = true, features = ["sha3"] }
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
+akita-params.workspace = true
 akita-pcs = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true

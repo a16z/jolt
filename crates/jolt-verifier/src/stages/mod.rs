@@ -1,5 +1,3 @@
-//! Typed verifier stage entry points.
-
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::advice, AdviceClaimReductionLayout, JoltAdviceKind,

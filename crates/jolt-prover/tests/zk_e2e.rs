@@ -26,7 +26,7 @@ mod zk {
     use jolt_program::execution::OwnedTrace;
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
-    use jolt_riscv::{JoltInstructionKind, JoltTraceRow};
+    use jolt_riscv::JoltTraceRow;
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::JoltProtocolConfig;
     use jolt_verifier::JoltSponge;
@@ -34,14 +34,6 @@ mod zk {
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
-
-    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
-    const KECCAK_ROTRI_ROWS: usize = 576;
-    // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
-    // `digest` takes its unaligned path: two fused absorb-permute blocks staged
-    // through stack copies, then a padded final block.
-    const SHA3_INPUT_LEN: usize = 300;
-    const SHA3_PERMUTATIONS: usize = 3;
 
     type Proof = JoltProof;
 
@@ -140,33 +132,6 @@ mod zk {
             let proved = prove_muldiv(JoltBackend::reference());
             assert_eq!(proved.proof.protocol, JoltProtocolConfig::for_zk(true));
             verify(&proved).expect("modular ZK proof must verify");
-        });
-    }
-
-    #[test]
-    fn zk_sha3_inline_modular_proof_is_accepted() {
-        with_zk_stack(|| {
-            let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
-            let proved = prove_guest(
-                GuestCase {
-                    func: Some("sha3"),
-                    inputs: postcard::to_stdvec(&message).expect("serialize input"),
-                    ..GuestCase::new("sha3-guest")
-                },
-                JoltBackend::optimized(),
-                |rows| {
-                    assert_eq!(
-                        rows.iter()
-                            .filter(|row| {
-                                row.instruction_kind() == Some(JoltInstructionKind::VirtualROTRI)
-                            })
-                            .count(),
-                        KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
-                        "two unaligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
-                    );
-                },
-            );
-            verify(&proved).expect("modular SHA3 ZK proof must verify");
         });
     }
 

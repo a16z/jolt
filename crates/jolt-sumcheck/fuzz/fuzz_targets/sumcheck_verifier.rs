@@ -22,7 +22,6 @@ use libfuzzer_sys::fuzz_target;
 const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-sumcheck-fuzz/verifier");
 const SESSION: &[u8] = b"jolt-sumcheck-fuzz";
 
-/// Bytes per BN254 scalar.
 const SCALAR_BYTES: usize = 32;
 
 /// Cap on `num_vars` to keep the fuzz iteration cheap. Real sumchecks bind up
@@ -30,8 +29,6 @@ const SCALAR_BYTES: usize = 32;
 /// handful of rounds.
 const MAX_NUM_VARS: usize = 8;
 
-/// Cap on `degree` to keep round polys small. Real sumchecks use degree
-/// 2..=4; we go up to 6 to exercise the high-degree path.
 const MAX_DEGREE: usize = 6;
 
 fuzz_target!(|data: &[u8]| {

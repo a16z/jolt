@@ -12,7 +12,6 @@ use crate::domain::SumcheckDomain;
 use crate::error::SumcheckError;
 use crate::round_proof::{receive_compressed_round, receive_full_round};
 
-/// Stateless sumcheck verifier engine.
 pub struct SumcheckVerifier;
 
 impl SumcheckVerifier {

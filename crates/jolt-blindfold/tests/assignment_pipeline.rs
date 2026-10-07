@@ -1,9 +1,3 @@
-//! End-to-end pipeline over the prover-side assignment API:
-//! `BlindFoldProtocol::assign_witness` → `jolt_blindfold::prove` →
-//! `BlindFoldProtocol::verify`, cross-validating the crate's own prover
-//! against the verifier on witnesses assembled from committed sumcheck data
-//! and the protocol's public parts alone.
-
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,

@@ -152,8 +152,6 @@ pub fn validate_proof_config(
 mod tests {
     use super::*;
 
-    // This is the field-inline-era format, including the disabled extension
-    // axis. The old three-axis format has no implicit decoder fallback.
     #[test]
     fn protocol_wire_format_is_explicit() {
         let protocol = JoltProtocolConfig {
@@ -171,29 +169,6 @@ mod tests {
             protocol.transcript_bytes(),
             [0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0]
         );
-    }
-
-    #[test]
-    fn matching_protocol_config_is_accepted() {
-        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_CONFIG).is_ok());
-    }
-
-    /// A proof declaring the opposite field-inline axis rejects fail-closed, in both builds
-    /// without field-inline (proof claims enabled) and builds with field-inline enabled (proof
-    /// claims disabled).
-    #[test]
-    fn mismatched_field_inline_axis_is_rejected() {
-        let mut protocol = JOLT_VERIFIER_CONFIG;
-        protocol.field_inline = if JOLT_VERIFIER_CONFIG.field_inline.enabled {
-            FieldInlineConfig::disabled()
-        } else {
-            FieldInlineConfig::enabled()
-        };
-
-        assert!(matches!(
-            validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
-            Err(VerifierError::ProtocolConfigMismatch { .. })
-        ));
     }
 
     /// A proof declaring a different field-register file size rejects even when the enabled

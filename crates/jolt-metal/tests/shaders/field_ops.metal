@@ -69,9 +69,14 @@ kernel void jolt_test_field_from_i64(device const long* v [[buffer(0)]],
     out[i] = F::from_i64(v[i]);
 }
 
-// Writes the all-ones pattern, which is not canonical for any 2^128 - C.
+// Writes the all-ones pattern, which is not canonical for any field here:
+// every modulus is below 2^64 or 2^128 and every coefficient must be
+// canonical.
 template <typename F>
 kernel void jolt_test_field_write_non_canonical(device F* out [[buffer(0)]],
                                                 uint i [[thread_position_in_grid]]) {
-    out[i].limb = uint4(0xffffffffu);
+    device uchar* bytes = reinterpret_cast<device uchar*>(out + i);
+    for (uint k = 0; k < sizeof(F); k++) {
+        bytes[k] = 0xff;
+    }
 }

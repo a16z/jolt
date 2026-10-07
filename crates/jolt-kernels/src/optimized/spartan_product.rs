@@ -96,9 +96,6 @@ pub struct SpartanProductRow {
     pub virtual_instruction: OpFlag,
 }
 
-/// The exact integer Lagrange coefficients `L_i(node)` of the 3-node base
-/// window at every node of the extended window (in-domain nodes included —
-/// there they are the 0/1 selectors).
 fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     let mut out = [[0i64; DOMAIN]; EXTENDED_SIZE];
     for (position, coefficients) in out.iter_mut().enumerate() {
@@ -199,30 +196,22 @@ fn field_extended_products<F: JoltField>(
     out
 }
 
-/// The field images of [`extension_coefficients`], for the active field-inline cycles'
-/// field path.
 #[cfg(feature = "field-inline")]
 fn extension_coefficient_fields<F: JoltField>() -> [[F; DOMAIN]; EXTENDED_SIZE] {
     extension_coefficients().map(|coefficients| coefficients.map(F::from_i64))
 }
 
-/// The uni-skip carry: the typed rows (reused by the remainder), the low
-/// challenge vector, and all extended-node values of `t1`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
-    /// The active field-inline cycles' composed column values, sparse and sorted by
-    /// cycle (only the three value columns feed the product lanes).
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     t1_values: Vec<F>,
 }
 
-/// Extended-node evaluations of
-/// `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)`, split-eq factored.
 fn extended_t1_values<F: JoltField>(
     rows: &BundleAccess<'_, SpartanProductRow>,
     tau_low: &[F],
@@ -280,9 +269,6 @@ fn extended_t1_values<F: JoltField>(
 pub struct OptimizedProductUniskip;
 
 impl OptimizedProductUniskip {
-    /// The post-collection half of [`UniskipKernel::prepare`], shared with the
-    /// in-module parity tests (which construct rows — and with field-inline enabled,
-    /// the sparse field-inline rows — directly).
     #[cfg(test)]
     fn prepare_from_rows<F: JoltField>(
         session: &mut ProofSession,
@@ -306,7 +292,6 @@ impl OptimizedProductUniskip {
         )
     }
 
-    /// The store-generic half of `prepare`.
     fn prepare_from_store<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
@@ -421,13 +406,10 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
     }
 }
 
-/// The linear-time product remainder rounds over the cycle domain
-/// (bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    /// Whether the first-shrink purge ran.
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -437,7 +419,6 @@ struct ProductRemainderKernel<F: JoltField> {
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
-    /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
     lagrange_weights: Vec<F>,
 }
 impl<F: JoltField> ProductRemainderKernel<F> {
@@ -492,18 +473,9 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             left_acc.fmadd_u64(weights_ref[1], row.lookup_output.0);
             left_acc.fmadd_u64(weights_ref[2], u64::from(row.jump_flag.0));
             let mut right_acc = <F as WithAccumulator>::SignedProductAccumulator::default();
-            right_acc.fmadd_s256(
-                weights_ref[0],
-                &S256::from_i128(row.right_instruction_input.0),
-            );
-            right_acc.fmadd_s256(
-                weights_ref[1],
-                &S256::from_u64(u64::from(row.branch_flag.0)),
-            );
-            right_acc.fmadd_s256(
-                weights_ref[2],
-                &S256::from_u64(1 - u64::from(row.next_is_noop.0)),
-            );
+            right_acc.fmadd_i128(weights_ref[0], row.right_instruction_input.0);
+            right_acc.fmadd_u64(weights_ref[1], u64::from(row.branch_flag.0));
+            right_acc.fmadd_u64(weights_ref[2], 1 - u64::from(row.next_is_noop.0));
             (left_acc.reduce(), right_acc.reduce())
         };
         #[cfg(feature = "field-inline")]
@@ -604,7 +576,6 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     fn bind(&mut self, challenge: F) {
         let shrunk = self.left.bind_low_to_high_in_place(challenge);
         let _ = self.right.bind_low_to_high_in_place(challenge);
-        // Purge once after the first shrink.
         if shrunk && !self.purged {
             self.purged = true;
             crate::mem::purge_retained_memory(self.challenges.total());
@@ -614,8 +585,6 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    /// `eq(r_cycle, ·)` over the bound cycle point, shared by the base and field-inline
-    /// opening walks below (one `2^log_T` table per extraction).
     fn cycle_weights(&self) -> Vec<F> {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         EqPolynomial::<F>::evals(&reversed, None)
@@ -638,9 +607,9 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             let mut flags: [<F as WithAccumulator>::SmallScalarAccumulator; 5] = Default::default();
             for (t, &weight) in (start..end).zip(&weights[start..end]) {
                 let row = access.row(t)?;
-                words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
-                words[1].fmadd_s256(weight, &S256::from_i128(row.right_instruction_input.0));
-                words[2].fmadd_s256(weight, &S256::from_u64(row.lookup_output.0));
+                words[0].fmadd_u64(weight, row.left_instruction_input.0);
+                words[1].fmadd_i128(weight, row.right_instruction_input.0);
+                words[2].fmadd_u64(weight, row.lookup_output.0);
                 flags[0].fmadd_u64(weight, u64::from(row.jump_flag.0));
                 flags[1].fmadd_u64(weight, u64::from(row.write_lookup_output_to_rd.0));
                 flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
@@ -800,9 +769,6 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
     }
 }
 
-/// Byte parity against the reference product kernels, mirroring the outer
-/// module's test structure: synthetic wide-value witnesses across sizes plus
-/// the real sample trace through the full trait path.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -891,9 +857,6 @@ mod tests {
             .collect()
     }
 
-    /// Sparse synthetic field-inline rows with pseudo-random full-field values in the
-    /// three lane factor columns (the composed product lanes read nothing else off the
-    /// field-inline rows).
     #[cfg(feature = "field-inline")]
     fn synthetic_field_rows(log_t: usize, seed: u64) -> Vec<(usize, FieldInlineSpartanRow<Fr>)> {
         let mut state = seed | 1;
@@ -964,9 +927,6 @@ mod tests {
         backend
     }
 
-    /// The remainder's true input claim
-    /// `scale · Σ_j eq(τ_low, j) · left(j) · right(j)` over the composed lane
-    /// selection, straight field math.
     fn true_input_claim(
         rows: &[SpartanProductRow],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
@@ -1234,8 +1194,6 @@ mod tests {
         });
     }
 
-    /// Canonical value at or above `0.7·p` (top limb of the BN254 scalar
-    /// modulus is `0x3064_4E72_E131_A029`).
     fn heavy(value: Fr) -> bool {
         let mut bytes_le = [0u8; 32];
         value.to_bytes_le(&mut bytes_le);
@@ -1429,8 +1387,6 @@ mod tests {
             .with_plane(4, |backend| sample_case(backend, 4));
     }
 
-    /// The integer extension coefficients equal the field Lagrange basis
-    /// evaluations at every extended node (in-domain selectors included).
     #[test]
     fn extension_coefficients_match_field_lagrange() {
         for (position, coefficients) in extension_coefficients().iter().enumerate() {
@@ -1446,8 +1402,6 @@ mod tests {
         }
     }
 
-    /// The typed bundle's columns equal the oracle tables for all eight
-    /// product openings.
     #[test]
     fn bundle_columns_match_oracle_tables() {
         with_sample_backend(|backend| {

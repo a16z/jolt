@@ -327,11 +327,6 @@ mod field_inline_round_trip {
             .sum()
     }
 
-    /// The field-register read-write kernel on the honest field-inline replay: every round message
-    /// passes the engine's running-claim check starting from the relation's
-    /// own input claim, and the extracted openings equal direct MLE
-    /// evaluations of the witness oracle's tables at the derived
-    /// `[address ‖ cycle]` opening point.
     #[test]
     fn field_register_read_write_kernel_outputs_match_direct_mle() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
@@ -383,8 +378,6 @@ mod field_inline_round_trip {
             )
             .unwrap();
 
-        // The engine's round loop: bind the previous draw, check the running
-        // claim, reduce through the returned round polynomial.
         let rounds = relation.rounds();
         let sumcheck_point: Vec<Fr> = (0..rounds as u64).map(|i| fr(200 + i)).collect();
         let mut previous_claim = relation.input_claim(&claims, &challenges).unwrap();
@@ -405,8 +398,6 @@ mod field_inline_round_trip {
             .validate_derived_tables(&relation, &points, &output_points, &challenges)
             .unwrap();
 
-        // Every opening shares the `[address ‖ cycle]` point; each extracted
-        // value must be the direct MLE of its oracle table there.
         let opening_point = output_points.registers_val();
         let grid = |polynomial| cycle_table(polynomial);
         assert_eq!(
@@ -445,8 +436,6 @@ mod field_inline_round_trip {
         let (_, cycle_sub_point) = opening_point.split_at(opening_point.len() - LOG_T);
         assert_eq!(outputs.rd_inc, mle(&inc, cycle_sub_point));
 
-        // The relation's own output fold closes the loop: the final running
-        // claim equals `expected_output` at the extracted claims.
         let expected = relation
             .expected_output(&points, &outputs, &output_points, &challenges)
             .unwrap();

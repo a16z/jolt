@@ -1,4 +1,3 @@
-//! Verifier-owned proof model types.
 //!
 //! A proof is its argument string. Its leading prover messages are the
 //! [`ProofHeader`] and the [`ProofCommitments`]; every later message's width is

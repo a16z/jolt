@@ -19,7 +19,6 @@ pub trait PairingGroup: Clone + Debug + Eq + Sync + Send + 'static {
     type G2: JoltGroup;
     type GT: JoltGroup;
 
-    /// Computes the bilinear pairing `e(g1, g2)`.
     #[must_use]
     fn pairing(g1: &Self::G1, g2: &Self::G2) -> Self::GT;
 

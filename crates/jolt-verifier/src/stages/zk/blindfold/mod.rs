@@ -58,6 +58,10 @@ use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder};
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use jolt_claims::protocols::composed::r1cs::{
+    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
 #[cfg(not(feature = "field-inline"))]
@@ -114,10 +118,6 @@ use jolt_poly::{
     OperandPolynomial, OperandSide,
 };
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_r1cs::constraints::jolt::{
-    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
@@ -1354,7 +1354,6 @@ fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
     }
 }
 
-/// The first `prefix_len` variables of an `address ++ cycle` opening point.
 fn point_prefix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -1371,8 +1370,6 @@ fn point_prefix<F: JoltField>(
     })
 }
 
-/// The variables past the first `prefix_len` of an `address ++ cycle` opening
-/// point (the cycle sub-point).
 fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,

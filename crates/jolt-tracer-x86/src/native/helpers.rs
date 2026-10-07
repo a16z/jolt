@@ -8,7 +8,7 @@
 //! tests `exit` after each helper call and jumps to the exit stub when
 //! nonzero. Return values travel in rax.
 
-use common::constants::RAM_START_ADDRESS;
+use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 
 use super::state::{AdviceCompute, ExitReason, GuestState, HostContext};
 
@@ -133,8 +133,9 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
     unsafe { (*state.obs_cursor).ram_pre = pre };
 }
 
-/// `Sd` slow path: device-region, unaligned, or out-of-bounds effective
-/// addresses. `JoltDevice::store` also handles the panic/termination bits.
+/// `Sd` slow path: device-region, unaligned, stack-canary, or out-of-bounds
+/// effective addresses. `JoltDevice::store` also handles the
+/// panic/termination bits.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
     address: u64,
@@ -150,6 +151,21 @@ pub extern "sysv64" fn slow_store_doubleword(
     }
     if address >= RAM_START_ADDRESS {
         state.fault_addr = address;
+        let offset = address - RAM_START_ADDRESS;
+        if offset.wrapping_sub(state.canary_offset) < STACK_CANARY_SIZE {
+            // Same condition and wording as `Mmu::assert_effective_address`,
+            // which panics here (spec invariant 7 asymmetry).
+            let stack_size = host.device.memory_layout.stack_size;
+            return fail(
+                state,
+                host,
+                format!(
+                    "Stack overflow: attempted to store {address:#X}, which is in the stack \
+                     canary region. Increase stack_size in MemoryConfig (currently \
+                     {stack_size} bytes)."
+                ),
+            );
+        }
         state.exit = ExitReason::FaultOutOfBounds as u64;
         return 0;
     }

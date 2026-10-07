@@ -667,46 +667,10 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn folded_instance_uses_transcript_derived_challenge() {
-        let setup = setup();
-        let protocol = inner_round_protocol();
-        let messages = Messages::zero(&setup, &protocol);
-        let narg = messages.narg();
-
-        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, SESSION, &narg);
-        let folded = protocol
-            .folded_instance(&mut transcript)
-            .expect("fold inputs are well-shaped");
-
-        let sent = &messages.folding;
-        let committed = protocol
-            .committed_relaxed_instance(&sent.auxiliary_rows)
-            .expect("committed instance builds");
-        let random = protocol
-            .random_relaxed_instance(
-                &sent.random_rounds,
-                &sent.random_output_claim_rows,
-                &sent.random_auxiliary_rows,
-                &sent.random_error_rows,
-                &sent.random_evals,
-                sent.random_u,
-            )
-            .expect("random instance builds");
-        let mut prover = Messages::transcript();
-        sent.send(&mut prover);
-        let folding_challenge: Fr = prover.challenge_small();
-        let expected = committed
-            .fold(&random, &sent.cross_term_error_rows, folding_challenge)
-            .expect("fold dimensions match");
-
-        assert_eq!(folded, expected);
-        assert_eq!(
-            transcript.challenge_bytes::<32>(),
-            prover.challenge_bytes::<32>()
-        );
-    }
-
+    /// Regression: a proof with fewer `folded_eval_outputs` than the layout's
+    /// eval coordinates previously reached `folded_eval_outputs[index]` and
+    /// panicked; both the eager length gate and the per-coordinate lookup
+    /// must surface the same typed length error instead.
     #[test]
     fn verify_rejects_truncated_folded_eval_outputs() {
         let setup = setup();

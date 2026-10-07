@@ -277,8 +277,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let booleanity_dimensions =
             BooleanityDimensions::new(formula_dimensions.ra_layout, log_t, committed_chunk_bits);
 
-        // The bytecode folds below consume per-stage power VECTORS, expanded
-        // once here from the carried scalars.
         let stage_gamma_powers = carried.bytecode_read_raf.stage_gamma_powers();
         let bytecode_r_address = stage6a_points.bytecode_read_raf.intermediate.clone();
         let booleanity_r_address = stage6a_points.booleanity.intermediate.clone();

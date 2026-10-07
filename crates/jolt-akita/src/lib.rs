@@ -23,6 +23,7 @@
 mod adapters;
 pub mod configs;
 mod native_batching;
+mod one_hot_family;
 mod planning;
 pub mod schedule_registry;
 pub mod schedules;
@@ -45,6 +46,7 @@ pub use adapters::{
     AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupParams, AkitaVerifierSetup,
     AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
+pub use configs::AkitaChunkProfile;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };

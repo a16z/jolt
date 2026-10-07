@@ -456,7 +456,6 @@ where
     let one_hot_config = header.one_hot_config;
     #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = header.untrusted_advice;
-    // The zk axis is fixed at compile time; every branch below const-folds.
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     let vc_capacity = if zk {
         Some(validate_zk_vector_commitment_setup::<PCS, VC>(
@@ -982,7 +981,7 @@ mod tests {
     #[test]
     fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
         use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
-        use jolt_r1cs::constraints::jolt::SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
+        use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
 
         const {
             assert!(MAX_BLINDFOLD_GENERATORS > SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE);
@@ -1066,8 +1065,6 @@ mod tests {
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        // Use the build's instruction profile when
-        // required, including the all-inactive table for this empty program.
         let program = JoltProgramPreprocessing::new(
             Vec::new(),
             Vec::new(),

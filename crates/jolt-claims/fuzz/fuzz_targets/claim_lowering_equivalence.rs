@@ -7,9 +7,10 @@
 //! witness variable. The directly evaluated result must satisfy the lowered
 //! constraints, while changing only the claimed result must violate them.
 
+use jolt_claims::r1cs::{assert_claim_expr_eq, ClaimSourceTable, SourceValue};
 use jolt_claims::{Expr, Source, Term};
 use jolt_field::{Fr, Ring};
-use jolt_r1cs::{assert_claim_expr_eq, ClaimSourceTable, R1csBuilder, SourceValue};
+use jolt_r1cs::R1csBuilder;
 use libfuzzer_sys::fuzz_target;
 
 const SOURCE_COUNT: usize = 4;

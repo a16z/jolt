@@ -17,8 +17,8 @@
 //!   2^64 * FieldRdValue`. RV64 row 12 and the `RangeCheck` lookup bound
 //!   the advice limb below 2^64; canonicality belongs to the guest readout.
 
-use crate::constraint::SparseRow;
 use jolt_field::JoltField;
+use jolt_r1cs::{ConstraintMatrices, SparseRow};
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
 
@@ -80,13 +80,6 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
 
     let empty = || Vec::new();
 
-    // Eq-conditional constraints (0-9), with arithmetic in the proof field.
-    // Form: guard · (left − right) = 0  →  A=guard, B=left−right, C=0
-
-    // 0: FieldAdd
-    //    guard = IsFieldAdd
-    //    left  = FieldRs1Value + FieldRs2Value
-    //    right = FieldRdValue
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAdd), 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
@@ -95,10 +88,6 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    // 1: FieldSub
-    //    guard = IsFieldSub
-    //    left  = FieldRs1Value − FieldRs2Value
-    //    right = FieldRdValue
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldSub), 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
@@ -125,10 +114,6 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_FIELD_INV_PRODUCT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
-    // 4: FieldAssertEq
-    //    guard = IsFieldAssertEq
-    //    left  = FieldRs1Value
-    //    right = FieldRs2Value
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAssertEq), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1), (V_FIELD_RS2_VALUE, -1)]));
     c_rows.push(empty());
@@ -149,18 +134,10 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]);
     c_rows.push(empty());
 
-    // 6: FieldAssertZero
-    //    guard = IsFieldAssertZero
-    //    left  = FieldRs1Value
-    //    right = 0
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAssertZero), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1)]));
     c_rows.push(empty());
 
-    // 7: FieldLoadImm
-    //    guard = IsFieldLoadImm
-    //    left  = FieldRdValue
-    //    right = Imm
     a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldLoadImm), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RD_VALUE, 1), (V_IMM, -1)]));
     c_rows.push(empty());
@@ -217,9 +194,9 @@ fn append_product_constraints<F: JoltField>(
 ///
 /// Product constraints are intentionally excluded for consumers that handle the
 /// field multiplication checks in a separate protocol step.
-pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = field_eq_constraint_rows();
-    crate::ConstraintMatrices::new(
+    ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
         NUM_VARS_PER_CYCLE,
         a_rows,
@@ -233,14 +210,14 @@ pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::Constrai
 /// Returns 12 constraints using the shared RV64 columns and five field columns:
 /// - 10 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
-pub fn field_inline_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_trace_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = field_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     c_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
 
-    crate::ConstraintMatrices::new(
+    ConstraintMatrices::new(
         NUM_CONSTRAINTS_PER_CYCLE,
         NUM_VARS_PER_CYCLE,
         a_rows,
@@ -344,15 +321,6 @@ mod tests {
             field_inline_trace_constraints::<Fr>().check_witness(&witness),
             Err(ROW_FIELD_PRODUCT)
         );
-    }
-
-    #[test]
-    fn inactive_field_mul_does_not_pin_destination_to_product() {
-        let witness = witness(Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(99), &[]);
-
-        field_inline_trace_constraints::<Fr>()
-            .check_witness(&witness)
-            .expect("inactive FMUL guard leaves destination unconstrained");
     }
 
     #[test]

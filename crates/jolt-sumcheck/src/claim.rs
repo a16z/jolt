@@ -1,5 +1,3 @@
-//! Sumcheck claim: the public statement that the protocol proves.
-
 use jolt_field::Field;
 
 pub use jolt_poly::EvaluationClaim;

@@ -1,5 +1,3 @@
-//! Stateless claim types for PCS operations.
-
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_poly::EvaluationClaim;
 use jolt_transcript::Channel;
@@ -27,7 +25,6 @@ impl<F: JoltField, C: CanonicalBytes> ZkEvaluationClaim<'_, F, C> {
     }
 }
 
-/// Verifier-side opening claim: commitment, point, and claimed value.
 #[derive(Clone, Debug)]
 pub struct VerifierOpeningClaim<F: JoltField, C> {
     pub commitment: C,

@@ -14,9 +14,7 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
 
     w[..16].copy_from_slice(&input);
 
-    // Calculate word schedule
     for i in 16..64 {
-        // σ₁(w[i-2]) + w[i-7] + σ₀(w[i-15]) + w[i-16]
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
         let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
         w[i] = w[i - 16]
@@ -25,13 +23,12 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
             .wrapping_add(s1);
     }
 
-    // Perform 64 rounds
     for i in 0..64 {
         let ch = (e & f) ^ ((!e) & g);
         let maj = (a & b) ^ (a & c) ^ (b & c);
 
-        let sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22); // Σ₀(a)
-        let sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25); // Σ₁(e)
+        let sigma0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let sigma1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
 
         let t1 = h
             .wrapping_add(sigma1)
@@ -50,7 +47,6 @@ pub fn execute_sha256_compression(initial_state: [u32; 8], input: [u32; 16]) -> 
         a = t1.wrapping_add(t2);
     }
 
-    // Final IV addition
     [
         initial_state[0].wrapping_add(a),
         initial_state[1].wrapping_add(b),

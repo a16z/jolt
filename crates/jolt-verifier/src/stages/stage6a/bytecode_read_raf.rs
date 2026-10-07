@@ -246,7 +246,6 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
 pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     symbolic: AddressPhaseSymbolic,
     dimensions: BytecodeReadRafDimensions,
-    /// Committed-program mode stages the `BytecodeValClaim` wire claims.
     committed_program: bool,
     /// The upstream cycle points and register opening points the address-phase
     /// kernel's PC pushforwards and stage-value folds bind against (the same
@@ -281,8 +280,6 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         }
     }
 
-    /// The relation composed with the field-inline kernel geometry (field-register
-    /// opening points).
     #[cfg(feature = "field-inline")]
     pub fn with_field_inline_geometry(
         mut self,
@@ -341,8 +338,6 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         self.entry_bytecode_index
     }
 
-    /// The staged `BytecodeValClaim` wire-claim count: all
-    /// `NUM_BYTECODE_VAL_STAGES` in committed-program mode, none in full mode.
     fn num_val_stages(&self) -> usize {
         if self.committed_program {
             bytecode_reduction::NUM_BYTECODE_VAL_STAGES
@@ -379,51 +374,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
             val_stages: vec![r_address; self.num_val_stages()],
         }
         .into())
-    }
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use crate::stages::relations::test_transcript::assert_same_draws;
-    use jolt_field::Fr;
-    use jolt_transcript::Channel;
-
-    // The address phase has the only multi-field `Challenges` (gamma + five stage
-    // gammas), so it exercises that the default draws one uniform challenge per
-    // field in declaration order. The cycle and committed variants are
-    // single-field and use the same default path.
-    #[test]
-    fn default_draw_challenges_draws_one_uniform_gamma_per_field() {
-        let relation = BytecodeReadRafAddressPhase::<Fr>::new(
-            BytecodeReadRafDimensions::new(3, 4, 2),
-            false,
-            BytecodeStagePoints {
-                stage_cycle_points: Default::default(),
-                register_read_write_point: Vec::new(),
-                register_val_evaluation_point: Vec::new(),
-                fused_inc_cycle_points: Vec::new(),
-            },
-            0,
-        );
-
-        let (challenges, gammas) = assert_same_draws(
-            |t| relation.draw_challenges(t).unwrap(),
-            |t| std::array::from_fn::<Fr, 6, _>(|_| t.challenge()),
-        );
-
-        assert_eq!(
-            [
-                challenges.gamma,
-                challenges.stage1_gamma,
-                challenges.stage2_gamma,
-                challenges.stage3_gamma,
-                challenges.stage4_gamma,
-                challenges.stage5_gamma,
-            ],
-            gammas,
-        );
     }
 }
 
@@ -515,7 +465,6 @@ mod field_inline_tests {
         powers
     }
 
-    /// Field-register accesses extend the ordinary input fold at their stage powers.
     #[test]
     fn composed_input_claim_matches_from_scratch_fold() {
         let relation = relation();

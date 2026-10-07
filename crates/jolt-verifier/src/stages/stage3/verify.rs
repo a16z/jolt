@@ -1,5 +1,3 @@
-//! Stage 3 verifier: Spartan shift, instruction input, and register reduction.
-
 use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_field::{CanonicalDecode, JoltField};
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};

@@ -22,7 +22,6 @@ use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// The field increment commitment used by the packed path.
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
 pub mod preprocessing;
@@ -52,7 +51,6 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
 }
 

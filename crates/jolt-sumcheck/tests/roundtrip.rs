@@ -1,5 +1,3 @@
-//! Integration tests: full prover-verifier roundtrips with product compositions.
-//!
 //! An honest prover writes each round into a `ProverTranscript`, in full or
 //! compressed form, and the verifier reads the resulting proof back; the
 //! reduced claim must match the product of the factors at the challenge point.

@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 4 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
@@ -61,7 +59,6 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     }
 }
 
-/// The shared opening-point accessors over the point-only stage-4 aggregate.
 impl<F: JoltField> Stage4OutputPoints<F> {
     /// The stage's claim routes: the RAM value check's staged contribution
     /// cells are [`ClaimRoute::Staged`](crate::stages::relations::ClaimRoute::Staged).

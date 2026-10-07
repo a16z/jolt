@@ -86,8 +86,6 @@ where
     let carried = stage6a.challenges();
     let draws = Stage6bDraws::draw(transcript, checked.precommitted.bytecode.is_some());
 
-    // The batch is built after the post-6a draws, directly from the upstream stage
-    // outputs; `build` derives every mode-agnostic constructor leg internally.
     let sumchecks = Stage6bSumchecks::build(
         checked,
         preprocessing,
@@ -284,10 +282,6 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// Per-mode sample claims with sentinel values in the canonical append order: base
-    /// interleaves the inc member after the RA virtualizations (and, under `field-inline`, the
-    /// field-inline inc member after it); Akita carries the read-raf `FusedInc` cell and the
-    /// lattice booleanity digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
         let last = 10;

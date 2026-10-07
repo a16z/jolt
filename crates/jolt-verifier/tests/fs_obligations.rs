@@ -220,7 +220,13 @@ fn production_sources(workspace: &Path) -> Vec<PackageSource> {
         .filter(|package| {
             matches!(
                 package["name"].as_str(),
-                Some("jolt-verifier" | "jolt-dory" | "jolt-akita")
+                Some(
+                    "jolt-verifier"
+                        | "jolt-dory"
+                        | "jolt-akita"
+                        | "jolt-spartan-verifier"
+                        | "jolt-hyperkzg"
+                )
             )
         })
         .map(package_id)

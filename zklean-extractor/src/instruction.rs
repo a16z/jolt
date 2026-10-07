@@ -13,7 +13,6 @@ use crate::{
     util::{indent, ZkLeanReprField},
 };
 
-/// Represents how an instructions operands should be combined into a single vector.
 #[derive(Debug, Clone, Copy)]
 pub enum OperandInterleaving {
     /// Indicates that the operands should be concatenated:
@@ -25,7 +24,6 @@ pub enum OperandInterleaving {
 }
 
 impl OperandInterleaving {
-    /// Extract the operand interleaving for an instruction
     fn instruction_interleaving(instruction: &JoltInstructionRow) -> Self {
         let instruction = JoltInstruction::try_from(*instruction)
             .expect("final Jolt instruction rows have exhaustive typed dispatch");
@@ -46,8 +44,6 @@ impl std::fmt::Display for OperandInterleaving {
     }
 }
 
-/// Wrapper around a JoltInstructionRowData
-// TODO: Make this generic over the instruction set
 #[derive(Debug, Clone)]
 pub struct ZkLeanInstruction<J> {
     instruction: tracer::instruction::Instruction,

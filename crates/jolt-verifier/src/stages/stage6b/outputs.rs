@@ -1,6 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 6b (cycle-phase)
-//! verification.
-
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -368,8 +365,6 @@ pub struct Stage6bZkOutput<F: JoltField, C> {
     pub output_points: Stage6bOutputPoints<F>,
 }
 
-// The clear variant carries the located opening claims read on the hot path; the
-// ZK variant carries committed consistency plus the point-only `output_points`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage6bOutput<F: JoltField, C> {
     Clear(Stage6bClearOutput<F>),

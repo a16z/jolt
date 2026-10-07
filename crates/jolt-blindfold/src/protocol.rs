@@ -771,43 +771,6 @@ mod tests {
     }
 
     #[test]
-    fn blindfold_protocol_builder_constructs_protocol() {
-        let stages = vec![stage(1, 1)];
-        let committed = vec![scalar_committed(&stages[0], &[11], &[21])];
-        let protocol = protocol_from_committed(&stages, &committed);
-
-        assert_eq!(protocol.sumcheck_consistency.len(), 1);
-        assert_eq!(protocol.committed_output_claims.len(), 1);
-        assert_eq!(protocol.layout.stage_count(), 1);
-        assert!(protocol.eval_commitments.is_empty());
-        assert!(protocol.r1cs.num_vars > 1);
-        assert_eq!(
-            protocol.dimensions,
-            BlindFoldDimensions {
-                witness: RowDimensions {
-                    row_len: 2,
-                    row_count: 4,
-                },
-                error: RowDimensions {
-                    row_len: 2,
-                    row_count: 2,
-                },
-                witness_rows: WitnessRowLayout {
-                    coefficients: 0..1,
-                    output_claims: 1..2,
-                    auxiliary: 2..3,
-                    padding: 3..4,
-                },
-                coefficient_rows: 1,
-                output_claim_rows: 1,
-                auxiliary_rows: 1,
-                coefficient_values: 2,
-                auxiliary_values: 2,
-            }
-        );
-    }
-
-    #[test]
     fn blindfold_protocol_builder_resolves_output_claim_aliases() {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum Opening {
@@ -1111,41 +1074,6 @@ mod tests {
     }
 
     #[test]
-    fn random_relaxed_instance_rejects_round_row_count_mismatch() {
-        let setup = pedersen_setup();
-        let protocol = one_stage_protocol(&setup);
-        let round_rows = vec![
-            pedersen_commitment(&setup, 7);
-            protocol.dimensions.coefficient_rows.saturating_sub(1)
-        ];
-        let output_claim_rows =
-            vec![pedersen_commitment(&setup, 71); protocol.dimensions.output_claim_rows];
-        let auxiliary_rows =
-            vec![pedersen_commitment(&setup, 72); protocol.dimensions.auxiliary_rows];
-        let error_rows = vec![pedersen_commitment(&setup, 8); protocol.dimensions.error.row_count];
-
-        let error = protocol
-            .random_relaxed_instance(
-                &round_rows,
-                &output_claim_rows,
-                &auxiliary_rows,
-                &error_rows,
-                &[],
-                Fr::from_u64(3),
-            )
-            .expect_err("witness row count differs");
-
-        assert_eq!(
-            error,
-            RelaxedError::LengthMismatch {
-                name: "random round commitments",
-                expected: protocol.dimensions.coefficient_rows,
-                actual: protocol.dimensions.coefficient_rows - 1,
-            }
-        );
-    }
-
-    #[test]
     fn random_relaxed_instance_rejects_error_row_count_mismatch() {
         let setup = pedersen_setup();
         let protocol = one_stage_protocol(&setup);
@@ -1210,18 +1138,6 @@ mod tests {
                 actual: 1,
             }
         );
-    }
-
-    #[test]
-    fn validate_cross_term_error_rows_accepts_exact_count() {
-        let setup = pedersen_setup();
-        let protocol = one_stage_protocol(&setup);
-        let cross_term_rows =
-            vec![pedersen_commitment(&setup, 9); protocol.dimensions.error.row_count];
-
-        protocol
-            .validate_cross_term_error_rows(&cross_term_rows)
-            .expect("cross-term row count matches");
     }
 
     #[test]

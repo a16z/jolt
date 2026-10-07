@@ -7,7 +7,6 @@ use crate::{
     util::indent,
 };
 
-// XXX Extract this? Or make it generic?
 type TestField = Fr;
 
 #[derive(Debug, Clone)]

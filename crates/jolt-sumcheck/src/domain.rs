@@ -1,5 +1,3 @@
-//! Sumcheck round domains.
-
 use crate::error::SumcheckError;
 use jolt_field::Field;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};

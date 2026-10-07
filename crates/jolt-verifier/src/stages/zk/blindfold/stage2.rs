@@ -133,8 +133,6 @@ where
         eq_spartan,
     )?;
 
-    // The field-inline claim reduction member and its baked publics (relation + gamma +
-    // EqSpartan), at the same source-values position as before.
     #[cfg(feature = "field-inline")]
     let field_registers_reduction = super::field_inline::stage2_claim_reduction(
         values,

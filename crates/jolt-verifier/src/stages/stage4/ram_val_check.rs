@@ -212,8 +212,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The `Val_init` decomposition publics are input publics: the public
-            // initial-RAM evaluation and the negated committed-contribution selectors.
             RamValCheckPublic::InitEval => Ok(self.public_eval),
             RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => {
                 self.init_selectors
@@ -239,9 +237,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation of
-            // the produced cycle point against the fixed read-write cycle. Gamma comes
-            // from the drawn `challenges` (the value `draw_challenges` produced).
             RamValCheckPublic::LtCyclePlusGamma => {
                 let output_cycle =
                     output_points

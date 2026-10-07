@@ -67,6 +67,11 @@ where
     H: Sponge,
     W: JoltWitnessPlane<F>,
 {
+    if config.akita_chunk_profile != PCS::akita_chunk_profile(&preprocessing.verifier.pcs_setup) {
+        return Err(ProverError::Unsupported {
+            reason: "Akita chunk profile differs from preprocessing; reuse its configuration or regenerate preprocessing",
+        });
+    }
     if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
         return Err(ProverError::Unsupported {
             reason: "Akita supports only cycle-major trace polynomials",
@@ -210,7 +215,6 @@ where
         }
     }
     let required_batch_polys = auxiliary_groups.len() + 1;
-    // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
         || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
         || preprocessing.pcs_setup.max_total_batch_polys() < required_batch_polys

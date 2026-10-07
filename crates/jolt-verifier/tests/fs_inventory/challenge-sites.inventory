@@ -15,12 +15,17 @@ jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::c
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenges_small#0
 jolt-dory::transcript.rs::DoryProverChannel<'_,H>::challenge_scalar::challenge#0
 jolt-dory::transcript.rs::DoryVerifierChannel<'_,'_,H>::challenge_scalar::challenge#0
+jolt-hyperkzg::kzg.rs::exchange_evaluations::challenge#1
+jolt-hyperkzg::kzg.rs::exchange_witnesses::challenge#1
+jolt-hyperkzg::scheme.rs::HyperKZGScheme::exchange_fold_commitments::challenge#1
 jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenges_small#5
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::prove_batch_zk::challenge_powers#0
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_powers#0
 jolt-prover::blindfold.rs::prove_blindfold::challenge_bytes#1
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#1
+jolt-spartan-verifier::key.rs::SpartanKey<F>::draw_tau::challenge#0
 jolt-sumcheck::committed.rs::CommittedSumcheckBuilder<'a,F,VC,R>::commit_round::challenge_small#1
 jolt-sumcheck::prover.rs::prove_uniskip_clear::challenge_small#1
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_round::challenge_small#1

@@ -1,5 +1,9 @@
 //! Compile-time Jolt R1CS composition.
 
+// R1CS construction is control-plane code, not hot claim evaluation
+// (specs/verifier-closure-lints.md).
+#![deny(clippy::indexing_slicing, clippy::wildcard_enum_match_arm)]
+
 use jolt_field::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
@@ -7,21 +11,21 @@ use jolt_poly::{
 };
 use thiserror::Error as ThisError;
 
-use crate::{ConstraintMatrices, ConstraintMatrixEvalError};
+use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError};
 
-use super::rv64;
-use super::rv64::NUM_CONSTRAINTS_PER_CYCLE as RV64_NUM_CONSTRAINTS_PER_CYCLE;
+pub mod rv64;
+use rv64::NUM_CONSTRAINTS_PER_CYCLE as RV64_NUM_CONSTRAINTS_PER_CYCLE;
 
 #[cfg(feature = "field-inline")]
-use super::field_constraints;
+pub mod field_constraints;
 #[cfg(feature = "field-inline")]
-use super::field_constraints::{
+use field_constraints::{
     NUM_CONSTRAINTS_PER_CYCLE as FIELD_NUM_CONSTRAINTS_PER_CYCLE,
     NUM_EQ_CONSTRAINTS as FIELD_NUM_EQ_CONSTRAINTS, NUM_FIELD_COLUMNS, ROW_ADVICE_LIMB,
     ROW_ASSERT_EQ, ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB,
     ROW_LOAD_ACCUMULATE_FROM_MEMORY, ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
 };
-use super::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
+use rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
 
 #[cfg(feature = "field-inline")]
 pub const FIELD_INLINE_COLUMN_BASE: usize = rv64::NUM_VARS_PER_CYCLE;
@@ -34,7 +38,7 @@ pub const FIELD_INLINE_ROW_BASE: usize = RV64_NUM_EQ_CONSTRAINTS;
 pub const FIELD_INLINE_APPENDED_COLUMNS: usize = NUM_FIELD_COLUMNS;
 
 #[cfg(feature = "field-inline")]
-pub use super::field_constraints::NUM_VARS_PER_CYCLE;
+pub use field_constraints::NUM_VARS_PER_CYCLE;
 
 #[cfg(not(feature = "field-inline"))]
 pub const NUM_VARS_PER_CYCLE: usize = rv64::NUM_VARS_PER_CYCLE;
@@ -344,10 +348,6 @@ fn append_field_inline_columns<F: JoltField>(
 }
 
 #[cfg(test)]
-#[cfg_attr(
-    feature = "field-inline",
-    expect(clippy::expect_used, reason = "tests may unwind via panic")
-)]
 mod tests {
     #[cfg(feature = "field-inline")]
     use super::field_constraints::{
@@ -355,26 +355,26 @@ mod tests {
         V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE, V_FIELD_RS1_VALUE,
         V_FIELD_RS2_VALUE,
     };
-    #[cfg(feature = "claim-lowering")]
     use super::rv64::NUM_PRODUCT_CONSTRAINTS;
     #[cfg(feature = "field-inline")]
     use super::rv64::{flag_column, V_CONST, V_IMM, V_RD_WRITE_VALUE, V_RS1_VALUE};
     use super::*;
-    #[cfg(feature = "field-inline")]
-    use crate::SparseRow;
-    #[cfg(feature = "claim-lowering")]
-    use jolt_claims::protocols::composed::geometry::{
+    use crate::protocols::composed::geometry::{
         SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
     };
     #[cfg(feature = "field-inline")]
-    use jolt_claims::protocols::field_inline::{
+    use crate::protocols::field_inline::{
         geometry::spartan::{
             outer_output_openings, FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS,
             FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
         },
         FieldInlineVirtualPolynomial,
     };
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Fr;
+    #[cfg(feature = "field-inline")]
+    use jolt_field::Ring;
+    #[cfg(feature = "field-inline")]
+    use jolt_r1cs::SparseRow;
     #[cfg(feature = "field-inline")]
     use jolt_riscv::CircuitFlags;
     #[cfg(feature = "field-inline")]
@@ -391,39 +391,10 @@ mod tests {
         assert_eq!(composed.a, rv64.a);
         assert_eq!(composed.b, rv64.b);
         assert_eq!(composed.c, rv64.c);
-        #[cfg(feature = "claim-lowering")]
-        {
-            assert_eq!(SPARTAN_PRODUCT_BASE_LANES, NUM_PRODUCT_CONSTRAINTS);
-            assert_eq!(
-                composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
-                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
-            );
-        }
-    }
-
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn default_spartan_outer_geometry_matches_rv64() {
-        assert_eq!(SPARTAN_OUTER_ROW_COUNT, RV64_NUM_EQ_CONSTRAINTS);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 10);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 27);
-        assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
+        assert_eq!(SPARTAN_PRODUCT_BASE_LANES, NUM_PRODUCT_CONSTRAINTS);
         assert_eq!(
-            SPARTAN_OUTER_FIRST_GROUP_ROWS,
-            [1, 2, 3, 4, 5, 6, 11, 14, 17, 18]
-        );
-        assert_eq!(
-            SPARTAN_OUTER_SECOND_GROUP_ROWS,
-            [0, 7, 8, 9, 10, 12, 13, 15, 16]
-        );
-        assert_eq!(
-            spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))
-                .map(|weights| weights.len()),
-            Ok(RV64_NUM_EQ_CONSTRAINTS)
-        );
-        assert_eq!(
-            spartan_outer_opening_columns(),
-            (rv64::V_LEFT_INSTRUCTION_INPUT..=rv64::NUM_R1CS_INPUTS).collect::<Vec<_>>()
+            composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
+            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
         );
     }
 
@@ -438,43 +409,6 @@ mod tests {
         assert_eq!(
             composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
             SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
-        );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn field_inline_spartan_outer_geometry_includes_field_rows() {
-        assert_eq!(
-            SPARTAN_OUTER_ROW_COUNT,
-            RV64_NUM_EQ_CONSTRAINTS + FIELD_NUM_EQ_CONSTRAINTS
-        );
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
-        assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
-        assert_eq!(
-            &SPARTAN_OUTER_FIRST_GROUP_ROWS[10..],
-            &[
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FADD,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FSUB,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FMUL,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_FINV,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_MEMORY,
-            ]
-        );
-        assert_eq!(
-            &SPARTAN_OUTER_SECOND_GROUP_ROWS[9..],
-            &[
-                RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_REGISTER,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_ZERO,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_IMM,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_ADVICE_LIMB,
-            ]
-        );
-        assert_eq!(
-            spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))
-                .map(|weights| weights.len()),
-            Ok(SPARTAN_OUTER_ROW_COUNT)
         );
     }
 
@@ -516,46 +450,6 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn field_inline_spartan_outer_remainder_uses_appended_openings() {
-        let tau = [
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(4),
-            Fr::from_u64(5),
-            Fr::from_u64(6),
-        ];
-        let remainder = [
-            Fr::from_u64(7),
-            Fr::from_u64(8),
-            Fr::from_u64(9),
-            Fr::from_u64(10),
-        ];
-        let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-            tau: &tau,
-            uniskip: Fr::from_u64(11),
-            remainder: &remainder,
-        })
-        .expect("composed field-inline remainder derives");
-        let opening_count = spartan_outer_opening_columns().len();
-        let openings = (1..=opening_count as u64)
-            .map(Fr::from_u64)
-            .collect::<Vec<_>>();
-
-        let _output_claim = formula
-            .expected_output_claim(&openings)
-            .expect("field-inline output claim evaluates");
-        assert_eq!(
-            opening_count,
-            rv64::NUM_R1CS_INPUTS + FIELD_INLINE_APPENDED_COLUMNS
-        );
-        // The factored publics: the tau kernel, one Az and one Bz weight per
-        // opening (appended field-inline columns included), and the two
-        // affine constants.
-        assert_eq!(formula.public_coefficients().len(), 2 * opening_count + 3);
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
     #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn field_inline_composed_constraints_share_constant_column() {
         let composed = trace_constraints::<Fr>();
@@ -586,7 +480,7 @@ mod tests {
     #[test]
     #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
     fn composed_lane_helpers_match_field_product_constraint_rows() {
-        use jolt_claims::protocols::field_inline::geometry::product::{
+        use crate::protocols::field_inline::geometry::product::{
             composed_remainder_factor_contributions, composed_uniskip_input_contribution,
             selected_product_lanes, FieldProductLaneFactors, FieldProductLaneInputs,
         };

@@ -171,14 +171,12 @@ impl InlineExpansionBuilder {
         }
     }
 
-    /// Release every handle in a fixed-size inline-register array.
     pub fn release_many<const N: usize>(&mut self, registers: [InlineRegister; N]) {
         for register in registers {
             self.release(register);
         }
     }
 
-    /// Release every handle produced by an iterator.
     pub fn release_iter(&mut self, registers: impl IntoIterator<Item = InlineRegister>) {
         for register in registers {
             self.release(register);

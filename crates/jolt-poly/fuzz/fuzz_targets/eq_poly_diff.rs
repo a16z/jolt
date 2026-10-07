@@ -1,10 +1,5 @@
 #![no_main]
 
-//! Differential check of the three eq-polynomial evaluation paths: the
-//! materialized table (`EqPolynomial::evaluations`), the per-index formula
-//! (`eq_index_msb`), and the split tensor table (`TensorEqTable`) must agree
-//! on every hypercube index.
-
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::{eq_index_msb, EqPolynomial, TensorEqTable};
 use libfuzzer_sys::fuzz_target;
@@ -16,7 +11,7 @@ fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
     }
-    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1; // 1..=10
+    let num_vars = (data[0] as usize % MAX_NUM_VARS) + 1;
     if data.len() < 1 + num_vars * SCALAR_BYTES {
         return;
     }

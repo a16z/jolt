@@ -12,7 +12,7 @@ pub struct FormatJ {
 impl InstructionFormat for FormatJ {
     fn parse(word: u32) -> Self {
         FormatJ {
-            rd: ((word >> 7) & 0x1f) as u8, // [11:7]
+            rd: ((word >> 7) & 0x1f) as u8,
             imm: (
                 match word & 0x80000000 { // imm[31:20] = [31]
 				0x80000000 => 0xfff00000,

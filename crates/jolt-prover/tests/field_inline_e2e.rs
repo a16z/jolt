@@ -200,13 +200,3 @@ mod zk {
         });
     }
 }
-
-#[cfg(not(all(
-    feature = "prover-fixtures",
-    feature = "field-inline",
-    not(feature = "akita")
-)))]
-#[test]
-#[ignore = "enable --features prover-fixtures,field-inline (optionally +zk) to run the dory \
-            field-inline e2e; the packed suite is akita_field_inline_e2e.rs"]
-fn field_inline_e2e() {}

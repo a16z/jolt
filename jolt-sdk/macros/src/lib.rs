@@ -22,7 +22,6 @@ pub fn provable(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut token_stream = builder.build();
 
-    // Add wasm utilities and functions if the function is marked as wasm
     if builder.has_wasm_attr() {
         let wasm_token_stream: TokenStream = builder.make_wasm_function().into();
         token_stream.extend(wasm_token_stream);
@@ -157,7 +156,6 @@ impl MacroBuilder {
         let build_prover_fn_name = Ident::new(&format!("build_prover_{fn_name}"), fn_name.span());
         let prove_output_ty = self.get_prove_output_type();
 
-        // Include public, trusted_advice, and untrusted_advice arguments for the prover
         let ordered_func_args = self.get_all_func_args_in_order();
         let all_names: Vec<_> = ordered_func_args.iter().map(|(name, _)| name).collect();
         let all_types: Vec<_> = ordered_func_args.iter().map(|(_, ty)| ty).collect();
@@ -505,10 +503,8 @@ impl MacroBuilder {
                 #enable_field_inline
                 #set_mem_size
 
-                // Build the compute_advice version first
                 __jolt_program.build_with_features(target_dir, &["compute_advice"]);
 
-                // Build the normal version (without compute_advice)
                 __jolt_program.build_with_features(target_dir, &[]);
 
                 __jolt_program
@@ -628,7 +624,6 @@ impl MacroBuilder {
         let commit_fn_name =
             Ident::new(&format!("commit_trusted_advice_{fn_name}"), fn_name.span());
 
-        // If there are no trusted advice arguments, return None values
         if self.trusted_func_args.is_empty() {
             return quote! {
                 #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
@@ -912,9 +907,6 @@ impl MacroBuilder {
     }
 
     fn make_allocator(&self) -> TokenStream2 {
-        // The allocator is provided by jolt-sdk's boot modules:
-        // - std mode: guest_std_boot.rs uses linked_list_allocator
-        // - no-std mode: ZeroOS jolt-platform provides the global allocator
         quote! {}
     }
 
@@ -1063,7 +1055,6 @@ impl MacroBuilder {
                     let ident = pat_ident.ident.clone();
                     let arg_type = ty.clone();
 
-                    // Check if the type is wrapped in jolt::TrustedAdvice<> or jolt::UntrustedAdvice<>
                     if Self::is_trusted_advice_type(&arg_type) {
                         trusted_advice_args.push((ident, arg_type));
                     } else if Self::is_untrusted_advice_type(&arg_type) {
@@ -1202,7 +1193,6 @@ impl MacroBuilder {
 pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
 
-    // Extract function components
     let fn_name = &func.sig.ident;
     let fn_vis = &func.vis;
     let fn_inputs = &func.sig.inputs;
@@ -1210,10 +1200,8 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_body = &func.block;
     let fn_attrs = &func.attrs;
 
-    // Validate that no inputs are mutable
     for arg in fn_inputs {
         if let syn::FnArg::Typed(pat_type) = arg {
-            // Case 1: mut x: T
             if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
                 if pat_ident.mutability.is_some() {
                     panic!(
@@ -1222,7 +1210,6 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     );
                 }
             }
-            // Case 2: x: &mut T
             if let syn::Type::Reference(type_ref) = &*pat_type.ty {
                 if type_ref.mutability.is_some() {
                     panic!(
@@ -1239,14 +1226,11 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Validate return type is UntrustedAdvice<T>
     let inner_type = match fn_output {
         ReturnType::Type(_, ty) => {
-            // Check if type is UntrustedAdvice<T>
             if let Type::Path(type_path) = &**ty {
                 if let Some(segment) = type_path.path.segments.last() {
                     if segment.ident == "UntrustedAdvice" {
-                        // Extract T from UntrustedAdvice<T>
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                             if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
                                 inner.clone()
@@ -1274,28 +1258,20 @@ pub fn advice(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    // Generate the dual-mode function
     let expanded = quote! {
-        // Version with compute_advice: execute body and write to advice tape
         #[cfg(feature = "compute_advice")]
         #(#fn_attrs)*
         #fn_vis fn #fn_name(#fn_inputs) #fn_output {
-            // execute body
             let result: #inner_type = #fn_body;
-            // Serialize and write to advice tape
             <#inner_type as jolt::AdviceTapeIO>::write_to_advice_tape(&result);
-            // return result
             jolt::UntrustedAdvice::new(result)
         }
 
-        // Version without compute_advice: read from advice tape
         #[cfg(not(feature = "compute_advice"))]
         #[allow(unused_variables)]
         #(#fn_attrs)*
         #fn_vis fn #fn_name(#fn_inputs) #fn_output {
-            // get result from advice tape
             let result: #inner_type = <#inner_type as jolt::AdviceTapeIO>::new_from_advice_tape();
-            // wrap in UntrustedAdvice and return
             jolt::UntrustedAdvice::new(result)
         }
     };

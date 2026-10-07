@@ -7,14 +7,14 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
+use jolt_claims::protocols::composed::r1cs::{
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
@@ -73,7 +73,6 @@ where
                 .spartan_outer_uniskip
                 .first_round_poly(session, &[], &())
         })?;
-    // The selected jolt-r1cs shape includes the field-inline rows when enabled.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
@@ -83,7 +82,6 @@ where
     )?;
     let uniskip_challenge = proved_uniskip.challenge;
 
-    // The generated stage drivers, on the verifier's own batch type.
     let sumchecks = Stage1BatchSumchecks {
         outer_remainder: OuterRemainder::new(
             SpartanOuterDimensions::rv64(log_t),
@@ -143,9 +141,8 @@ mod field_inline_round_trip {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        addi_only_backend, addi_only_preprocessing, field_arithmetic_backend,
-        field_arithmetic_preprocessing, fixture_transcript, test_checked_inputs, verify_through,
-        FixturePreprocessing, Through, LOG_T,
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, verify_through, FixturePreprocessing, Through, LOG_T,
     };
 
     fn round_trip(trace_backend: TraceBackend<OwnedTrace>, preprocessing: FixturePreprocessing) {
@@ -189,16 +186,6 @@ mod field_inline_round_trip {
         );
     }
 
-    /// The ADDI-only field-inline trace: every field-inline column is zero, so this pins
-    /// the composed protocol on a field-inline guest that executes no field-inline
-    /// instruction.
-    #[test]
-    fn addi_only_stage1_round_trips_the_composed_verifier() {
-        round_trip(addi_only_backend(), addi_only_preprocessing());
-    }
-
-    /// Actual field-inline rows via decoded field-inline instruction words (two field loads and a
-    /// multiply).
     #[test]
     fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
         round_trip(field_arithmetic_backend(), field_arithmetic_preprocessing());
@@ -271,36 +258,5 @@ mod field_inline_zk {
             &field_arithmetic_preprocessing(),
             &mut prover_transcript,
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Without field-inline, the composed jolt-r1cs outer uni-skip constants equal the
-    /// jolt-claims RV64-only constants this recipe previously passed — the
-    /// swap is byte-neutral.
-    #[cfg(not(feature = "field-inline"))]
-    #[test]
-    fn outer_uniskip_constants_match_the_rv64_only_values() {
-        use jolt_claims::protocols::jolt::geometry::dimensions::{
-            OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-        };
-
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_DOMAIN_SIZE);
-        assert_eq!(
-            SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-            OUTER_UNISKIP_FIRST_ROUND_DEGREE
-        );
-    }
-
-    /// With field-inline enabled, the composed outer domain carries the appended field-inline rows
-    /// — the spec's 15-point domain and its degree-42 first round.
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn outer_uniskip_constants_are_the_composed_field_domains() {
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
     }
 }

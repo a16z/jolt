@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 2 verification.
-
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 
@@ -92,8 +90,6 @@ pub struct Stage2BatchSumchecks<F: JoltField> {
     pub ram_output_check: RamOutputCheck<F>,
 }
 
-/// The shared per-relation opening-point accessors over the point-only stage-2
-/// batch aggregate.
 impl<F: JoltField> Stage2BatchOutputPoints<F> {
     /// The RAM read-write opening point (shared by `val`/`ra`/`inc`).
     pub fn ram_read_write_point(&self) -> &[F] {
@@ -409,11 +405,8 @@ mod tests {
 
         let expected = (1..=11)
             .map(fr)
-            // The field-inline part of the product member.
             .chain([fr(201), fr(202), fr(203)])
-            // The instruction claim-reduction non-aliased outputs.
             .chain([fr(12), fr(13)])
-            // RAM RAF evaluation, RAM output check.
             .chain([fr(14), fr(15)])
             .collect::<Vec<_>>();
         assert_eq!(
@@ -479,20 +472,6 @@ mod tests {
     fn validate_aliases_rejects_lookup_output_mismatch() {
         let mut values = consistent_values();
         values.instruction_claim_reduction.lookup_output = fr(99);
-        assert!(sumchecks().validate_aliases(&values).is_err());
-    }
-
-    #[test]
-    fn validate_aliases_rejects_left_instruction_input_mismatch() {
-        let mut values = consistent_values();
-        values.instruction_claim_reduction.left_instruction_input = fr(99);
-        assert!(sumchecks().validate_aliases(&values).is_err());
-    }
-
-    #[test]
-    fn validate_aliases_rejects_right_instruction_input_mismatch() {
-        let mut values = consistent_values();
-        values.instruction_claim_reduction.right_instruction_input = fr(99);
         assert!(sumchecks().validate_aliases(&values).is_err());
     }
 

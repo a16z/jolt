@@ -84,11 +84,6 @@ where
         JoltRelationId::BytecodeReadRaf,
     )?;
 
-    // The batch, through the verifier's own promoted constructor: the relation
-    // carries the upstream cycle/register points and the entry index (full
-    // geometry at construction) — the kernel's read path. Committed-program
-    // mode stages the five raw bound `Val_s` values as extra wire claims; the
-    // sumcheck itself is unchanged.
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
     let entry_bytecode_index = preprocessing
         .verifier
@@ -105,7 +100,6 @@ where
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
     })?;
-    // The field-register access terms use their own upstream opening points.
     #[cfg(feature = "field-inline")]
     let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_geometry(
         sumchecks,

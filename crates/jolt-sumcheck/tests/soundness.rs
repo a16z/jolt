@@ -1,5 +1,4 @@
 //! Soundness tests: adversarial proofs against sumcheck verification.
-//!
 //! A proof is the NARG byte string, so every attack is a byte-level edit of
 //! an honest proof or a mismatched public statement.
 

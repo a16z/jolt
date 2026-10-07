@@ -36,7 +36,6 @@ impl ProveRounds<F> for LinearRound {
 }
 
 fn main() -> Result<(), SumcheckError<F>> {
-    // g(X) = 3 + 2X, so g(0) + g(1) = 8.
     let claim = SumcheckClaim::new(1, 1, F::from_u64(8));
 
     let mut prover_transcript = ProverTranscript::<Keccak>::new(&PROTOCOL, SESSION);

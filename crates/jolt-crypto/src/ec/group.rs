@@ -45,19 +45,15 @@ pub trait JoltGroup:
     + CanonicalBytes
     + CanonicalDecode
 {
-    /// Group identity element.
     #[must_use]
     fn identity() -> Self;
 
-    /// Returns `true` if this element is the identity.
     #[must_use]
     fn is_identity(&self) -> bool;
 
-    /// Returns `self + self`.
     #[must_use]
     fn double(&self) -> Self;
 
-    /// Scalar multiplication: `scalar * self`.
     #[must_use]
     fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self;
 
