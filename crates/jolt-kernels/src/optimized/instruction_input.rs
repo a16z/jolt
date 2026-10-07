@@ -63,6 +63,10 @@ pub struct InstructionInputRow {
 #[cfg(all(feature = "metal", target_os = "macos"))]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct PreparedInstructionInputRows {
+    #[cfg_attr(
+        feature = "allocative",
+        allocative(visit = crate::backend::visit_heap_free_elements)
+    )]
     rows: Vec<InstructionInputRow>,
 }
 

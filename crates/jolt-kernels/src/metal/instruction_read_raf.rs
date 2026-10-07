@@ -875,12 +875,17 @@ fn committed_hamming_log_k_chunk(
         .and_then(|shape| shape.log_rows.checked_sub(log_t))
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct MetalInstructionReadRafKernel {
     cpu: OptimizedInstructionReadRafKernel<AkitaField>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     context: Arc<SolinasMetal>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     config: InstructionReadRafMetalConfig,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     address_sequence: Option<Box<AddressPhaseSequence>>,
     resident_lookup_plane: Option<ResidentLookupIndexPlane>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     sequence: Option<Product5Sequence>,
     /// The cycle challenge bound on the fly by the second resident cycle
     /// round, until the handoff binds the next one into product5 tables.

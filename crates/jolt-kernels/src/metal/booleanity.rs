@@ -322,8 +322,10 @@ impl PrepareKernel<AkitaField, Booleanity<AkitaField>> for MetalBackend {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct MetalBooleanityKernel {
     cpu: OptimizedBooleanityCycleKernel<AkitaField>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     sequence: Option<BooleanitySequence>,
     host_tail: Vec<AkitaField>,
     cutoff_elements: usize,

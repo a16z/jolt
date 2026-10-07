@@ -20,10 +20,14 @@ use super::{
 
 /// The Shift view of the resident Stage-1 rows: unexpanded PC and the
 /// virtual/first/no-op flags from the compact row, PC from the raw row.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone)]
 pub struct SpartanShiftResidentRows {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     compact: Buffer,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     raw: Buffer,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     metadata: ResidentSpartanShiftMetadata,
 }
 

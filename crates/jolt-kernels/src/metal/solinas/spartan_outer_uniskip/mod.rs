@@ -127,6 +127,7 @@ pub(crate) struct SpartanStage1RowsKey {
 /// Parked beside Stage-1 rows from
 /// [`SolinasMetal::allocate_spartan_outer_uniskip_rows`]: Stage 1's uni-skip
 /// writes them while it dispatches, and nothing reads them before.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct UnwrittenStage1Rows;
 
 #[derive(Clone)]

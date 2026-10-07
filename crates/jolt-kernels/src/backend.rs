@@ -16,6 +16,8 @@ use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
+#[cfg(all(feature = "allocative", feature = "metal"))]
+use jolt_poly::GruenSplitEqPolynomial;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
 use jolt_verifier::stages::relations::{
@@ -240,6 +242,29 @@ fn visit_carry<T: Any + Allocative>(value: &(dyn Any + Send), visitor: &mut Visi
     if let Some(value) = value.downcast_ref::<T>() {
         visitor.visit_field(Key::new(std::any::type_name::<T>()), value);
     }
+}
+
+/// Bytes a `Vec` reserved, by `capacity()`, for the Metal kernels' hand-sized
+/// visits.
+#[cfg(all(feature = "allocative", feature = "metal"))]
+pub(crate) fn vec_heap_bytes<T>(values: &Vec<T>) -> usize {
+    values.capacity() * size_of::<T>()
+}
+
+#[cfg(all(feature = "allocative", feature = "metal"))]
+pub(crate) fn poly_heap_bytes<F: JoltField>(poly: &Polynomial<F>) -> usize {
+    allocative::size_of_unique_allocated_data(poly)
+}
+
+#[cfg(all(feature = "allocative", feature = "metal"))]
+pub(crate) fn gruen_heap_bytes<F: JoltField>(gruen: &GruenSplitEqPolynomial<F>) -> usize {
+    allocative::size_of_unique_allocated_data(gruen)
+}
+
+/// Visits a raw allocation of `bytes` that its owner frees by hand.
+#[cfg(all(feature = "allocative", feature = "metal"))]
+pub(crate) fn visit_raw_allocation(bytes: &usize, visitor: &mut Visitor<'_>) {
+    visitor.visit_simple(Key::new("allocation"), *bytes);
 }
 
 /// Bytes an element table reserved, for element types that own no heap but

@@ -329,7 +329,7 @@ impl RegistersReadWriteStage1Source {
 impl allocative::Allocative for RegistersReadWriteStage1Source {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
-        if let Some(mut shared) = visitor.enter_shared(
+        if let Some(shared) = visitor.enter_shared(
             allocative::Key::new("owner"),
             std::mem::size_of::<*const RegistersReadWriteStage1SourceInner>(),
             Arc::as_ptr(&self.0).cast(),

@@ -321,6 +321,7 @@ pub(crate) struct RamReadWriteRecordCollectionChunkWriter<'a> {
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteRecordChunks {
     rows: usize,
     chunks: Vec<AlignedRamReadWriteRecordArena>,
@@ -332,6 +333,7 @@ pub(crate) struct RamReadWriteRecordChunks {
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteRecordWorkerCensus {
     address_counts: Box<[u32]>,
     tile_counts: Box<[u32]>,
@@ -348,10 +350,16 @@ const RAM_READ_WRITE_RECORD_ALIGNMENT: usize = 16 * 1024;
 
 /// Page-aligned record and rank planes that can back borrowed Metal buffers.
 #[cfg(all(feature = "metal", target_os = "macos"))]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct AlignedRamReadWriteRecordArena {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     ptr: core::ptr::NonNull<u8>,
     records: usize,
     record_allocation_bytes: usize,
+    #[cfg_attr(
+        feature = "allocative",
+        allocative(visit = crate::backend::visit_raw_allocation)
+    )]
     total_allocation_bytes: usize,
 }
 

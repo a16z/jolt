@@ -587,6 +587,7 @@ impl<F: JoltField> LazyFusedInc<F> {
 }
 
 /// Inner-loop algebra used by the stage-6b cycle kernel.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BytecodeCycleAlgebra {
     Generic,

@@ -505,8 +505,10 @@ impl PrepareKernel<AkitaField, BytecodeReadRafCycle<AkitaField>> for MetalBacken
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct MetalBytecodeReadRafKernel {
     cpu: CycleKernel<AkitaField>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     sequence: Option<BytecodeCycleRowSequence>,
     host_tail: Option<[Vec<AkitaField>; 5]>,
     cutoff_elements: usize,

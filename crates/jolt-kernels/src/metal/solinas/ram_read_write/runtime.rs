@@ -204,12 +204,18 @@ struct RamReadWriteBuffers {
     e_out: Buffer,
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone)]
 pub(crate) struct RamRafSegmentedAddressPlane {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     segments: Buffer,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     blocks: Buffer,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     bounded_segments: Buffer,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     hot_segments: Buffer,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     hot_message_chunks: Buffer,
     rows: usize,
     addresses: usize,

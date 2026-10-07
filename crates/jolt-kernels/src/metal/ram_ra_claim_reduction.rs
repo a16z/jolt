@@ -154,6 +154,7 @@ impl SumcheckKernel<AkitaField> for HostSparseRamRaClaimKernel {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum MetalDensePhase {
     Prefix {
         p: [Vec<AkitaField>; TERMS],
@@ -169,7 +170,9 @@ enum MetalDensePhase {
     },
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct MetalDenseRamRaClaimKernel {
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     sequence: Option<RamRaClaimReductionSequence>,
     phase: MetalDensePhase,
     gamma_powers: [AkitaField; TERMS],
@@ -177,6 +180,7 @@ struct MetalDenseRamRaClaimKernel {
     rounds_bound: usize,
     next_round: usize,
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     test_counters: Arc<super::backend::MetalTestCounters>,
 }
 
