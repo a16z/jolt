@@ -21,16 +21,11 @@ use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use super::geometry::{BalancedIncChunking, LatticeGeometryError};
 
-/// Fixed selector capacity of the packed trace polynomial at K=16.
-pub const ONE_HOT_TRACE_K16_CAPACITY: usize = 64;
-/// Fixed selector capacity of the packed trace polynomial at K=256.
-pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
-
 pub use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
 /// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
 /// `Ra` families, balanced increment chunks, and signed carry as semantic
-/// columns of one packed polynomial. Instruction, bytecode, and increment
+/// columns of one native commitment batch. Instruction, bytecode, and increment
 /// columns omit row zero; RAM commits every row.
 /// Advice word columns are their own commitment objects
 /// ([`advice_packing_plan`]).
@@ -78,7 +73,11 @@ pub fn one_hot_trace_columns(
     shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
     let chunking = BalancedIncChunking::new(shape.log_k_chunk)?;
-    let _capacity = one_hot_trace_column_capacity(shape.log_k_chunk)?;
+    if !matches!(shape.log_k_chunk, 4 | 8) {
+        return Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth {
+            chunk_width: shape.log_k_chunk,
+        });
+    }
     let instruction_columns = 2 * XLEN / shape.log_k_chunk;
     if shape.ra_layout.instruction() != instruction_columns {
         return Err(
@@ -99,17 +98,7 @@ pub fn one_hot_trace_columns(
     Ok(polynomials)
 }
 
-/// Number of selector slots in the packed `OneHotTrace`.
-pub const fn one_hot_trace_column_capacity(
-    log_k_chunk: usize,
-) -> Result<usize, LatticeGeometryError> {
-    match log_k_chunk {
-        4 => Ok(ONE_HOT_TRACE_K16_CAPACITY),
-        8 => Ok(ONE_HOT_TRACE_K256_CAPACITY),
-        chunk_width => Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth { chunk_width }),
-    }
-}
-
+/// Canonical committed-program packing plan.
 pub fn precommitted_packing_plan(
     shape: &PrecommittedPackingShape,
 ) -> Result<PrecommittedPackingPlan, LatticeGeometryError> {

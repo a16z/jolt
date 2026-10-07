@@ -1,7 +1,7 @@
 //! Verifier-selected protocol configuration.
 //!
 //! Every protocol axis is fixed at compile time — the `zk` feature selects
-//! BlindFold, the `akita` feature selects packed commitments and little-endian
+//! BlindFold, the `akita` feature selects Akita commitments and little-endian
 //! scalar challenges, the `field-inline` feature enables the native
 //! field-register extension — so one compiled verifier runs exactly one
 //! protocol. A proof self-describes its axes and [`validate_proof_config`]
@@ -20,7 +20,7 @@ use crate::VerifierError;
 #[cfg(all(feature = "zk", feature = "akita"))]
 compile_error!(
     "the `zk` and `akita` features are mutually exclusive: no zk protocol exists over the \
-     packed commitment axis (a lattice-friendly hiding commitment is a future workstream)"
+     Akita commitment axis (a lattice-friendly hiding commitment is a future workstream)"
 );
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,9 +36,9 @@ pub enum CommitmentConfig {
     /// Per-polynomial commitments, RLC batch opening (requires additive
     /// homomorphism).
     Homomorphic,
-    /// Packed one-hot trace and dense advice commitments with heterogeneous
-    /// Akita opening and verification.
-    Packed,
+    /// Native one-hot trace groups and dense auxiliary commitments with
+    /// heterogeneous Akita opening and verification.
+    Akita,
 }
 
 /// Byte order used to decode scalar Fiat-Shamir challenges.
@@ -88,7 +88,7 @@ pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::BlindFold;
 pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::Transparent;
 
 #[cfg(feature = "akita")]
-pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Packed;
+pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Akita;
 
 #[cfg(not(feature = "akita"))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homomorphic;
@@ -148,6 +148,19 @@ mod tests {
             protocol
         );
         assert!(postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0]).is_err());
+        let akita_protocol = JoltProtocolConfig {
+            commitment: CommitmentConfig::Akita,
+            scalar_challenge_endianness: ScalarChallengeEndianness::Little,
+            ..protocol
+        };
+        assert_eq!(
+            postcard::to_stdvec(&akita_protocol).unwrap(),
+            [0, 1, 1, 0, 4, 0]
+        );
+        assert_eq!(
+            postcard::from_bytes::<JoltProtocolConfig>(&[0, 1, 1, 0, 4, 0]).unwrap(),
+            akita_protocol
+        );
     }
 
     /// A proof declaring a different field-register file size rejects even when the enabled

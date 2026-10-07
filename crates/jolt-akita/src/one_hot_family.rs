@@ -4,7 +4,7 @@ use akita_types::AkitaVerifierSetup;
 
 use crate::adapters::AkitaScheduleArtifacts;
 use crate::configs::{AkitaChunkProfile, JoltOneHotK16};
-use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
+use crate::schedules::emit::{K16_SCALAR_NUM_VARS, K256_SCALAR_NUM_VARS};
 
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
@@ -70,9 +70,9 @@ macro_rules! define_family_types {
 
             pub(crate) fn num_vars_range(self, num_polys: usize) -> (usize, usize) {
                 let (base_min, max) = if self.k() == AKITA_ONE_HOT_K16 {
-                    K16_NUM_VARS
+                    K16_SCALAR_NUM_VARS
                 } else {
-                    K256_NUM_VARS
+                    K256_SCALAR_NUM_VARS
                 };
                 // Two-polynomial rows provide more live blocks for the two
                 // chunked levels. These floors are admitted by the pinned planner.

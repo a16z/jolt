@@ -164,7 +164,7 @@ impl AkitaScheduleArtifacts {
     /// four required `.aks` files and any present profile companions, so hosts
     /// still load once at preprocessing and pass
     /// the bundle to each setup. Callers that must compare setup provenance
-    /// keep their own handle rather than calling this twice — the packed
+    /// keep their own handle rather than calling this twice — the Akita
     /// prover's advice guards test bundle identity with `Arc::ptr_eq`.
     ///
     /// Panics rather than returning: the packaged `schedules/` directory is
@@ -338,7 +338,7 @@ pub fn host_parallel_verifier_threads() -> usize {
 /// (the bridge splitter re-splits whenever a job migrates to a stealing
 /// worker, and the fold kernels carry large frames), which overflows rayon's
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
-/// the packed prover at trace-scale shapes. Every backend setup/commit/
+/// the Akita prover at trace-scale shapes. Every backend setup/commit/
 /// prove/verify entry funnels through this pool. Nested calls reuse it.
 pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     #[cfg(feature = "profiling")]
@@ -412,7 +412,7 @@ impl AkitaSetupParams {
     }
 
     /// Setup parameters for a commitment object that only ever commits and
-    /// opens through the one-hot flavor (the packed `OneHotTrace` group): skips
+    /// opens through the one-hot flavor (the native `OneHotTrace` group): skips
     /// building the dense-flavor backend setup of the same shape.
     pub fn one_hot_only(
         max_num_vars: usize,
@@ -1070,7 +1070,7 @@ pub struct AkitaProverHint {
 pub(crate) enum AkitaHintSource {
     Dense { poly_count: usize },
     OneHot { poly_count: usize, one_hot_k: usize },
-    TraceOneHot { one_hot_k: usize },
+    TraceOneHot { poly_count: usize, one_hot_k: usize },
 }
 
 impl Default for AkitaHintSource {
@@ -1097,8 +1097,9 @@ impl AkitaHintSource {
 
     pub(crate) const fn len(self) -> usize {
         match self {
-            Self::Dense { poly_count } | Self::OneHot { poly_count, .. } => poly_count,
-            Self::TraceOneHot { .. } => 1,
+            Self::Dense { poly_count }
+            | Self::OneHot { poly_count, .. }
+            | Self::TraceOneHot { poly_count, .. } => poly_count,
         }
     }
 }

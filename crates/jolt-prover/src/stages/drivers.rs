@@ -109,7 +109,7 @@ mod stage6b {
     };
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
-    // The packed batch has no inc member — the fused-inc read-raf stages
+    // The Akita batch has no inc member — the fused-inc read-raf stages
     // discharge the reduced inc claims instead.
     #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;

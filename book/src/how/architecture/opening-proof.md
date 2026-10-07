@@ -4,7 +4,7 @@ The final stage ([stage 8](./architecture.md)) of Jolt is the batched opening pr
 Over the course of the preceding stages, we obtain polynomial evaluation claims that must be proven using the [polynomial commitment scheme](../appendix/pcs.md)'s opening proof.
 Instead of proving these openings "just-in-time", we **accumulate** them and defer the opening proof to the last stage (see `ProverOpeningAccumulator` and `VerifierOpeningAccumulator` in the legacy prover for this accumulation).
 By waiting until the end, we can [batch-prove](../optimizations/batched-openings.md) all of the openings, instead of proving them individually.
-Jolt supports two commitment backends: the elliptic-curve-based [Dory](../dory.md) backend combines commitments homomorphically, while the lattice-based [Akita](../akita.md) backend uses prefix packing and a native grouped opening proof.
+Jolt supports two commitment backends: the elliptic-curve-based [Dory](../dory.md) backend combines commitments homomorphically, while the lattice-based [Akita](../akita.md) backend uses native column batching and a grouped opening proof.
 Both amortize the cost of proving the accumulated evaluation claims in Stage 8.
 
 ## Claim reduction sumchecks
@@ -14,7 +14,7 @@ Throughout the earlier stages of Jolt, various components generate multiple poly
 These claim reduction sumchecks serve two purposes:
 
 1. Reduce the number of claims that need to be virtualized by a subsequent sumcheck. E.g. if the same virtual polynomial $P$ is opened at two different points $r_1$ and $r_2$, a claim reduction can be applied to avoid running two instances of the sumcheck that virtualized $P$. 
-2. Reduce the number of claims that need to be proven via PCS opening proof. Dory's homomorphic batching and Akita's prefix packing both use claims at a common point. Akita's independently committed objects can retain their own opening points in the final grouped proof.
+2. Reduce the number of claims that need to be proven via PCS opening proof. Dory's homomorphic batching and Akita's native trace batching both use claims at a common point. Akita's independently committed objects can retain their own opening points in the final grouped proof.
 
 The claim-reduction formulas live in `crates/jolt-claims/src/protocols/jolt/relations/claim_reductions/`, with prover kernels in `crates/jolt-kernels/src/optimized/`. They include:
 
@@ -39,11 +39,11 @@ A claim reduction sumcheck takes multiple polynomial evaluation claims, potentia
 
 ## Akita grouped opening
 
-Akita commits the trace as one physical polynomial, `OneHotTrace`, with a fixed-capacity prefix selecting among its logical one-hot columns. The committed variable order is `(slot || cycle || address)`. After the preceding stages produce column evaluations at a common `(cycle || address)` point, Stage 8 binds those evaluations and their layout to the transcript, samples the slot selector, and reduces them to one evaluation of `OneHotTrace`. This [prefix-packing reduction](../optimizations/batched-openings.md#prefix-packing-and-native-grouped-openings-akita) does not require a homomorphic combination of commitments.
+Akita commits the trace as one native `OneHotTrace` group containing the actual one-hot columns. Each column has `log_T + log_K` variables in `(cycle || address)` order. Stage 8 assembles exactly one evaluation per canonical column at the common point; it adds no slot variables and performs no selector reduction. The [native grouped opening](../optimizations/batched-openings.md#native-grouped-openings-akita) proves the ordered evaluations without combining commitments homomorphically.
 
 Advice and committed-program data are independent dense commitment objects: optional untrusted and trusted advice, one `BytecodeChunk(i)` per committed bytecode chunk, and a `ProgramImageInit` object. Stage 8 reduces the claims for each object separately, then opens all present objects together with `OneHotTrace` in one native Akita proof. Each group retains its own shape and opening point. The canonical order is untrusted advice, trusted advice, bytecode chunks, program image, and finally `OneHotTrace`, omitting absent objects. Group roles, commitments, points, and evaluations are bound to the transcript before the backend proof.
 
-The modular prover implements this in `crates/jolt-prover/src/akita/stage8.rs`, with the verifier counterpart in `crates/jolt-verifier/src/stages/stage8/packed.rs`. `AkitaNativeBatching` in `crates/jolt-akita/src/native_batching.rs` validates the groups and invokes the native backend opening. The Dory matrix embeddings described below apply only to the Dory backend.
+The modular prover implements this in `crates/jolt-prover/src/akita/stage8.rs`, with the verifier counterpart in `crates/jolt-verifier/src/stages/stage8/akita.rs`. `AkitaNativeBatching` in `crates/jolt-akita/src/native_batching.rs` validates the groups and invokes the native backend opening. The Dory matrix embeddings described below apply only to the Dory backend.
 
 ## Final reduction with Dory
 

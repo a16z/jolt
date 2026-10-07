@@ -132,11 +132,11 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
-    /// Packed path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
+    /// Akita path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
     /// weight of a Booleanity leg (`specs/digit-zero-virtualization.md`).
     EqBooleanityAtDigitZero,
     EqVirtualization(usize),
-    /// Packed path: `eq(r_virtualization_address_i, 0)` — the digit-zero
+    /// Akita path: `eq(r_virtualization_address_i, 0)` — the digit-zero
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
     BalancedIncValueAtAddress,
@@ -337,7 +337,7 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed polynomials (slots of the packed witness); base
+    // Lattice-mode committed polynomials (columns of the native trace group); base
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,

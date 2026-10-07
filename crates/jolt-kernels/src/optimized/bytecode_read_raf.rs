@@ -9,7 +9,7 @@
 //!   `Σ_{j_hi} E_hi_s[j_hi] · (Σ_{j_lo: pc=k} E_lo_s[j_lo])` — the inner sums
 //!   are additions only and the base stages share one trace walk, so the eq
 //!   tables cost `O(√T)` each instead of `O(T)` and the `O(T)` walk pays one
-//!   PC lookup per cycle for all stages. In the packed protocol, four more
+//!   PC lookup per cycle for all stages. In the Akita protocol, four more
 //!   pushforwards use the same walk with the fused-increment row weight
 //!   (legacy `BytecodeReadRafAddressSumcheckProver::initialize`).
 //! - **Sparse one-hot RA** (cycle phase): the committed `BytecodeRa(i)`

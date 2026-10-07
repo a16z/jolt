@@ -86,7 +86,7 @@ pub struct Stage6bSumchecks<F: JoltField> {
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
-    /// Absent on the packed path: the inc claims are discharged inside the
+    /// Absent on the Akita path: the inc claims are discharged inside the
     /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
@@ -144,7 +144,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
         &self.field_registers_inc_claim_reduction.rd_inc
     }
 
-    /// The packed fused-inc opening point: the read-raf cycle suffix (the
+    /// The Akita fused-inc opening point: the read-raf cycle suffix (the
     /// stage-6b cycle point).
     #[cfg(feature = "akita")]
     pub fn fused_inc_opening_point(&self) -> &[F] {
@@ -213,7 +213,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     /// is the derived, layout-independent claim count; the ZK path subtracts its
     /// runtime bytecode/booleanity point-alias dedup from it to size the committed
     /// output claims. ZK-only, hence base-only (no zk protocol exists over the
-    /// packed axis).
+    /// Akita axis).
     #[cfg(not(feature = "akita"))]
     #[expect(
         clippy::arithmetic_side_effects,
@@ -280,7 +280,7 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
         }
     }
 
-    /// The packed-shape twin of [`Self::new`]: the lattice batch has no increment or advice
+    /// The Akita-shape twin of [`Self::new`]: the lattice batch has no increment or advice
     /// members, and the field-register increment-reduction slot again defaults to the inert
     /// all-zero claim.
     #[cfg(feature = "akita")]

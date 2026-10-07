@@ -110,10 +110,10 @@ fn validate_trace_batch_statement(
     validate_grouped_claim("main-trace", main)?;
     if main.commitment.backend_flavor != AkitaBackendFlavor::OneHot
         || main.commitment.one_hot_k != setup.one_hot_k
-        || main.commitment.poly_count != 1
+        || main.commitment.poly_count != setup.max_num_polys_per_commitment_group
     {
         return Err(invalid_batch(
-            "Akita final trace group must be one setup-matched one-hot polynomial",
+            "Akita final trace group must be a setup-matched one-hot batch",
         ));
     }
     let supported_grouped_config =
@@ -160,7 +160,7 @@ where
     T: Transcript<Challenge = AkitaField>,
 {
     append_verifier_setup(transcript, setup, AkitaBackendFlavor::OneHot)?;
-    transcript.append(&Label(b"akita_precommit_batch_v3"));
+    transcript.append(&Label(b"akita_precommit_batch_v4"));
     transcript.append_bytes(&serialize_akita(&selection)?);
     let group_count = auxiliary_groups
         .len()
@@ -194,7 +194,7 @@ where
     }
     Ok(bridged_akita_session(
         transcript,
-        b"jolt-akita/precommitted-group-batch/v3",
+        b"jolt-akita/precommitted-group-batch/v4",
     ))
 }
 
@@ -288,10 +288,10 @@ impl AkitaNativeBatching {
         }
         if !matches!(
             main_hint.source,
-            AkitaHintSource::TraceOneHot { .. } | AkitaHintSource::OneHot { poly_count: 1, .. }
+            AkitaHintSource::TraceOneHot { .. } | AkitaHintSource::OneHot { .. }
         ) {
             return Err(invalid_batch(
-                "Akita main-trace hint must retain one one-hot source",
+                "Akita main-trace hint must retain the one-hot batch",
             ));
         }
         let (main_backend_commitment, main_backend_hint) = main_hint

@@ -99,7 +99,7 @@ The proof system is split into focused crates under `crates/`. Top-level crates 
 
 Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shout`, pinned in the root `Cargo.toml`.
 
-**jolt-prover** — Prover orchestration for the staged Jolt protocol; Dory is the default PCS, `akita` selects the packed lattice path, and `zk` enables BlindFold.
+**jolt-prover** — Prover orchestration for the staged Jolt protocol; Dory is the default PCS, `akita` selects the native lattice batching path, and `zk` enables BlindFold.
 
 **jolt-verifier / jolt-claims** — Verifier staging and the symbolic protocol relations shared with the prover.
 
@@ -117,7 +117,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 **common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
 
-The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `akita` selects the packed lattice protocol and is mutually exclusive with `zk`.
+The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `akita` selects the native lattice batching protocol and is mutually exclusive with `zk`.
 
 ### Key Type Parameters
 
@@ -134,7 +134,7 @@ T: Transcript<Challenge = PCS::Field>
 
 1. **Preprocess**: `jolt-program` expands bytecode and builds the program/RAM view; the selected PCS builds prover and verifier preprocessing.
 2. **Trace and witness**: `jolt-host`/`tracer` execute the guest; `jolt-witness` exposes trace-backed committed and virtual polynomials.
-3. **Commit**: stage 0 commits the trace objects. Dory streams individual polynomials; Akita packs the one-hot trace and auxiliary objects.
+3. **Commit**: stage 0 commits the trace objects. Dory streams individual polynomials; Akita commits the one-hot columns as one native group and auxiliary objects separately.
 4. **Reduce**: `jolt-prover/src/stages/` proves stages 1–7 from the symbolic relations in `jolt-claims`.
 5. **Open**: stage 8 reduces the remaining claims and dispatches the joint PCS opening.
 6. **BlindFold**: ZK builds prove the committed sumcheck transcript with `jolt-blindfold`.

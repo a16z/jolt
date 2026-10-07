@@ -432,7 +432,7 @@ where
                 JoltCommittedPolynomial::BalancedIncDigit(_)
                 | JoltCommittedPolynomial::BalancedIncCarry => {
                     // Lattice-mode polynomials open through the fixed-prefix
-                    // path in `stage8::packed`, never the homomorphic RLC batch.
+                    // path in `stage8::akita`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
                         reason: format!(
                             "polynomial {polynomial:?} is not part of the stage 8 prover order"
@@ -456,7 +456,7 @@ where
             JoltCommittedPolynomial::BalancedIncDigit(_)
             | JoltCommittedPolynomial::BalancedIncCarry => {
                 return Err(VerifierError::FinalOpeningBatchFailed {
-                    reason: "packed increments have no homomorphic embedding".to_string(),
+                    reason: "Akita increments have no homomorphic embedding".to_string(),
                 });
             }
         };
@@ -684,7 +684,7 @@ where
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
-    super::packed::verify(
+    super::akita::verify(
         formula_dimensions,
         proof.one_hot_config,
         preprocessing,
