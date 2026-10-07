@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use akita_config::{policy_of, CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_params::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, ChunkedWitnessCfg,
-    FoldSchedule, GroupOpenPhaseParams, MultiChunkProfileId, PolynomialGroupLayout,
+    FoldSchedule, FoldSuccessor, GroupOpenPhaseParams, MultiChunkProfileId, PolynomialGroupLayout,
     PrecommittedGroupAdmissionPolicy, ScheduleLookupKey,
 };
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
@@ -274,17 +274,31 @@ fn multi_chunk_catalogs_cover_every_supported_profile() {
                     .expect("reachable multi-chunk shape must resolve")
                     .schedule();
                 assert_eq!(schedule.root.params.witness_chunk, chunk_cfg);
+                let first_fold = schedule
+                    .recursive_folds
+                    .first()
+                    .expect("multi-chunk schedule must recursively fold");
+                assert_eq!(first_fold.params.witness_chunk, chunk_cfg);
+                assert!(schedule.root.params.witness_chunk_ends.is_empty());
                 assert_eq!(
-                    schedule
-                        .recursive_folds
-                        .first()
-                        .expect("multi-chunk schedule must recursively fold")
-                        .params
-                        .witness_chunk,
-                    chunk_cfg
+                    schedule.root.params.successor_block_len,
+                    Some(
+                        FoldSuccessor::Recursive(&first_fold.params)
+                            .source_block_len()
+                            .expect("successor source block width")
+                    )
+                );
+                assert_eq!(
+                    first_fold.params.witness_chunk_ends.len(),
+                    chunk_cfg.num_chunks
+                );
+                assert_eq!(
+                    first_fold.params.witness_chunk_ends.last(),
+                    Some(&first_fold.params.final_group().num_live_blocks())
                 );
                 assert!(schedule.recursive_folds.iter().skip(1).all(|fold| {
                     fold.params.witness_chunk == ChunkedWitnessCfg::default_non_chunked()
+                        && fold.params.witness_chunk_ends.is_empty()
                 }));
             }
             assert_eq!(catalog.len(), grid.len());

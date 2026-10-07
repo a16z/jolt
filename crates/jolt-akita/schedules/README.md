@@ -204,12 +204,10 @@ trace range. Other explicit configurations require a deployment-owned catalog
 containing that exact shape. Grouped preprocessing rejects a missing final shape
 during setup and reports the requested K, arity, and column count.
 
-Native trace batching establishes first-fold cycle locality. At the pinned
-revision `83574331`, later folds still halve a flat recursive witness and can
-cross chunk owners. The pin upgrade from its parent `e2c49ed` is intentionally
-part of Jolt's native batching PR: [Akita #169](https://github.com/LayerZero-Labs/akita/pull/169)
-adds the batch evaluation dispatch used by the fused trace opening.
-[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175) is the separate
-recursive ownership alignment follow-up. Upgrading past that change requires
-regenerating the affected Jolt multi-chunk catalogs. Regenerate catalogs after
-updating Akita.
+The catalogs are generated with Akita revision
+`d98400c555a7fc779bb4e29c35fbd4adad3232d1`, including
+[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
+Native trace batching establishes first-fold cycle locality. Recursive folds
+inherit chunk ownership, align chunk bodies to the successor's source block
+width, and keep the shared tail in the last owner. A reduction in chunk count
+merges owners. Regenerate catalogs after updating Akita.

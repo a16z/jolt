@@ -32,10 +32,11 @@ source so Akita's streaming kernels can process them together. There are no
 trace slot-selector variables or selector-reduction challenges.
 
 Native batching makes the first fold cycle-local: each chunk owns the same
-cycle range in every column. At the current Akita pin, later folds still halve
-a flat recursive witness, allowing boundary blocks and the tail to cross
-owners from the second fold onward. Recursive ownership alignment is follow-up
-work in [Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
+cycle range in every column. Recursive folds inherit those owners, align each
+chunk body to the successor's source block width, and retain the shared tail
+in the last owner. When the schedule reduces the chunk count, it merges owners.
+This behavior is provided by
+[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
 
 The canonical layout checks column order and dimensions. Commitments, their
 polynomial counts, group points, and ordered evaluations are bound to the
@@ -58,12 +59,12 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The native batching change intentionally upgrades Akita from `e2c49ed` to
-`83574331`, the immediate successor containing
-[Akita #169](https://github.com/LayerZero-Labs/akita/pull/169). Its batched source
-evaluation and opening preparation support the fused trace opening kernels.
-Recursive ownership alignment from #175 requires a later pin upgrade and
-regeneration of the affected multi-chunk catalogs.
+The workspace pins Akita to `d98400c555a7fc779bb4e29c35fbd4adad3232d1`,
+including batched source evaluation and opening preparation from
+[Akita #169](https://github.com/LayerZero-Labs/akita/pull/169) and recursive
+ownership alignment from
+[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
+The checked-in schedule catalogs are regenerated with this revision.
 
 `ProverConfig::derive` selects the single-chunk Akita profile. To use
 two, four, or eight chunks, set `config.akita_chunk_profile` before Akita
