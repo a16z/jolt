@@ -21,6 +21,8 @@
 //! with no range relation at all — see "Increment range" in
 //! `specs/lattice-claims.md`. Do not treat this reduction as bounding `Inc`.
 
+use std::collections::BTreeSet;
+
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -269,6 +271,19 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
             + decode_scale * constant(F::pow2(FUSED_INC_BITS)) * inc_value;
         output + coefficient * opening(reduced_balanced_inc_carry_opening())
     }
+
+    /// Every output term is one reduced opening times a coefficient built from
+    /// public values and challenges alone, so the openings are listed
+    /// without expanding the output.
+    fn expected_output_openings<F: Ring>(&self) -> BTreeSet<JoltOpeningId> {
+        self.shape
+            .layout
+            .polynomials()
+            .map(reduced_claim)
+            .chain((0..self.shape.chunking.chunk_count()).map(reduced_balanced_inc_digit_opening))
+            .chain([reduced_balanced_inc_carry_opening()])
+            .collect()
+    }
 }
 
 pub fn reduced_balanced_inc_digit_opening(index: usize) -> JoltOpeningId {
@@ -292,7 +307,20 @@ mod tests {
     use crate::protocols::jolt::{
         HammingWeightClaimReductionChallenge, JoltChallengeId, JoltDerivedId,
     };
+    use crate::referenced_openings;
     use jolt_field::{Fr, Ring};
+
+    #[test]
+    fn expected_output_openings_match_expanded_output() {
+        let layout = JoltRaPolynomialLayout::new(2, 3, 2).unwrap();
+        let relation = LatticeDigitZeroClaimReduction::new(
+            LatticeDigitZeroClaimReductionDimensions::new(layout, 32).unwrap(),
+        );
+        assert_eq!(
+            relation.expected_output_openings::<Fr>(),
+            referenced_openings([relation.output_expression::<Fr>()])
+        );
+    }
 
     #[test]
     fn public_unit_activation_ra_is_reconstructed_but_ram_keeps_base_legs() {
