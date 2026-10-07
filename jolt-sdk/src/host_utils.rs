@@ -28,23 +28,11 @@ use tracer::TracerInlineExpansionProvider;
 
 #[cfg(feature = "host")]
 pub use jolt_host as host;
-/// The sponge every SDK proof runs on, chosen by the `transcript-*` feature
-/// (Blake2b by default).
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-poseidon"
-))]
-pub type ProtocolSponge = jolt_transcript::PoseidonSponge;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-keccak"
-))]
-pub type ProtocolSponge = jolt_transcript::Keccak;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    not(any(feature = "transcript-poseidon", feature = "transcript-keccak"))
-))]
-pub type ProtocolSponge = jolt_transcript::Blake2b512;
+/// The sponge every SDK proof runs on: the verifier's
+/// [`JoltSponge`](jolt_verifier::JoltSponge), chosen by the `transcript-*`
+/// feature (Blake2b by default).
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+pub type ProtocolSponge = jolt_verifier::JoltSponge;
 #[cfg(feature = "host")]
 pub use jolt_program::execution::{
     ExecutionBackend, OwnedTrace, TraceError, TraceInputs, TraceOutput, TraceSource,

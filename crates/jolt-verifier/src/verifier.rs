@@ -35,8 +35,17 @@ use crate::{
     VerifierError,
 };
 
-/// The sponge Jolt proofs run on. Every prover and verifier entry point is
-/// generic over the sponge; this alias is the one place the default is chosen.
+/// The sponge Jolt proofs run on: Poseidon under `transcript-poseidon`, else
+/// Keccak under `transcript-keccak`, else Blake2b. Every prover and verifier
+/// entry point is generic over the sponge; this alias is the one place the
+/// default is chosen, and the SDK's `ProtocolSponge` is this alias.
+#[cfg(feature = "transcript-poseidon")]
+pub type JoltSponge = jolt_transcript::PoseidonSponge;
+/// See the Poseidon arm.
+#[cfg(all(feature = "transcript-keccak", not(feature = "transcript-poseidon")))]
+pub type JoltSponge = jolt_transcript::Keccak;
+/// See the Poseidon arm.
+#[cfg(not(any(feature = "transcript-keccak", feature = "transcript-poseidon")))]
 pub type JoltSponge = jolt_transcript::Blake2b512;
 
 /// The session every Jolt transcript is bound to.
