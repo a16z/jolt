@@ -189,7 +189,8 @@ impl RequiredMetalTraceCommitment {
     }
 }
 
-/// Prover seam for committing the packed trace directly from selected one-hot rows.
+/// Prover seam for committing the packed trace: directly from selected one-hot
+/// rows, or as the byte link's signed-byte trace beside its histogram groups.
 pub trait TraceOneHotCommitment: CommitmentScheme {
     fn commit_trace_one_hot(
         backend: &TraceCommitmentBackend,
@@ -202,6 +203,25 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 
     /// Drops the trace rows `hint` retains for the opening.
     fn release_trace_rows(hint: &mut Self::OpeningHint) -> Result<(), OpeningsError>;
+
+    /// See [`AkitaScheme::commit_signed_byte_trace`].
+    fn commit_signed_byte_trace(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        bytes: Vec<i8>,
+        precommitted_hints: &[&Self::OpeningHint],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
+
+    /// The bytes a [`Self::commit_signed_byte_trace`] hint retains for the
+    /// opening; `None` for every other hint.
+    fn signed_byte_trace(hint: &Self::OpeningHint) -> Option<&[i8]>;
+
+    /// See [`AkitaScheme::commit_field_digit_group`].
+    fn commit_field_digit_group(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        tables: &[Vec<Self::Field>],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
     /// Reinstalls rows regenerated from the committed witness; rejects rows
     /// whose shape or committed-entry metrics differ from the released ones.
@@ -878,6 +898,34 @@ impl TraceOneHotCommitment for AkitaScheme {
             rows,
             precommitted_hints,
         )
+    }
+
+    fn commit_signed_byte_trace(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        bytes: Vec<i8>,
+        precommitted_hints: &[&Self::OpeningHint],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Self::commit_signed_byte_trace(setup, layout_digest, bytes, precommitted_hints)
+    }
+
+    fn signed_byte_trace(hint: &Self::OpeningHint) -> Option<&[i8]> {
+        match &hint.polynomials {
+            AkitaHintPolynomials::SignedBytes(polys) => polys.first().map(SignedBytePoly::bytes),
+            AkitaHintPolynomials::Dense(_)
+            | AkitaHintPolynomials::OneHot(_)
+            | AkitaHintPolynomials::TraceOneHot(_)
+            | AkitaHintPolynomials::ReleasedTraceOneHot(_)
+            | AkitaHintPolynomials::FieldDigits(_) => None,
+        }
+    }
+
+    fn commit_field_digit_group(
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        tables: &[Vec<Self::Field>],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Self::commit_field_digit_group(setup, layout_digest, tables)
     }
 
     fn release_trace_rows(hint: &mut Self::OpeningHint) -> Result<(), OpeningsError> {

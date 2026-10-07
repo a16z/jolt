@@ -7,9 +7,13 @@ use std::sync::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
 use jolt_akita::TraceOneHotRows;
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::byte_link::BYTE_BITS;
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, committed_program_packing_plan, PrefixPackedObjectPlan,
 };
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::strategy::ByteTraceLayoutPlan;
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::{JoltField, Ring};
@@ -301,6 +305,77 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         hot_entries,
         zero_suffix_start,
     }))
+}
+
+/// The byte link's signed-byte trace `Q`, slot `c` of cycle `t` at
+/// `c · 2^log_t + t`: every cycle's `OneHotTrace` row as two's-complement
+/// bytes (a balanced digit's selected row is its two's-complement code), then
+/// the RAM activity bit, then zero slots.
+#[cfg(feature = "akita-byte-link")]
+#[tracing::instrument(skip_all, name = "assemble_byte_trace")]
+pub fn assemble_byte_trace<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    one_hot_trace: &OneHotTraceLayoutPlan,
+    byte_trace: &ByteTraceLayoutPlan,
+    log_t: usize,
+) -> Result<Vec<i8>, ProverError<F>> {
+    const BLOCK_ROWS: usize = 1 << 12;
+    let row_columns = one_hot_trace.packing().ids();
+    let slots = byte_trace.packing().ids();
+    let width = row_columns.len();
+    if slots.get(..width) != Some(row_columns)
+        || slots.get(width) != Some(&JoltCommittedPolynomial::RamActivity)
+    {
+        return Err(ProverError::InvariantViolation {
+            reason: "the byte trace does not extend the OneHotTrace row with the RAM activity bit",
+        });
+    }
+    let layout = OneHotTraceRowLayout::new(one_hot_trace, BYTE_BITS);
+    let write = |columns: &mut [&mut [i8]], selected_rows: &mut [u8], offset, row| {
+        let ram_active = layout.fill_row(row, selected_rows);
+        for (column, &selected) in columns.iter_mut().zip(selected_rows.iter()) {
+            column[offset] = selected as i8;
+        }
+        columns[width][offset] = i8::from(ram_active);
+    };
+    let num_rows = 1usize << log_t;
+    let mut bytes = vec![0i8; slots.len() * num_rows];
+    let mut blocks = (0..num_rows.div_ceil(BLOCK_ROWS))
+        .map(|_| Vec::with_capacity(width + 1))
+        .collect::<Vec<Vec<&mut [i8]>>>();
+    for column in bytes.chunks_exact_mut(num_rows).take(width + 1) {
+        for (block, rows) in blocks.iter_mut().zip(column.chunks_mut(BLOCK_ROWS)) {
+            block.push(rows);
+        }
+    }
+    #[cfg(feature = "parallel")]
+    if let Some(access) = direct_row_access(witness, num_rows) {
+        blocks
+            .into_par_iter()
+            .enumerate()
+            .try_for_each(|(block, mut columns)| {
+                let mut selected_rows = vec![0u8; width];
+                for offset in 0..columns[0].len() {
+                    let row = access.window::<OneHotTraceSourceRow>(block * BLOCK_ROWS + offset)?;
+                    write(&mut columns, &mut selected_rows, offset, row);
+                }
+                Ok::<_, ProverError<F>>(())
+            })?;
+        return Ok(bytes);
+    }
+    let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
+    let mut selected_rows = vec![0u8; width];
+    for (block, mut columns) in blocks.into_iter().enumerate() {
+        for offset in 0..columns[0].len() {
+            write(
+                &mut columns,
+                &mut selected_rows,
+                offset,
+                rows[block * BLOCK_ROWS + offset],
+            );
+        }
+    }
+    Ok(bytes)
 }
 
 /// One advice-word commitment object: one field coefficient per

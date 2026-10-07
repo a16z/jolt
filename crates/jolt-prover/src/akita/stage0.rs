@@ -2,12 +2,16 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
-use jolt_claims::protocols::jolt::lattice::{
-    OneHotTraceLayoutPlan, OneHotTraceShape, ONE_HOT_TRACE_LAYOUT,
-};
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::ByteTraceLayoutPlan;
+#[cfg(not(feature = "akita-byte-link"))]
+use jolt_claims::protocols::jolt::lattice::OneHotTraceLayoutPlan;
+use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
+#[cfg(feature = "akita-byte-link")]
+use jolt_openings::OpeningsError;
 use jolt_openings::{
     CommitmentScheme, GroupSetupMetadata, PrecommittedRole, TransparentObjectSetup,
 };
@@ -18,7 +22,11 @@ use jolt_verifier::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
+#[cfg(feature = "akita-byte-link")]
+use super::witness::assemble_byte_trace;
+#[cfg(not(feature = "akita-byte-link"))]
+use super::witness::assemble_one_hot_trace_rows;
+use super::witness::{commit_advice, AdviceObject};
 use super::JoltAkitaBackend;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -30,10 +38,14 @@ where
     pub checked: CheckedInputs,
     pub transcript: T,
     pub commitment: PCS::Output,
-    /// Holds no trace rows: they are released after the commit and
+    /// Under the byte link, holds `Q` from the commit through the opening.
+    /// Otherwise holds no trace rows: they are released after the commit and
     /// regenerated from the witness for the opening.
     pub hint: PCS::OpeningHint,
+    #[cfg(not(feature = "akita-byte-link"))]
     pub one_hot_trace_plan: OneHotTraceLayoutPlan,
+    #[cfg(feature = "akita-byte-link")]
+    pub byte_trace_plan: ByteTraceLayoutPlan,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
 }
 
@@ -137,14 +149,20 @@ where
         .map_err(|error| VerifierError::FinalOpeningBatchFailed {
             reason: error.to_string(),
         })?;
+    #[cfg(not(feature = "akita-byte-link"))]
     let canonical_digest = ONE_HOT_TRACE_LAYOUT
         .layout_digest(&one_hot_trace_shape)
         .map_err(|error| VerifierError::FinalOpeningBatchFailed {
             reason: error.to_string(),
         })?;
+    #[cfg(feature = "akita-byte-link")]
+    let byte_trace_plan =
+        ByteTraceLayoutPlan::new(&one_hot_trace_shape).map_err(VerifierError::ByteTraceGeometry)?;
+    #[cfg(feature = "akita-byte-link")]
+    let canonical_digest = byte_trace_plan.layout_digest();
     if preprocessing.pcs_setup.default_layout_digest() != canonical_digest {
         return Err(ProverError::Unsupported {
-            reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
+            reason: "the packed setup's layout digest is not the canonical trace layout digest",
         });
     }
     // Precommitted objects precede the trace because their profiles select its grouped row.
@@ -191,8 +209,35 @@ where
             ));
         }
     }
+    let precommitted_hints = precommitted
+        .iter()
+        .map(|(_, _, hint)| *hint)
+        .collect::<Vec<_>>();
+    #[cfg(feature = "akita-byte-link")]
+    let (commitment, hint) = {
+        let bytes = assemble_byte_trace(witness, &plan, &byte_trace_plan, log_t)?;
+        tracing::info_span!("akita_byte_trace_commit")
+            .in_scope(|| {
+                let committed = PCS::commit_signed_byte_trace(
+                    &preprocessing.pcs_setup,
+                    byte_trace_plan.layout_digest(),
+                    bytes,
+                    &precommitted_hints,
+                )?;
+                PCS::release_post_commit_residency(
+                    &backend.trace_commitment,
+                    &preprocessing.pcs_setup,
+                )?;
+                Ok::<_, OpeningsError>(committed)
+            })
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })?
+    };
+    #[cfg(not(feature = "akita-byte-link"))]
     let required_batch_polys = precommitted.len() + 1;
     // The setup is shape-exact for the canonical OneHotTrace group.
+    #[cfg(not(feature = "akita-byte-link"))]
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
         || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
         || preprocessing.pcs_setup.max_total_batch_polys() < required_batch_polys
@@ -202,6 +247,7 @@ where
             reason: "the packed setup's dimensions disagree with the canonical OneHotTrace shape",
         });
     }
+    #[cfg(not(feature = "akita-byte-link"))]
     let (commitment, hint) =
         tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
             // The trace group has log2(capacity) + log_t + log_k_chunk variables;
@@ -230,10 +276,6 @@ where
                 }
                 rows
             })?;
-            let precommitted_hints = precommitted
-                .iter()
-                .map(|(_, _, hint)| *hint)
-                .collect::<Vec<_>>();
             let committed = PCS::commit_trace_one_hot(
                 &backend.trace_commitment,
                 &preprocessing.pcs_setup,
@@ -271,7 +313,10 @@ where
         transcript,
         commitment,
         hint,
+        #[cfg(not(feature = "akita-byte-link"))]
         one_hot_trace_plan: plan,
+        #[cfg(feature = "akita-byte-link")]
+        byte_trace_plan,
         untrusted_advice,
     })
 }

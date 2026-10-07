@@ -1,6 +1,8 @@
 //! Top-level verifier entry point.
 
 use common::jolt_device::JoltDevice;
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::{ByteTraceLayoutPlan, OneHotTraceShape};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 #[cfg(not(feature = "akita"))]
@@ -18,6 +20,8 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(feature = "akita-byte-link")]
+use crate::stages::byte_link;
 use crate::{
     config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG},
     num,
@@ -201,6 +205,13 @@ where
         num::ilog2(checked.trace_length),
         JoltRelationId::InstructionReadRaf,
     )?;
+    #[cfg(feature = "akita-byte-link")]
+    let byte_trace = ByteTraceLayoutPlan::new(&OneHotTraceShape {
+        ra_layout: formula_dimensions.ra_layout,
+        log_t: formula_dimensions.trace.log_t(),
+        log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
+    })
+    .map_err(VerifierError::ByteTraceGeometry)?;
 
     let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
     let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
@@ -254,6 +265,13 @@ where
         &stage4,
         &stage6b,
     )?;
+    #[cfg(feature = "akita-byte-link")]
+    let link = byte_link::verify(
+        &proof.byte_link,
+        &stage6b.clear()?.byte_link_inputs()?,
+        &byte_trace,
+        &mut transcript,
+    )?;
     let stage8 = stage8::verify(
         &checked,
         preprocessing,
@@ -264,6 +282,8 @@ where
         &stage4,
         &stage6b,
         &stage7,
+        #[cfg(feature = "akita-byte-link")]
+        &link,
     )?;
 
     let stage8::Stage8Output::Clear = stage8 else {
@@ -1170,6 +1190,8 @@ mod tests {
     use num_traits::Zero;
 
     use crate::preprocessing::ProgramPreprocessing;
+    #[cfg(feature = "akita-byte-link")]
+    use crate::stages::byte_link::{ByteLinkProof, ReductionProof};
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -1439,6 +1461,14 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "akita-byte-link")]
+    fn empty_reduction() -> ReductionProof<Fr> {
+        ReductionProof {
+            rounds: Vec::new(),
+            finals: Vec::new(),
+        }
+    }
+
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof {
             protocol: crate::config::JoltProtocolConfig::for_zk(claims.is_zk()),
@@ -1453,6 +1483,18 @@ mod tests {
             joint_opening_proof: (),
             untrusted_advice_commitment: None,
             claims,
+            #[cfg(feature = "akita-byte-link")]
+            byte_link: ByteLinkProof {
+                histogram_commitments: [TestCommitment; 2],
+                trace_roots: [[Fr::zero(); 2]; 7],
+                table_roots: [[Fr::zero(); 2]; 7],
+                trace: Vec::new(),
+                triples: Vec::new(),
+                ram: Vec::new(),
+                triple_query: empty_reduction(),
+                ram_query: empty_reduction(),
+                source: empty_reduction(),
+            },
             trace_length: 1,
             ram_K: 4,
             rw_config: JoltReadWriteConfig {

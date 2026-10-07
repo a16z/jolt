@@ -50,6 +50,11 @@ pub fn final_opening_polynomial_order(
     polynomials
 }
 
+#[cfg(not(feature = "akita-byte-link"))]
+const TRACE_COLUMN_FINAL_RELATION: JoltRelationId = JoltRelationId::HammingWeightClaimReduction;
+#[cfg(feature = "akita-byte-link")]
+const TRACE_COLUMN_FINAL_RELATION: JoltRelationId = JoltRelationId::ByteLink;
+
 pub fn final_opening_id(polynomial: JoltCommittedPolynomial) -> JoltOpeningId {
     match polynomial {
         JoltCommittedPolynomial::TrustedAdvice => {
@@ -69,15 +74,14 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         }
         JoltCommittedPolynomial::InstructionRa(_)
         | JoltCommittedPolynomial::BytecodeRa(_)
-        | JoltCommittedPolynomial::RamRa(_) => JoltRelationId::HammingWeightClaimReduction,
+        | JoltCommittedPolynomial::RamRa(_)
+        | JoltCommittedPolynomial::BalancedIncDigit(_)
+        | JoltCommittedPolynomial::BalancedIncCarry => TRACE_COLUMN_FINAL_RELATION,
         JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice => {
             JoltRelationId::AdviceClaimReduction
         }
         JoltCommittedPolynomial::BytecodeChunk(_) => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
-
-        JoltCommittedPolynomial::BalancedIncDigit(_)
-        | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
         JoltCommittedPolynomial::RamActivity
         | JoltCommittedPolynomial::ZeroSlot(_)
         | JoltCommittedPolynomial::LinkHistogram(_) => JoltRelationId::ByteLink,
@@ -234,6 +238,11 @@ mod tests {
 
     #[test]
     fn final_opening_ids_use_sumcheck_sources() {
+        let one_hot = if cfg!(feature = "akita-byte-link") {
+            JoltRelationId::ByteLink
+        } else {
+            JoltRelationId::HammingWeightClaimReduction
+        };
         let ids = final_opening_polynomial_order(layout(), true, false, None)
             .into_iter()
             .map(final_opening_id)
@@ -249,26 +258,11 @@ mod tests {
                     JoltCommittedPolynomial::RdInc,
                     JoltRelationId::IncClaimReduction,
                 ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::InstructionRa(0),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::InstructionRa(1),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::BytecodeRa(0),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::RamRa(0),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
-                JoltOpeningId::committed(
-                    JoltCommittedPolynomial::RamRa(1),
-                    JoltRelationId::HammingWeightClaimReduction,
-                ),
+                JoltOpeningId::committed(JoltCommittedPolynomial::InstructionRa(0), one_hot,),
+                JoltOpeningId::committed(JoltCommittedPolynomial::InstructionRa(1), one_hot,),
+                JoltOpeningId::committed(JoltCommittedPolynomial::BytecodeRa(0), one_hot,),
+                JoltOpeningId::committed(JoltCommittedPolynomial::RamRa(0), one_hot,),
+                JoltOpeningId::committed(JoltCommittedPolynomial::RamRa(1), one_hot,),
                 JoltOpeningId::trusted_advice(JoltRelationId::AdviceClaimReduction),
             ]
         );

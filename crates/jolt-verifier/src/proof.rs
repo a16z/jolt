@@ -9,6 +9,8 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "akita-byte-link")]
+use crate::stages::byte_link::ByteLinkProof;
 use crate::{
     config::JoltProtocolConfig,
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
@@ -51,6 +53,8 @@ pub struct JoltProof<
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
+    #[cfg(feature = "akita-byte-link")]
+    pub byte_link: ByteLinkProof<PCS::Field, PCS::Output>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
@@ -88,6 +92,8 @@ where
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
             claims,
+            #[cfg(feature = "akita-byte-link")]
+            byte_link: self.byte_link,
             trace_length: self.trace_length,
             ram_K: self.ram_K,
             rw_config: self.rw_config,

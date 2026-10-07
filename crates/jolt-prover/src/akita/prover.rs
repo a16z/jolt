@@ -2,13 +2,15 @@
 //! one transcript and one backend session, and their wire outputs assemble
 //! into the packed-envelope [`JoltProof`].
 
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", not(feature = "akita-byte-link")))]
 use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
+#[cfg(feature = "akita-byte-link")]
+use jolt_kernels::byte_link::reference::ByteTrace;
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
@@ -16,14 +18,16 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", not(feature = "akita-byte-link")))]
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
+#[cfg(feature = "akita-byte-link")]
+use super::byte_link::{prove_byte_link_stage, ByteLinkStage};
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
-use super::witness::{
-    assemble_one_hot_trace_rows, fills_one_hot_trace_rows_directly, AdviceObject,
-};
+use super::witness::AdviceObject;
+#[cfg(not(feature = "akita-byte-link"))]
+use super::witness::{assemble_one_hot_trace_rows, fills_one_hot_trace_rows_directly};
 use super::JoltAkitaBackend;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -167,34 +171,84 @@ where
         witness,
         &mut transcript,
     )?;
-    let plan = &stage0.one_hot_trace_plan;
-    let chunk_width = config.one_hot_config.committed_chunk_bits();
-    // The opening's rows depend only on the witness. They are assembled under
-    // stage 7 only when it runs on the device and they fill straight from the
-    // witness: the host cores are idle then, and on the measured Metal route
-    // stage 7 is the only stage between the commit and the opening with
-    // footprint headroom for them. A host-bound stage 7 would share its cores
-    // and its peak with them, so stage 8 assembles them otherwise. A separate
-    // pool keeps stage 7's rayon jobs from queueing behind the assembly's.
-    // Under the byte link stage 7 has no device member, and the opening's rows
-    // are assembled only after the session release below.
-    #[cfg(all(feature = "metal", target_os = "macos"))]
-    let stage7_on_device = !cfg!(feature = "akita-byte-link")
-        && backend
+    #[cfg(not(feature = "akita-byte-link"))]
+    let (stage7, joint_opening_proof) = {
+        let plan = &stage0.one_hot_trace_plan;
+        let chunk_width = config.one_hot_config.committed_chunk_bits();
+        // The opening's rows depend only on the witness. They are assembled under
+        // stage 7 only when it runs on the device and they fill straight from the
+        // witness: the host cores are idle then, and on the measured Metal route
+        // stage 7 is the only stage between the commit and the opening with
+        // footprint headroom for them. A host-bound stage 7 would share its cores
+        // and its peak with them, so stage 8 assembles them otherwise. A separate
+        // pool keeps stage 7's rayon jobs from queueing behind the assembly's.
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let stage7_on_device = backend
             .piop_metal
             .as_ref()
             .is_some_and(|metal| metal.runs_hamming_weight_on_device(&session, log_t, chunk_width));
-    #[cfg(not(all(feature = "metal", target_os = "macos")))]
-    let stage7_on_device = false;
-    let overlap = stage7_on_device && fills_one_hot_trace_rows_directly(witness, log_t);
-    let (stage7, assembled_rows) = std::thread::scope(|scope| {
-        let rows = overlap.then(|| {
-            scope.spawn(move || {
-                on_one_hot_trace_rows_pool(|| {
-                    assemble_one_hot_trace_rows(witness, plan, chunk_width, log_t)
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let stage7_on_device = false;
+        let overlap = stage7_on_device && fills_one_hot_trace_rows_directly(witness, log_t);
+        let (stage7, assembled_rows) = std::thread::scope(|scope| {
+            let rows = overlap.then(|| {
+                scope.spawn(move || {
+                    on_one_hot_trace_rows_pool(|| {
+                        assemble_one_hot_trace_rows(witness, plan, chunk_width, log_t)
+                    })
                 })
-            })
+            });
+            let stage7 = prove_stage7::<F, PCS, VC, T>(
+                &backend.base,
+                &mut session,
+                &mode,
+                &checked,
+                config,
+                preprocessing,
+                &stage4.clear_output,
+                &stage6b.clear_output,
+                witness,
+                &mut transcript,
+            );
+            let rows = rows.map(|rows| {
+                let completed_before_join = rows.is_finished();
+                let _span =
+                    tracing::info_span!("jolt_prover::one_hot_trace_rows", completed_before_join)
+                        .entered();
+                rows.join()
+                    .map_err(|_| ProverError::InvariantViolation {
+                        reason: "asynchronous one-hot trace assembly panicked",
+                    })
+                    .and_then(|result| result)
+            });
+            (stage7, rows)
         });
+        let stage7 = stage7?;
+        let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
+            &checked,
+            config,
+            preprocessing,
+            plan,
+            assembled_rows.transpose()?,
+            witness,
+            &stage0.commitment,
+            stage0.hint,
+            stage0.untrusted_advice.as_ref(),
+            trusted_advice,
+            preprocessing
+                .committed_program
+                .as_ref()
+                .map(|data| &data.direct_program),
+            &stage4.clear_output,
+            &stage6b.clear_output,
+            &stage7.clear_output,
+            &mut transcript,
+        )?;
+
+        (stage7, joint_opening_proof)
+    };
+    #[cfg(feature = "akita-byte-link")]
+    let (stage7, byte_link, joint_opening_proof) = {
         let stage7 = prove_stage7::<F, PCS, VC, T>(
             &backend.base,
             &mut session,
@@ -206,44 +260,45 @@ where
             &stage6b.clear_output,
             witness,
             &mut transcript,
-        );
-        let rows = rows.map(|rows| {
-            let completed_before_join = rows.is_finished();
-            let _span =
-                tracing::info_span!("jolt_prover::one_hot_trace_rows", completed_before_join)
-                    .entered();
-            rows.join()
-                .map_err(|_| ProverError::InvariantViolation {
-                    reason: "asynchronous one-hot trace assembly panicked",
-                })
-                .and_then(|result| result)
-        });
-        (stage7, rows)
-    });
-    let stage7 = stage7?;
-    // Stage 8 takes no session, so nothing reads it past this point.
-    #[cfg(feature = "akita-byte-link")]
-    backend.end_trace_stages(session, log_t);
-    let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
-        &checked,
-        config,
-        preprocessing,
-        plan,
-        assembled_rows.transpose()?,
-        witness,
-        &stage0.commitment,
-        stage0.hint,
-        stage0.untrusted_advice.as_ref(),
-        trusted_advice,
-        preprocessing
-            .committed_program
-            .as_ref()
-            .map(|data| &data.direct_program),
-        &stage4.clear_output,
-        &stage6b.clear_output,
-        &stage7.clear_output,
-        &mut transcript,
-    )?;
+        )?;
+        backend.end_trace_stages(session, log_t);
+        let bytes =
+            PCS::signed_byte_trace(&stage0.hint).ok_or(ProverError::InvariantViolation {
+                reason: "the stage-0 trace hint holds no byte trace",
+            })?;
+        let ByteLinkStage {
+            link,
+            histogram_hints,
+        } = prove_byte_link_stage::<F, PCS, T>(
+            &preprocessing.pcs_setup,
+            &ByteTrace {
+                plan: &stage0.byte_trace_plan,
+                bytes,
+            },
+            &stage6b.clear_output.byte_link_inputs()?,
+            &mut transcript,
+        )?;
+        let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
+            &checked,
+            preprocessing,
+            &stage0.byte_trace_plan,
+            &link.openings,
+            (&link.proof.histogram_commitments, histogram_hints),
+            &stage0.commitment,
+            stage0.hint,
+            stage0.untrusted_advice.as_ref(),
+            trusted_advice,
+            preprocessing
+                .committed_program
+                .as_ref()
+                .map(|data| &data.direct_program),
+            &stage4.clear_output,
+            &stage6b.clear_output,
+            &stage7.clear_output,
+            &mut transcript,
+        )?;
+        (stage7, link.proof, joint_opening_proof)
+    };
 
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
@@ -261,6 +316,8 @@ where
             stage7_sumcheck_proof: stage7.sumcheck_proof,
         },
         joint_opening_proof,
+        #[cfg(feature = "akita-byte-link")]
+        byte_link,
         untrusted_advice_commitment: stage0
             .untrusted_advice
             .map(|object| object.commitment.clone()),
@@ -282,7 +339,7 @@ where
     })
 }
 
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", not(feature = "akita-byte-link")))]
 #[expect(
     clippy::expect_used,
     reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
@@ -298,7 +355,7 @@ fn on_one_hot_trace_rows_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     .install(f)
 }
 
-#[cfg(not(feature = "parallel"))]
+#[cfg(all(not(feature = "parallel"), not(feature = "akita-byte-link")))]
 fn on_one_hot_trace_rows_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     f()
 }

@@ -1,25 +1,36 @@
 //! The Akita final opening.
 //!
-//! `OneHotTrace` prefix-packs its semantic columns into one physical
-//! polynomial. Advice and direct committed-program objects join it as
-//! precommitted Akita groups and are discharged by one joint opening.
+//! The main trace object prefix-packs its semantic columns into one physical
+//! polynomial: the `OneHotTrace` selectors, or under the byte link the
+//! signed-byte trace `Q`, whose histogram groups `W` then open beside it.
+//! Advice and direct committed-program objects join as precommitted Akita
+//! groups and are discharged by one joint opening.
 
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::byte_link::HistogramGroup;
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, committed_program_packing_plan, OneHotTraceShape, PrefixPackedObjectPlan,
 };
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::strategy::ByteTraceLayoutPlan;
+#[cfg(not(feature = "akita-byte-link"))]
 use jolt_claims::protocols::jolt::lattice::strategy::{
     OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
 use jolt_field::JoltField;
+#[cfg(feature = "akita-byte-link")]
+use jolt_openings::PrefixPackedClaims;
 use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
 use super::precommitted::precommitted_final_openings;
+#[cfg(feature = "akita-byte-link")]
+use crate::stages::byte_link::{ByteLinkOpening, ByteLinkOpenings};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
@@ -40,6 +51,7 @@ fn opening_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
+#[cfg(not(feature = "akita-byte-link"))]
 fn validate_one_hot_trace_metadata<C, S>(
     commitment: &C,
     setup: &S,
@@ -118,6 +130,94 @@ where
     Ok(())
 }
 
+#[cfg(feature = "akita-byte-link")]
+fn validate_byte_trace_metadata<C, S>(
+    commitment: &C,
+    setup: &S,
+    plan: &ByteTraceLayoutPlan,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+    S: OneHotTraceSetupMetadata,
+{
+    if commitment.is_one_hot_backend() || commitment.one_hot_k() != 0 {
+        return Err(batch_failed(
+            "the byte trace commitment must use Akita's signed-byte backend",
+        ));
+    }
+    if commitment.layout_digest() != plan.layout_digest()
+        || setup.default_layout_digest() != plan.layout_digest()
+    {
+        return Err(batch_failed(
+            "the byte trace commitment or setup has a noncanonical layout digest",
+        ));
+    }
+    if commitment.num_vars() != plan.packing().packed_num_vars() || commitment.poly_count() != 1 {
+        return Err(batch_failed(
+            "the byte trace commitment must be one polynomial of the canonical packed arity",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "akita-byte-link")]
+fn validate_histogram_metadata<C>(
+    commitment: &C,
+    group: HistogramGroup,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+{
+    if commitment.is_one_hot_backend()
+        || commitment.layout_digest() != group.layout_digest().map_err(batch_failed)?
+        || commitment.num_vars() != group.num_vars()
+        || commitment.poly_count() != group.packs().len()
+    {
+        return Err(batch_failed(format!(
+            "the {group:?} histogram commitment does not have its group's layout and shape"
+        )));
+    }
+    Ok(())
+}
+
+/// The byte trace's prefix-packed claims: every column of `Q` at the link's
+/// source point. Shared verbatim by the packed prover's stage 8.
+#[cfg(feature = "akita-byte-link")]
+pub fn byte_trace_packed_claims<F: Clone>(
+    plan: &ByteTraceLayoutPlan,
+    source: &ByteLinkOpening<F>,
+) -> PrefixPackedClaims<F> {
+    PrefixPackedClaims::new(
+        plan.layout_digest(),
+        source.point.clone(),
+        source.values.clone(),
+    )
+}
+
+/// The two histogram groups' claims at the link's query points, in role
+/// order after every advice and program object. Shared verbatim by the packed
+/// prover's stage 8.
+#[cfg(feature = "akita-byte-link")]
+pub fn histogram_claims<F: Clone, C: Clone>(
+    link: &ByteLinkOpenings<F>,
+    [triples, ram]: &[C; 2],
+) -> [PrecommittedClaim<F, C>; 2] {
+    [
+        (HistogramGroup::Triples, &link.triples, triples),
+        (HistogramGroup::Ram, &link.ram, ram),
+    ]
+    .map(|(group, opening, commitment)| {
+        PrecommittedClaim::new(
+            group.role(),
+            GroupOpeningClaim::new(
+                commitment.clone(),
+                opening.point.clone(),
+                opening.values.clone(),
+            ),
+        )
+    })
+}
+
 /// One resolved commitment object and its canonical packing.
 struct ResolvedObject<'a, PCS: CommitmentScheme> {
     plan: PrefixPackedObjectPlan,
@@ -174,7 +274,7 @@ pub fn verify<PCS, VC, T>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
-    one_hot_trace_commitment: &PCS::Output,
+    trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     proof: &PCS::Proof,
@@ -183,6 +283,8 @@ pub fn verify<PCS, VC, T>(
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
+    #[cfg(feature = "akita-byte-link")] link: &ByteLinkOpenings<PCS::Field>,
+    #[cfg(feature = "akita-byte-link")] histogram_commitments: &[PCS::Output; 2],
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -191,26 +293,15 @@ where
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    // Precommitted objects precede the OneHotTrace group in canonical role order.
+    // Precommitted objects precede the main trace group in canonical role order.
     // Optional objects join exactly when their direct final reductions exist;
     // presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
-    let one_hot_trace_shape = OneHotTraceShape {
+    let trace_shape = OneHotTraceShape {
         ra_layout: formula_dimensions.ra_layout,
         log_t: formula_dimensions.trace.log_t(),
         log_k_chunk: chunk_width,
     };
-    let plan = ONE_HOT_TRACE_LAYOUT
-        .plan(&one_hot_trace_shape)
-        .map_err(batch_failed)?;
-    validate_one_hot_trace_metadata(
-        one_hot_trace_commitment,
-        &preprocessing.pcs_setup,
-        plan.layout_digest(),
-        plan.packing().packed_num_vars(),
-        1,
-        1 << chunk_width,
-    )?;
     let leaves = leaf_claims(
         schedule,
         #[cfg(feature = "akita")]
@@ -218,11 +309,32 @@ where
         stage6b,
         stage7,
     )?;
-    let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
-    let packed_claim = plan
-        .packing()
-        .reduce_claims(&packed_claims, transcript)
-        .map_err(batch_failed)?;
+    #[cfg(not(feature = "akita-byte-link"))]
+    let packed_claim = {
+        let plan = ONE_HOT_TRACE_LAYOUT
+            .plan(&trace_shape)
+            .map_err(batch_failed)?;
+        validate_one_hot_trace_metadata(
+            trace_commitment,
+            &preprocessing.pcs_setup,
+            plan.layout_digest(),
+            plan.packing().packed_num_vars(),
+            1,
+            1 << chunk_width,
+        )?;
+        let packed_claims = one_hot_trace_packed_claims(&plan, chunk_width, &leaves)?;
+        plan.packing()
+            .reduce_claims(&packed_claims, transcript)
+            .map_err(batch_failed)?
+    };
+    #[cfg(feature = "akita-byte-link")]
+    let packed_claim = {
+        let plan = ByteTraceLayoutPlan::new(&trace_shape).map_err(batch_failed)?;
+        validate_byte_trace_metadata(trace_commitment, &preprocessing.pcs_setup, &plan)?;
+        plan.packing()
+            .reduce_claims(&byte_trace_packed_claims(&plan, &link.source), transcript)
+            .map_err(batch_failed)?
+    };
     let untrusted = advice_object::<PCS>(
         leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
         untrusted_advice_commitment,
@@ -305,8 +417,16 @@ where
         }
     }
 
+    #[cfg(feature = "akita-byte-link")]
+    {
+        for (group, commitment) in HistogramGroup::ALL.into_iter().zip(histogram_commitments) {
+            validate_histogram_metadata(commitment, group)?;
+        }
+        precommitted.extend(histogram_claims(link, histogram_commitments));
+    }
+
     let main_group = GroupOpeningClaim::new(
-        one_hot_trace_commitment.clone(),
+        trace_commitment.clone(),
         packed_claim.point.as_slice().to_vec(),
         vec![packed_claim.value],
     );
@@ -326,6 +446,7 @@ where
 /// column's leaf claim, its point mapped to the committed row-major order,
 /// all required to share one canonical opening point. Shared verbatim by the
 /// packed prover's stage 8, so both sides derive the same packed statement.
+#[cfg(not(feature = "akita-byte-link"))]
 pub fn one_hot_trace_packed_claims<F: JoltField>(
     plan: &OneHotTraceLayoutPlan,
     chunk_width: usize,
@@ -384,11 +505,9 @@ pub fn object_leaf_claims<F: JoltField>(
 /// Every packed column's single leaf claim, resolved from stage 4, the
 /// precommitted reductions, and stage 7, keyed by committed polynomial. The
 /// canonical object plans check coverage, point arity, and suffix compatibility.
-/// Shared verbatim by the packed prover's stage 8.
-///
-/// Under the byte link the trace columns open only through the link over the
-/// routed stage-6b claims; both fronts stop here with
-/// [`VerifierError::ByteLinkNotWired`] once the routing succeeds.
+/// Shared verbatim by the packed prover's stage 8. Under the byte link the
+/// trace columns open through the link's openings instead, so no stage-7 leaf
+/// names them.
 pub fn leaf_claims<F: JoltField>(
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<F>,
@@ -495,13 +614,5 @@ pub fn leaf_claims<F: JoltField>(
         insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
     }
 
-    #[cfg(not(feature = "akita-byte-link"))]
-    {
-        Ok(leaves)
-    }
-    #[cfg(feature = "akita-byte-link")]
-    {
-        let _inputs = stage6b.byte_link_inputs()?;
-        Err(VerifierError::ByteLinkNotWired)
-    }
+    Ok(leaves)
 }

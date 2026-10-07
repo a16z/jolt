@@ -7,6 +7,8 @@ use jolt_akita::{
 };
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
 #[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::byte_link::HistogramGroup;
+#[cfg(feature = "akita-byte-link")]
 use jolt_claims::protocols::jolt::lattice::ByteTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
@@ -25,6 +27,7 @@ use crate::{
     CommittedProgramProverData, JoltProverPreprocessing, PreprocessingError, ProverConfig,
 };
 
+#[cfg(not(feature = "akita-byte-link"))]
 use super::one_hot_trace_setup_shape;
 #[cfg(feature = "akita-byte-link")]
 use super::setup::one_hot_trace_shape;
@@ -79,40 +82,58 @@ fn grouped_setup(
     let invalid_configuration = |error: VerifierError| PreprocessingError::InvalidConfiguration {
         reason: error.to_string(),
     };
-    #[cfg(feature = "akita-byte-link")]
-    let _ = ByteTraceLayoutPlan::new(
-        &one_hot_trace_shape(config, program.bytecode.code_size).map_err(invalid_configuration)?,
-    )
-    .map_err(PreprocessingError::ByteTraceGeometry)?;
-    let (shape, layout_digest, one_hot_k) =
-        one_hot_trace_setup_shape(config, program.bytecode.code_size)
-            .map_err(invalid_configuration)?;
     let untrusted_physical_vars = untrusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Untrusted))
         .transpose()?;
     let trusted_physical_vars = trusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Trusted))
         .transpose()?;
-    let precommitted_count = usize::from(untrusted_physical_vars.is_some())
-        + usize::from(trusted_physical_vars.is_some())
-        + direct_program_physical_vars.len();
-    let precommitted_schedule = (precommitted_count > 0).then(|| {
-        PrecommittedScheduleParams::new(
-            untrusted_physical_vars,
-            trusted_physical_vars,
+    #[cfg(not(feature = "akita-byte-link"))]
+    let params = {
+        let (shape, layout_digest, one_hot_k) =
+            one_hot_trace_setup_shape(config, program.bytecode.code_size)
+                .map_err(invalid_configuration)?;
+        let precommitted_count = usize::from(untrusted_physical_vars.is_some())
+            + usize::from(trusted_physical_vars.is_some())
+            + direct_program_physical_vars.len();
+        let precommitted_schedule = (precommitted_count > 0).then(|| {
+            PrecommittedScheduleParams::new(
+                untrusted_physical_vars,
+                trusted_physical_vars,
+                shape.num_vars,
+            )
+            .with_direct_program_physical_arities(direct_program_physical_vars.to_vec())
+        });
+        AkitaSetupParams::one_hot_only_grouped(
             shape.num_vars,
+            shape.num_polys,
+            shape.num_polys + precommitted_count,
+            layout_digest,
+            one_hot_k,
+            precommitted_schedule,
+            AkitaScheduleArtifacts::shared_from_default_directory(),
         )
-        .with_direct_program_physical_arities(direct_program_physical_vars.to_vec())
-    });
-    let params = AkitaSetupParams::one_hot_only_grouped(
-        shape.num_vars,
-        shape.num_polys,
-        shape.num_polys + precommitted_count,
-        layout_digest,
-        one_hot_k,
-        precommitted_schedule,
-        AkitaScheduleArtifacts::shared_from_default_directory(),
-    );
+    };
+    #[cfg(feature = "akita-byte-link")]
+    let params = {
+        let plan = ByteTraceLayoutPlan::new(
+            &one_hot_trace_shape(config, program.bytecode.code_size)
+                .map_err(invalid_configuration)?,
+        )
+        .map_err(PreprocessingError::ByteTraceGeometry)?;
+        let groups = HistogramGroup::ALL.map(|group| (group.num_vars(), group.packs().len()));
+        AkitaSetupParams::signed_bytes_grouped(
+            PrecommittedScheduleParams::new(
+                untrusted_physical_vars,
+                trusted_physical_vars,
+                plan.packing().packed_num_vars(),
+            )
+            .with_direct_program_physical_arities(direct_program_physical_vars.to_vec())
+            .with_field_digit_groups(groups),
+            plan.layout_digest(),
+            AkitaScheduleArtifacts::shared_from_default_directory(),
+        )
+    };
     Ok(AkitaScheme::setup(params)?)
 }
 

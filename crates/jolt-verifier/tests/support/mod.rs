@@ -9,6 +9,8 @@ pub enum VerifierPhase {
     Stage5,
     Stage6,
     Stage7,
+    #[cfg(feature = "akita-byte-link")]
+    ByteLink,
     Stage8Openings,
     Zk,
 }

@@ -46,3 +46,86 @@ pub struct ReductionProof<F: JoltField> {
     pub rounds: Vec<[F; 2]>,
     pub finals: Vec<F>,
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "tests count wire elements with plain arithmetic"
+)]
+mod tests {
+    use jolt_claims::protocols::jolt::lattice::byte_link::{
+        ByteLinkBatch, HistogramGroup, BYTE_LINK_PACKS,
+    };
+    use jolt_field::{Fr, Zero};
+
+    use super::*;
+
+    fn field_elements<F: JoltField, C>(proof: &ByteLinkProof<F, C>) -> usize {
+        let ByteLinkProof {
+            histogram_commitments: _,
+            trace_roots,
+            table_roots,
+            trace,
+            triples,
+            ram,
+            triple_query,
+            ram_query,
+            source,
+        } = proof;
+        let gkr = |layers: &[GkrLayerProof<F>]| {
+            layers
+                .iter()
+                .map(|GkrLayerProof { rounds, children }| 3 * rounds.len() + 4 * children.len())
+                .sum::<usize>()
+        };
+        let reduction =
+            |ReductionProof { rounds, finals }: &ReductionProof<F>| 2 * rounds.len() + finals.len();
+        2 * (trace_roots.len() + table_roots.len())
+            + gkr(trace)
+            + gkr(triples)
+            + gkr(ram)
+            + reduction(triple_query)
+            + reduction(ram_query)
+            + reduction(source)
+    }
+
+    /// At 2^29 cycles the link sends 4,117 field elements beside its two `W`
+    /// commitments: 65,872 bytes of Fp128, the spec §2 budget.
+    #[test]
+    fn byte_link_wire_at_2_29_is_the_counted_size() {
+        const LOG_T: usize = 29;
+        let gkr = |batch: ByteLinkBatch, trees: usize| {
+            (0..batch.num_vars(LOG_T))
+                .map(|layer| GkrLayerProof {
+                    rounds: vec![[Fr::zero(); 3]; layer],
+                    children: vec![[Fr::zero(); 4]; trees],
+                })
+                .collect()
+        };
+        let reduction = |num_vars: usize, finals: usize| ReductionProof {
+            rounds: vec![[Fr::zero(); 2]; num_vars],
+            finals: vec![Fr::zero(); finals],
+        };
+        let proof = ByteLinkProof {
+            histogram_commitments: [(), ()],
+            trace_roots: [[Fr::zero(); 2]; 7],
+            table_roots: [[Fr::zero(); 2]; 7],
+            trace: gkr(ByteLinkBatch::Trace, BYTE_LINK_PACKS.len()),
+            triples: gkr(
+                ByteLinkBatch::Triples,
+                HistogramGroup::Triples.packs().len(),
+            ),
+            ram: gkr(ByteLinkBatch::Ram, HistogramGroup::Ram.packs().len()),
+            triple_query: reduction(
+                HistogramGroup::Triples.num_vars(),
+                HistogramGroup::Triples.packs().len(),
+            ),
+            ram_query: reduction(
+                HistogramGroup::Ram.num_vars(),
+                HistogramGroup::Ram.packs().len(),
+            ),
+            source: reduction(LOG_T, 32),
+        };
+        assert_eq!(16 * field_elements(&proof), 65_872);
+    }
+}

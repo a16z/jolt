@@ -2,6 +2,8 @@
 
 #[cfg(feature = "akita-byte-link")]
 use jolt_claims::protocols::jolt::lattice::byte_link::{ByteLinkBatch, HistogramGroup};
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::LatticeGeometryError;
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
@@ -113,11 +115,9 @@ pub enum VerifierError {
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
 
-    /// The byte trace opens only through the byte link, which consumes the
-    /// routed stage-6b claims; neither front implements the link yet.
     #[cfg(feature = "akita-byte-link")]
-    #[error("the byte link is not wired: stage 8 cannot open the byte trace")]
-    ByteLinkNotWired,
+    #[error(transparent)]
+    ByteTraceGeometry(LatticeGeometryError),
 
     #[cfg(feature = "akita-byte-link")]
     #[error("byte link rejected: {0}")]

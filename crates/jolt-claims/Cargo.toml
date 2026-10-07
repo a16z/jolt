@@ -11,6 +11,7 @@ workspace = true
 [features]
 default = []
 akita = []
+akita-byte-link = ["akita"]
 # Heap flamegraph visitation of the relation claim structs (profile harness).
 allocative = ["dep:allocative"]
 field-inline = []

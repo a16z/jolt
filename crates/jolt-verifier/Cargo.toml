@@ -26,7 +26,7 @@ zk = ["jolt-prover/zk"]
 akita = ["jolt-prover/akita", "jolt-claims/akita"]
 # The packed protocol over the byte-root trace commitment and the W-only
 # histogram link (`CommitmentConfig::PackedByteLink`). Default off.
-akita-byte-link = ["akita", "jolt-prover/akita-byte-link"]
+akita-byte-link = ["akita", "jolt-claims/akita-byte-link", "jolt-prover/akita-byte-link"]
 transcript-blake2b = []
 transcript-keccak = []
 transcript-poseidon = []

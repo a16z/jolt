@@ -5,6 +5,8 @@ use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(feature = "akita-byte-link")]
+use crate::stages::byte_link::ByteLinkOpenings;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
@@ -493,6 +495,7 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage4: &Stage4Output<F, VC::Output>,
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
+    #[cfg(feature = "akita-byte-link")] link: &ByteLinkOpenings<F>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: JoltField,
@@ -515,6 +518,10 @@ where
         stage4.clear()?,
         stage6.clear()?,
         stage7.clear()?,
+        #[cfg(feature = "akita-byte-link")]
+        link,
+        #[cfg(feature = "akita-byte-link")]
+        &proof.byte_link.histogram_commitments,
     )?;
 
     Ok(Stage8Output::Clear)

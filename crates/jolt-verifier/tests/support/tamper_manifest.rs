@@ -1086,6 +1086,17 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the hamming-weight reduction final-claim fold covers the increment carry",
     ),
+    #[cfg(feature = "akita-byte-link")]
+    checked_standard(
+        "proof.byte_link",
+        "proof.byte_link",
+        VerifierPhase::ByteLink,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::IgnoredUntilFixture,
+        "the akita verifier fixtures sit outside the byte trace's K=2^8 geometry; the \
+         jolt-prover link and 2^16 end-to-end tests offset roots, rounds, finals and \
+         histogram commitments",
+    ),
 ];
 
 pub fn all_targets() -> Vec<TamperTarget> {
@@ -1154,6 +1165,8 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.rw_config",
         "proof.one_hot_config",
         "proof.trace_polynomial_order",
+        #[cfg(feature = "akita-byte-link")]
+        "proof.byte_link",
         "proof.stages.stage1_uni_skip_first_round_proof.round_polynomials[*]",
         "proof.stages.stage1_sumcheck_proof.round_polynomials[*]",
         "proof.stages.stage2_uni_skip_first_round_proof.round_polynomials[*]",

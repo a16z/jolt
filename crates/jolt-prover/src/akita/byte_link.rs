@@ -1,20 +1,69 @@
-//! The byte link stage between stage 7 and the final opening: the histogram
-//! commitments are absorbed, the compression challenges drawn, and the link
-//! proved against the byte trace through [`LinkTranscript`].
+//! The byte link stage between stage 7 and the final opening: the histograms
+//! `W` are committed, the compression challenges drawn, and the link proved
+//! against the byte trace through [`LinkTranscript`].
 
+use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::byte_link::{
     ByteLinkBatch, ByteLinkInputs, HistogramGroup,
 };
 use jolt_field::JoltField;
 use jolt_kernels::byte_link::reference::{self, ByteTrace, Histograms};
 use jolt_kernels::byte_link::{ByteLinkDraw, ByteLinkMessage, ByteLinkTranscript};
+use jolt_openings::CommitmentScheme;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::stages::byte_link::{
     transcript as schedule, ByteLinkOpenings, ByteLinkProof, GkrLayerProof, ReductionProof,
 };
+use jolt_verifier::VerifierError;
 
 use crate::ProverError;
+
+/// The link stage's wire and openings, with the histogram groups' hints for
+/// the final opening.
+pub struct ByteLinkStage<PCS: CommitmentScheme> {
+    pub link: ProvedByteLink<PCS::Field, PCS::Output>,
+    pub histogram_hints: [PCS::OpeningHint; 2],
+}
+
+/// Commits both histogram groups of `trace` at the stage-6b cycle point, then
+/// proves the link over the stage-6b `inputs`.
+pub fn prove_byte_link_stage<F, PCS, T>(
+    setup: &PCS::ProverSetup,
+    trace: &ByteTrace<'_>,
+    inputs: &ByteLinkInputs<F>,
+    transcript: &mut T,
+) -> Result<ByteLinkStage<PCS>, ProverError<F>>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F> + TraceOneHotCommitment,
+    PCS::Output: AppendToTranscript,
+    T: Transcript<Challenge = F>,
+{
+    let histograms = reference::histograms(trace, inputs)?;
+    let [triples, ram] = HistogramGroup::ALL.map(|group| {
+        group
+            .layout_digest()
+            .and_then(|digest| {
+                PCS::commit_field_digit_group(setup, digest, histograms.group(group))
+            })
+            .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+                reason: error.to_string(),
+            })
+    });
+    let ((triple_commitment, triple_hint), (ram_commitment, ram_hint)) = (triples?, ram?);
+    let link = prove_byte_link(
+        trace,
+        &histograms,
+        inputs,
+        [triple_commitment, ram_commitment],
+        transcript,
+    )?;
+    Ok(ByteLinkStage {
+        link,
+        histogram_hints: [triple_hint, ram_hint],
+    })
+}
 
 /// The link's wire and the openings it leaves for stage 8.
 pub struct ProvedByteLink<F: JoltField, C> {

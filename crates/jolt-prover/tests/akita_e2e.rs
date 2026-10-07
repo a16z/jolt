@@ -12,6 +12,8 @@ mod akita_tests {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
     #[cfg(feature = "akita-byte-link")]
+    use jolt_claims::protocols::jolt::lattice::byte_link::ByteLinkBatch;
+    #[cfg(feature = "akita-byte-link")]
     use jolt_claims::protocols::jolt::lattice::LatticeGeometryError;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
@@ -27,6 +29,8 @@ mod akita_tests {
     #[cfg(not(feature = "akita-byte-link"))]
     use jolt_verifier::proof::ClearProofClaims;
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
+    #[cfg(feature = "akita-byte-link")]
+    use jolt_verifier::{error::ByteLinkError, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -280,6 +284,63 @@ mod akita_tests {
         };
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("forced-K256 proof must verify");
+    }
+
+    /// The byte link at 2^16 cycles: the fibonacci guest at K=2^8 proves and
+    /// verifies, survives a serialization round trip, and rejects an altered
+    /// link round polynomial, an altered `Q` final, swapped histogram
+    /// commitments, and a K=2^4 shape before stage 1.
+    #[cfg(feature = "akita-byte-link")]
+    #[test]
+    fn byte_link_e2e_akita_at_2_16() {
+        let inputs = postcard::to_stdvec(&4000u32).expect("serialize inputs");
+        let run = guest_run("fibonacci-guest", &inputs, &[], &[]);
+        let mut config = derive_config(&run);
+        assert_eq!(config.trace_length, 1 << 16);
+        config.one_hot_config = JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: 32,
+        };
+        let proved = prove_guest(run, config, false, &[]);
+        verify(&proved).expect("the 2^16 byte-link proof must verify");
+
+        let encoded = bincode::serde::encode_to_vec(&proved.proof, bincode::config::standard())
+            .expect("serialize packed proof");
+        let (decoded, consumed): (Proof, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("deserialize packed proof");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(decoded, proved.proof);
+
+        let rejects = |mutate: &dyn Fn(&mut Proof)| {
+            let mut proof = proved.proof.clone();
+            mutate(&mut proof);
+            verify(&ProvedGuest {
+                preprocessing: proved.preprocessing.clone(),
+                public_io: proved.public_io.clone(),
+                proof,
+                trusted_advice_commitment: None,
+            })
+        };
+        let one = AkitaField::from_u64(1);
+        assert!(matches!(
+            rejects(&|proof| proof.byte_link.trace[3].rounds[1][0] += one),
+            Err(VerifierError::ByteLink(ByteLinkError::Gate {
+                batch: ByteLinkBatch::Trace,
+                layer: 3
+            }))
+        ));
+        assert!(matches!(
+            rejects(&|proof| proof.byte_link.source.finals[0] += one),
+            Err(VerifierError::ByteLink(ByteLinkError::Source))
+        ));
+        assert!(rejects(&|proof| proof.byte_link.histogram_commitments.swap(0, 1)).is_err());
+        assert!(matches!(
+            rejects(&|proof| proof.one_hot_config.log_k_chunk = 4),
+            Err(VerifierError::ByteTraceGeometry(
+                LatticeGeometryError::UnsupportedByteTraceShape { chunk_width: 4, .. }
+            ))
+        ));
     }
 
     #[test]

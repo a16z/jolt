@@ -68,6 +68,7 @@ jolt-verifier::proof.rs::JoltCommitments.instruction_ra
 jolt-verifier::proof.rs::JoltCommitments.ram_inc
 jolt-verifier::proof.rs::JoltCommitments.ram_ra
 jolt-verifier::proof.rs::JoltCommitments.rd_inc
+jolt-verifier::proof.rs::JoltProof.byte_link
 jolt-verifier::proof.rs::JoltProof.claims
 jolt-verifier::proof.rs::JoltProof.commitments
 jolt-verifier::proof.rs::JoltProof.joint_opening_proof
