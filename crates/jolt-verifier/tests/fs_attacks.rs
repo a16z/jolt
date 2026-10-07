@@ -395,6 +395,7 @@ fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
 #[test]
 fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
     use jolt_akita::{AkitaField, AkitaScheme};
+    use jolt_field::Ring;
     use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
     use support::akita_fixtures::akita_muldiv_case;
 

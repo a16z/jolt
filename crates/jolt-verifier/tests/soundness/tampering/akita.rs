@@ -29,7 +29,7 @@ use jolt_claims::protocols::jolt::lattice::relations::{
     booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::JoltField;
+use jolt_field::{JoltField, Ring};
 use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
 use jolt_verifier::preprocessing::ProgramPreprocessing;
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
