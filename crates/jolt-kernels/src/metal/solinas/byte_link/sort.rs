@@ -40,10 +40,10 @@ struct WeightParams {
 pub(super) const W_CELLS: usize = RAM * (1 << TRIPLE_BITS) + (1 << RAM_BITS);
 
 impl ByteLinkProver {
-    /// Arena bytes of the sort phase: the staging and sorted pairs of one pack, its CSR offsets
-    /// and run accumulators.
+    /// Arena bytes of the sort phase: one pack's staged, grouped and sorted `(key, cycle)` pairs,
+    /// its CSR offsets and run accumulators.
     pub(super) fn sort_bytes(&self, shape: Shape) -> usize {
-        2 * self.gpu.arena_size(shape.explicit * 8)
+        3 * self.gpu.arena_size(shape.explicit * 8)
             + self.gpu.arena_size(((1 << TRIPLE_BITS) + 1) * 4)
             + self.gpu.arena_size((1 << TRIPLE_BITS) * 20)
     }
@@ -61,7 +61,8 @@ impl ByteLinkProver {
         let eq_hi = self.gpu.fields(&split.hi);
         let w = self.gpu.histogram_buffer(W_CELLS * 16);
         let staging = self.gpu.arena(entries * 8)?;
-        let pairs = self.gpu.arena(entries * 8)?;
+        let scratch = self.gpu.arena(entries * 8)?;
+        let sorted = self.gpu.arena(entries * 8)?;
         let offsets = self.gpu.arena(((1 << TRIPLE_BITS) + 1) * 4)?;
         let accumulators = self.gpu.arena((1 << TRIPLE_BITS) * 20)?;
         let counts = self.gpu.scratch(SORT_BINS * 4);
@@ -108,15 +109,16 @@ impl ByteLinkProver {
                     bind(e, 2, &staging, 0);
                     bytes(e, 3, &sort);
                     bind(e, 4, &zeros, 4);
-                    bind(e, 5, &pairs, 0);
+                    bind(e, 5, &sorted, 0);
                     bytes(e, 6, &columns);
                 });
                 r.dispatch(SORT_BUCKETS, Grid::Groups(SORT_BINS, 1024), |e| {
                     bind(e, 0, &staging, 0);
                     bind(e, 1, &starts, 0);
                     bind(e, 2, &offsets, 0);
-                    bind(e, 3, &pairs, 0);
+                    bind(e, 3, &scratch, 0);
                     bytes(e, 4, &sort);
+                    bind(e, 5, &sorted, 0);
                 });
                 r.dispatch(WEIGHTS_PREPARE, Grid::Threads(keys, 256), |e| {
                     bind(e, 0, &offsets, 0);
@@ -127,7 +129,7 @@ impl ByteLinkProver {
                     WEIGHTS_RUNS,
                     Grid::Threads(entries.div_ceil(RUN_CHUNK as usize), 256),
                     |e| {
-                        bind(e, 0, &pairs, 0);
+                        bind(e, 0, &sorted, 0);
                         bind(e, 1, &offsets, 0);
                         bind(e, 2, &eq_lo, 0);
                         bind(e, 3, &eq_hi, 0);

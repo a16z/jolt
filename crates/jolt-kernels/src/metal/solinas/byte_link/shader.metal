@@ -949,21 +949,27 @@ kernel void byte_link_sort_scatter(
     }
 }
 
-// One threadgroup per high bucket: counting sort by the low bits, CSR offsets and sorted (key, cycle).
+// One threadgroup per high bucket: counting sort by the low bits, CSR offsets and sorted (key, cycle). The
+// entries first move to `scratch` grouped by the top half of the low bits, so the final scatter of the
+// threadgroup lands within one of 64 groups (12 KB at 2^29) instead of anywhere in the bucket (787 KB): the
+// whole-bucket scatter outgrew the GPU caches as buckets grew with the rows.
 kernel void byte_link_sort_buckets(
     device const uint2* staging [[buffer(0)]],
     device const uint* bucket_start [[buffer(1)]],
     device uint* offsets [[buffer(2)]],
-    device uint2* sorted [[buffer(3)]],
+    device uint2* scratch [[buffer(3)]],
     constant LinkSortParams& params [[buffer(4)]],
+    device uint2* sorted [[buffer(5)]],
     uint tid [[thread_index_in_threadgroup]],
     uint lane [[thread_index_in_simdgroup]],
     uint simd [[simdgroup_index_in_threadgroup]],
     uint bucket [[threadgroup_position_in_grid]])
 {
     threadgroup atomic_uint bins[LINK_SORT_BINS];
+    threadgroup atomic_uint groups[64];
     threadgroup uint simd_totals[32];
     uint low_mask = (1u << params.low_bits) - 1u;
+    uint group_shift = params.low_bits / 2u;
     uint begin = bucket_start[bucket];
     uint end = bucket_start[bucket + 1u];
     link_zero_bins(bins, tid);
@@ -979,9 +985,18 @@ kernel void byte_link_sort_buckets(
     if (bucket + 1u == LINK_SORT_BINS && tid == 0u) {
         offsets[LINK_SORT_BINS << params.low_bits] = params.entries;
     }
+    if (tid <= (low_mask >> group_shift)) {
+        atomic_store_explicit(&groups[tid], atomic_load_explicit(&bins[tid << group_shift], memory_order_relaxed), memory_order_relaxed);
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     for (uint i = begin + tid; i < end; i += LINK_SORT_THREADS) {
         uint2 entry = staging[i];
+        uint position = atomic_fetch_add_explicit(&groups[(entry.x & low_mask) >> group_shift], 1u, memory_order_relaxed);
+        scratch[begin + position] = entry;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    for (uint i = begin + tid; i < end; i += LINK_SORT_THREADS) {
+        uint2 entry = scratch[i];
         uint position = atomic_fetch_add_explicit(&bins[entry.x & low_mask], 1u, memory_order_relaxed);
         sorted[begin + position] = entry;
     }
