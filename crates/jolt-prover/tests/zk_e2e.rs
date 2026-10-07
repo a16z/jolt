@@ -54,8 +54,8 @@ mod zk {
     }
 
     fn derive_config(run: &PreparedGuest) -> ProverConfig {
-        ProverConfig::derive::<Fr>(
-            run.trace.trace.proof_rows(),
+        ProverConfig::derive_from_dimensions::<Fr>(
+            run.trace.dimensions,
             &run.preprocessing.memory_layout,
             run.preprocessing.ram.min_bytecode_address,
             run.preprocessing.ram.bytecode_words.len(),
@@ -97,12 +97,11 @@ mod zk {
                 .expect("trusted advice commitment")
         });
         let proof =
-            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &backend,
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                backend.with_witness(&witness),
                 &preprocessing,
                 &config,
                 trusted.as_ref(),
-                &witness,
                 &public_io,
             )
             .expect("modular ZK prove");
@@ -167,21 +166,15 @@ mod zk {
                 ),
                 JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
             );
-            let proof = jolt_prover::dory::prove::<
-                Fr,
-                DoryScheme,
-                Pedersen<Bn254G1>,
-                Blake2bTranscript,
-                _,
-            >(
-                &JoltBackend::reference(),
-                &preprocessing,
-                &config,
-                None,
-                &witness,
-                &public_io,
-            )
-            .expect("committed ZK prove");
+            let proof =
+                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                    JoltBackend::reference().with_witness(&witness),
+                    &preprocessing,
+                    &config,
+                    None,
+                    &public_io,
+                )
+                .expect("committed ZK prove");
             jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 &preprocessing.verifier,
                 &public_io,

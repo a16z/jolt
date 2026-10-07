@@ -8,8 +8,9 @@ use std::sync::OnceLock;
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_host::Program;
+use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
-use jolt_prover::akita::{self, JoltAkitaBackend};
+use jolt_prover::JoltBackend;
 use jolt_prover::ProverConfig;
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
@@ -112,8 +113,8 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
 }
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
-    ProverConfig::derive::<AkitaField>(
-        run.trace.trace.proof_rows(),
+    ProverConfig::derive_from_dimensions::<AkitaField>(
+        run.trace.dimensions,
         &run.program_preprocessing.memory_layout,
         run.program_preprocessing.ram.min_bytecode_address,
         run.program_preprocessing.ram.bytecode_words.len(),
@@ -144,12 +145,11 @@ fn prove_prepared(
         preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-        &JoltAkitaBackend::optimized(),
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
         &config,
         trusted.as_ref(),
-        &witness,
         &public_io,
     )
     .expect("prove Akita verifier fixture");
@@ -183,7 +183,7 @@ mod field_inline {
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
-    use jolt_prover::akita::JoltAkitaBackend;
+    use jolt_prover::JoltBackend;
     use jolt_prover::{akita, ProverConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
@@ -258,8 +258,8 @@ mod field_inline {
         let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
         let public_io = trace_output.device.clone();
 
-        let config = ProverConfig::derive::<AkitaField>(
-            trace_output.trace.proof_rows(),
+        let config = ProverConfig::derive_from_dimensions::<AkitaField>(
+            trace_output.dimensions,
             &memory_layout,
             program_preprocessing.ram.min_bytecode_address,
             program_preprocessing.ram.bytecode_words.len(),
@@ -284,12 +284,11 @@ mod field_inline {
         .expect("trace witness")
         .with_field_inline()
         .expect("field-inline witness view");
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(),
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
             &config,
             None,
-            &witness,
             &public_io,
         )
         .expect("Akita field-inline prove");

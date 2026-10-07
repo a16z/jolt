@@ -75,6 +75,8 @@ struct TraceExecution {
 }
 
 impl ExecutionBackend for TracerBackend {
+    type Trace = Arc<TraceData>;
+
     fn trace(
         &mut self,
         program: &JoltProgram,

@@ -309,8 +309,8 @@ pub fn prove_program(
     .with_advice_tape(advice_tape);
     let trace = program.trace_with(&mut TracerBackend::new(), trace_inputs)?;
     let public_io = trace.device.clone();
-    let config = ProverConfig::derive::<F>(
-        trace.trace.proof_rows(),
+    let config = ProverConfig::derive_from_dimensions::<F>(
+        trace.dimensions,
         memory_layout,
         preprocessing.verifier.program.min_bytecode_address(),
         preprocessing.verifier.program.program_image_len_words(),
@@ -339,12 +339,11 @@ pub fn prove_program(
         }
     };
     let backend = jolt_prover::JoltBackend::<F, PCS>::optimized();
-    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProofTranscript, _>(
-        &backend,
+    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProofTranscript>(
+        backend.with_witness(&witness),
         preprocessing,
         &config,
         trusted_advice.as_ref(),
-        &witness,
         &public_io,
     )?;
     Ok((proof, public_io))

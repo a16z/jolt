@@ -18,23 +18,28 @@
 //! layout the commitment and `commitment_embedding_scale` agree on). The
 //! trace order enters a chunk table only through its coefficient
 //! interleaving, which the recipe-supplied tables already carry. The slot
-//! returns [`MultilinearPoly`] objects because the PCS opening drives them
-//! lazily (`fold_rows`).
+//! returns [`MultilinearPoly`](jolt_poly::MultilinearPoly) objects because the
+//! PCS opening drives them lazily (`fold_rows`).
 
+#[cfg(not(feature = "akita"))]
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::{
-    JoltAdviceKind, JoltCommittedPolynomial, ProgramImageClaimReductionLayout,
-};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{JoltAdviceKind, ProgramImageClaimReductionLayout};
 use jolt_field::JoltField;
-use jolt_poly::{sparse_segments_mle_msb, MultilinearPoly};
+use jolt_poly::sparse_segments_mle_msb;
+#[cfg(not(feature = "akita"))]
+use jolt_poly::MultilinearPoly;
 use jolt_witness::JoltWitnessPlane;
 
+#[cfg(not(feature = "akita"))]
 use crate::commitment::CommitmentGrid;
 use crate::{KernelError, ProofSession};
 
 /// A consuming factory for host committed-program opening tables. Backends
 /// holding these polynomials in device memory need not materialize host copies.
+#[cfg(not(feature = "akita"))]
 pub type PrecommittedOpeningTables<'a, F> =
     Box<dyn FnOnce() -> Result<BTreeMap<JoltCommittedPolynomial, Vec<F>>, KernelError<F>> + 'a>;
 
@@ -47,6 +52,7 @@ pub type PrecommittedOpeningTables<'a, F> =
 /// Receives the full witness plane (not just the oracle surface) so
 /// implementations can rebuild the committed columns from typed trace
 /// bundles instead of materialized `K × T` oracle grids.
+#[cfg(not(feature = "akita"))]
 pub trait JointOpeningPolynomials<F: JoltField> {
     fn prepare(
         &self,
@@ -56,6 +62,14 @@ pub trait JointOpeningPolynomials<F: JoltField> {
         precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>>;
+
+    #[cfg(feature = "field-inline")]
+    fn prepare_field_inline(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>>;
 }
 
 /// A private contribution to stage 4's initial RAM evaluation. Points are

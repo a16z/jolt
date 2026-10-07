@@ -11,13 +11,14 @@
 use common::jolt_device::JoltDevice;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
+use jolt_claims::protocols::jolt::geometry::committed_openings::proof_commitment_order;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
-use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
+use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, ProofSession, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltCommitments;
@@ -27,9 +28,7 @@ use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
     absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::{
-    validate_servable, JoltWitnessOracle, JoltWitnessPlane, RowSource, WitnessBundle,
-};
+use jolt_witness::WitnessBundle;
 
 use crate::config::advice_total_vars;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -69,13 +68,12 @@ where
 /// committed-program chunk/image commitments — the verifier's own absorb
 /// order).
 #[tracing::instrument(skip_all)]
-pub fn prove_stage0<F, PCS, VC, T, W>(
-    backend: &JoltBackend<F, PCS>,
+pub fn prove_stage0<F, PCS, VC, T>(
+    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
     session: &mut ProofSession,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
-    witness: &W,
     public_io: &JoltDevice,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
@@ -84,7 +82,6 @@ where
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F>,
 {
     // Committed-program mode needs the prover-retained full program + hints;
     // require presence to agree with the verifier preprocessing's mode.
@@ -171,22 +168,19 @@ where
         &mut transcript,
     );
 
-    let ids: Vec<JoltCommittedPolynomial> = witness
-        .committed_order()?
-        .into_iter()
-        .filter(|id| {
-            !matches!(
-                id,
-                JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice
-            )
-        })
-        .collect();
+    let dimensions = crate::stages::formula_dimensions(
+        &checked,
+        config,
+        preprocessing.verifier.program.bytecode_len(),
+        JoltRelationId::HammingWeightClaimReduction,
+    )?;
+    let ids = proof_commitment_order(dimensions.ra_layout);
     let requested = ids
         .iter()
         .map(|&id| JoltPolynomialId::Committed(id))
         .chain(InstructionReadRafWitness::annotated_ids())
         .chain(BytecodeReadRafWitness::annotated_ids());
-    validate_servable(witness as &dyn JoltWitnessOracle<F>, requested)?;
+    backend.validate_servable(requested)?;
 
     let grid = CommitmentGrid {
         total_vars: config.commitment_total_vars(
@@ -207,15 +201,7 @@ where
         columns = ids.len(),
         total_vars = grid.total_vars
     )
-    .in_scope(|| {
-        backend.commit.commit_witness(
-            session,
-            witness as &dyn RowSource,
-            &ids,
-            grid,
-            &preprocessing.pcs_setup,
-        )
-    })?;
+    .in_scope(|| backend.commit_witness(session, &ids, grid, &preprocessing.pcs_setup))?;
     let (commitments, mut hints) = assemble_commitments::<PCS>(committed)?;
 
     // The field-inline committed columns follow the base commitments and
@@ -223,13 +209,8 @@ where
     // `absorb_transcript_commitments` absorbs them in.
     #[cfg(feature = "field-inline")]
     let (commitments, field_inline_hints) = {
-        let (field_inline, field_inline_hints) = commit_field_inline::<F, PCS>(
-            backend,
-            session,
-            witness as &dyn JoltWitnessPlane<F>,
-            grid,
-            &preprocessing.pcs_setup,
-        )?;
+        let (field_inline, field_inline_hints) =
+            commit_field_inline::<F, PCS>(backend, session, grid, &preprocessing.pcs_setup)?;
         (
             commitments.with_field_inline(field_inline),
             field_inline_hints,
@@ -254,9 +235,8 @@ where
             id = ?JoltCommittedPolynomial::UntrustedAdvice
         )
         .in_scope(|| {
-            backend.commit.commit_advice(
+            backend.commit_advice(
                 session,
-                witness as &dyn JoltWitnessOracle<F>,
                 JoltCommittedPolynomial::UntrustedAdvice,
                 advice_grid,
                 &preprocessing.pcs_setup,
@@ -327,9 +307,8 @@ where
     reason = "the wire payload paired with its opening hints"
 )]
 fn commit_field_inline<F, PCS>(
-    backend: &JoltBackend<F, PCS>,
+    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
     session: &mut ProofSession,
-    witness: &dyn JoltWitnessPlane<F>,
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
 ) -> Result<
@@ -343,20 +322,10 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    let Some(field_inline) = witness.field_inline() else {
-        return Err(ProverError::Unsupported {
-            reason: "field-inline proving requires a witness plane serving the field-inline \
-                     oracle (a field-inline guest)",
-        });
-    };
-    let ids = field_inline.committed_order();
+    let ids = [FieldInlineCommittedPolynomial::FieldRdInc];
     // Backend-neutral seam span, like `commit_witness`.
     let committed = tracing::info_span!("commit_field_inline_witness", columns = ids.len())
-        .in_scope(|| {
-            backend
-                .commit
-                .commit_field_inline_witness(session, witness, &ids, grid, setup)
-        })?;
+        .in_scope(|| backend.commit_field_inline_witness(session, &ids, grid, setup))?;
 
     let mut rd_inc = None;
     let mut hints = Vec::with_capacity(committed.len());
@@ -448,8 +417,10 @@ mod field_inline_tests {
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, Ring};
     use jolt_kernels::finish_streamed;
+    use jolt_kernels::KernelError;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
     use jolt_transcript::LegacyBlake2bTranscript;
+    use jolt_witness::JoltWitnessPlane;
 
     fn grid() -> CommitmentGrid {
         CommitmentGrid {
@@ -483,7 +454,8 @@ mod field_inline_tests {
         let mut session = backend.begin_proof();
         let setup = DoryScheme::setup_prover(grid().total_vars);
 
-        let ids: Vec<JoltCommittedPolynomial> = witness.committed_polynomial_order().unwrap();
+        let ids: Vec<JoltCommittedPolynomial> =
+            witness.metadata().committed_polynomial_order().unwrap();
         let committed = backend
             .commit
             .commit_witness(
@@ -497,9 +469,8 @@ mod field_inline_tests {
         let (commitments, _hints) = assemble_commitments::<DoryScheme>(committed).unwrap();
 
         let (field_inline, field_inline_hints) = commit_field_inline::<Fr, DoryScheme>(
-            &backend,
+            &backend.with_witness(&witness),
             &mut session,
-            &witness as &dyn JoltWitnessPlane<Fr>,
             grid(),
             &setup,
         )
@@ -572,12 +543,14 @@ mod field_inline_tests {
         let setup = DoryScheme::setup_prover(grid().total_vars);
 
         let result = commit_field_inline::<Fr, DoryScheme>(
-            &backend,
+            &backend.with_witness(&witness),
             &mut session,
-            &witness as &dyn JoltWitnessPlane<Fr>,
             grid(),
             &setup,
         );
-        assert!(matches!(result, Err(ProverError::Unsupported { .. })));
+        assert!(matches!(
+            result,
+            Err(ProverError::Kernel(KernelError::Unsupported { .. }))
+        ));
     }
 }

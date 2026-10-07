@@ -11,7 +11,7 @@
 use jolt_claims::protocols::jolt::TraceDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -24,7 +24,6 @@ use jolt_verifier::stages::stage3::outputs::{
     Stage3Sumchecks,
 };
 use jolt_verifier::stages::stage3::stage3_input_values_from_upstream;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{ProverConfig, ProverError, StageProver as _};
@@ -41,16 +40,14 @@ pub struct Stage3ProverOutput<F: JoltField, C> {
 }
 
 /// Prove stage 3 on `transcript` (positioned at the stage-2 boundary).
-#[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage3<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
+    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
     config: &ProverConfig,
     stage1: &Stage1ClearOutput<F>,
     stage2: &Stage2ClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage3ProverOutput<F, VC::Output>, ProverError<F>>
 where
@@ -77,12 +74,11 @@ where
     let input_points = sumchecks.empty_input_points();
     let inputs = stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);
 
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.registry.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &challenges,

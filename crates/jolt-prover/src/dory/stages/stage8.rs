@@ -27,15 +27,13 @@ use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
-#[cfg(feature = "field-inline")]
-use jolt_kernels::{field_inline::FieldIncrementColumn, optimized::opening::DenseTraceColumnPoly};
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{
     build_committed_bytecode_chunk_coeffs, program_image_words_padded,
 };
 use jolt_kernels::opening::PrecommittedOpeningTables;
-use jolt_kernels::{CommitmentGrid, JoltBackend, KernelError, ProofSession};
+use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, KernelError, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 #[cfg(not(feature = "zk"))]
 use jolt_openings::BatchOpeningScheme;
@@ -45,8 +43,6 @@ use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
     VerifierOpeningClaim, ZkOpeningScheme,
 };
-#[cfg(feature = "field-inline")]
-use jolt_poly::MultilinearPoly;
 use jolt_poly::Point;
 use jolt_transcript::Transcript;
 use jolt_verifier::proof::JoltCommitments;
@@ -54,7 +50,6 @@ use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage8::{batch_entries, precommitted_final_openings};
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::JoltWitnessPlane;
 
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -74,7 +69,7 @@ pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
+    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
     session: &mut ProofSession,
     checked: &CheckedInputs,
     config: &ProverConfig,
@@ -89,7 +84,6 @@ pub fn prove_stage8<F, PCS, VC, T>(
     )>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
 where
@@ -256,11 +250,7 @@ where
         polynomials = order.len(),
         total_vars = grid.total_vars
     )
-    .in_scope(|| {
-        backend
-            .joint_opening
-            .prepare(session, witness, &order, precommitted_tables, grid)
-    })?;
+    .in_scope(|| backend.prepare_joint_opening(session, &order, precommitted_tables, grid))?;
     // Move stage-0 hints; cloning would retain every row commitment.
     let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
         hints.into().into_iter().collect();
@@ -276,14 +266,8 @@ where
         .collect::<Result<_, _>>()?;
     jolt_kernels::mem::drop_in_background_thread(hint_by_id);
 
-    // The witness-side twin of the composed plan splice above: the statement
-    // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and
-    // `batch_entries` emits entries 1:1 with `order`, so the polynomial and
-    // hint join at `order`'s RdInc position + 1. The column is read off the field-inline
-    // oracle rather than through the backend's joint-opening slot (typed over
-    // the base polynomial family) and opened as a lazy grid view placed
-    // exactly as its stage-0 commitment fed it — never the dense
-    // `2^total_vars` embedding.
+    // Match the protocol's FieldRdInc splice with its backend-owned polynomial
+    // and stage-0 hint at the same batch position.
     #[cfg(feature = "field-inline")]
     let (polynomials, ordered_hints) = {
         let mut polynomials = polynomials;
@@ -294,17 +278,8 @@ where
             .ok_or(ProverError::InvariantViolation {
                 reason: "the final opening batch has no FieldRdInc entry",
             })?;
-        let oracle = witness.field_inline().ok_or(ProverError::Unsupported {
-            reason:
-                "the stage-8 FieldRdInc opening requires a witness plane serving the field-inline \
-                         oracle",
-        })?;
-        let table = FieldIncrementColumn::resolve(session, oracle, 1usize << grid.log_t)?;
-        let column =
-            DenseTraceColumnPoly::new(table, grid).ok_or(ProverError::InvariantViolation {
-                reason: "FieldRdInc table exceeds the commitment grid",
-            })?;
-        polynomials.insert(position, Box::new(column) as Box<dyn MultilinearPoly<F>>);
+        let column = backend.prepare_field_inline_opening(session, grid)?;
+        polynomials.insert(position, column);
         let hint = field_inline_hints
             .into_iter()
             .find(|(id, _)| *id == FieldInlineCommittedPolynomial::FieldRdInc)
