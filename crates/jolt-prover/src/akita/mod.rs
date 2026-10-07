@@ -183,8 +183,8 @@ where
     /// Byte-link entry (spec §5): the session's carries, `BooleanityRows`
     /// among them, and the Metal views of host trace tables go before the
     /// link allocates. Nothing after stage 7 reads either. The purge returns
-    /// the freed pages now; macOS otherwise reclaims them up to a second
-    /// later, while the link already allocates.
+    /// the freed pages now; macOS otherwise reclaims them later, while the
+    /// link already allocates.
     #[cfg(feature = "akita-byte-link")]
     pub fn end_trace_stages(&self, session: ProofSession, log_t: usize) {
         drop(session);

@@ -556,7 +556,7 @@ pub(super) fn validate_completed_command(
 }
 
 #[cfg(all(test, feature = "akita-byte-link"))]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = "no-copy view fixture")]
 mod tests {
     use std::{ffi::c_void, sync::Arc};
 
