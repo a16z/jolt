@@ -263,8 +263,11 @@ mod akita_tests {
     #[cfg(feature = "akita-byte-link")]
     #[test]
     fn byte_link_setup_rejects_a_k16_geometry_before_stage_8() {
-        let (run, config) = muldiv_run();
-        assert_eq!(config.one_hot_config.committed_chunk_bits(), 4);
+        let (run, mut config) = muldiv_run();
+        config.one_hot_config = JoltOneHotConfig {
+            log_k_chunk: 4,
+            lookups_ra_virtual_log_k_chunk: 16,
+        };
         assert!(matches!(
             preprocessing::preprocess_full(run.preprocessing, &config),
             Err(jolt_prover::PreprocessingError::ByteTraceGeometry(
@@ -284,20 +287,17 @@ mod akita_tests {
         verify(&proved).expect("forced-K256 proof must verify");
     }
 
-    /// The byte link at 2^16 cycles: the fibonacci guest at K=2^8 proves and
-    /// verifies, survives a serialization round trip, and rejects swapped
-    /// histogram commitments and a K=2^4 shape before stage 1.
+    /// The byte link at 2^16 cycles: the fibonacci guest proves and verifies at
+    /// the derived K=2^8, survives a serialization round trip, and rejects
+    /// swapped histogram commitments and a K=2^4 shape before stage 1.
     #[cfg(feature = "akita-byte-link")]
     #[test]
     fn byte_link_e2e_akita_at_2_16() {
         let inputs = postcard::to_stdvec(&4000u32).expect("serialize inputs");
         let run = guest_run("fibonacci-guest", &inputs, &[], &[]);
-        let mut config = derive_config(&run);
+        let config = derive_config(&run);
         assert_eq!(config.trace_length, 1 << 16);
-        config.one_hot_config = JoltOneHotConfig {
-            log_k_chunk: 8,
-            lookups_ra_virtual_log_k_chunk: 32,
-        };
+        assert_eq!(config.one_hot_config.committed_chunk_bits(), 8);
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("the 2^16 byte-link proof must verify");
 

@@ -211,11 +211,12 @@ fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
 
 /// Below the trace-length threshold (`log_T < 25`), use
 /// 4-bit committed chunks and `LOG_K/8 = 16`-bit virtual-RA chunks; at or
-/// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks
-/// (a branch that requires a 2^25-cycle trace).
+/// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks.
+/// Under `akita-byte-link` every length takes the 8-bit branch: the byte
+/// trace exists only at K=2^8.
 #[expect(non_snake_case)]
 fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
-    if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+    if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T && !cfg!(feature = "akita-byte-link") {
         JoltOneHotConfig {
             log_k_chunk: 4,
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 8) as u8,
