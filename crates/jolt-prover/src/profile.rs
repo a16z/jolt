@@ -84,7 +84,6 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use rayon::ThreadPoolBuilder;
 use tracer::execution_backend::TracerBackend;
 
-#[cfg(not(feature = "akita"))]
 use crate::JoltBackend;
 use crate::JoltSharedPreprocessing;
 use crate::ProverConfig;
@@ -841,18 +840,8 @@ fn prove_workload(
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
-    #[cfg(not(feature = "field-inline"))]
-    let config = ProverConfig::derive_compact::<Fr>(
-        trace_output.trace.as_slice(),
-        &memory_layout,
-        program_preprocessing.ram.min_bytecode_address,
-        program_preprocessing.ram.bytecode_words.len(),
-        max_trace_length,
-    )
-    .expect("derive config");
-    #[cfg(feature = "field-inline")]
-    let config = ProverConfig::derive::<Fr>(
-        trace_output.trace.rows(),
+    let config = ProverConfig::derive_from_dimensions::<Fr>(
+        trace_output.dimensions,
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
         program_preprocessing.ram.bytecode_words.len(),
@@ -891,12 +880,11 @@ fn prove_workload(
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-        &backend,
+    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
         None,
-        witness.as_ref(),
         &public_io,
     )
     .expect("modular prove");
@@ -955,25 +943,15 @@ fn prove_workload(
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
     let backend = match backend {
-        BackendKind::Reference => crate::akita::JoltAkitaBackend::reference(),
-        BackendKind::Optimized => crate::akita::JoltAkitaBackend::optimized(),
+        BackendKind::Reference => JoltBackend::reference(),
+        BackendKind::Optimized => JoltBackend::optimized(),
     };
 
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
-    #[cfg(not(feature = "field-inline"))]
-    let mut config = ProverConfig::derive_compact::<AkitaField>(
-        trace_output.trace.as_slice(),
-        &memory_layout,
-        program_preprocessing.ram.min_bytecode_address,
-        program_preprocessing.ram.bytecode_words.len(),
-        max_trace_length,
-    )
-    .expect("derive config");
-    #[cfg(feature = "field-inline")]
-    let mut config = ProverConfig::derive::<AkitaField>(
-        trace_output.trace.rows(),
+    let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
+        trace_output.dimensions,
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
         program_preprocessing.ram.bytecode_words.len(),
@@ -1026,12 +1004,11 @@ fn prove_workload(
     // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
-    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-        &backend,
+    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
         None,
-        &witness,
         &public_io,
     )
     .expect("modular Akita prove");

@@ -22,8 +22,8 @@ pub fn prove(
         preprocessing,
         trace,
     } = support::prepare(case);
-    let config = ProverConfig::derive::<Fr>(
-        trace.trace.rows(),
+    let config = ProverConfig::derive_from_dimensions::<Fr>(
+        trace.dimensions,
         &preprocessing.memory_layout,
         preprocessing.ram.min_bytecode_address,
         preprocessing.ram.bytecode_words.len(),
@@ -49,12 +49,11 @@ pub fn prove(
     )
     .with_field_inline()
     .expect("field-inline witness view");
-    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-        &backend,
+    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        backend.with_witness(&witness),
         &preprocessing,
         &config,
         None,
-        &witness,
         &public_io,
     )
     .expect("modular field-inline prove");

@@ -22,10 +22,10 @@ use jolt_verifier::stages::stage8::akita::field_inc_claim;
 use jolt_verifier::stages::stage8::akita::{leaf_claims, object_leaf_claims, one_hot_trace_claim};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
-#[cfg(feature = "field-inline")]
-use super::field_inline::FieldIncObject;
 use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+#[cfg(feature = "field-inline")]
+use jolt_kernels::akita::commitment::FieldIncObject;
 
 fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     ProverError::Verifier(VerifierError::FinalOpeningBatchFailed {

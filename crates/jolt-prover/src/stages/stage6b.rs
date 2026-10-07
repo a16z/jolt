@@ -25,7 +25,7 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -47,7 +47,6 @@ use jolt_verifier::stages::stage6b::{
     stage6b_input_points_from_upstream, stage6b_input_values_from_upstream,
 };
 use jolt_verifier::CheckedInputs;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
@@ -68,7 +67,7 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage6b<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
+    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
@@ -80,7 +79,6 @@ pub fn prove_stage6b<F, PCS, VC, T>(
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
     stage6a: &Stage6aClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage6bProverOutput<F, VC::Output>, ProverError<F>>
 where
@@ -106,13 +104,20 @@ where
     let draws = Stage6bDraws::draw(transcript, committed_program);
 
     // The batch, through the verifier's own promoted constructor over the
-    // clear carriers. The full-program rows feed only the full-mode table
-    // fold; they ride the witness plane (witness generation requires the
-    // full program in every mode).
+    // clear carriers. Full-mode bytecode rows come from program preprocessing.
     let bytecode_table_rows = if committed_program {
         None
     } else {
-        Some(witness.program_preprocessing().bytecode.bytecode.as_slice())
+        Some(
+            preprocessing
+                .program()
+                .ok_or(ProverError::InvariantViolation {
+                    reason: "missing full program preprocessing",
+                })?
+                .bytecode
+                .bytecode
+                .as_slice(),
+        )
     };
     let entry_bytecode_index = preprocessing
         .verifier
@@ -175,12 +180,11 @@ where
     // `impl_stage_prover` invocation site (the promoted verifier helper's
     // canonical order, including the runtime booleanity-vs-bytecode point
     // dedup).
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.registry.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &cycle_challenges,
@@ -269,7 +273,7 @@ mod field_inline_round_trip {
         label: &'static [u8],
     ) {
         let witness = trace_backend.with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
@@ -290,7 +294,7 @@ mod field_inline_round_trip {
         }
         .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
+            &backend.with_witness(&witness),
             &mut session,
             &mode,
             &checked,
@@ -302,7 +306,6 @@ mod field_inline_round_trip {
             &stage4.clear_output,
             &stage5.clear_output,
             &stage6a.clear_output,
-            &witness,
             &mut prover_transcript,
         )
         .unwrap();
@@ -461,7 +464,7 @@ mod field_inline_round_trip {
     #[test]
     fn field_register_inc_claim_reduction_kernel_output_matches_direct_mle() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut session = backend.begin_proof();
         let oracle = witness.field_inline().unwrap();
 
@@ -554,7 +557,7 @@ mod field_inline_zk {
     #[test]
     fn committed_stage6b_shell_carries_the_curated_rows() {
         let witness = addi_only_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut session = backend.begin_proof();
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
@@ -577,7 +580,7 @@ mod field_inline_zk {
         }
         .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
+            &backend.with_witness(&witness),
             &mut session,
             &mode,
             &checked,
@@ -589,7 +592,6 @@ mod field_inline_zk {
             &stage4.clear_output,
             &stage5.clear_output,
             &stage6a.clear_output,
-            &witness,
             &mut transcript,
         )
         .unwrap();

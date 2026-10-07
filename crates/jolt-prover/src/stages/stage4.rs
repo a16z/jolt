@@ -16,7 +16,7 @@ use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::opening::RamInitialOpening;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -39,7 +39,6 @@ use jolt_verifier::stages::stage4::{
     VerifiedRamValCheckAdviceContribution,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
@@ -58,7 +57,7 @@ pub struct Stage4ProverOutput<F: JoltField, C> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage4<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
+    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
@@ -66,7 +65,6 @@ pub fn prove_stage4<F, PCS, VC, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage2: &Stage2ClearOutput<F>,
     stage3: &Stage3ClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage4ProverOutput<F, VC::Output>, ProverError<F>>
 where
@@ -133,11 +131,8 @@ where
     let values = if openings.is_empty() {
         Vec::new()
     } else {
-        tracing::info_span!("RamInitialOpeningEvaluation::evaluate").in_scope(|| {
-            backend
-                .ram_initial_openings
-                .evaluate(session, &openings, witness)
-        })?
+        tracing::info_span!("RamInitialOpeningEvaluation::evaluate")
+            .in_scope(|| backend.evaluate_ram_initial_openings(session, &openings))?
     };
     if values.len() != openings.len() {
         return Err(ProverError::InvariantViolation {
@@ -205,12 +200,11 @@ where
     // at prepare), and the stage's `no_opening_values` absorb order is the
     // batch's hand-written `opening_values` replacement (staged openings
     // first, then registers, then RAM) — the driver's default curation.
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.registry.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &challenges,
@@ -272,7 +266,7 @@ mod field_inline_round_trip {
     #[test]
     fn field_arithmetic_stage4_round_trips_the_composed_verifier() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
@@ -294,7 +288,7 @@ mod field_inline_round_trip {
         }
         .through_stage3();
         let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
+            &backend.with_witness(&witness),
             &mut session,
             &mode,
             &checked,
@@ -302,7 +296,6 @@ mod field_inline_round_trip {
             &preprocessing,
             &stage2.clear_output,
             &stage3.clear_output,
-            &witness,
             &mut prover_transcript,
         )
         .unwrap();
@@ -343,7 +336,7 @@ mod field_inline_round_trip {
     #[test]
     fn field_register_read_write_kernel_outputs_match_direct_mle() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut session = backend.begin_proof();
         let oracle = witness.field_inline().unwrap();
 
@@ -481,7 +474,7 @@ mod field_inline_zk {
     #[test]
     fn committed_stage4_shell_carries_the_curated_rows() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut session = backend.begin_proof();
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
@@ -504,7 +497,7 @@ mod field_inline_zk {
         }
         .through_stage3();
         let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
+            &backend.with_witness(&witness),
             &mut session,
             &mode,
             &checked,
@@ -512,7 +505,6 @@ mod field_inline_zk {
             &preprocessing,
             &stage2.clear_output,
             &stage3.clear_output,
-            &witness,
             &mut transcript,
         )
         .unwrap();

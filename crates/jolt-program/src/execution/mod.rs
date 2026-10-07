@@ -19,8 +19,9 @@ pub use crate::field_inline::{
 pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, TraceSource};
 pub use error::TraceError;
 pub use trace::{
-    JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
-    RegisterState, RegisterWrite, TraceInputs, TraceOutput, TraceRow, TraceRowError,
+    ExecutionDimensions, JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamAddressBounds,
+    RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceInputs, TraceOutput,
+    TraceRow, TraceRowError,
 };
 
 #[cfg(feature = "image")]

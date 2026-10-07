@@ -12,23 +12,31 @@
 //! fallback partial backends compose over; it is eager-dense throughout — a
 //! test oracle at harness scale, never a performance path.
 
+#[cfg(feature = "akita")]
+use jolt_akita::TraceOneHotCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "akita")]
+use jolt_openings::{GroupSetupMetadata, TransparentObjectSetup};
 
 use jolt_sumcheck::{RoundScheduler, SequentialRounds};
 
 use crate::backend::{BuildRoundScheduler, ProofSession};
+#[cfg(not(feature = "akita"))]
 use crate::commitment::ModeStreamingCommitment;
-use crate::JoltBackend;
+use crate::{CommitWitness, JoltBackend};
 
 use self::precommitted_reduction::ReferencePrecommittedAddress;
 use self::spartan_outer::ReferenceOuterRemainder;
 use self::spartan_product::ReferenceProductRemainder;
 
 pub mod advice_claim_reduction;
+#[cfg(feature = "akita")]
+pub mod akita;
 pub mod booleanity;
 pub mod bytecode_claim_reduction;
 pub mod bytecode_read_raf;
+#[cfg(not(feature = "akita"))]
 pub mod commitment;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;
@@ -45,6 +53,7 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 pub mod naive;
+#[cfg(not(feature = "akita"))]
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod program_image_claim_reduction;
@@ -71,10 +80,9 @@ pub struct ReferenceBackend;
 /// Whether the active jolt-claims protocol shape is the packed (lattice)
 /// one: the lattice build folds the store val stage into
 /// `NUM_BYTECODE_VAL_STAGES`, so equality with `LATTICE_BYTECODE_VAL_STAGES`
-/// discriminates the shape at runtime. jolt-kernels deliberately has no
-/// feature of its own — a local cfg would silently read false under feature
-/// unification and desynchronize the kernels from the jolt-claims shape —
-/// so mode-agnostic relations (the booleanity address phase) branch on this.
+/// discriminates the shape at runtime. Dependency feature unification can
+/// select this shape without enabling this crate's `akita` feature, so
+/// mode-agnostic relations (the booleanity address phase) branch on this.
 pub(crate) fn lattice_shape() -> bool {
     jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES
         == jolt_claims::protocols::jolt::lattice::LATTICE_BYTECODE_VAL_STAGES
@@ -96,12 +104,29 @@ where
     /// against, and the fallback partial backends compose over. Its commit
     /// slot streams, hence the [`ModeStreamingCommitment`] bound — a
     /// reference-implementation requirement, not a seam one.
+    #[cfg(not(feature = "akita"))]
     pub fn reference() -> Self
     where
         PCS: ModeStreamingCommitment,
     {
+        Self::reference_kernels(ReferenceBackend)
+    }
+
+    /// Reference compute kernels with native packed witness commitment.
+    #[cfg(feature = "akita")]
+    pub fn reference() -> Self
+    where
+        PCS: TraceOneHotCommitment + TransparentObjectSetup,
+        PCS::ProverSetup: GroupSetupMetadata,
+    {
+        Self::reference_kernels(ReferenceBackend)
+    }
+
+    /// Reference compute kernels with a caller-supplied commitment implementation.
+    /// Commitment selection is independent of the compute slots.
+    pub fn reference_kernels(commit: impl CommitWitness<F, PCS> + 'static) -> Self {
         Self {
-            commit: Box::new(ReferenceBackend),
+            commit: Box::new(commit),
             round_scheduler: Box::new(ReferenceBackend),
             spartan_outer_uniskip: Box::new(ReferenceBackend),
             spartan_outer_remainder: Box::new(ReferenceOuterRemainder),
@@ -153,6 +178,7 @@ where
             program_image_reduction_address: Box::new(ReferencePrecommittedAddress::new(
                 "stage 6b parked no program-image reduction state for the scheduled address phase",
             )),
+            #[cfg(not(feature = "akita"))]
             joint_opening: Box::new(ReferenceBackend),
         }
     }

@@ -5,7 +5,7 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::AkitaProverSetup;
 use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
-use jolt_prover::akita::JoltAkitaBackend;
+use jolt_prover::JoltBackend;
 use jolt_prover::{akita, ProverConfig};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
@@ -27,7 +27,7 @@ pub struct ProveOutput {
 /// The callback inspects the attached witness before proving.
 pub fn prove<D>(
     case: &GuestCase,
-    backend: JoltAkitaBackend<AkitaField, AkitaScheme>,
+    backend: JoltBackend<AkitaField, AkitaScheme>,
     inspect: impl FnOnce(
         &ProverConfig,
         &dyn FieldInlineWitnessOracle<AkitaField>,
@@ -41,8 +41,8 @@ pub fn prove<D>(
     } = crate::support::prepare(case);
     let memory_layout = trace_output.device.memory_layout.clone();
     let public_io = trace_output.device.clone();
-    let config = ProverConfig::derive::<AkitaField>(
-        trace_output.trace.rows(),
+    let config = ProverConfig::derive_from_dimensions::<AkitaField>(
+        trace_output.dimensions,
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
         program_preprocessing.ram.bytecode_words.len(),
@@ -78,12 +78,11 @@ pub fn prove<D>(
         &prover_preprocessing.pcs_setup,
     );
 
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-        &backend,
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
         None,
-        &witness,
         &public_io,
     )
     .expect("Akita field-inline prove");

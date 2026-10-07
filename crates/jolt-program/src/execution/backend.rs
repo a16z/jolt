@@ -4,7 +4,7 @@ use std::sync::Arc;
 use super::{MemoryImage, TraceError, TraceInputs, TraceOutput, TraceRow};
 
 pub trait ExecutionBackend {
-    type Trace: TraceSource;
+    type Trace;
 
     fn trace(
         &mut self,
@@ -40,7 +40,10 @@ pub trait TraceSource {
 /// that require retained random access must emit their compact row format at
 /// this boundary instead of draining a replaying source into another full
 /// trace allocation.
-pub trait ChunkedExecutionBackend: ExecutionBackend {
+pub trait ChunkedExecutionBackend: ExecutionBackend
+where
+    Self::Trace: TraceSource,
+{
     /// Everything needed to deterministically re-execute one chunk,
     /// independent of every other chunk.
     type Checkpoint: Send + Sync;

@@ -188,8 +188,8 @@ mod twin_tests {
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_kernels::{
-        KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
-        SumcheckKernelError,
+        KernelContext, KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs,
+        SumcheckKernel, SumcheckKernelError,
     };
     use jolt_poly::UnivariatePoly;
     use jolt_sumcheck::{ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckError};
@@ -758,10 +758,9 @@ mod twin_tests {
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &kernels,
+                &KernelContext::new(&kernels, NoWitness),
                 &mut session,
                 &mut SequentialRounds,
-                &NoWitness,
                 &inputs,
                 &input_points,
                 &challenges,
@@ -860,10 +859,9 @@ mod twin_tests {
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &kernels,
+                &KernelContext::new(&kernels, NoWitness),
                 &mut session,
                 &mut SequentialRounds,
-                &NoWitness,
                 &inputs,
                 &input_points,
                 &challenges,
@@ -918,10 +916,9 @@ mod twin_tests {
         let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let result = sumchecks.prove(
-            &kernels,
+            &KernelContext::new(&kernels, NoWitness),
             &mut session,
             &mut SequentialRounds,
-            &NoWitness,
             &inputs,
             &input_points,
             &challenges,
@@ -946,10 +943,9 @@ mod twin_tests {
         };
 
         let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, _>(
-            &kernels,
+            &KernelContext::new(&kernels, NoWitness),
             None,
             &mut session,
-            &NoWitness,
             Some(&claims),
             Some(&points),
             Some(&NoChallenges::default()),

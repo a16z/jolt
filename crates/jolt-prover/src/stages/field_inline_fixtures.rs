@@ -18,11 +18,17 @@
 
 use std::sync::Arc;
 
+use crate::JoltBackend;
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
+use jolt_field::Fr;
+#[cfg(feature = "akita")]
+use jolt_kernels::{
+    CommitWitness, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,
+};
 use jolt_program::execution::{
     JoltProgram, OwnedTrace, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
     TraceOutput, TraceRow,
@@ -38,6 +44,8 @@ use jolt_riscv::{
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::PrecommittedSchedule;
 use jolt_verifier::CheckedInputs;
+#[cfg(feature = "akita")]
+use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 use crate::{JoltProverPreprocessing, ProverConfig};
@@ -402,7 +410,7 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
 }
 
 /// The stage recipes' derived-config shape for the fixture traces: the same
-/// derivation `ProverConfig::derive` performs, at the fixture's scale (no
+/// derivation `ProverConfig::derive_from_dimensions` performs, at the fixture's scale (no
 /// RAM traffic, so `ram_K` stays at a small power of two).
 pub(crate) fn test_prover_config() -> ProverConfig {
     ProverConfig {
@@ -456,7 +464,7 @@ pub(crate) mod twins {
     };
     use jolt_claims::protocols::jolt::TraceDimensions;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Ring;
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::{AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript};
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
@@ -490,6 +498,7 @@ pub(crate) mod twins {
     use jolt_claims::protocols::jolt::JoltRelationId;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
     use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
     use jolt_verifier::stages::stage4::outputs::Stage4Sumchecks;
     use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
@@ -912,9 +921,9 @@ pub(crate) mod proving {
     use crate::stages::stage4::{prove_stage4, Stage4ProverOutput};
     use crate::stages::stage5::{prove_stage5, Stage5ProverOutput};
     use crate::stages::stage6a::{prove_stage6a, Stage6aProverOutput};
+    use crate::ProofSession;
     use crate::{JoltBackend, ProofMode};
     use jolt_field::Fr;
-    use jolt_kernels::ProofSession;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_witness::JoltWitnessPlane;
     type Commitment = Bn254G1;
@@ -942,33 +951,30 @@ pub(crate) mod proving {
     impl FixtureProver<'_> {
         pub(crate) fn through_stage3(&mut self) -> Stages3 {
             let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                self.backend,
+                &self.backend.with_witness(self.witness),
                 self.session,
                 self.mode,
                 LOG_T,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                self.backend,
+                &self.backend.with_witness(self.witness),
                 self.session,
                 self.mode,
                 self.config,
                 self.public_io,
                 &stage1.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
             let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                self.backend,
+                &self.backend.with_witness(self.witness),
                 self.session,
                 self.mode,
                 self.config,
                 &stage1.clear_output,
                 &stage2.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
@@ -977,7 +983,7 @@ pub(crate) mod proving {
         pub(crate) fn through_stage4(&mut self) -> Stages4 {
             let (stage1, stage2, stage3) = self.through_stage3();
             let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                self.backend,
+                &self.backend.with_witness(self.witness),
                 self.session,
                 self.mode,
                 self.checked,
@@ -985,7 +991,6 @@ pub(crate) mod proving {
                 self.preprocessing,
                 &stage2.clear_output,
                 &stage3.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
@@ -994,7 +999,7 @@ pub(crate) mod proving {
         pub(crate) fn through_stage5(&mut self) -> Stages5 {
             let ((stage1, stage2, stage3), stage4) = self.through_stage4();
             let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                self.backend,
+                &self.backend.with_witness(self.witness),
                 self.session,
                 self.mode,
                 self.checked,
@@ -1002,7 +1007,6 @@ pub(crate) mod proving {
                 self.preprocessing,
                 &stage2.clear_output,
                 &stage4.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
@@ -1011,7 +1015,7 @@ pub(crate) mod proving {
         pub(crate) fn through_stage6a(&mut self) -> Stages6a {
             let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
             let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                self.backend,
+                &self.backend.with_witness(self.witness),
                 self.session,
                 self.mode,
                 self.checked,
@@ -1022,11 +1026,39 @@ pub(crate) mod proving {
                 &stage3.clear_output,
                 &stage4.clear_output,
                 &stage5.clear_output,
-                self.witness,
                 self.transcript,
             )
             .unwrap();
             ((((stage1, stage2, stage3), stage4), stage5), stage6a)
         }
+    }
+}
+
+/// The stage fixtures do not perform a PCS commitment.
+pub(crate) fn reference_backend() -> JoltBackend<Fr, DoryScheme> {
+    #[cfg(not(feature = "akita"))]
+    {
+        JoltBackend::reference()
+    }
+    #[cfg(feature = "akita")]
+    {
+        JoltBackend::reference_kernels(UnusedCommit)
+    }
+}
+
+#[cfg(feature = "akita")]
+struct UnusedCommit;
+
+#[cfg(feature = "akita")]
+impl CommitWitness<Fr, DoryScheme> for UnusedCommit {
+    fn commit_witness(
+        &self,
+        _: &mut ProofSession,
+        _: &dyn JoltWitnessPlane<Fr>,
+        _: WitnessCommitRequest<'_, DoryScheme>,
+    ) -> Result<WitnessCommitment<DoryScheme>, KernelError<Fr>> {
+        Err(KernelError::Unsupported {
+            reason: "stage fixture has no commitment slot",
+        })
     }
 }

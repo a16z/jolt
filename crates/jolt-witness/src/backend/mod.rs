@@ -1,3 +1,7 @@
+//! Witness backends: implementors of the id-indexed oracle surface.
+
+use std::sync::Arc;
+
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_field::Field;
 use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -77,7 +81,9 @@ pub trait ProgramSource {
 /// oracle surface, the sequential row source (kernels collect their own
 /// typed bundles through [`crate::collect_bundles`], so no stage recipe
 /// stages row vectors on the side), and the program view.
-/// Blanket-implemented; the supertrait set is exactly what kernels consume.
+/// Implementations may expose only metadata (for example [`crate::JoltVmWitnessMetadata`]);
+/// unsupported data queries return [`WitnessError::UnavailableView`].
+/// Blanket-implemented over the existing query interfaces.
 pub trait JoltWitnessPlane<F: Field>:
     JoltWitnessOracle<F> + RowSource + ProgramSource + Send + Sync
 {
@@ -87,3 +93,44 @@ impl<F: Field, T> JoltWitnessPlane<F> for T where
     T: JoltWitnessOracle<F> + RowSource + ProgramSource + Send + Sync
 {
 }
+
+// Shared and borrowed handles preserve the underlying witness capabilities.
+macro_rules! impl_witness_handle {
+    ($handle:ty) => {
+        impl<F: Field, T: JoltWitnessOracle<F> + ?Sized> JoltWitnessOracle<F> for $handle {
+            fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
+                (**self).shape(id)
+            }
+            fn oracle_table(&self, id: JoltPolynomialId) -> Result<Vec<F>, WitnessError> {
+                (**self).oracle_table(id)
+            }
+            fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+                (**self).committed_order()
+            }
+            #[cfg(feature = "field-inline")]
+            fn field_inline(&self) -> Option<&dyn FieldInlineWitnessOracle<F>> {
+                (**self).field_inline()
+            }
+        }
+        impl<T: ProgramSource + ?Sized> ProgramSource for $handle {
+            fn program_preprocessing(&self) -> &JoltProgramPreprocessing {
+                (**self).program_preprocessing()
+            }
+        }
+        impl<T: RowSource + ?Sized> RowSource for $handle {
+            fn visit_chunks(
+                &self,
+                range: std::ops::Range<usize>,
+                chunk_size: usize,
+                visitor: &mut crate::ChunkVisitor<'_>,
+            ) -> Result<(), WitnessError> {
+                (**self).visit_chunks(range, chunk_size, visitor)
+            }
+            fn random_access(&self) -> Option<crate::RandomAccessRows> {
+                (**self).random_access()
+            }
+        }
+    };
+}
+impl_witness_handle!(&T);
+impl_witness_handle!(Arc<T>);

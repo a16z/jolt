@@ -7,6 +7,14 @@
     feature = "akita",
     not(feature = "field-inline")
 ))]
+#[path = "support/akita_backend.rs"]
+mod backend_contract;
+
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 mod support;
 
 #[cfg(all(
@@ -28,11 +36,12 @@ mod akita_tests {
     use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
     use jolt_program::execution::OwnedTrace;
+    use jolt_prover::akita;
     use jolt_prover::akita::preprocessing::{
         self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
     };
     use jolt_prover::akita::witness::commit_advice;
-    use jolt_prover::akita::{self, JoltAkitaBackend};
+    use jolt_prover::JoltBackend;
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
@@ -64,8 +73,8 @@ mod akita_tests {
     }
 
     fn derive_config(run: &PreparedGuest) -> ProverConfig {
-        ProverConfig::derive_compact::<AkitaField>(
-            run.trace.trace.as_slice(),
+        ProverConfig::derive_from_dimensions::<AkitaField>(
+            run.trace.dimensions,
             &run.preprocessing.memory_layout,
             run.preprocessing.ram.min_bytecode_address,
             run.preprocessing.ram.bytecode_words.len(),
@@ -116,12 +125,11 @@ mod akita_tests {
             witness_config(&config, untrusted_advice, has_trusted_advice),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(),
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
             trusted.as_ref(),
-            &witness,
             &public_io,
         )
         .expect("Akita proof");
@@ -147,6 +155,64 @@ mod akita_tests {
         let run = guest_run("muldiv-guest", &inputs, &[], &[]);
         let config = derive_config(&run);
         (run, config)
+    }
+
+    #[test]
+    fn commitment_request_rejects_a_different_layout_and_excess_groups() {
+        use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
+        use jolt_claims::protocols::jolt::JoltFormulaDimensions;
+        use jolt_kernels::akita::commitment::WitnessCommitRequest;
+        use jolt_openings::{CommitmentScheme, OpeningsError};
+
+        let (run, config) = muldiv_run();
+        let log_t = config.trace_length.ilog2() as usize;
+        let dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
+            log_t,
+            128,
+            run.preprocessing.bytecode.code_size,
+            config.ram_K,
+        ))
+        .expect("formula dimensions");
+        let shape = OneHotTraceShape {
+            ra_layout: dimensions.ra_layout,
+            log_t,
+            log_k_chunk: config.one_hot_config.committed_chunk_bits(),
+        };
+        let preprocessing = preprocessing::preprocess_full_with_advice(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            run.preprocessing,
+            &config,
+            false,
+            false,
+        )
+        .expect("Akita preprocessing");
+        let setup = &preprocessing.pcs_setup;
+        let request = WitnessCommitRequest::<AkitaScheme>::new(setup, shape, &[])
+            .expect("matching canonical geometry");
+        assert_eq!(
+            request.plan(),
+            &ONE_HOT_TRACE_LAYOUT.plan(&shape).expect("canonical layout")
+        );
+
+        let different_shape = OneHotTraceShape {
+            log_t: log_t + 1,
+            ..shape
+        };
+        assert!(matches!(
+            WitnessCommitRequest::<AkitaScheme>::new(setup, different_shape, &[]),
+            Err(OpeningsError::InvalidSetup(reason))
+                if reason.contains("layout digest")
+        ));
+
+        // The trace itself consumes one group, so filling the entire setup
+        // capacity with auxiliary groups must be rejected before dispatch.
+        let hint = <AkitaScheme as CommitmentScheme>::OpeningHint::default();
+        let hints = vec![&hint; setup.max_total_batch_polys()];
+        assert!(matches!(
+            WitnessCommitRequest::<AkitaScheme>::new(setup, shape, &hints),
+            Err(OpeningsError::InvalidSetup(reason))
+                if reason.contains("dimensions")
+        ));
     }
 
     #[test]
@@ -243,12 +309,11 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(),
+        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
             None,
-            &witness,
             &public_io,
         );
         assert!(matches!(
@@ -286,12 +351,11 @@ mod akita_tests {
                     continue;
                 }
                 config.akita_chunk_profile = requested;
-                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-                    &JoltAkitaBackend::optimized(),
+                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                    JoltBackend::optimized().with_witness(&witness),
                     &preprocessing,
                     &config,
                     None,
-                    &witness,
                     &public_io,
                 );
                 assert!(matches!(
@@ -396,12 +460,11 @@ mod akita_tests {
                 witness_config(&config, true, true),
                 JoltVmWitnessInputs::new(&run.program, &program, run.trace),
             );
-            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-                &JoltAkitaBackend::optimized(),
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
                 Some(&object),
-                &witness,
                 &public_io,
             )
             .expect("reuse the original advice commitment and opening hint");
@@ -444,12 +507,11 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(),
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
             None,
-            &witness,
             &public_io,
         )
         .expect("committed Akita proof");
@@ -513,12 +575,11 @@ mod akita_tests {
             witness_config(&config, true, true),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(),
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
             Some(&trusted_object),
-            &witness,
             &public_io,
         )
         .expect("committed advice Akita proof");
