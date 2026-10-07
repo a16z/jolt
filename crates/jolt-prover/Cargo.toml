@@ -27,6 +27,9 @@ akita = [
   "jolt-field/solinas",
   "jolt-kernels/akita",
 ]
+# The packed protocol over the byte-root trace commitment and the W-only
+# histogram link (`CommitmentConfig::PackedByteLink`). Default off.
+akita-byte-link = ["akita", "jolt-verifier/akita-byte-link"]
 # Apple GPU commitment and PIOP kernels for the packed protocol. The proof
 # shape and transcript are identical to the `akita` feature.
 metal = ["akita", "jolt-akita/metal", "jolt-kernels/metal"]

@@ -24,6 +24,9 @@ zk = ["jolt-prover/zk"]
 # commitment object, co-batched reduction opening. Mutually exclusive with
 # `zk` — one PIOP per compiled verifier.
 akita = ["jolt-prover/akita", "jolt-claims/akita"]
+# The packed protocol over the byte-root trace commitment and the W-only
+# histogram link (`CommitmentConfig::PackedByteLink`). Default off.
+akita-byte-link = ["akita", "jolt-prover/akita-byte-link"]
 transcript-blake2b = []
 transcript-keccak = []
 transcript-poseidon = []

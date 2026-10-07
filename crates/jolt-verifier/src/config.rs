@@ -2,9 +2,10 @@
 //!
 //! The protocol choices are fixed at compile time: `zk` selects BlindFold,
 //! while `akita` selects packed commitments and little-endian scalar
-//! challenges. One compiled verifier therefore runs exactly one protocol. A
-//! proof self-describes these choices and [`validate_proof_config`] rejects a
-//! mismatch fail-closed.
+//! challenges, and `akita-byte-link` the byte-root packed commitment. One
+//! compiled verifier therefore runs exactly one protocol. A proof
+//! self-describes these choices and [`validate_proof_config`] rejects a
+//! mismatch fail-closed, before the transcript is seeded.
 
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +33,9 @@ pub enum CommitmentConfig {
     /// Packed one-hot trace and dense advice commitments with heterogeneous
     /// Akita opening and verification.
     Packed,
+    /// Packed signed-byte trace `Q` linked to the retained one-hot claims by
+    /// committed W histograms; advice and program objects as in `Packed`.
+    PackedByteLink,
 }
 
 /// Byte order used to decode scalar Fiat-Shamir challenges.
@@ -68,8 +72,11 @@ pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::BlindFold;
 #[cfg(not(feature = "zk"))]
 pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::Transparent;
 
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Packed;
+
+#[cfg(feature = "akita-byte-link")]
+pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::PackedByteLink;
 
 #[cfg(not(feature = "akita"))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homomorphic;
