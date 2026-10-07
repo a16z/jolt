@@ -314,8 +314,12 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
     /// Park the post-cycle bound state under `RA`'s carry key — the shared
     /// body of the per-kind `park_residue` overrides. A cycle-completed
     /// schedule has no stage-7 member, so it parks nothing.
-    fn park_carry<RA: 'static>(self, session: &mut ProofSession) {
+    fn park_carry<RA: 'static>(self, session: &mut ProofSession)
+    where
+        R: 'static,
+    {
         if !self.has_address_phase() {
+            crate::mem::drop_in_background_thread(self);
             return;
         }
         session.park(PrecommittedReductionCarry::<F, RA> {

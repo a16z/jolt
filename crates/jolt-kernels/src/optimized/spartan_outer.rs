@@ -1431,8 +1431,9 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
     type Relation = OuterRemainder<F>;
 
     #[cfg(feature = "field-inline")]
-    fn park_residue(self: Box<Self>, session: &mut ProofSession) {
-        session.park(FieldSpartanCarry(self.field_rows));
+    fn park_residue(mut self: Box<Self>, session: &mut ProofSession) {
+        session.park(FieldSpartanCarry(std::mem::take(&mut self.field_rows)));
+        crate::mem::drop_in_background_thread(self);
     }
 
     #[cfg_attr(

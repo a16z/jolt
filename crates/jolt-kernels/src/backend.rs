@@ -221,13 +221,13 @@ impl<T: ?Sized> MaybeAllocative for T {}
 /// a monomorphized visitor captured at insertion — where the concrete type
 /// is still known — so heap flamegraphs can see through the `dyn Any`.
 struct Carry {
-    value: Box<dyn Any>,
+    value: Box<dyn Any + Send>,
     #[cfg(feature = "allocative")]
     visit: fn(&dyn Any, &mut Visitor<'_>),
 }
 
 impl Carry {
-    fn new<T: Any + MaybeAllocative>(value: T) -> Self {
+    fn new<T: Any + MaybeAllocative + Send>(value: T) -> Self {
         Self {
             value: Box::new(value),
             #[cfg(feature = "allocative")]
@@ -317,7 +317,7 @@ impl ProofSession {
         clippy::expect_used,
         reason = "the map entry is keyed by T's TypeId, so the downcast is infallible"
     )]
-    pub fn state_or_insert_with<T: Any + MaybeAllocative>(
+    pub fn state_or_insert_with<T: Any + MaybeAllocative + Send>(
         &mut self,
         init: impl FnOnce() -> T,
     ) -> &mut T {
@@ -344,7 +344,7 @@ impl ProofSession {
     /// missing or stale carry is a proof-time
     /// [`KernelError`](crate::KernelError), the accepted cost of keeping
     /// every batch member uniform.
-    pub fn park<T: Any + MaybeAllocative>(&mut self, value: T) {
+    pub fn park<T: Any + MaybeAllocative + Send>(&mut self, value: T) {
         let _ = self.state.insert(TypeId::of::<T>(), Carry::new(value));
     }
 
