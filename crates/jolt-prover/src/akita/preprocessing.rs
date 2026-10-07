@@ -11,7 +11,6 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_program::preprocess::JoltProgramPreprocessing;
-use jolt_transcript::LegacyBlake2bTranscript;
 use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
@@ -24,7 +23,6 @@ use super::one_hot_trace_setup_shape;
 use super::witness::{commit_advice, commit_direct_program, AdviceObject};
 
 pub type AkitaVc = NoVectorCommitment<AkitaField>;
-pub type AkitaTranscript = LegacyBlake2bTranscript<AkitaField>;
 pub type AkitaProverPreprocessing = JoltProverPreprocessing<AkitaScheme, AkitaVc>;
 pub type AkitaVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
 

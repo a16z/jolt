@@ -7,7 +7,7 @@ use crate::protocols::field_inline::relations::{
 use crate::protocols::field_inline::FieldInlineOpeningId;
 use crate::protocols::jolt::relations::spartan as base;
 use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-use crate::{Expr, InputClaims, MissingOpeningValue, OutputClaims};
+use crate::{Expr, InputClaims, MapCells, MissingOpeningValue, OutputClaims};
 use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
@@ -122,6 +122,39 @@ impl<F: JoltField, B: OutputClaims<F>, E: OutputClaims<F, FieldInlineOpeningId>>
                 .map_err(|e| MissingOpeningValue { id: e.id.into() })?,
             field_inline: E::from_opening_values(|id| resolve(&(*id).into()))
                 .map_err(|e| MissingOpeningValue { id: e.id.into() })?,
+        })
+    }
+}
+
+impl<A, B> MapCells<A, B, FieldInlineOpeningId> for EmptyClaims {
+    type Mapped = Self;
+
+    fn try_map_cells<E>(
+        &self,
+        _: &mut impl FnMut(&FieldInlineOpeningId, &A) -> Result<B, E>,
+    ) -> Result<Self, E> {
+        Ok(Self)
+    }
+}
+
+impl<A, B, Base, Ext> MapCells<A, B, ComposedOpeningId> for ComposedClaims<Base, Ext>
+where
+    Base: MapCells<A, B>,
+    Ext: MapCells<A, B, FieldInlineOpeningId>,
+{
+    type Mapped = ComposedClaims<Base::Mapped, Ext::Mapped>;
+
+    fn try_map_cells<E>(
+        &self,
+        f: &mut impl FnMut(&ComposedOpeningId, &A) -> Result<B, E>,
+    ) -> Result<Self::Mapped, E> {
+        Ok(ComposedClaims {
+            base: self
+                .base
+                .try_map_cells(&mut |id, cell| f(&(*id).into(), cell))?,
+            field_inline: self
+                .field_inline
+                .try_map_cells(&mut |id, cell| f(&(*id).into(), cell))?,
         })
     }
 }

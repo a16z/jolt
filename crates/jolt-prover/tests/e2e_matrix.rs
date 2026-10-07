@@ -227,7 +227,7 @@ mod matrix {
         use jolt_field::Fr;
         use jolt_program::execution::OwnedTrace;
         use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
-        use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+        use jolt_verifier::JoltSponge;
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
         use crate::support::{self, GuestCase};
@@ -276,7 +276,7 @@ mod matrix {
                 .include_trusted_advice(trusted.is_some()),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
                 &JoltBackend::optimized(),
                 &preprocessing,
                 &config,
@@ -285,7 +285,7 @@ mod matrix {
                 &public_io,
             )
             .expect("Dory proof");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,
@@ -299,9 +299,10 @@ mod matrix {
     mod mode {
         use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_program::execution::OwnedTrace;
-        use jolt_prover::akita::preprocessing::{self, AkitaTranscript, AkitaVc};
+        use jolt_prover::akita::preprocessing::{self, AkitaVc};
         use jolt_prover::akita::{self, JoltAkitaBackend};
         use jolt_prover::ProverConfig;
+        use jolt_verifier::JoltSponge;
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
         use crate::support::{self, GuestCase};
@@ -346,7 +347,7 @@ mod matrix {
                 .include_trusted_advice(trusted_advice),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
                 &JoltAkitaBackend::optimized(),
                 &preprocessing,
                 &config,
@@ -355,7 +356,7 @@ mod matrix {
                 &public_io,
             )
             .expect("Akita proof");
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

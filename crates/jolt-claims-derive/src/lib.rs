@@ -70,7 +70,7 @@
 //! (one drawn Fiat-Shamir scalar). A `Vec<F>` field is rejected (challenge sub-enum
 //! variants are unit, so there is no indexed id), and an `Option<F>` field is
 //! rejected (no relation draws a conditional challenge, and the `draw_challenges`
-//! default treats every field as one unconditional `challenge_scalar`).
+//! default treats every field as one unconditional exact `challenge()`).
 //!
 //! Generates both halves of [`SumcheckChallenges`]: `resolve_challenge` (id →
 //! value) and `from_transcript_values` (consume one drawn scalar per field in
@@ -501,6 +501,9 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     let mut order_chains = Vec::new();
     let mut resolve_arms = Vec::new();
     let mut construct_fields = Vec::new();
+    // Field initializers for `MapCells`, in declaration order (struct literal
+    // fields evaluate in written order, so cells are visited canonically).
+    let mut map_fields = Vec::new();
 
     for plan in &plans {
         let FieldPlan {
@@ -513,6 +516,14 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         if *is_many {
             let id = id_expr(&namespace, kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
+            map_fields.push(quote! {
+                #ident: self
+                    .#ident
+                    .iter()
+                    .enumerate()
+                    .map(|(index, __cell)| f(&#id, __cell))
+                    .collect::<::core::result::Result<::std::vec::Vec<_>, __E>>()?,
+            });
             resolve_arms.push(quote! {
                 for (index, __value) in self.#ident.iter().enumerate() {
                     if *id == #id {
@@ -534,6 +545,9 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         } else if *is_option {
             let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
+            map_fields.push(quote! {
+                #ident: self.#ident.as_ref().map(|__cell| f(&#id, __cell)).transpose()?,
+            });
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__value) = &self.#ident {
                     if *id == #id {
@@ -545,6 +559,9 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         } else {
             let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
+            map_fields.push(quote! {
+                #ident: f(&#id, &self.#ident)?,
+            });
             resolve_arms.push(quote! {
                 if *id == #id {
                     return ::core::option::Option::Some(self.#ident);
@@ -613,6 +630,21 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             ) -> ::core::result::Result<Self, ::jolt_claims::MissingOpeningValue<#id_ty>> {
                 ::core::result::Result::Ok(Self {
                     #(#construct_fields)*
+                })
+            }
+        }
+
+        // The structural cell map, over any pair of cell types: the struct's
+        // own declaration fixes the visit order and the mapped shape.
+        impl<__A, __B> ::jolt_claims::MapCells<__A, __B, #id_ty> for #name<__A> {
+            type Mapped = #name<__B>;
+
+            fn try_map_cells<__E>(
+                &self,
+                f: &mut impl ::core::ops::FnMut(&#id_ty, &__A) -> ::core::result::Result<__B, __E>,
+            ) -> ::core::result::Result<#name<__B>, __E> {
+                ::core::result::Result::Ok(#name {
+                    #(#map_fields)*
                 })
             }
         }
@@ -766,7 +798,7 @@ fn plan_challenge_field(field: &Field) -> Result<ChallengeFieldPlan> {
             &field.ty,
             "challenge fields are an unconditional scalar `F`; a conditional \
              `Option<F>` challenge is not supported (no relation draws one, and the \
-             `draw_challenges` default treats every field as one `challenge_scalar`)",
+             `draw_challenges` default treats every field as one exact `challenge()`)",
         ));
     }
     Ok(ChallengeFieldPlan { ident, path })

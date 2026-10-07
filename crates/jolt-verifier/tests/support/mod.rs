@@ -1,18 +1,3 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum VerifierPhase {
-    Preamble,
-    Commitments,
-    Stage1,
-    Stage2,
-    Stage3,
-    Stage4,
-    Stage5,
-    Stage6,
-    Stage7,
-    Stage8Openings,
-    Zk,
-}
-
 pub fn assert_accepts_mode(zk: bool, result: Result<(), VerifierError>) {
     let result_debug = format!("{result:?}");
 
@@ -54,18 +39,12 @@ pub fn assert_zk_rejects(result: Result<(), VerifierError>) {
 }
 #[cfg(all(feature = "prover-fixtures", feature = "akita"))]
 pub mod akita_fixtures;
-#[cfg(feature = "fs-audit")]
-pub mod fs_mutations;
-#[cfg(feature = "fs-audit")]
-pub mod fs_transcript;
 #[cfg(feature = "prover-fixtures")]
 pub mod guest_fixtures;
-#[cfg(feature = "prover-fixtures")]
-pub mod proof_claims;
-pub mod tamper_manifest;
 #[cfg(all(feature = "prover-fixtures", not(feature = "akita")))]
 pub mod verifier_fixtures;
-#[cfg(feature = "zk")]
-pub mod zk_audit;
+
+#[cfg(all(feature = "prover-fixtures", feature = "logging"))]
+pub mod narg;
 
 use jolt_verifier::VerifierError;

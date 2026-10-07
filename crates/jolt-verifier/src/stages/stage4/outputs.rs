@@ -1,15 +1,17 @@
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
-use jolt_transcript::Transcript;
 
-use crate::stages::relations::{OutputClaims, SumcheckBatch};
+use crate::stages::relations::{ClaimRoutes, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
 pub use super::field_registers_read_write_checking::{
     FieldRegistersReadWriteChecking, FieldRegistersReadWriteOutputClaims,
 };
-use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims};
+use super::ram_val_check::{
+    RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims, RamValCheckStagedOpenings,
+};
 use super::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
@@ -20,24 +22,14 @@ use super::registers_read_write_checking::{
 /// `Stage4InputPoints<F>`, `Stage4OutputClaims<F>`, `Stage4OutputPoints<F>`, and
 /// `Stage4Challenges<F>` aggregates — one field per instance, in this declaration order.
 ///
-/// The RAM value-check instance produces *more* openings than the register one:
-/// besides its main `ram_ra`/`ram_inc`, it also stages the `Val_init` advice
-/// contributions and (in committed program mode) the program-image contribution.
-/// Those staged openings are folded into `RamValCheckOutputClaims`, so the
-/// aggregate is genuinely one-field-per-instance. But the stage-4 Fiat-Shamir
-/// append order interleaves them around the register openings — advice +
-/// program-image come *before* the register openings, then `ram_ra`/`ram_inc`
-/// come *after* — which a plain per-instance concatenation cannot express. The
-/// stage therefore opts out of the generated absorb methods via
-/// `#[sumcheck_batch(no_opening_values)]` and supplies the exact interleaved
-/// order below.
-///
-/// The RAM value-check member's wire set extends its output `Expr`
-/// (`ram_ra`/`ram_inc`) with the present staged advice / program-image openings
-/// (see its `wire_output_openings` override), so the generated output-shape
-/// count/validator cover their presence and count.
+/// Besides its `ram_ra`/`ram_inc`, the RAM value-check member produces the
+/// staged `Val_init` advice and program-image contribution openings
+/// ([`RamValCheckStagedOpenings`]),
+/// routed [`ClaimRoute::Staged`](crate::stages::relations::ClaimRoute::Staged):
+/// a clear proof sends them before the batch, and a committed proof commits
+/// them in declaration order with the rest of the stage's claims.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(no_opening_values, crate = "crate")]
+#[sumcheck_batch(routes, crate = "crate")]
 pub struct Stage4Sumchecks<F: JoltField> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     /// The field-inline Twist read/write instance over `T * 2^log_k`. Declaration position
@@ -67,52 +59,13 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     }
 }
 
-impl<F: JoltField> Stage4Sumchecks<F> {
-    /// The hand-written replacement for the absorb method the
-    /// `no_opening_values` opt-out suppresses: stage 4's canonical order
-    /// interleaves the RAM value-check's staged openings around the register
-    /// openings, so it delegates to the claims aggregate's curated order.
-    /// Same signature as the generated method, so the generated prove
-    /// driver's default curation serves this stage unchanged.
-    pub fn opening_values(&self, claims: &Stage4OutputClaims<F>) -> Vec<F> {
-        claims.opening_values()
-    }
-}
-
-impl<F: JoltField> Stage4OutputClaims<F> {
-    /// The produced opening claims in canonical (Fiat-Shamir) order, matching the prover's
-    /// commitment (flush) order exactly: the `Val_init` advice openings, the committed
-    /// program-image contribution, the register read-write openings, under `field-inline` the
-    /// five field-register read-write openings (the spec's committed row order: after the
-    /// ordinary register openings, before the RAM value-check ones), then the RAM value-check
-    /// `ram_ra`/`ram_inc` openings. The advice and program-image openings are produced by the
-    /// RAM value-check instance but are *appended first* (before the registers), so this is
-    /// hand-written rather than a per-instance concatenation — see [`Stage4Sumchecks`].
-    pub fn opening_values(&self) -> Vec<F> {
-        let ram = &self.ram_val_check;
-        let mut values: Vec<F> = ram
-            .untrusted_advice
-            .into_iter()
-            .chain(ram.trusted_advice)
-            .chain(ram.program_image)
-            .chain(self.registers_read_write.opening_values())
-            .collect();
-        #[cfg(feature = "field-inline")]
-        values.extend(self.field_registers_read_write.opening_values());
-        values.extend([ram.ram_ra, ram.ram_inc]);
-        values
-    }
-
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label, matching the prover's commitment order.
-    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
-    }
-}
-
 impl<F: JoltField> Stage4OutputPoints<F> {
+    /// The stage's claim routes: the RAM value check's staged contribution
+    /// cells are [`ClaimRoute::Staged`](crate::stages::relations::ClaimRoute::Staged).
+    pub fn claim_routes(&self) -> Result<ClaimRoutes, VerifierError> {
+        Ok(RamValCheckStagedOpenings::from_claims(&self.ram_val_check).claim_routes())
+    }
+
     /// The register read-write opening point (shared by all five register
     /// openings).
     pub fn registers_read_write_point(&self) -> &[F] {
@@ -138,10 +91,7 @@ pub struct Stage4ClearOutput<F: JoltField> {
     /// the Fiat-Shamir opening-claim encoder.
     pub output_values: Stage4OutputClaims<F>,
     /// The produced stage-4 opening *points*, paired field-for-field with
-    /// `output_values` for the register and RAM value-check leaves. The advice /
-    /// program-image opening points are carried on `ram_val_check_init` (they sit at
-    /// the staged RAM address sub-point, not the batch sumcheck point), so they are
-    /// left absent here.
+    /// `output_values`.
     pub output_points: Stage4OutputPoints<F>,
     pub ram_val_check_init: RamValCheckInitialEvaluation<F>,
 }
@@ -153,9 +103,7 @@ pub struct Stage4ZkOutput<F: JoltField, C> {
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
     pub ram_val_check_public_eval: F,
     /// The produced opening points, the ZK counterpart of the clear path's
-    /// `output_points`. Read through the same `*_point()` accessors. The advice /
-    /// program-image leaves are absent in ZK (BlindFold carries those openings), so
-    /// only the register and RAM value-check points are populated.
+    /// `output_points`. Read through the same `*_point()` accessors.
     pub output_points: Stage4OutputPoints<F>,
 }
 
@@ -193,7 +141,7 @@ impl<F: JoltField, C> Stage4Output<F, C> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::test_transcript::assert_same_draws;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::geometry::dimensions::{
@@ -203,7 +151,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -253,19 +201,46 @@ mod tests {
         Vec::new()
     }
 
-    /// The full interleaved order: advice (untrusted, trusted) and the program-image
-    /// contribution come *first*, then the five register openings, under `field-inline` the
-    /// five field-inline openings, then `ram_ra`/`ram_inc` last — exactly matching the
-    /// prover's stage-4 `pending_claims` flush order.
+    /// The staged routes when every staged contribution is present.
+    fn staged_routes() -> ClaimRoutes {
+        RamValCheckStagedOpenings::<Vec<Fr>> {
+            untrusted_advice: Some(Vec::new()),
+            trusted_advice: Some(Vec::new()),
+            program_image: Some(Vec::new()),
+        }
+        .claim_routes()
+    }
+
+    /// The clear post-round claims, pinned with distinct sentinels: the five
+    /// register openings, under `field-inline` the five field-register openings,
+    /// then `ram_ra`/`ram_inc`; the staged contributions travel before the batch.
     #[test]
-    fn opening_values_interleave_advice_then_registers_then_ram() {
-        let expected: Vec<Fr> = [fr(1), fr(2), fr(10)]
-            .into_iter()
-            .chain((3..=7).map(fr))
+    fn wire_claims_omit_staged_openings() {
+        let expected: Vec<Fr> = (3..=7)
+            .map(fr)
             .chain(field_inline_splice())
             .chain([fr(8), fr(9)])
             .collect();
-        assert_eq!(claims_with_advice(true).opening_values(), expected);
+        assert_eq!(
+            Stage4Sumchecks::wire_claim_values(&claims_with_advice(true), &staged_routes()),
+            expected
+        );
+    }
+
+    /// The committed rows are declaration order: the registers, under
+    /// `field-inline` the field registers, then the RAM value check's fields
+    /// (untrusted, trusted, program image, `ram_ra`, `ram_inc`).
+    #[test]
+    fn committed_claims_follow_declaration_order() {
+        let expected: Vec<Fr> = (3..=7)
+            .map(fr)
+            .chain(field_inline_splice())
+            .chain([fr(1), fr(2), fr(10), fr(8), fr(9)])
+            .collect();
+        assert_eq!(
+            Stage4Sumchecks::committed_claim_values(&claims_with_advice(true), &staged_routes()),
+            expected
+        );
     }
 
     fn sumchecks() -> Stage4Sumchecks<Fr> {
@@ -286,60 +261,38 @@ mod tests {
                 TraceDimensions::new(log_t),
                 ram_log_k,
                 RamValCheckInit::from(fr(0)),
+                RamValCheckStagedOpenings::default(),
             ),
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the inline draw order: one `challenge_scalar` per
-    /// leading member — the registers gamma, under `field-inline` the field-register
-    /// read-write gamma (the spec's draw slot: after the registers gamma, before the RAM
-    /// value-check draw) — then the RAM value-check draw (its domain separator + gamma; that
-    /// draw's byte exactness is pinned by its own member test). The replica reuses the RAM
-    /// member's `draw_challenges` so this test pins the member ORDER.
+    /// The batch draws one uniform gamma per member in declaration order: the
+    /// registers gamma, under `field-inline` the field-register read-write gamma
+    /// (the spec's draw slot: after the registers gamma, before the RAM
+    /// value-check gamma), then the RAM value-check gamma.
     #[test]
-    fn draw_challenges_matches_inline_draw_sequence() {
-        use crate::stages::relations::ConcreteSumcheck as _;
-
+    fn draw_challenges_follow_member_order() {
         let sumchecks = sumchecks();
         #[cfg(not(feature = "field-inline"))]
-        let leading_gamma_draws = 1usize;
+        let gamma_draws = 2usize;
         #[cfg(feature = "field-inline")]
-        let leading_gamma_draws = 2usize;
-        let (inline_events, (inline_gammas, inline_ram_gamma)) = record(|t| {
-            let gammas = (0..leading_gamma_draws)
-                .map(|_| t.challenge_scalar())
-                .collect::<Vec<Fr>>();
-            let ram = sumchecks.ram_val_check.draw_challenges(t).unwrap();
-            (gammas, ram.gamma)
-        });
-        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
+        let gamma_draws = 3usize;
+        let (challenges, gammas) = assert_same_draws(
+            |t| sumchecks.draw_challenges(t).unwrap(),
+            |t| (0..gamma_draws).map(|_| t.challenge()).collect::<Vec<Fr>>(),
+        );
 
-        assert_eq!(draw_events, inline_events);
-        assert!(matches!(draw_events.first(), Some(DrawEvent::Squeeze(1))));
-        assert!(draw_events
-            .iter()
-            .any(|event| matches!(event, DrawEvent::Append(_))));
         #[cfg(not(feature = "field-inline"))]
-        let drawn_gammas = vec![challenges.registers_read_write.gamma];
+        let drawn_gammas = vec![
+            challenges.registers_read_write.gamma,
+            challenges.ram_val_check.gamma,
+        ];
         #[cfg(feature = "field-inline")]
         let drawn_gammas = vec![
             challenges.registers_read_write.gamma,
             challenges.field_registers_read_write.gamma,
+            challenges.ram_val_check.gamma,
         ];
-        assert_eq!(drawn_gammas, inline_gammas);
-        assert_eq!(challenges.ram_val_check.gamma, inline_ram_gamma);
-    }
-
-    #[test]
-    fn output_claim_count_matches_absorbed_openings() {
-        let sumchecks = sumchecks();
-        #[cfg(not(feature = "field-inline"))]
-        assert_eq!(sumchecks.output_claim_count(), 7);
-        #[cfg(feature = "field-inline")]
-        assert_eq!(sumchecks.output_claim_count(), 12);
-        assert_eq!(
-            claims_with_advice(false).opening_values().len(),
-            sumchecks.output_claim_count(),
-        );
+        assert_eq!(drawn_gammas, gammas);
     }
 }

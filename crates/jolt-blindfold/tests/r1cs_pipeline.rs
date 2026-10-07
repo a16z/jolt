@@ -9,7 +9,7 @@ fn r1cs_pipeline_rejects_late_stage_mismatch() {
     let mut prover = SumcheckTestProver::new(ChaCha20Rng::from_seed([6; 32]));
     let (stage1, stage2, stage3, values) = generated_deep_triple(&mut prover);
     let mut tampered_stage3 = stage3.clone();
-    tampered_stage3.proof = stage2.proof.clone();
+    tampered_stage3.consistency = stage2.consistency.clone();
 
     assert!(build_deep_relation(&stage1, &stage2, &tampered_stage3, &values).is_err());
 }

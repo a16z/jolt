@@ -25,6 +25,9 @@ bytemuck = { workspace = true, optional = true }
 rand_core = { workspace = true }
 rayon = { workspace = true, optional = true }
 thiserror = { workspace = true }
+# The transcript codec traits atoms implement. spongefish 0.7 references its
+# sha3 `StdHash` even when another sponge is selected.
+spongefish = { workspace = true, features = ["sha3"] }
 
 [features]
 default = ["bn254"]
@@ -40,6 +43,7 @@ fp128-proof-linkage = ["asm"]
 fp64-proof-linkage = []
 
 [dev-dependencies]
+spongefish = { workspace = true, features = ["sha3"] }
 # The spine test's oracle field must satisfy `JoltField`, which requires
 # `Allocative` under the `allocative` feature; integration tests do not see
 # the optional dependency above.

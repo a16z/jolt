@@ -1,73 +1,79 @@
-//! Bridges the `jolt-transcript` framework into dory-pcs's `DoryTranscript` trait.
+//! Runs dory-pcs inside the caller's NARG transcript.
 //!
-//! Prover/verifier parity within `jolt-dory` is by construction: both sides
-//! traverse this adapter. The surrounding Jolt transcript is responsible for
-//! matching the core Fiat-Shamir byte layout before this adapter is entered.
+//! dory-pcs absorbs every prover message it relies on through
+//! [`DoryTranscript::append_serde`], interleaved with its challenges in an
+//! order fixed by the proof's round count. The prover adapter sends each such
+//! value as a prover message, so the argument string holds exactly Dory's
+//! messages in Fiat-Shamir order. dory-pcs verifies from a proof struct it
+//! receives up front, so the verifier first rebuilds that struct by reading the
+//! messages from the transcript's unread bytes without absorbing them, then runs `dory::verify` with
+//! an adapter whose every `append_serde` receives the next message from the
+//! live transcript and checks it equals the value dory-pcs absorbs.
+//!
+//! The Σ₁ responses of a ZK proof are the one part of the proof dory-pcs never
+//! absorbs. Both sides place them after the Dory messages, so the argument
+//! string carries no byte the verifier reads without absorbing.
 
-use dory::backends::arkworks::BN254;
+use dory::backends::arkworks::{ArkDoryProof, ArkG2, BN254};
+use dory::messages::{
+    FirstReduceMessage, ScalarProductMessage, ScalarProductProof, SecondReduceMessage, Sigma1Proof,
+    Sigma2Proof, VMVMessage,
+};
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::transcript::Transcript as DoryTranscript;
-use dory::primitives::DorySerialize;
+use dory::primitives::{DoryDeserialize, DorySerialize};
 use jolt_field::Fr;
-use jolt_transcript::domain::{Label, LabelWithCount};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_openings::OpeningsError;
+use jolt_transcript::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 
-use crate::scheme::{ark_to_jolt_fr, jolt_fr_to_ark, ArkFr};
+use crate::scheme::{jolt_fr_to_ark, ArkFr, ArkG1, ArkGT};
 
-pub struct JoltToDoryTranscript<'a, T: Transcript<Challenge = Fr>> {
-    transcript: &'a mut T,
+/// Prover side: every absorbed value becomes a prover message.
+pub(crate) struct DoryProverChannel<'a, H: Sponge> {
+    transcript: &'a mut ProverTranscript<H>,
 }
 
-impl<'a, T: Transcript<Challenge = Fr>> JoltToDoryTranscript<'a, T> {
-    pub fn new(transcript: &'a mut T) -> Self {
+impl<'a, H: Sponge> DoryProverChannel<'a, H> {
+    pub(crate) fn new(transcript: &'a mut ProverTranscript<H>) -> Self {
         Self { transcript }
+    }
+
+    /// Sends the Σ₁ responses dory-pcs does not absorb, after its messages.
+    pub(crate) fn send_sigma1_responses(
+        &mut self,
+        proof: &ArkDoryProof,
+    ) -> Result<(), OpeningsError> {
+        let sigma1 = proof.sigma1_proof.as_ref().ok_or_else(|| {
+            OpeningsError::ProveFailed("ZK proof must contain a Σ₁ proof".to_owned())
+        })?;
+        for response in [&sigma1.z1, &sigma1.z2, &sigma1.z3] {
+            self.transcript.send_bytes(&compressed(response));
+        }
+        Ok(())
     }
 }
 
-impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, T> {
+impl<H: Sponge> DoryTranscript for DoryProverChannel<'_, H> {
     type Curve = BN254;
 
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
-        self.transcript
-            .append(&LabelWithCount(b"dory_bytes", bytes.len() as u64));
-        self.transcript.append_bytes(bytes);
+        self.transcript.send_bytes(bytes);
     }
 
     fn append_field(&mut self, _label: &[u8], x: &ArkFr) {
-        let jolt_scalar = ark_to_jolt_fr(x);
-        self.transcript.append(&Label(b"dory_field"));
-        jolt_scalar.append_to_transcript(self.transcript);
+        self.transcript.send_bytes(&compressed(x));
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "transcript serialization failures are fatal"
-    )]
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {
-        let mut buffer = Vec::new();
-        g.serialize_compressed(&mut buffer)
-            .expect("group serialization should not fail");
-        self.transcript
-            .append(&LabelWithCount(b"dory_group", buffer.len() as u64));
-        self.transcript.append_bytes(&buffer);
+        self.transcript.send_bytes(&compressed(g));
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "transcript serialization failures are fatal"
-    )]
     fn append_serde<S: DorySerialize>(&mut self, _label: &[u8], s: &S) {
-        let mut buffer = Vec::new();
-        s.serialize_compressed(&mut buffer)
-            .expect("DorySerialize serialization should not fail");
-        self.transcript
-            .append(&LabelWithCount(b"dory_serde", buffer.len() as u64));
-        self.transcript.append_bytes(&buffer);
+        self.transcript.send_bytes(&compressed(s));
     }
 
     fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {
-        let challenge: Fr = self.transcript.challenge_scalar();
-        jolt_fr_to_ark(&challenge)
+        jolt_fr_to_ark(&self.transcript.challenge::<Fr>())
     }
 
     fn reset(&mut self, _domain_label: &[u8]) {
@@ -75,192 +81,244 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
     }
 }
 
+/// Verifier side: every absorbed value must be the next prover message.
+pub(crate) struct DoryVerifierChannel<'a, 'p, H: Sponge> {
+    transcript: &'a mut VerifierTranscript<'p, H>,
+    mismatch: bool,
+}
+
+impl<'a, 'p, H: Sponge> DoryVerifierChannel<'a, 'p, H> {
+    pub(crate) fn new(transcript: &'a mut VerifierTranscript<'p, H>) -> Self {
+        Self {
+            transcript,
+            mismatch: false,
+        }
+    }
+
+    /// Receives the Σ₁ responses, which must match the ones `proof` was
+    /// rebuilt with, then reports whether every absorbed value matched.
+    pub(crate) fn finish(mut self, proof: &ArkDoryProof) -> Result<(), OpeningsError> {
+        if let Some(sigma1) = &proof.sigma1_proof {
+            for response in [&sigma1.z1, &sigma1.z2, &sigma1.z3] {
+                self.expect(&compressed(response));
+            }
+        }
+        if self.mismatch {
+            return Err(OpeningsError::VerificationFailed);
+        }
+        Ok(())
+    }
+
+    fn expect(&mut self, bytes: &[u8]) {
+        match self.transcript.receive_bytes(bytes.len()) {
+            Ok(received) if received == bytes => {}
+            Ok(_) | Err(_) => self.mismatch = true,
+        }
+    }
+}
+
+impl<H: Sponge> DoryTranscript for DoryVerifierChannel<'_, '_, H> {
+    type Curve = BN254;
+
+    fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
+        self.expect(bytes);
+    }
+
+    fn append_field(&mut self, _label: &[u8], x: &ArkFr) {
+        self.expect(&compressed(x));
+    }
+
+    fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {
+        self.expect(&compressed(g));
+    }
+
+    fn append_serde<S: DorySerialize>(&mut self, _label: &[u8], s: &S) {
+        self.expect(&compressed(s));
+    }
+
+    fn challenge_scalar(&mut self, _label: &[u8]) -> ArkFr {
+        jolt_fr_to_ark(&self.transcript.challenge::<Fr>())
+    }
+
+    fn reset(&mut self, _domain_label: &[u8]) {
+        unreachable!("reset is not invoked by dory-pcs and is intentionally unsupported")
+    }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "serializing a group or field element into a Vec cannot fail"
+)]
+fn compressed<S: DorySerialize + ?Sized>(value: &S) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(value.compressed_size());
+    value
+        .serialize_compressed(&mut bytes)
+        .expect("Dory element serialization cannot fail");
+    bytes
+}
+
+/// Rebuilds the Dory proof for a `num_vars`-variable opening from the next
+/// prover messages, parsing ahead in `unread`, the bytes the live verifier
+/// transcript has not yet received.
+///
+/// WARNING: this restates `dory::verify`'s message order and compressed
+/// widths, which dory-pcs owns. A drift from an upstream reorder fails
+/// completeness, not soundness: [`DoryVerifierChannel`] still receives every
+/// byte and checks it against the parsed value. Update this parser with any
+/// dory-pcs bump.
+pub(crate) fn read_proof(
+    unread: &[u8],
+    num_vars: usize,
+    zk: bool,
+) -> Result<ArkDoryProof, OpeningsError> {
+    let sigma = num_vars.div_ceil(2);
+    let nu = num_vars - sigma;
+    let reader = &mut { unread };
+
+    let vmv_message = VMVMessage {
+        c: read::<ArkGT>(reader)?,
+        d2: read(reader)?,
+        e1: read::<ArkG1>(reader)?,
+    };
+    let zk_prefix = if zk {
+        let e2 = read::<ArkG2>(reader)?;
+        let y_com = read::<ArkG1>(reader)?;
+        let sigma1_commitments = (read::<ArkG2>(reader)?, read::<ArkG1>(reader)?);
+        let sigma2 = Sigma2Proof {
+            a: read::<ArkGT>(reader)?,
+            z1: read::<ArkFr>(reader)?,
+            z2: read(reader)?,
+        };
+        Some((e2, y_com, sigma1_commitments, sigma2))
+    } else {
+        None
+    };
+
+    let mut first_messages = Vec::with_capacity(sigma);
+    let mut second_messages = Vec::with_capacity(sigma);
+    for _ in 0..sigma {
+        first_messages.push(FirstReduceMessage {
+            d1_left: read::<ArkGT>(reader)?,
+            d1_right: read(reader)?,
+            d2_left: read(reader)?,
+            d2_right: read(reader)?,
+            e1_beta: read::<ArkG1>(reader)?,
+            e2_beta: read::<ArkG2>(reader)?,
+        });
+        second_messages.push(SecondReduceMessage {
+            c_plus: read::<ArkGT>(reader)?,
+            c_minus: read(reader)?,
+            e1_plus: read::<ArkG1>(reader)?,
+            e1_minus: read(reader)?,
+            e2_plus: read::<ArkG2>(reader)?,
+            e2_minus: read(reader)?,
+        });
+    }
+
+    let Some((e2, y_com, (a1, a2), sigma2)) = zk_prefix else {
+        let final_message = ScalarProductMessage {
+            e1: read::<ArkG1>(reader)?,
+            e2: read::<ArkG2>(reader)?,
+        };
+        return Ok(ArkDoryProof {
+            vmv_message,
+            first_messages,
+            second_messages,
+            final_message: Some(final_message),
+            nu,
+            sigma,
+            e2: None,
+            y_com: None,
+            sigma1_proof: None,
+            sigma2_proof: None,
+            scalar_product_proof: None,
+        });
+    };
+
+    let scalar_product = ScalarProductProof {
+        p1: read::<ArkGT>(reader)?,
+        p2: read(reader)?,
+        q: read(reader)?,
+        r: read(reader)?,
+        e1: read::<ArkG1>(reader)?,
+        e2: read::<ArkG2>(reader)?,
+        r1: read::<ArkFr>(reader)?,
+        r2: read(reader)?,
+        r3: read(reader)?,
+    };
+    let sigma1 = Sigma1Proof {
+        a1,
+        a2,
+        z1: read::<ArkFr>(reader)?,
+        z2: read(reader)?,
+        z3: read(reader)?,
+    };
+    Ok(ArkDoryProof {
+        vmv_message,
+        first_messages,
+        second_messages,
+        final_message: None,
+        nu,
+        sigma,
+        e2: Some(e2),
+        y_com: Some(y_com),
+        sigma1_proof: Some(sigma1),
+        sigma2_proof: Some(sigma2),
+        scalar_product_proof: Some(scalar_product),
+    })
+}
+
+/// Compressed width of each element type a Dory proof carries.
+trait CompressedWidth {
+    const BYTES: usize;
+}
+
+impl CompressedWidth for ArkFr {
+    const BYTES: usize = 32;
+}
+
+impl CompressedWidth for ArkG1 {
+    const BYTES: usize = 32;
+}
+
+impl CompressedWidth for ArkG2 {
+    const BYTES: usize = 64;
+}
+
+impl CompressedWidth for ArkGT {
+    const BYTES: usize = 384;
+}
+
+/// Parses the next compressed `T` from the unread proof bytes, advancing
+/// `unread` past it.
+fn read<T>(unread: &mut &[u8]) -> Result<T, OpeningsError>
+where
+    T: DoryDeserialize + CompressedWidth,
+{
+    // A proof that ends early is truncated, as the live transcript would
+    // report on the same bytes; only a malformed element fails verification.
+    let (bytes, rest) = unread
+        .split_at_checked(T::BYTES)
+        .ok_or(OpeningsError::Transcript(TranscriptError::Truncated))?;
+    let value = T::deserialize_compressed(bytes).map_err(|_| OpeningsError::VerificationFailed)?;
+    *unread = rest;
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::expect_used,
-        clippy::indexing_slicing,
-        reason = "tests unwrap infallible serialization of well-formed group elements"
-    )]
+    use dory::primitives::arithmetic::Field as DoryField;
 
     use super::*;
-    use crate::scheme::jolt_fr_to_ark;
-    use ark_bn254::{Fr as ArkBn254Fr, G1Projective};
-    use ark_ec::PrimeGroup;
-    use ark_serialize::CanonicalSerialize;
-    use dory::backends::arkworks::{ArkFr as DoryArkFr, ArkG1};
-    use jolt_field::Ring;
-    use jolt_transcript::Blake2bTranscript;
-
-    // The framing words below are reconstructed from the documented layout
-    // (legacy.rs `Label` / `LabelWithCount`), NOT by calling those helpers:
-    // a `Label` is one 32-byte zero-padded word; a `LabelWithCount` packs the
-    // label into bytes 0..24 and the count big-endian into bytes 24..32. Each
-    // word and each payload is absorbed as its own `append_bytes` call.
-
-    fn label_word(label: &[u8]) -> [u8; 32] {
-        assert!(label.len() <= 32);
-        let mut word = [0u8; 32];
-        word[..label.len()].copy_from_slice(label);
-        word
-    }
-
-    fn label_with_count_word(label: &[u8], count: u64) -> [u8; 32] {
-        assert!(label.len() <= 24);
-        let mut word = [0u8; 32];
-        word[..label.len()].copy_from_slice(label);
-        word[24..].copy_from_slice(&count.to_be_bytes());
-        word
-    }
-
-    fn transcript() -> Blake2bTranscript {
-        Blake2bTranscript::new(b"dory-adapter-framing")
-    }
-
-    /// `ArkFr` in scope is a type alias, which cannot be used in constructor
-    /// position; this builds the dory wrapper explicitly.
-    fn dory_ark_fr(inner: ArkBn254Fr) -> ArkFr {
-        DoryArkFr(inner)
-    }
 
     #[test]
-    fn append_bytes_frames_as_dory_bytes_count_word_then_payload() {
-        let payload = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
-
-        let mut actual = transcript();
-        JoltToDoryTranscript::new(&mut actual).append_bytes(b"caller-label", &payload);
-
-        let mut expected = transcript();
-        expected.append_bytes(&label_with_count_word(b"dory_bytes", 5));
-        expected.append_bytes(&payload);
-        assert_eq!(actual.state(), expected.state());
-
-        // The count is load-bearing: the same payload under a wrong count
-        // must diverge, otherwise the golden comparison proves nothing.
-        let mut wrong_count = transcript();
-        wrong_count.append_bytes(&label_with_count_word(b"dory_bytes", 4));
-        wrong_count.append_bytes(&payload);
-        assert_ne!(actual.state(), wrong_count.state());
-
-        // Word and payload are separate absorptions, not one concatenated
-        // buffer (the sponge length-prefixes each `append_bytes` call).
-        let mut merged = transcript();
-        let mut buffer = label_with_count_word(b"dory_bytes", 5).to_vec();
-        buffer.extend_from_slice(&payload);
-        merged.append_bytes(&buffer);
-        assert_ne!(actual.state(), merged.state());
-    }
-
-    #[test]
-    fn append_field_frames_as_dory_field_label_then_big_endian_scalar() {
-        let mut actual = transcript();
-        JoltToDoryTranscript::new(&mut actual).append_field(
-            b"caller-label",
-            &dory_ark_fr(ArkBn254Fr::from(0xdead_beefu64)),
-        );
-
-        // Fr absorbs as its 32-byte big-endian canonical form: 24 zero bytes
-        // then the value, reconstructed here without CanonicalBytes.
-        let mut scalar_be = [0u8; 32];
-        scalar_be[24..].copy_from_slice(&0xdead_beefu64.to_be_bytes());
-
-        let mut expected = transcript();
-        expected.append_bytes(&label_word(b"dory_field"));
-        expected.append_bytes(&scalar_be);
-        assert_eq!(actual.state(), expected.state());
-
-        // Little-endian absorption would be an invisible-to-roundtrip bug.
-        let mut little_endian = transcript();
-        let mut scalar_le = [0u8; 32];
-        scalar_le[..8].copy_from_slice(&0xdead_beefu64.to_le_bytes());
-        little_endian.append_bytes(&label_word(b"dory_field"));
-        little_endian.append_bytes(&scalar_le);
-        assert_ne!(actual.state(), little_endian.state());
-    }
-
-    #[test]
-    fn append_group_frames_as_dory_group_count_word_then_compressed_point() {
-        let generator = ArkG1(G1Projective::generator());
-
-        let mut actual = transcript();
-        JoltToDoryTranscript::new(&mut actual).append_group(b"caller-label", &generator);
-
-        // Payload reconstructed via arkworks compressed serialization of the
-        // inner point; the adapter's framing is the labeled count word.
-        let mut payload = Vec::new();
-        generator
-            .0
-            .serialize_compressed(&mut payload)
-            .expect("compressed G1 serialization should not fail");
-        assert_eq!(payload.len(), 32);
-
-        let mut expected = transcript();
-        expected.append_bytes(&label_with_count_word(b"dory_group", payload.len() as u64));
-        expected.append_bytes(&payload);
-        assert_eq!(actual.state(), expected.state());
-    }
-
-    #[test]
-    fn append_serde_frames_as_dory_serde_count_word_then_compressed_value() {
-        let value = dory_ark_fr(ArkBn254Fr::from(42u64));
-
-        let mut actual = transcript();
-        JoltToDoryTranscript::new(&mut actual).append_serde(b"caller-label", &value);
-
-        let mut payload = Vec::new();
-        value
-            .0
-            .serialize_compressed(&mut payload)
-            .expect("compressed Fr serialization should not fail");
-        assert_eq!(payload.len(), 32);
-
-        let mut expected = transcript();
-        expected.append_bytes(&label_with_count_word(b"dory_serde", payload.len() as u64));
-        expected.append_bytes(&payload);
-        assert_eq!(actual.state(), expected.state());
-    }
-
-    /// Domain separation comes from the fixed `dory_*` labels; the caller's
-    /// dory-side label is deliberately dropped by the adapter.
-    #[test]
-    fn caller_labels_do_not_reach_the_transcript() {
-        let payload = [1u8, 2, 3];
-
-        let mut first = transcript();
-        JoltToDoryTranscript::new(&mut first).append_bytes(b"label-one", &payload);
-
-        let mut second = transcript();
-        JoltToDoryTranscript::new(&mut second).append_bytes(b"label-two", &payload);
-
-        assert_eq!(first.state(), second.state());
-        assert_ne!(first.state(), transcript().state());
-    }
-
-    /// The adapter's challenge is the Jolt transcript's scalar challenge,
-    /// converted — so after identical absorptions both sides must squeeze the
-    /// same scalar, and the adapter's state advances exactly like the direct
-    /// transcript's.
-    #[test]
-    fn challenge_scalar_matches_underlying_jolt_transcript() {
-        let mut adapted = transcript();
-        let mut adapter = JoltToDoryTranscript::new(&mut adapted);
-        adapter.append_bytes(b"caller-label", b"shared-absorption");
-        let adapter_challenge = adapter.challenge_scalar(b"caller-label");
-
-        let mut direct = transcript();
-        direct.append_bytes(&label_with_count_word(b"dory_bytes", 17));
-        direct.append_bytes(b"shared-absorption");
-        let direct_challenge: Fr = direct.challenge_scalar();
-
-        assert_eq!(adapter_challenge, jolt_fr_to_ark(&direct_challenge));
-        assert_ne!(adapter_challenge, dory_ark_fr(ArkBn254Fr::from(0u64)));
-        assert_eq!(adapted.state(), direct.state());
-
-        // Fr conversion sanity: the transmute-based bridge is the identity on
-        // canonical values.
-        assert_eq!(
-            jolt_fr_to_ark(&Fr::from_u64(7)),
-            dory_ark_fr(ArkBn254Fr::from(7u64)),
-        );
+    fn compressed_widths_match_arkworks() {
+        fn width<T: DorySerialize + CompressedWidth>(value: &T) {
+            assert_eq!(value.compressed_size(), T::BYTES);
+        }
+        width(&<ArkFr as DoryField>::one());
+        width(&<ArkG1 as DoryGroup>::identity());
+        width(&<ArkG2 as DoryGroup>::identity());
+        width(&<ArkGT as DoryGroup>::identity());
     }
 }

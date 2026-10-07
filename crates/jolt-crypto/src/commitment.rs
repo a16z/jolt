@@ -4,10 +4,12 @@ use std::{
     marker::PhantomData,
 };
 
-use jolt_field::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
+use jolt_field::{Accumulator, CanonicalBytes, CanonicalDecode, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
-use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
@@ -53,6 +55,24 @@ impl CanonicalBytes for NoCommitment {
     const NUM_BYTES: usize = 0;
 
     fn to_bytes_le(&self, _out: &mut [u8]) {}
+}
+
+impl Encoding<[u8]> for NoCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        ::jolt_field::narg::encode(self)
+    }
+}
+
+impl CanonicalDecode for NoCommitment {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        bytes.is_empty().then_some(Self)
+    }
+}
+
+impl NargDeserialize for NoCommitment {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
+        ::jolt_field::narg::deserialize(buf)
+    }
 }
 
 impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
@@ -105,7 +125,7 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 /// elements with a blinding factor. Uses `Self::Output` from the supertrait
 /// as the commitment value type.
 pub trait VectorCommitment:
-    Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
+    Commitment<Output: Copy + CanonicalBytes + CanonicalDecode + Serialize + DeserializeOwned>
 {
     type Field: JoltField;
 

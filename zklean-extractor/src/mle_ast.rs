@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use jolt_field::JoltField;
 use jolt_field::{
-    AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring,
-    WithAccumulator,
+    AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator,
+    Ring, WithAccumulator,
 };
 
 #[cfg(test)]
@@ -24,6 +24,9 @@ use crate::util::LetBinderIndex;
 
 // Import scalar constants for internal use (pub use handles function re-exports)
 use crate::scalar_ops::{BN254_MODULUS, SCALAR_ONE, SCALAR_ZERO};
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 // Re-export scalar_ops for external use
 pub use crate::scalar_ops::{
@@ -1326,24 +1329,13 @@ impl CanonicalBytes for MleAst {
     }
 }
 
-impl CanonicalEncoding for MleAst {
-    const MODULUS_BITS: u32 = 254;
-
-    fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
-        if let Some(challenge) = take_pending_challenge() {
-            return challenge;
-        }
-
-        let value = BigUint::from_bytes_le(bytes)
-            % BigUint::from_bytes_le(&BN254_MODULUS.map(u64::to_le_bytes).concat());
-        let digits = value.to_u64_digits();
-        let mut limbs = [0u64; 4];
-        for (dst, src) in limbs.iter_mut().zip(digits) {
-            *dst = src;
-        }
-        Self::new_scalar(limbs)
+impl Encoding<[u8]> for MleAst {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        jolt_field::narg::encode(self)
     }
+}
 
+impl CanonicalDecode for MleAst {
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         if let Some(challenge) = take_pending_challenge() {
             return Some(challenge);
@@ -1363,6 +1355,31 @@ impl CanonicalEncoding for MleAst {
             *dst = src;
         }
         Some(Self::new_scalar(limbs))
+    }
+}
+
+impl NargDeserialize for MleAst {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
+        jolt_field::narg::deserialize(buf)
+    }
+}
+
+impl CanonicalEncoding for MleAst {
+    const MODULUS_BITS: u32 = 254;
+
+    fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
+        if let Some(challenge) = take_pending_challenge() {
+            return challenge;
+        }
+
+        let value = BigUint::from_bytes_le(bytes)
+            % BigUint::from_bytes_le(&BN254_MODULUS.map(u64::to_le_bytes).concat());
+        let digits = value.to_u64_digits();
+        let mut limbs = [0u64; 4];
+        for (dst, src) in limbs.iter_mut().zip(digits) {
+            *dst = src;
+        }
+        Self::new_scalar(limbs)
     }
 
     fn to_u128_checked(&self) -> Option<u128> {

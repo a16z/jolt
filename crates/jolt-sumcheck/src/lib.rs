@@ -16,14 +16,13 @@
 //! |--------|---------|
 //! | [`claim`] | [`SumcheckClaim`] (input statement) and [`EvaluationClaim`] (reduction output) |
 //! | [`batch`] | [`BatchPrelude`] — the batched head shared by verify and prove drivers |
-//! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
-//! | [`verifier`] | [`SumcheckVerifier`] engine |
+//! | [`verifier`] | [`SumcheckVerifier`] engine, reading rounds from the proof transcript |
 //! | [`prover`] | [`ProveRounds`], [`prove_batch`], and the uni-skip provers — the prove-side engine |
 //! | [`prover`] | [`RoundScheduler`] / [`SequentialRounds`] — the per-round member-traversal seam |
 //! | [`recorder`] | [`SumcheckRecorder`] — the clear/ZK proof-recording seam |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
-//! | [`round_proof`] | [`RoundMessage`] and [`ClearRound`] traits |
+//! | [`round_proof`] | Round polynomials on the wire: fixed-width full and compressed forms |
 //! | [`committed`] | Commitment-backed round messages |
 //! | [`error`] | [`SumcheckError`] variants |
 //!
@@ -34,27 +33,19 @@
 //! - [`SumcheckStatement`] — round count and degree bound without a claimed sum.
 //! - [`EvaluationClaim<F>`] — the oracle evaluation claim `g(r) = v` produced by a
 //!   successful reduction; the caller MUST discharge it against the polynomial oracle.
-//! - [`ClearProof<F>`] — clear proof wire representation, either full or compressed.
-//! - [`ClearSumcheckProof<F>`] — a sequence of full univariate round polynomials, one per variable.
-//! - [`CompressedSumcheckProof<F>`] — owned wire form omitting each linear coefficient.
-//! - [`SumcheckProof<F, C>`] — clear or committed sumcheck proof data.
-//! - [`CommittedSumcheckProof<C>`] — committed round messages and output-claim commitments.
+//! - [`CommittedOutputClaims<C>`] — row commitments to a committed sumcheck's output claims.
 //! - [`BooleanHypercube`] — the standard `{0,1}` sumcheck round domain.
 //! - [`CenteredIntegerDomain`] — centered consecutive-integer sumcheck round domain.
-//! - [`SumcheckError`] — error variants: `RoundCheckFailed`, `DegreeBoundExceeded`,
-//!   `WrongNumberOfRounds`.
+//! - [`SumcheckError`] — error variants, including `RoundCheckFailed`,
+//!   `DegreeBoundExceeded`, and `Transcript`.
 //!
-//! ## Verifiers
-//! - [`SumcheckVerifier`] — single-instance verifier. Replays the Fiat-Shamir
-//!   transcript and checks each round.
+//! ## Proofs live in the transcript
 //!
-//! ## Per-round proof types
-//! - [`RoundMessage`] — degree bound and transcript absorption.
-//! - [`ClearRound<F>`] — clear round polynomial evaluation and well-formedness.
-//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw, unlabelled absorb.
-//! - [`LabeledRoundPoly`] — borrowed wrapper adding a `LabelWithCount` prefix.
-//! - [`CompressedLabeledRoundPoly`] — borrowed wrapper using the compressed
-//!   wire format (omits the linear coefficient).
+//! There is no sumcheck proof type. Provers write round polynomials (or their
+//! commitments) into a [`ProverTranscript`](jolt_transcript::ProverTranscript)
+//! through a [`SumcheckRecorder`]; [`SumcheckVerifier`] reads them back from a
+//! [`VerifierTranscript`](jolt_transcript::VerifierTranscript). Every round is
+//! sent at its public degree bound, so no length or label travels with it.
 //!
 //! # Dependency position
 //!
@@ -67,10 +58,10 @@
 //! ```
 //!
 //! Polynomial and clear sumcheck arithmetic is generic over
-//! [`Field`](jolt_field::Field). Stock clear transcript adapters additionally
-//! require [`AppendToTranscript`](jolt_transcript::AppendToTranscript) where
-//! field values are absorbed. Optimized Jolt kernels and commitment backends
-//! retain their stronger capability bounds at their own integration points.
+//! [`Field`](jolt_field::Field); transcript paths additionally require
+//! [`CanonicalEncoding`](jolt_field::CanonicalEncoding) to send and draw field
+//! elements. Optimized Jolt kernels and commitment backends retain their
+//! stronger capability bounds at their own integration points.
 //!
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -94,7 +85,6 @@ pub mod claim;
 pub mod committed;
 pub mod domain;
 pub mod error;
-pub mod proof;
 pub mod prover;
 #[cfg(feature = "r1cs")]
 pub mod r1cs;
@@ -107,42 +97,22 @@ mod round_scheduler_tests;
 #[cfg(all(test, feature = "committed"))]
 mod tests;
 
-/// Transcript label used for ordinary sumcheck round polynomials.
-pub const SUMCHECK_ROUND_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_poly";
-/// Transcript label used for univariate-skip round polynomials.
-pub const UNISKIP_ROUND_TRANSCRIPT_LABEL: &[u8] = b"uniskip_poly";
-/// Transcript label used when a sumcheck claim scalar is absorbed before batching.
-pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
-/// Transcript label used when a produced opening claim is absorbed in the clear.
-pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
-
-/// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
-pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
-where
-    A: jolt_transcript::AppendToTranscript,
-    T: jolt_transcript::Transcript,
-{
-    transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
-}
-
 pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 #[cfg(feature = "committed")]
 pub use committed::CommittedSumcheckBuilder;
 pub use committed::{
-    BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
-    CommittedRoundWitness, CommittedSumcheckConsistency, CommittedSumcheckProof,
+    BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedSumcheckConsistency,
     CommittedSumcheckWitness, VerifiedCommittedRound,
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
-pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
-#[cfg(feature = "committed")]
-pub use prover::prove_uniskip_committed;
 pub use prover::{
     prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
-    ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
+    ProvedUniskip, RoundScheduler, SequentialRounds,
 };
+#[cfg(feature = "committed")]
+pub use prover::{prove_uniskip_committed, ProvedUniskipCommitted};
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
     allocate_sumcheck_r1cs_layout, append_sumcheck_r1cs_constraints,
@@ -151,6 +121,9 @@ pub use r1cs::{
 };
 #[cfg(feature = "committed")]
 pub use recorder::CommittedSumcheckRecorder;
-pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
-pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
+pub use recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+pub use round_proof::{
+    padded_coefficients, receive_compressed_round, receive_full_round, send_compressed_round,
+    send_full_round,
+};
 pub use verifier::SumcheckVerifier;

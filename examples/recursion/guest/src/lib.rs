@@ -70,7 +70,7 @@ fn verify(bytes: &[u8]) -> u32 {
             jolt::VerifierField,
             jolt::VerifierPCS,
             jolt::VerifierVC,
-            jolt::VerifierTranscript,
+            jolt::ProtocolSponge,
         >(&verifier_preprocessing, &device, &proof, None)
         .is_ok();
         end_cycle_tracking("verification");

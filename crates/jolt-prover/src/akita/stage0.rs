@@ -1,3 +1,11 @@
+//! Packed stage 0: input validation, the Fiat-Shamir preamble, and the
+//! packed commitments.
+//!
+//! The transcript work is the verifier's own exported code
+//! ([`validate_inputs`], [`ProofHeader::send`], [`absorb_public_preamble`],
+//! [`ProofCommitments::send`], [`absorb_public_commitments`]), mirroring the
+//! verifier's `seed_transcript` step for step.
+
 use common::jolt_device::JoltDevice;
 use std::sync::Arc;
 
@@ -9,10 +17,11 @@ use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentGroupRole, CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_verifier::sites::{COMMITMENTS, PREAMBLE};
 use jolt_verifier::{
-    absorb_packed_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
-    CheckedInputs, ProofTranscriptConfig, VerifierError,
+    absorb_public_commitments, absorb_public_preamble, jolt_protocol_id, validate_inputs,
+    CheckedInputs, ProofCommitments, ProofHeader, VerifierError, JOLT_SESSION,
 };
 use jolt_witness::JoltWitnessPlane;
 
@@ -21,12 +30,15 @@ use super::field_inline::FieldIncObject;
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-pub struct Stage0Output<PCS, T>
+/// Outputs retained for later prover stages. The transcript is positioned
+/// exactly where the verifier's `seed_transcript` leaves its own.
+pub struct Stage0Output<PCS, H>
 where
     PCS: CommitmentScheme,
+    H: Sponge,
 {
     pub checked: CheckedInputs,
-    pub transcript: T,
+    pub transcript: ProverTranscript<H>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
@@ -35,22 +47,24 @@ where
     pub field_inc: FieldIncObject<PCS>,
 }
 
-/// Validate inputs, commit the packed objects, and seed the transcript.
+/// Validate inputs, send the proof header and absorb the public preamble,
+/// commit the packed objects, send the per-proof commitments, and absorb the
+/// public ones (trusted advice, then the direct committed-program objects).
 #[tracing::instrument(skip_all)]
-pub fn prove_stage0<F, PCS, VC, T, W>(
+pub fn prove_stage0<F, PCS, VC, H, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
-) -> Result<Stage0Output<PCS, T>, ProverError<F>>
+) -> Result<Stage0Output<PCS, H>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
     W: JoltWitnessPlane<F>,
 {
     if config.akita_chunk_profile != PCS::akita_chunk_profile(&preprocessing.verifier.pcs_setup) {
@@ -99,27 +113,25 @@ where
         }
     }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
-    let checked = validate_inputs_from_parts(
+    let header = ProofHeader {
+        trace_length: config.trace_length,
+        ram_K: config.ram_K,
+        rw_config: config.rw_config,
+        one_hot_config: config.one_hot_config,
+        trace_polynomial_order: config.trace_polynomial_order,
+        untrusted_advice: untrusted_advice_present,
+    };
+    let checked = validate_inputs(
         &preprocessing.verifier,
         public_io,
-        config.trace_length,
-        config.ram_K,
-        config.trace_polynomial_order,
-        config.one_hot_config,
+        &header,
         trusted_advice.is_some(),
-        false,
     )?;
 
-    let mut transcript = T::new(b"Jolt");
-    absorb_transcript_preamble(
-        &checked,
-        ProofTranscriptConfig {
-            rw_config: config.rw_config,
-            one_hot_config: config.one_hot_config,
-            trace_polynomial_order: config.trace_polynomial_order,
-        },
-        &mut transcript,
-    );
+    let mut transcript = ProverTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION);
+    transcript.site(PREAMBLE);
+    header.send(&mut transcript);
+    absorb_public_preamble(&checked, &mut transcript);
 
     let log_t = config.trace_length.ilog2() as usize;
     let log_k_chunk = config.one_hot_config.committed_chunk_bits();
@@ -238,17 +250,19 @@ where
             Ok::<_, ProverError<F>>((commitment, hint))
         })?;
 
-    absorb_packed_commitments(
-        &commitment,
-        untrusted_advice.as_ref().map(|object| &object.commitment),
-        trusted_advice.map(|object| &object.commitment),
+    transcript.site(COMMITMENTS);
+    ProofCommitments {
+        one_hot_trace: commitment.clone(),
         #[cfg(feature = "field-inline")]
-        Some(&field_inc.commitment),
-        preprocessing
-            .verifier
-            .program
-            .committed()
-            .map_or(&[][..], |committed| &committed.direct_program_commitments),
+        field_inc: field_inc.commitment.clone(),
+        untrusted_advice: untrusted_advice
+            .as_ref()
+            .map(|object| object.commitment.clone()),
+    }
+    .send::<PCS, H>(&mut transcript);
+    absorb_public_commitments(
+        &preprocessing.verifier,
+        trusted_advice.map(|object| &object.commitment),
         &mut transcript,
     );
 

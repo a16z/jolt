@@ -1,23 +1,23 @@
 use crate::error::SumcheckError;
-use crate::round_proof::ClearRound;
 use jolt_field::Field;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
+use jolt_poly::UnivariatePoly;
 
 pub trait SumcheckDomain<F: Field> {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>>;
 
-    fn check_round_sum<R>(
+    /// Checks that `round`'s sum over this domain equals `running_sum`.
+    fn check_round_sum(
         &self,
         round_index: usize,
         running_sum: F,
-        round: &R,
-    ) -> Result<(), SumcheckError<F>>
-    where
-        R: ClearRound<F>,
-    {
-        round.check_round_well_formed(round_index)?;
-        let coefficients = self.round_sum_coefficients(round.degree())?;
-        let expected = round.degree() + 1;
+        round: &UnivariatePoly<F>,
+    ) -> Result<(), SumcheckError<F>> {
+        let expected = round.coefficients().len();
+        let degree = expected
+            .checked_sub(1)
+            .ok_or(SumcheckError::EmptyRoundCoefficients)?;
+        let coefficients = self.round_sum_coefficients(degree)?;
         if coefficients.len() != expected {
             return Err(SumcheckError::RoundSumCoefficientCountMismatch {
                 round: round_index,
@@ -26,7 +26,12 @@ pub trait SumcheckDomain<F: Field> {
             });
         }
 
-        let actual = round.coefficient_linear_combination(&coefficients);
+        let actual = round
+            .coefficients()
+            .iter()
+            .zip(&coefficients)
+            .map(|(&coefficient, &scale)| coefficient * scale)
+            .sum();
         if actual != running_sum {
             return Err(SumcheckError::RoundCheckFailed {
                 round: round_index,

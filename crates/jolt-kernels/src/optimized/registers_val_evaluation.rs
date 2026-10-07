@@ -265,7 +265,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
                         || [F::Accumulator::default(); 3],
                         |mut acc, y| {
                             group(y, &mut acc)?;
-                            Ok(acc)
+                            Ok::<_, SumcheckError<F>>(acc)
                         },
                     )
                     .map(|acc| acc.map(|acc| acc.map(F::Accumulator::reduce)))

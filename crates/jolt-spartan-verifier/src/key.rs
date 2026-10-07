@@ -1,8 +1,8 @@
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::JoltField;
+use jolt_field::{CanonicalDecode, JoltField};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_transcript::{AppendToTranscript, Label, Transcript};
+use jolt_transcript::Channel;
 
 use crate::{outer_relation, SpartanError};
 
@@ -147,40 +147,43 @@ impl<F: JoltField> SpartanKey<F> {
     }
 }
 
-impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
-    /// Bind the authenticated relation, public input, and commitment before tau.
-    pub fn begin<C: AppendToTranscript>(
+/// The Spartan message schedule, shared by both roles: every public value and
+/// prover message outside the two sumchecks and the PCS calls is bound here,
+/// in this order.
+impl<F: JoltField + CanonicalDecode> SpartanKey<F> {
+    /// Binds the authenticated relation and the public input. The caller then
+    /// exchanges the witness commitment and calls [`Self::draw_tau`].
+    pub fn bind_statement<C: Channel>(
         &self,
         public_inputs: &[F],
-        commitment: &C,
-        transcript: &mut impl Transcript<Challenge = F>,
-    ) -> Result<Vec<F>, SpartanError<F>> {
+        channel: &mut C,
+    ) -> Result<(), SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
-        transcript.append(&Label(b"spartan-clear-v1"));
-        transcript.append_bytes(&self.relation_digest);
-        transcript.append_bytes(&self.policy_id);
-        transcript.append_values(b"public-inputs", public_inputs);
-        transcript.append_labeled(b"witness-commitment", commitment);
-        let tau = transcript.challenge_vector(self.row_vars());
-        transcript.append_labeled(b"spartan-outer", &F::zero());
-        Ok(tau)
+        channel.public(&self.relation_digest);
+        channel.public(&self.policy_id);
+        channel.public_all(public_inputs);
+        Ok(())
     }
 
-    /// Absorb outer claims, draw matrix weights, and bind the inner input claim.
-    pub fn begin_inner(
+    /// Draws the outer sumcheck point `tau` and binds its zero input claim.
+    pub fn draw_tau<C: Channel>(&self, channel: &mut C) -> Vec<F> {
+        let tau = (0..self.row_vars()).map(|_| channel.challenge()).collect();
+        channel.public(&F::zero());
+        tau
+    }
+
+    /// Exchanges the outer evaluations, draws the matrix weights, and binds
+    /// the inner input claim it returns with the weights.
+    pub fn begin_inner<C: Channel>(
         &self,
         row_weights: &[F],
         public_inputs: &[F],
-        evaluations: [F; 3],
-        transcript: &mut impl Transcript<Challenge = F>,
+        evaluations: &mut [F; 3],
+        channel: &mut C,
     ) -> Result<([F; 3], F), SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
-        transcript.append_values(b"outer-evaluations", &evaluations);
-        let weights = [
-            transcript.challenge(),
-            transcript.challenge(),
-            transcript.challenge(),
-        ];
+        channel.exchange_all(evaluations)?;
+        let weights: [F; 3] = std::array::from_fn(|_| channel.challenge());
         let public = std::iter::once(F::one())
             .chain(public_inputs.iter().copied())
             .collect::<Vec<_>>();
@@ -193,19 +196,19 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
         )?;
         let claim = weights
             .iter()
-            .zip(evaluations)
+            .zip(evaluations.iter())
             .map(|(weight, evaluation)| *weight * evaluation)
             .sum::<F>()
             - contribution;
-        transcript.append_labeled(b"spartan-inner", &claim);
+        channel.public(&claim);
         Ok((weights, claim))
     }
 
-    /// Binds the terminal witness claim before the PCS opening transcript.
-    pub fn append_witness_evaluation(
-        evaluation: F,
-        transcript: &mut impl Transcript<Challenge = F>,
-    ) {
-        transcript.append_labeled(b"witness-evaluation", &evaluation);
+    /// Exchanges the terminal witness claim, which the PCS opening then proves.
+    pub fn exchange_witness_evaluation<C: Channel>(
+        evaluation: &mut F,
+        channel: &mut C,
+    ) -> Result<(), SpartanError<F>> {
+        Ok(channel.exchange(evaluation)?)
     }
 }

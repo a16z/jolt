@@ -122,12 +122,14 @@ The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `aki
 ### Key Type Parameters
 
 The staged prover and verifier are generic over the PCS, vector commitment,
-and transcript. Dory uses `Fr`; the `akita` build uses `AkitaField`.
+and the transcript's sponge. Dory uses `Fr`; the `akita` build uses
+`AkitaField`. Proofs are argument strings written through
+`jolt_transcript::ProverTranscript<H>` and read through `VerifierTranscript<'_, H>`.
 
 ```
 PCS: CommitmentScheme
 VC: VectorCommitment<Field = PCS::Field>
-T: Transcript<Challenge = PCS::Field>
+H: Sponge
 ```
 
 ### Prover Pipeline

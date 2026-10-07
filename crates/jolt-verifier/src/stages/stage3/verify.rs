@@ -1,8 +1,8 @@
-use jolt_claims::protocols::jolt::{geometry::dimensions::TraceDimensions, JoltRelationId};
-use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
-use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+use jolt_field::{CanonicalDecode, JoltField};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE3;
 
 use super::{
     instruction_input::{instruction_input_input_values_from_upstream, InstructionInput},
@@ -15,11 +15,9 @@ use super::{
     spartan_shift::{spartan_shift_input_values_from_upstream, SpartanShift},
 };
 use crate::{
-    proof::JoltProof,
     stages::{
         stage1::{Stage1BatchOutputClaims, Stage1Output},
         stage2::{Stage2BatchOutputClaims, Stage2Output},
-        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -40,19 +38,18 @@ pub fn stage3_input_values_from_upstream<F: JoltField>(
     }
 }
 
-#[jolt_verifier_derive::fs_scope(Stage3)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<F, C, H>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    transcript: &mut T,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-) -> Result<Stage3Output<PCS::Field, VC::Output>, VerifierError>
+    transcript: &mut VerifierTranscript<'_, H>,
+    stage1: &Stage1Output<F, C>,
+    stage2: &Stage2Output<F, C>,
+) -> Result<Stage3Output<F, C>, VerifierError>
 where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    F: JoltField,
+    C: CanonicalDecode,
+    H: Sponge,
 {
+    transcript.site(STAGE3);
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = TraceDimensions::new(log_t);
 
@@ -72,56 +69,40 @@ where
     };
 
     // Draw each relation's batching gamma in declaration order (shift, instruction
-    // input, register reduction); each is a single `challenge_scalar`. The drawn
+    // input, register reduction); each is a single exact `challenge()`. The drawn
     // challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {
-        let claims = &proof.clear_claims()?.stage3;
         let stage1 = stage1.clear()?;
         let stage2 = stage2.clear()?;
-        sumchecks.validate_output_claims(claims)?;
 
         let input_values =
             stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);
         let input_points = sumchecks.empty_input_points();
 
-        let output_points = sumchecks.verify_clear(
-            &input_values,
-            &input_points,
-            &challenges,
-            claims,
-            &proof.stages.stage3_sumcheck_proof,
-            transcript,
-            3,
-        )?;
-
-        sumchecks.append_output_claims(transcript, claims);
+        let (output_points, output_values) =
+            sumchecks.verify_clear(&input_values, &input_points, &challenges, transcript, 3)?;
 
         return Ok(Stage3Output::Clear(Stage3ClearOutput {
-            output_values: claims.clone(),
+            output_values,
             output_points,
         }));
     }
 
     {
-        let consistency = sumchecks.verify_zk(&proof.stages.stage3_sumcheck_proof, transcript)?;
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage3_sumcheck_proof,
-            "stage3_sumcheck_proof",
-            sumchecks.output_claim_count(),
-            JoltRelationId::SpartanShift,
+        let batch = sumchecks.verify_zk(
+            checked.committed_row_len()?,
+            &sumchecks.empty_input_points(),
+            transcript,
         )?;
-        let output_points = sumchecks
-            .derive_opening_points(&consistency.challenges(), &sumchecks.empty_input_points())?;
 
         Ok(Stage3Output::Zk(Stage3ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_consistency: batch.consistency,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }))
     }
 }

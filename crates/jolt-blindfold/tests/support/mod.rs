@@ -5,8 +5,9 @@
 )]
 
 use jolt_blindfold::{
-    BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
-    FinalOpeningBinding, WitnessCoordinate,
+    prove, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, BlindFoldWitness,
+    CommittedClaimRows, FinalOpeningBinding, ProverError, RowDimensions, VerificationError,
+    WitnessCoordinate,
 };
 use jolt_claims::r1cs::ClaimSourceTable;
 use jolt_claims::{challenge, constant, derived, opening, Expr};
@@ -14,19 +15,30 @@ use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
 use jolt_field::{CanonicalBytes, Field, Fr, Ring};
-use jolt_poly::{CompressedPoly, EqPolynomial};
+use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
-    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
-    CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage, SumcheckDomainSpec,
-    SumcheckR1csLayout, SumcheckStatement, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    CommittedOutputClaims, CommittedSumcheckBuilder, CommittedSumcheckConsistency,
+    CommittedSumcheckWitness, SumcheckDomainSpec, SumcheckR1csLayout, SumcheckStatement,
+    SumcheckVerifier, VerifiedCommittedRound,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Label, Transcript};
-use rand_core::RngCore;
+use jolt_transcript::{
+    Blake2b512, Channel, ProtocolId, ProverTranscript, TranscriptError, VerifierTranscript,
+};
+use rand_chacha::ChaCha20Rng;
+use rand_core::{RngCore, SeedableRng};
 
 pub type F = Fr;
 pub type VC = Pedersen<Bn254G1>;
+pub type H = Blake2b512;
 pub type TestExpr = Expr<F, Opening, Public, Challenge>;
+
+pub const PROTOCOL: ProtocolId = ProtocolId::new::<H>("jolt-blindfold/tests");
+pub const SESSION: &[u8] = b"blindfold-integration";
+
+/// Compressed-round coefficient counts of the folded Spartan sumchecks.
+const OUTER_ROUND_LEN: usize = 3;
+const INNER_ROUND_LEN: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Opening {
@@ -50,14 +62,15 @@ pub enum Challenge {
     Mix,
 }
 
+/// One committed sumcheck stage written into a prover transcript, with the
+/// commitments and challenges the verifier reads back and the prover-retained
+/// openings.
 #[derive(Clone, Debug)]
 pub struct GeneratedStage {
     pub statement: SumcheckStatement,
-    pub proof: CommittedSumcheckProof<Bn254G1>,
-    pub coefficients: Vec<Vec<F>>,
-    pub blindings: Vec<F>,
-    pub output_claim_rows: Vec<Vec<F>>,
-    pub output_claim_blindings: Vec<F>,
+    pub consistency: CommittedSumcheckConsistency<F, Bn254G1>,
+    pub output_claims: CommittedOutputClaims<Bn254G1>,
+    pub witness: CommittedSumcheckWitness<F>,
     pub input_claim: F,
     pub claim_outs: Vec<F>,
 }
@@ -152,37 +165,19 @@ pub fn field_low_u64(value: F) -> u64 {
     ])
 }
 
-pub fn transcript_projection<A: AppendToTranscript>(label: &'static [u8], value: &A) -> u64 {
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-statistical-projection");
-    transcript.append(&Label(label));
-    value.append_to_transcript(&mut transcript);
-    field_low_u64(transcript.challenge())
+pub fn projection<A: CanonicalBytes>(label: &'static [u8], values: &[A]) -> u64 {
+    let mut transcript = ProverTranscript::<H>::new(
+        &ProtocolId::new::<H>("blindfold-statistical-projection"),
+        label,
+    );
+    transcript.public_all(values);
+    u64::from_le_bytes(transcript.challenge_bytes())
 }
 
-pub fn field_slice_projection(label: &'static [u8], values: &[F]) -> u64 {
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-statistical-projection");
-    transcript.append_values(label, values);
-    field_low_u64(transcript.challenge())
-}
-
-pub fn compressed_sumcheck_projection(
-    label: &'static [u8],
-    proof: &CompressedSumcheckProof<F>,
-) -> u64 {
-    let mut values = Vec::new();
-    for round in &proof.round_polynomials {
-        values.extend_from_slice(round.coeffs_except_linear_term());
-    }
-    field_slice_projection(label, &values)
-}
-
-pub fn opening_projection(
-    label: &'static [u8],
-    opening: &jolt_crypto::VectorCommitmentOpening<F>,
-) -> u64 {
+pub fn opening_projection(label: &'static [u8], opening: &VectorCommitmentOpening<F>) -> u64 {
     let mut values = opening.combined_vector.clone();
     values.push(opening.combined_blinding);
-    field_slice_projection(label, &values)
+    projection(label, &values)
 }
 
 pub fn assert_empirical_distribution(projection: &StatisticalProjection) {
@@ -339,27 +334,6 @@ pub fn pedersen_setup(capacity: usize) -> PedersenSetup<Bn254G1> {
     PedersenSetup::new(message_generators, generator.scalar_mul(&f(99)))
 }
 
-pub fn commit_round_with_blinding(
-    setup: &PedersenSetup<Bn254G1>,
-    coefficients: Vec<F>,
-    blinding: F,
-) -> CommittedRound<Bn254G1> {
-    CommittedRoundWitness {
-        coefficients,
-        blinding,
-    }
-    .commit::<VC>(setup)
-    .expect("round witness commits")
-}
-
-pub fn commit_round(
-    setup: &PedersenSetup<Bn254G1>,
-    coefficients: Vec<F>,
-    round: usize,
-) -> CommittedRound<Bn254G1> {
-    commit_round_with_blinding(setup, coefficients, f(round as u64 + 17))
-}
-
 pub fn coefficients_for_claim_with_rng(claim: F, degree: usize, rng: &mut impl RngCore) -> Vec<F> {
     let mut coefficients = vec![f(0); degree + 1];
     let mut nonconstant_sum = f(0);
@@ -384,138 +358,86 @@ impl<R: RngCore> SumcheckTestProver<R> {
     pub fn prove_stage(
         &mut self,
         setup: &PedersenSetup<Bn254G1>,
-        transcript: &mut Blake2bTranscript<F>,
+        transcript: &mut ProverTranscript<H>,
         statement: SumcheckStatement,
         input_claim: F,
     ) -> GeneratedStage {
         self.prove_stage_with_output_claims(setup, transcript, statement, input_claim, 0)
     }
 
+    /// Proves a committed stage whose rounds sum to `input_claim`, followed by
+    /// `output_claim_count` random output-claim rows of `degree + 1` values.
     pub fn prove_stage_with_output_claims(
         &mut self,
         setup: &PedersenSetup<Bn254G1>,
-        transcript: &mut Blake2bTranscript<F>,
+        transcript: &mut ProverTranscript<H>,
         statement: SumcheckStatement,
         input_claim: F,
         output_claim_count: usize,
     ) -> GeneratedStage {
+        let blinding_rng = ChaCha20Rng::seed_from_u64(self.rng.next_u64());
+        let mut builder = CommittedSumcheckBuilder::<F, VC, _>::new(setup, blinding_rng)
+            .expect("setup has commitment capacity");
         let mut claim = input_claim;
-        let mut rounds = Vec::with_capacity(statement.num_vars);
-        let mut coefficients = Vec::with_capacity(statement.num_vars);
-        let mut blindings = Vec::with_capacity(statement.num_vars);
+        let mut challenges = Vec::with_capacity(statement.num_vars);
         let mut claim_outs = Vec::with_capacity(statement.num_vars);
-
         for _ in 0..statement.num_vars {
-            let round_coefficients =
+            let coefficients =
                 coefficients_for_claim_with_rng(claim, statement.degree, &mut self.rng);
-            let blinding = rng_field(&mut self.rng);
-            let round = commit_round_with_blinding(setup, round_coefficients.clone(), blinding);
-            round.append_to_transcript(transcript);
-            let challenge = transcript.challenge();
-            claim = eval_poly(&round_coefficients, challenge);
-
-            rounds.push(round);
-            coefficients.push(round_coefficients);
-            blindings.push(blinding);
+            let challenge = builder
+                .commit_round(
+                    &UnivariatePoly::new(coefficients.clone()),
+                    statement.degree,
+                    transcript,
+                )
+                .expect("round commits");
+            claim = eval_poly(&coefficients, challenge);
+            challenges.push(challenge);
             claim_outs.push(claim);
         }
-        let mut output_claim_rows = Vec::with_capacity(output_claim_count);
-        let mut output_claim_blindings = Vec::with_capacity(output_claim_count);
-        let mut output_commitments = Vec::with_capacity(output_claim_count);
-        for _ in 0..output_claim_count {
-            let row = (0..=statement.degree)
-                .map(|_| rng_field(&mut self.rng))
-                .collect::<Vec<_>>();
-            let blinding = rng_field(&mut self.rng);
-            output_commitments.push(VC::commit(setup, &row, &blinding));
-            output_claim_rows.push(row);
-            output_claim_blindings.push(blinding);
-        }
-        let output_claims = CommittedOutputClaims {
-            commitments: output_commitments,
-        };
-        output_claims.append_to_transcript(transcript);
+        let output_claim_values = (0..output_claim_count * (statement.degree + 1))
+            .map(|_| rng_field(&mut self.rng))
+            .collect::<Vec<_>>();
+        let witness = builder
+            .finish(&output_claim_values, transcript)
+            .expect("output claims commit");
+        assert_eq!(witness.output_claim_rows.len(), output_claim_count);
 
+        let consistency = CommittedSumcheckConsistency {
+            rounds: witness
+                .round_coefficients
+                .iter()
+                .zip(&witness.round_blindings)
+                .zip(challenges)
+                .map(
+                    |((coefficients, blinding), challenge)| VerifiedCommittedRound {
+                        commitment: VC::commit(setup, coefficients, blinding),
+                        degree: statement.degree,
+                        challenge,
+                    },
+                )
+                .collect(),
+        };
+        let output_claims = CommittedOutputClaims {
+            commitments: witness
+                .output_claim_rows
+                .iter()
+                .zip(&witness.output_claim_blindings)
+                .map(|(row, blinding)| VC::commit(setup, row, blinding))
+                .collect(),
+        };
         GeneratedStage {
             statement,
-            proof: CommittedSumcheckProof {
-                rounds,
-                output_claims,
-            },
-            coefficients,
-            blindings,
-            output_claim_rows,
-            output_claim_blindings,
+            consistency,
+            output_claims,
+            witness,
             input_claim,
             claim_outs,
         }
     }
-
-    pub fn prove_stage_with_fresh_transcript(
-        &mut self,
-        setup: &PedersenSetup<Bn254G1>,
-        transcript_label: &'static [u8],
-        statement: SumcheckStatement,
-        input_claim: F,
-    ) -> GeneratedStage {
-        let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
-        self.prove_stage(setup, &mut transcript, statement, input_claim)
-    }
 }
 
-pub fn generate_zero_stage(setup: &PedersenSetup<Bn254G1>, num_vars: usize) -> GeneratedStage {
-    let rounds = (0..num_vars)
-        .map(|round| commit_round(setup, vec![f(0)], round))
-        .collect();
-    GeneratedStage {
-        statement: SumcheckStatement::new(num_vars, 1),
-        proof: CommittedSumcheckProof {
-            rounds,
-            output_claims: CommittedOutputClaims::default(),
-        },
-        coefficients: vec![vec![f(0)]; num_vars],
-        blindings: (0..num_vars).map(|round| f(round as u64 + 17)).collect(),
-        output_claim_rows: Vec::new(),
-        output_claim_blindings: Vec::new(),
-        input_claim: f(0),
-        claim_outs: vec![f(0); num_vars],
-    }
-}
-
-pub fn stage_consistency(
-    statement: SumcheckStatement,
-    proof: &CommittedSumcheckProof<Bn254G1>,
-) -> CommittedSumcheckConsistency<F, Bn254G1> {
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
-    proof
-        .verify_committed_consistency(statement, &mut transcript)
-        .expect("committed proof transcript verifies")
-}
-
-pub fn stage_consistency_for_transcript(
-    stages: &[&GeneratedStage],
-) -> Vec<CommittedSumcheckConsistency<F, Bn254G1>> {
-    stage_consistency_for_transcript_label(b"blindfold-r1cs-e2e", stages)
-}
-
-pub fn stage_consistency_for_transcript_label(
-    transcript_label: &'static [u8],
-    stages: &[&GeneratedStage],
-) -> Vec<CommittedSumcheckConsistency<F, Bn254G1>> {
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
-    stages
-        .iter()
-        .map(|stage| {
-            stage
-                .proof
-                .verify_committed_consistency(stage.statement, &mut transcript)
-                .expect("committed proof transcript verifies")
-        })
-        .collect()
-}
-
-pub fn blindfold_statement_for_transcript_label<O, P, Ch>(
-    transcript_label: &'static [u8],
+pub fn blindfold_statement<O, P, Ch>(
     relations: &[TestStageRelation<F, O, P, Ch>],
     stages: &[&GeneratedStage],
     final_openings: Vec<FinalOpeningBinding<F, O, Bn254G1>>,
@@ -530,24 +452,19 @@ where
         stages.len(),
         "relations and generated stages must align"
     );
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
     let stages = relations
         .iter()
         .zip(stages)
         .map(|(relation, generated)| {
-            let consistency = generated
-                .proof
-                .verify_committed_consistency(generated.statement, &mut transcript)
-                .expect("committed proof transcript verifies");
             BlindFoldStage::new(
                 relation.name.clone(),
                 relation.statement,
                 relation.domain,
-                consistency,
+                generated.consistency.clone(),
                 CommittedClaimRows::new(
                     Vec::new(),
                     relation.statement.degree + 1,
-                    generated.proof.output_claims.clone(),
+                    generated.output_claims.clone(),
                 ),
                 relation.input_claim.clone(),
                 relation.output_claim.clone(),
@@ -565,11 +482,13 @@ pub fn assign_generated_stage(
     builder
         .assign(layout.input_claim, generated.input_claim)
         .expect("input claim assigns");
-    for (round_layout, (round_coefficients, &claim_out)) in layout
-        .rounds
-        .iter()
-        .zip(generated.coefficients.iter().zip(&generated.claim_outs))
-    {
+    for (round_layout, (round_coefficients, &claim_out)) in layout.rounds.iter().zip(
+        generated
+            .witness
+            .round_coefficients
+            .iter()
+            .zip(&generated.claim_outs),
+    ) {
         for (&variable, &coefficient) in round_layout.coefficients.iter().zip(round_coefficients) {
             builder
                 .assign(variable, coefficient)
@@ -673,12 +592,7 @@ pub fn build_deep_relation(
             stage3_output,
         ),
     ];
-    let statement = blindfold_statement_for_transcript_label(
-        b"blindfold-r1cs-e2e",
-        &relations,
-        &[stage1, stage2, stage3],
-        Vec::new(),
-    );
+    let statement = blindfold_statement(&relations, &[stage1, stage2, stage3], Vec::new());
 
     let mut builder = R1csBuilder::<F>::new();
     let mut sources = ClaimSourceTable::<F, Opening, Public, Challenge>::new();
@@ -713,7 +627,7 @@ pub fn generated_deep_triple<R: RngCore>(
     let setup = pedersen_setup(4);
     let statement = SumcheckStatement::new(4, 3);
     let mut values = deep_values_without_links();
-    let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-e2e");
+    let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, SESSION);
     let stage1 = prover.prove_stage(
         &setup,
         &mut transcript,
@@ -749,170 +663,456 @@ pub fn generated_deep_triple<R: RngCore>(
     (stage1, stage2, stage3, values)
 }
 
+/// The public description of a committed-stage protocol: everything the
+/// verifier needs besides the proof bytes.
 #[derive(Clone, Debug)]
-pub struct BlindFoldTestProof {
-    pub protocol: BlindFoldProtocol<F, Bn254G1>,
-    pub proof: BlindFoldProof<F, Bn254G1>,
-    pub setup: PedersenSetup<Bn254G1>,
+pub struct StageTemplate {
+    pub name: &'static str,
+    pub statement: SumcheckStatement,
+    pub output_claim_count: usize,
+    pub opening_ids: Vec<usize>,
+    pub input_claim: Expr<F, usize>,
+    pub output_claim: Expr<F, usize>,
 }
 
 #[derive(Clone, Debug)]
-struct SumcheckTrace {
-    proof: CompressedSumcheckProof<F>,
-    point: Vec<F>,
+pub struct ProtocolTemplate {
+    pub stages: Vec<StageTemplate>,
+    pub final_openings: Vec<FinalOpeningBinding<F, usize, Bn254G1>>,
 }
 
-pub struct ProtocolBackedInstance {
+impl ProtocolTemplate {
+    pub fn statement(
+        &self,
+        committed: Vec<(
+            CommittedSumcheckConsistency<F, Bn254G1>,
+            CommittedOutputClaims<Bn254G1>,
+        )>,
+    ) -> BlindFoldStatement<F, usize, Bn254G1> {
+        assert_eq!(self.stages.len(), committed.len());
+        let stages = self
+            .stages
+            .iter()
+            .zip(committed)
+            .map(|(stage, (consistency, output_claims))| {
+                BlindFoldStage::new(
+                    stage.name,
+                    stage.statement,
+                    SumcheckDomainSpec::BooleanHypercube,
+                    consistency,
+                    CommittedClaimRows::new(
+                        stage.opening_ids.clone(),
+                        stage.statement.degree + 1,
+                        output_claims,
+                    ),
+                    stage.input_claim.clone(),
+                    stage.output_claim.clone(),
+                )
+            })
+            .collect();
+        BlindFoldStatement::new(stages, self.final_openings.clone())
+    }
+
+    /// Verifies a whole proof: reads every committed stage, rebuilds the
+    /// BlindFold protocol from what was read, verifies BlindFold, and requires
+    /// that nothing follows.
+    pub fn verify(
+        &self,
+        setup: &PedersenSetup<Bn254G1>,
+        narg: &[u8],
+    ) -> Result<(), VerificationError<F>> {
+        self.verify_with_session(setup, SESSION, narg)
+    }
+
+    pub fn verify_with_session(
+        &self,
+        setup: &PedersenSetup<Bn254G1>,
+        session: &[u8],
+        narg: &[u8],
+    ) -> Result<(), VerificationError<F>> {
+        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, session, narg);
+        let committed = self
+            .stages
+            .iter()
+            .enumerate()
+            .map(|(stage_index, stage)| {
+                SumcheckVerifier::verify_committed(
+                    stage.statement,
+                    stage.output_claim_count,
+                    &mut transcript,
+                )
+                .map_err(|source| VerificationError::Sumcheck {
+                    stage_index,
+                    source,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let protocol = blindfold_protocol_from_statement(&self.statement(committed))?;
+        protocol.verify::<VC, H>(setup, &mut transcript)?;
+        Ok(transcript.finish()?)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage2Input {
+    Constant,
+    /// The product of two stage-1 output-claim openings, which makes the
+    /// claim lowering allocate a product auxiliary.
+    ProductOfStage1Openings,
+}
+
+/// Two committed stages, one final opening bound to the first stage-1
+/// output-claim value, and the protocol the prover builds from them. The
+/// stages are proved from `stage_seed`, so [`transcript`](Self::transcript)
+/// rebuilds the prover transcript at the BlindFold boundary on demand: a
+/// prover transcript cannot be copied.
+#[derive(Clone)]
+pub struct TwoStageFixture {
     pub setup: PedersenSetup<Bn254G1>,
+    stage_seed: [u8; 32],
+    stage2_input: Stage2Input,
+    pub stages: Vec<GeneratedStage>,
+    pub template: ProtocolTemplate,
+    pub statement: BlindFoldStatement<F, usize, Bn254G1>,
     pub protocol: BlindFoldProtocol<F, Bn254G1>,
-    pub rows: Vec<Vec<F>>,
-    pub blindings: Vec<F>,
     pub eval_outputs: Vec<F>,
     pub eval_blindings: Vec<F>,
 }
 
-pub const PROTOCOL_BACKED_TRANSCRIPT_LABEL: &[u8] = b"protocol-backed-blindfold-proof";
+impl TwoStageFixture {
+    /// The prover transcript after both committed stages.
+    pub fn transcript(&self) -> ProverTranscript<H> {
+        prove_stages(&self.setup, self.stage_seed, self.stage2_input).0
+    }
 
-pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBackedInstance {
-    build_protocol_backed_instance_with_bindings(rng, 1)
+    pub fn stage_witnesses(&self) -> Vec<&CommittedSumcheckWitness<F>> {
+        self.stages.iter().map(|stage| &stage.witness).collect()
+    }
+
+    /// Runs the shipped BlindFold prover after the committed stages and
+    /// returns the whole proof.
+    pub fn prove(
+        &self,
+        rows: &[Vec<F>],
+        blindings: &[F],
+        rng: &mut impl RngCore,
+    ) -> Result<Vec<u8>, ProverError<F>> {
+        let mut transcript = self.transcript();
+        prove::<F, VC, H, _>(
+            &self.setup,
+            &self.protocol,
+            &mut transcript,
+            BlindFoldWitness {
+                rows,
+                blindings,
+                eval_outputs: &self.eval_outputs,
+                eval_blindings: &self.eval_blindings,
+            },
+            rng,
+        )?;
+        Ok(transcript.finish())
+    }
+
+    pub fn verify(&self, narg: &[u8]) -> Result<(), VerificationError<F>> {
+        self.template.verify(&self.setup, narg)
+    }
+
+    pub fn messages(&self, narg: &[u8]) -> ProofMessages {
+        ProofMessages::parse(&self.protocol, self.transcript().narg().len(), narg)
+            .expect("proof parses in transcript order")
+    }
 }
 
-/// Like [`build_protocol_backed_instance`], with `binding_count` (1 or 2)
-/// final-opening bindings: the second opens stage 2's first output claim.
-pub fn build_protocol_backed_instance_with_bindings<R: RngCore>(
-    rng: &mut R,
-    binding_count: usize,
-) -> ProtocolBackedInstance {
-    let setup = pedersen_setup(4);
-    let transcript_label = PROTOCOL_BACKED_TRANSCRIPT_LABEL;
-    let statement1 = SumcheckStatement::new(3, 3);
-    let statement2 = SumcheckStatement::new(2, 3);
-    let input1 = f(37);
-    let input2 = f(89);
-
-    let (stage1, stage2) = {
-        let mut prover = SumcheckTestProver::new(&mut *rng);
-        let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
-        let stage1 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
-        let stage2 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement2, input2, 1);
-        (stage1, stage2)
+/// Proves the two committed stages from `seed` on a fresh transcript.
+fn prove_stages(
+    setup: &PedersenSetup<Bn254G1>,
+    seed: [u8; 32],
+    stage2_input: Stage2Input,
+) -> (
+    ProverTranscript<H>,
+    GeneratedStage,
+    GeneratedStage,
+    Expr<F, usize>,
+) {
+    let mut rng = ChaCha20Rng::from_seed(seed);
+    let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, SESSION);
+    let mut prover = SumcheckTestProver::new(&mut rng);
+    let stage1 = prover.prove_stage_with_output_claims(
+        setup,
+        &mut transcript,
+        SumcheckStatement::new(3, 3),
+        f(37),
+        2,
+    );
+    let (input2, input2_claim) = match stage2_input {
+        Stage2Input::Constant => (f(89), constant(f(89))),
+        Stage2Input::ProductOfStage1Openings => {
+            let row = &stage1.witness.output_claim_rows[0];
+            (row[0] * row[1], opening(0usize) * opening(1usize))
+        }
     };
-    let stage1_output = *stage1
-        .claim_outs
-        .last()
-        .expect("stage has at least one round");
-    let stage2_output = *stage2
-        .claim_outs
-        .last()
-        .expect("stage has at least one round");
-    let mut real_eval_outputs = vec![stage1.output_claim_rows[0][0]];
-    if binding_count == 2 {
-        real_eval_outputs.push(stage2.output_claim_rows[0][0]);
-    }
-    let real_eval_blindings = real_eval_outputs
-        .iter()
-        .map(|_| rng_field(rng))
-        .collect::<Vec<_>>();
-    let eval_commitments = real_eval_outputs
-        .iter()
-        .zip(&real_eval_blindings)
-        .map(|(&output, blinding)| VC::commit(&setup, &[output], blinding))
-        .collect::<Vec<_>>();
+    let stage2 = prover.prove_stage_with_output_claims(
+        setup,
+        &mut transcript,
+        SumcheckStatement::new(2, 3),
+        input2,
+        1,
+    );
+    (transcript, stage1, stage2, input2_claim)
+}
 
-    let mut transcript = Blake2bTranscript::<F>::new(transcript_label);
-    let stage1_consistency = stage1
-        .proof
-        .verify_committed_consistency(stage1.statement, &mut transcript)
-        .expect("stage 1 committed proof transcript verifies");
-    let stage2_consistency = stage2
-        .proof
-        .verify_committed_consistency(stage2.statement, &mut transcript)
-        .expect("stage 2 committed proof transcript verifies");
-    let stages = vec![
-        BlindFoldStage::new(
-            "protocol-backed-stage-1",
-            statement1,
-            SumcheckDomainSpec::BooleanHypercube,
-            stage1_consistency,
-            CommittedClaimRows::new(
-                (0..stage1.proof.output_claims.commitments.len() * (statement1.degree + 1))
-                    .collect(),
-                statement1.degree + 1,
-                stage1.proof.output_claims.clone(),
-            ),
-            constant(input1),
-            constant(stage1_output),
-        ),
-        BlindFoldStage::new(
-            "protocol-backed-stage-2",
-            statement2,
-            SumcheckDomainSpec::BooleanHypercube,
-            stage2_consistency,
-            CommittedClaimRows::new(
-                (100..100 + stage2.proof.output_claims.commitments.len() * (statement2.degree + 1))
-                    .collect(),
-                statement2.degree + 1,
-                stage2.proof.output_claims.clone(),
-            ),
-            constant(input2),
-            constant(stage2_output),
-        ),
-    ];
-    let statement = BlindFoldStatement::new(
-        stages,
-        [0usize, 100]
+pub fn two_stage_fixture<R: RngCore>(rng: &mut R, stage2_input: Stage2Input) -> TwoStageFixture {
+    two_stage_fixture_with_bindings(rng, stage2_input, 1)
+}
+
+/// Like [`two_stage_fixture`], with `binding_count` (1 or 2) final-opening
+/// bindings: the second opens stage 2's first output claim.
+pub fn two_stage_fixture_with_bindings<R: RngCore>(
+    rng: &mut R,
+    stage2_input: Stage2Input,
+    binding_count: usize,
+) -> TwoStageFixture {
+    let setup = pedersen_setup(4);
+    let mut stage_seed = [0u8; 32];
+    rng.fill_bytes(&mut stage_seed);
+    let (_, stage1, stage2, input2_claim) = prove_stages(&setup, stage_seed, stage2_input);
+    let statement1 = stage1.statement;
+    let statement2 = stage2.statement;
+    let input1 = f(37);
+    let mut eval_outputs = vec![stage1.witness.output_claim_rows[0][0]];
+    if binding_count == 2 {
+        eval_outputs.push(stage2.witness.output_claim_rows[0][0]);
+    }
+    let eval_blindings: Vec<F> = eval_outputs.iter().map(|_| rng_field(rng)).collect();
+    let eval_commitments: Vec<_> = eval_outputs
+        .iter()
+        .zip(&eval_blindings)
+        .map(|(&output, blinding)| VC::commit(&setup, &[output], blinding))
+        .collect();
+
+    let row_len = statement1.degree + 1;
+    let template = ProtocolTemplate {
+        stages: vec![
+            StageTemplate {
+                name: "stage-1",
+                statement: statement1,
+                output_claim_count: 2,
+                opening_ids: (0..2 * row_len).collect(),
+                input_claim: constant(input1),
+                output_claim: constant(*stage1.claim_outs.last().expect("stage has rounds")),
+            },
+            StageTemplate {
+                name: "stage-2",
+                statement: statement2,
+                output_claim_count: 1,
+                opening_ids: (100..100 + row_len).collect(),
+                input_claim: input2_claim,
+                output_claim: constant(*stage2.claim_outs.last().expect("stage has rounds")),
+            },
+        ],
+        final_openings: [0usize, 100]
             .into_iter()
             .zip(&eval_commitments)
             .map(|(opening, &commitment)| {
                 FinalOpeningBinding::new(vec![opening], vec![f(1)], commitment)
             })
             .collect(),
+    };
+    let statement = template.statement(
+        [&stage1, &stage2]
+            .iter()
+            .map(|stage| (stage.consistency.clone(), stage.output_claims.clone()))
+            .collect(),
     );
-    let protocol = blindfold_protocol_from_statement(&statement)
-        .expect("protocol builds from committed statement");
-    let (real_witness_rows, real_witness_blindings) = protocol_backed_witness(
-        &protocol,
-        &statement,
-        &[&stage1, &stage2],
-        &real_eval_outputs,
-        &real_eval_blindings,
+    let protocol =
+        blindfold_protocol_from_statement(&statement).expect("protocol builds from stages");
+    TwoStageFixture {
+        setup,
+        stage_seed,
+        stage2_input,
+        stages: vec![stage1, stage2],
+        template,
+        statement,
+        protocol,
+        eval_outputs,
+        eval_blindings,
+    }
+}
+
+/// Everything needed to drive a prover (harness or real) over the same
+/// protocol-backed instance: the committed stages and protocol plus the
+/// witness rows assembled independently of `assign_witness`.
+#[derive(Clone)]
+pub struct ProtocolBackedInstance {
+    pub fixture: TwoStageFixture,
+    pub rows: Vec<Vec<F>>,
+    pub blindings: Vec<F>,
+}
+
+impl ProtocolBackedInstance {
+    pub fn prove_real(&self, rng: &mut impl RngCore) -> Result<Vec<u8>, ProverError<F>> {
+        self.fixture.prove(&self.rows, &self.blindings, rng)
+    }
+}
+
+pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBackedInstance {
+    build_protocol_backed_instance_with_bindings(rng, 1)
+}
+
+/// [`build_protocol_backed_instance`] over
+/// [`two_stage_fixture_with_bindings`].
+pub fn build_protocol_backed_instance_with_bindings<R: RngCore>(
+    rng: &mut R,
+    binding_count: usize,
+) -> ProtocolBackedInstance {
+    let fixture = two_stage_fixture_with_bindings(rng, Stage2Input::Constant, binding_count);
+    let (rows, blindings) = protocol_backed_witness(
+        &fixture.protocol,
+        &fixture.statement,
+        &[&fixture.stages[0], &fixture.stages[1]],
+        &fixture.eval_outputs,
+        &fixture.eval_blindings,
         rng,
     );
     ProtocolBackedInstance {
-        setup,
-        protocol,
-        rows: real_witness_rows,
-        blindings: real_witness_blindings,
-        eval_outputs: real_eval_outputs,
-        eval_blindings: real_eval_blindings,
+        fixture,
+        rows,
+        blindings,
     }
+}
+
+/// A complete proof from the harness's reference BlindFold prover.
+#[derive(Clone)]
+pub struct BlindFoldTestProof {
+    pub instance: ProtocolBackedInstance,
+    pub narg: Vec<u8>,
 }
 
 pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTestProof {
     let instance = build_protocol_backed_instance(rng);
-    let mut transcript = Blake2bTranscript::<F>::new(PROTOCOL_BACKED_TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
+    let fixture = &instance.fixture;
+    let mut transcript = fixture.transcript();
     let witness = ProtocolWitness {
         rows: &instance.rows,
         blindings: &instance.blindings,
-        eval_outputs: &instance.eval_outputs,
-        eval_blindings: &instance.eval_blindings,
+        eval_outputs: &fixture.eval_outputs,
+        eval_blindings: &fixture.eval_blindings,
     };
-    let proof = prove_from_protocol_witness(
-        &instance.setup,
-        &instance.protocol,
+    prove_from_protocol_witness(
+        &fixture.setup,
+        &fixture.protocol,
         &mut transcript,
         witness,
         rng,
     );
-
     BlindFoldTestProof {
-        protocol: instance.protocol,
-        proof,
-        setup: instance.setup,
+        instance,
+        narg: transcript.finish(),
     }
+}
+
+/// The BlindFold messages of a proof, read back in transcript order. Field
+/// and commitment widths are fixed, so the offsets also locate each message.
+#[derive(Clone, Debug)]
+pub struct ProofMessages {
+    pub auxiliary_rows: Vec<Bn254G1>,
+    pub random_u: F,
+    pub random_rounds: Vec<Bn254G1>,
+    pub random_output_claim_rows: Vec<Bn254G1>,
+    pub random_auxiliary_rows: Vec<Bn254G1>,
+    pub random_error_rows: Vec<Bn254G1>,
+    pub random_evals: Vec<Bn254G1>,
+    pub cross_term_error_rows: Vec<Bn254G1>,
+    pub folded_eval_outputs: Vec<F>,
+    pub folded_eval_blindings: Vec<F>,
+    pub eval_output_openings: Vec<VectorCommitmentOpening<F>>,
+    pub eval_blinding_openings: Vec<VectorCommitmentOpening<F>>,
+    pub outer_rounds: Vec<F>,
+    pub abc: Vec<F>,
+    pub error_opening: VectorCommitmentOpening<F>,
+    pub inner_rounds: Vec<F>,
+    pub witness_opening: VectorCommitmentOpening<F>,
+}
+
+impl ProofMessages {
+    pub fn parse(
+        protocol: &BlindFoldProtocol<F, Bn254G1>,
+        prefix_len: usize,
+        narg: &[u8],
+    ) -> Result<Self, TranscriptError> {
+        let dimensions = &protocol.dimensions;
+        let eval_count = protocol.eval_commitments.len();
+        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, SESSION, narg);
+        let _prefix = transcript.receive_bytes(prefix_len)?;
+        let auxiliary_rows = transcript.receive_n(dimensions.auxiliary_rows)?;
+        let random_u = transcript.receive()?;
+        let random_rounds = transcript.receive_n(dimensions.coefficient_rows)?;
+        let random_output_claim_rows = transcript.receive_n(dimensions.output_claim_rows)?;
+        let random_auxiliary_rows = transcript.receive_n(dimensions.auxiliary_rows)?;
+        let random_error_rows = transcript.receive_n(dimensions.error.row_count)?;
+        let random_evals = transcript.receive_n(eval_count)?;
+        let cross_term_error_rows = transcript.receive_n(dimensions.error.row_count)?;
+        let folded_eval_outputs = transcript.receive_n(eval_count)?;
+        let folded_eval_blindings = transcript.receive_n(eval_count)?;
+        let witness_row_len = dimensions.witness.row_len;
+        let mut eval_output_openings = Vec::new();
+        let mut eval_blinding_openings = Vec::new();
+        for coordinates in protocol
+            .final_opening_witness_coordinates()
+            .expect("final opening coordinates are in the witness layout")
+        {
+            if coordinates.evaluation.is_some() {
+                eval_output_openings.push(receive_opening(witness_row_len, &mut transcript)?);
+            }
+            if coordinates.blinding.is_some() {
+                eval_blinding_openings.push(receive_opening(witness_row_len, &mut transcript)?);
+            }
+        }
+        let outer_rounds = transcript.receive_n(OUTER_ROUND_LEN * num_vars(dimensions.error))?;
+        let abc = transcript.receive_n(3)?;
+        let error_opening = receive_opening(dimensions.error.row_len, &mut transcript)?;
+        let inner_rounds = transcript.receive_n(INNER_ROUND_LEN * num_vars(dimensions.witness))?;
+        let witness_opening = receive_opening(witness_row_len, &mut transcript)?;
+        transcript.finish()?;
+        Ok(Self {
+            auxiliary_rows,
+            random_u,
+            random_rounds,
+            random_output_claim_rows,
+            random_auxiliary_rows,
+            random_error_rows,
+            random_evals,
+            cross_term_error_rows,
+            folded_eval_outputs,
+            folded_eval_blindings,
+            eval_output_openings,
+            eval_blinding_openings,
+            outer_rounds,
+            abc,
+            error_opening,
+            inner_rounds,
+            witness_opening,
+        })
+    }
+}
+
+fn receive_opening(
+    row_len: usize,
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<VectorCommitmentOpening<F>, TranscriptError> {
+    Ok(VectorCommitmentOpening {
+        combined_vector: transcript.receive_n(row_len)?,
+        combined_blinding: transcript.receive()?,
+    })
+}
+
+fn send_opening(opening: &VectorCommitmentOpening<F>, transcript: &mut ProverTranscript<H>) {
+    transcript.send_all(&opening.combined_vector);
+    transcript.send(&opening.combined_blinding);
+}
+
+fn num_vars(dimensions: RowDimensions) -> usize {
+    log2(dimensions.row_count) + log2(dimensions.row_len)
 }
 
 pub fn blindfold_protocol_from_statement<O, P, Ch>(
@@ -948,27 +1148,6 @@ where
         );
     }
     builder.build()
-}
-
-pub fn append_protocol_transcript_prefix(
-    protocol: &BlindFoldProtocol<F, Bn254G1>,
-    transcript: &mut Blake2bTranscript<F>,
-) {
-    for (stage, output_claims) in protocol
-        .sumcheck_consistency
-        .iter()
-        .zip(&protocol.committed_output_claims)
-    {
-        for round in &stage.rounds {
-            CommittedRound {
-                commitment: round.commitment,
-                degree: round.degree,
-            }
-            .append_to_transcript(transcript);
-            let _ = transcript.challenge();
-        }
-        output_claims.append_to_transcript(transcript);
-    }
 }
 
 fn protocol_backed_witness<R: RngCore>(
@@ -1007,6 +1186,7 @@ fn protocol_backed_witness<R: RngCore>(
             .iter()
             .flat_map(|row| row.variables.iter().take(stage.output_claim_rows.row_len));
         let values = generated
+            .witness
             .output_claim_rows
             .iter()
             .flat_map(|row| row.iter().copied());
@@ -1043,7 +1223,7 @@ fn protocol_backed_witness<R: RngCore>(
 
     for row in stages
         .iter()
-        .flat_map(|stage| stage.output_claim_rows.iter())
+        .flat_map(|stage| stage.witness.output_claim_rows.iter())
     {
         let mut row = row.clone();
         row.resize(row_len, f(0));
@@ -1077,12 +1257,12 @@ fn protocol_backed_witness<R: RngCore>(
 
     let mut blindings = stages
         .iter()
-        .flat_map(|stage| stage.blindings.iter().copied())
+        .flat_map(|stage| stage.witness.round_blindings.iter().copied())
         .collect::<Vec<_>>();
     blindings.extend(
         stages
             .iter()
-            .flat_map(|stage| stage.output_claim_blindings.iter().copied()),
+            .flat_map(|stage| stage.witness.output_claim_blindings.iter().copied()),
     );
     blindings.extend((0..protocol.dimensions.auxiliary_rows).map(|_| rng_field(rng)));
     blindings.resize(protocol.dimensions.witness.row_count, f(0));
@@ -1100,13 +1280,18 @@ struct ProtocolWitness<'a> {
     eval_blindings: &'a [F],
 }
 
+#[derive(Clone, Debug)]
+struct SumcheckTrace {
+    point: Vec<F>,
+}
+
 fn prove_from_protocol_witness<R: RngCore>(
     setup: &PedersenSetup<Bn254G1>,
     protocol: &BlindFoldProtocol<F, Bn254G1>,
-    transcript: &mut Blake2bTranscript<F>,
+    transcript: &mut ProverTranscript<H>,
     witness: ProtocolWitness<'_>,
     rng: &mut R,
-) -> BlindFoldProof<F, Bn254G1> {
+) {
     let auxiliary_range = protocol.dimensions.witness_rows.auxiliary.clone();
     let auxiliary_row_commitments = commit_rows(
         setup,
@@ -1237,34 +1422,15 @@ fn prove_from_protocol_witness<R: RngCore>(
     let cross_term_error_row_commitments =
         commit_rows(setup, &cross_term_error_rows, &cross_term_error_blindings);
 
-    append_relaxed_instance_from_parts(
-        transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_committed_u",
-            witness: b"bf_committed_w",
-            error: b"bf_committed_e",
-            eval: b"bf_committed_eval",
-        },
-        committed.u,
-        &committed.witness_row_commitments,
-        &committed.error_row_commitments,
-        &committed.eval_commitments,
-    );
-    append_relaxed_instance_from_parts(
-        transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_random_u",
-            witness: b"bf_random_w",
-            error: b"bf_random_e",
-            eval: b"bf_random_eval",
-        },
-        random_u,
-        &random_instance.witness_row_commitments,
-        &random_instance.error_row_commitments,
-        &random_instance.eval_commitments,
-    );
-    transcript.append_values(b"bf_cross_e", &cross_term_error_row_commitments);
-    let folding_challenge = transcript.challenge();
+    transcript.send_all(&auxiliary_row_commitments);
+    transcript.send(&random_u);
+    transcript.send_all(&random_round_commitments);
+    transcript.send_all(&random_output_claim_row_commitments);
+    transcript.send_all(&random_auxiliary_row_commitments);
+    transcript.send_all(&random_error_row_commitments);
+    transcript.send_all(&random_eval_commitments);
+    transcript.send_all(&cross_term_error_row_commitments);
+    let folding_challenge: F = transcript.challenge_small();
 
     let folded_u = f(1) + folding_challenge * random_u;
     let folded_witness_rows = fold_rows(witness.rows, &random_witness_rows, folding_challenge);
@@ -1298,69 +1464,42 @@ fn prove_from_protocol_witness<R: RngCore>(
         &random_eval_blindings,
         folding_challenge,
     );
+    transcript.send_all(&folded_eval_outputs);
+    transcript.send_all(&folded_eval_blindings);
     let final_coordinates = protocol
         .final_opening_witness_coordinates()
         .expect("final opening coordinates are in witness layout");
-    let mut folded_eval_output_openings = Vec::new();
-    let mut folded_eval_blinding_openings = Vec::new();
     for (index, coordinates) in final_coordinates.iter().enumerate() {
-        if let Some(coordinate) = coordinates.evaluation {
+        for (coordinate, expected) in [
+            (coordinates.evaluation, folded_eval_outputs[index]),
+            (coordinates.blinding, folded_eval_blindings[index]),
+        ] {
+            let Some(coordinate) = coordinate else {
+                continue;
+            };
             let (opening, opened) = open_witness_coordinate(
                 &folded_witness_rows,
                 &folded_witness_blindings,
                 coordinate,
             );
-            assert_eq!(opened, folded_eval_outputs[index]);
-            folded_eval_output_openings.push(opening);
+            assert_eq!(opened, expected);
+            send_opening(&opening, transcript);
         }
-        if let Some(coordinate) = coordinates.blinding {
-            let (opening, opened) = open_witness_coordinate(
-                &folded_witness_rows,
-                &folded_witness_blindings,
-                coordinate,
-            );
-            assert_eq!(opened, folded_eval_blindings[index]);
-            folded_eval_blinding_openings.push(opening);
-        }
-    }
-    for opening in &folded_eval_output_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_out_open",
-            b"bf_eval_out_blind",
-            opening,
-        );
-    }
-    for opening in &folded_eval_blinding_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_blind_open",
-            b"bf_eval_blind_bl",
-            opening,
-        );
     }
 
-    transcript.append(&Label(b"bf_spartan"));
     let outer_num_vars =
         log2(protocol.dimensions.error.row_count) + log2(protocol.dimensions.error.row_len);
-    let tau = transcript.challenge_vector(outer_num_vars);
-    let outer_trace = prove_slow_sumcheck(
-        outer_num_vars,
-        3,
-        f(0),
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        transcript,
-        |point| {
-            outer_function(
-                &protocol.r1cs,
-                folded_u,
-                &flatten(&folded_witness_rows),
-                &folded_error_rows,
-                &tau,
-                point,
-            )
-        },
-    );
+    let tau: Vec<F> = transcript.challenges_small(outer_num_vars);
+    let outer_trace = prove_slow_sumcheck(outer_num_vars, 3, f(0), transcript, |point| {
+        outer_function(
+            &protocol.r1cs,
+            folded_u,
+            &flatten(&folded_witness_rows),
+            &folded_error_rows,
+            &tau,
+            point,
+        )
+    });
 
     let (az_rx, bz_rx, cz_rx) = abc_at_point(
         &protocol.r1cs,
@@ -1380,17 +1519,12 @@ fn prove_from_protocol_witness<R: RngCore>(
     )
     .expect("folded error rows open");
 
-    transcript.append_values(b"bf_az_bz_cz", &[az_rx, bz_rx, cz_rx]);
-    append_vector_opening(
-        transcript,
-        b"bf_error_opening",
-        b"bf_error_blind",
-        &error_opening,
-    );
+    transcript.send_all(&[az_rx, bz_rx, cz_rx]);
+    send_opening(&error_opening, transcript);
 
-    let ra = transcript.challenge();
-    let rb = transcript.challenge();
-    let rc = transcript.challenge();
+    let ra: F = transcript.challenge_small();
+    let rb: F = transcript.challenge_small();
+    let rc: F = transcript.challenge_small();
     let inner_num_vars =
         log2(protocol.dimensions.witness.row_count) + log2(protocol.dimensions.witness.row_len);
     let row_weights = EqPolynomial::<F>::evals(&outer_trace.point, None);
@@ -1399,24 +1533,17 @@ fn prove_from_protocol_witness<R: RngCore>(
         .public_column_contributions(&row_weights, 0, folded_u)
         .expect("public column contributions evaluate");
     let inner_claim = ra * (az_rx - public.a) + rb * (bz_rx - public.b) + rc * (cz_rx - public.c);
-    let inner_trace = prove_slow_sumcheck(
-        inner_num_vars,
-        2,
-        inner_claim,
-        b"inner_sumcheck_poly",
-        transcript,
-        |point| {
-            inner_function(
-                &protocol.r1cs,
-                &outer_trace.point,
-                &folded_witness_rows,
-                ra,
-                rb,
-                rc,
-                point,
-            )
-        },
-    );
+    let inner_trace = prove_slow_sumcheck(inner_num_vars, 2, inner_claim, transcript, |point| {
+        inner_function(
+            &protocol.r1cs,
+            &outer_trace.point,
+            &folded_witness_rows,
+            ra,
+            rb,
+            rc,
+            point,
+        )
+    });
     let (witness_row_point, witness_entry_point) = inner_trace
         .point
         .split_at(log2(protocol.dimensions.witness.row_count));
@@ -1429,27 +1556,7 @@ fn prove_from_protocol_witness<R: RngCore>(
     )
     .expect("folded witness rows open");
 
-    BlindFoldProof {
-        auxiliary_row_commitments,
-        random_round_commitments,
-        random_output_claim_row_commitments,
-        random_auxiliary_row_commitments,
-        random_error_row_commitments,
-        random_eval_commitments,
-        random_u,
-        cross_term_error_row_commitments,
-        outer_sumcheck: outer_trace.proof,
-        az_rx,
-        bz_rx,
-        cz_rx,
-        inner_sumcheck: inner_trace.proof,
-        witness_opening,
-        error_opening,
-        folded_eval_outputs,
-        folded_eval_blindings,
-        folded_eval_output_openings,
-        folded_eval_blinding_openings,
-    }
+    send_opening(&witness_opening, transcript);
 }
 
 fn commit_rows(setup: &PedersenSetup<Bn254G1>, rows: &[Vec<F>], blindings: &[F]) -> Vec<Bn254G1> {
@@ -1483,40 +1590,6 @@ fn boolean_point(index: usize, num_vars: usize) -> Vec<F> {
             f(((index >> shift) & 1) as u64)
         })
         .collect()
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RelaxedInstanceLabels {
-    u: &'static [u8],
-    witness: &'static [u8],
-    error: &'static [u8],
-    eval: &'static [u8],
-}
-
-fn append_relaxed_instance_from_parts(
-    transcript: &mut Blake2bTranscript<F>,
-    labels: RelaxedInstanceLabels,
-    u: F,
-    witness_commitments: &[Bn254G1],
-    error_commitments: &[Bn254G1],
-    eval_commitments: &[Bn254G1],
-) {
-    transcript.append(&Label(labels.u));
-    u.append_to_transcript(transcript);
-    transcript.append_values(labels.witness, witness_commitments);
-    transcript.append_values(labels.error, error_commitments);
-    transcript.append_values(labels.eval, eval_commitments);
-}
-
-fn append_vector_opening(
-    transcript: &mut Blake2bTranscript<F>,
-    row_label: &'static [u8],
-    blinding_label: &'static [u8],
-    opening: &jolt_crypto::VectorCommitmentOpening<F>,
-) {
-    transcript.append_values(row_label, &opening.combined_vector);
-    transcript.append(&Label(blinding_label));
-    opening.combined_blinding.append_to_transcript(transcript);
 }
 
 fn zero_rows(row_count: usize, row_len: usize) -> Vec<Vec<F>> {
@@ -1706,13 +1779,11 @@ fn prove_slow_sumcheck(
     num_vars: usize,
     degree: usize,
     claim: F,
-    label: &'static [u8],
-    transcript: &mut Blake2bTranscript<F>,
+    transcript: &mut ProverTranscript<H>,
     eval: impl Fn(&[F]) -> F,
 ) -> SumcheckTrace {
     let mut running_sum = claim;
     let mut prefix = Vec::with_capacity(num_vars);
-    let mut rounds = Vec::with_capacity(num_vars);
 
     for round in 0..num_vars {
         let remaining = num_vars - round - 1;
@@ -1736,19 +1807,13 @@ fn prove_slow_sumcheck(
         let mut compressed = Vec::with_capacity(degree);
         compressed.push(coefficients[0]);
         compressed.extend_from_slice(&coefficients[2..]);
-        transcript.append_values(label, &compressed);
-        let challenge = transcript.challenge();
+        transcript.send_all(&compressed);
+        let challenge: F = transcript.challenge_small();
         running_sum = eval_poly(&coefficients, challenge);
         prefix.push(challenge);
-        rounds.push(CompressedPoly::new(compressed));
     }
 
-    SumcheckTrace {
-        proof: CompressedSumcheckProof {
-            round_polynomials: rounds,
-        },
-        point: prefix,
-    }
+    SumcheckTrace { point: prefix }
 }
 
 fn interpolate_zero_to_degree(values: &[F]) -> Vec<F> {

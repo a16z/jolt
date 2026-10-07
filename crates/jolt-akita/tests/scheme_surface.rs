@@ -7,13 +7,16 @@
 mod support;
 
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
-    AKITA_ONE_HOT_K16,
+    AkitaBackendFlavor, AkitaHidingCommitment, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaSetupParams, AKITA_ONE_HOT_K16,
 };
+use jolt_field::{CanonicalBytes, CanonicalDecode};
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
-use support::{f, layout, polynomial, setup_for};
+use support::{
+    assert_transcripts_agree, f, layout, new_prover_transcript, new_verifier_transcript,
+    polynomial, setup_for,
+};
 
 /// The smallest dense dimension the checked-in catalog schedules.
 const DENSE_VARS: usize = 14;
@@ -90,8 +93,8 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
 
     let point: Vec<_> = (0..ONE_HOT_VARS).map(|index| f(index as u64 + 5)).collect();
     let eval = MultilinearPoly::evaluate(&one_hot, &point);
-    let mut prover_transcript = Blake2bTranscript::new(b"akita-k16-transported");
-    let proof = AkitaScheme::open(
+    let mut prover_transcript = new_prover_transcript(b"akita-k16-transported");
+    AkitaScheme::open(
         &one_hot,
         &point,
         eval,
@@ -100,23 +103,23 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
         &mut prover_transcript,
     )
     .expect("one-hot opening should prove");
+    let proof = prover_transcript.narg().to_vec();
 
     let json = serde_json::to_string(&verifier_setup).expect("verifier setup serializes");
     let transported: <AkitaScheme as CommitmentScheme>::VerifierSetup =
         serde_json::from_str(&json).expect("verifier setup deserializes");
     assert_eq!(transported, verifier_setup);
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita-k16-transported");
+    let mut verifier_transcript = new_verifier_transcript(b"akita-k16-transported", &proof);
     AkitaScheme::verify(
         &commitment,
         &point,
         eval,
-        &proof,
         &transported,
         &mut verifier_transcript,
     )
     .expect("transported setup must re-derive the one-hot backend key");
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_transcripts_agree(prover_transcript, verifier_transcript);
 }
 
 #[test]
@@ -127,8 +130,8 @@ fn open_without_hint_recommits_deterministically() {
     let eval = poly.evaluate(&point);
     let (commitment, _) = AkitaScheme::commit(&poly, &prover_setup).expect("commit succeeds");
 
-    let mut prover_transcript = Blake2bTranscript::new(b"akita-no-hint");
-    let proof = AkitaScheme::open(
+    let mut prover_transcript = new_prover_transcript(b"akita-no-hint");
+    AkitaScheme::open(
         &poly,
         &point,
         eval,
@@ -137,30 +140,32 @@ fn open_without_hint_recommits_deterministically() {
         &mut prover_transcript,
     )
     .expect("hint-free opening should prove");
+    let proof = prover_transcript.narg().to_vec();
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita-no-hint");
+    let mut verifier_transcript = new_verifier_transcript(b"akita-no-hint", &proof);
     AkitaScheme::verify(
         &commitment,
         &point,
         eval,
-        &proof,
         &verifier_setup,
         &mut verifier_transcript,
     )
     .expect("hint-free proof should verify against the original commitment");
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_transcripts_agree(prover_transcript, verifier_transcript);
 }
 
+/// The transparent hiding commitment is the evaluation's canonical encoding:
+/// it round-trips through the checked decoder and tracks the evaluation.
 #[test]
-fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
+fn hiding_commitment_encodes_the_evaluation() {
     let (prover_setup, _) = setup_for(DENSE_VARS, 1, layout(7));
     let poly = polynomial(DENSE_VARS, 50);
     let point: Vec<_> = (0..DENSE_VARS).map(|index| f(index as u64 + 2)).collect();
     let eval = poly.evaluate(&point);
     let (_, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).expect("commit_zk succeeds");
 
-    let mut transcript = Blake2bTranscript::new(b"akita-hiding");
-    let (_, hiding, ()) = AkitaScheme::open_zk(
+    let mut transcript = new_prover_transcript(b"akita-hiding");
+    let (hiding, ()) = AkitaScheme::open_zk(
         &poly,
         &point,
         eval,
@@ -169,19 +174,19 @@ fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
         &mut transcript,
     )
     .expect("open_zk should produce a hiding commitment");
-
-    let mut first = Blake2bTranscript::<AkitaField>::new(b"akita-hiding-bind");
-    hiding.append_to_transcript(&mut first);
-    let mut second = Blake2bTranscript::<AkitaField>::new(b"akita-hiding-bind");
-    hiding.append_to_transcript(&mut second);
-    assert_eq!(first.state(), second.state(), "binding is deterministic");
+    let encoded = hiding.to_bytes_le_vec();
+    assert_eq!(encoded, eval.to_bytes_le_vec());
+    assert_eq!(
+        AkitaHidingCommitment::from_bytes_le_checked(&encoded),
+        Some(hiding.clone())
+    );
 
     let mut other_point = point.clone();
     other_point[DENSE_VARS - 1] += f(1);
     let other_eval = poly.evaluate(&other_point);
     assert_ne!(eval, other_eval, "fixture needs distinct evaluations");
-    let mut transcript = Blake2bTranscript::new(b"akita-hiding");
-    let (_, other_hiding, ()) = AkitaScheme::open_zk(
+    let mut transcript = new_prover_transcript(b"akita-hiding");
+    let (other_hiding, ()) = AkitaScheme::open_zk(
         &poly,
         &other_point,
         other_eval,
@@ -190,11 +195,8 @@ fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
         &mut transcript,
     )
     .expect("open_zk should produce a hiding commitment");
-    let mut third = Blake2bTranscript::<AkitaField>::new(b"akita-hiding-bind");
-    other_hiding.append_to_transcript(&mut third);
     assert_ne!(
-        first.state(),
-        third.state(),
-        "distinct evaluations must bind distinct transcript states"
+        hiding, other_hiding,
+        "distinct evaluations must encode distinctly"
     );
 }

@@ -166,7 +166,8 @@ impl<F: JoltField, C> Stage5Output<F, C> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::test_transcript::assert_same_draws;
+    use crate::stages::relations::ClaimRoutes;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -175,7 +176,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -216,70 +217,42 @@ mod tests {
         }
     }
 
-    /// Locks the stage-5 Fiat-Shamir append order against silent drift: the instruction
+    /// Locks the stage-5 opening order against silent drift: the instruction
     /// read-RAF openings, then the RAM-RA reduced opening, then the register value-evaluation
     /// openings, under `field-inline` the field-inline value-evaluation openings last (the
     /// spec's committed row order: `FieldRdInc`, `FieldRdWa`), each member single-sourcing its
     /// own per-field order from its `OutputClaims` derive. A wrong batch order here silently
     /// breaks soundness, so it is pinned with distinct sentinels.
     #[test]
-    fn opening_values_follow_canonical_order() {
+    fn wire_claims_follow_canonical_order() {
         #[cfg(not(feature = "field-inline"))]
         let expected = (1..=8).map(fr).collect::<Vec<_>>();
         #[cfg(feature = "field-inline")]
         let expected = (1..=10).map(fr).collect::<Vec<_>>();
-        assert_eq!(sumchecks().opening_values(&claims()), expected);
+        assert_eq!(
+            Stage5Sumchecks::wire_claim_values(&claims(), &ClaimRoutes::default()),
+            expected
+        );
     }
 
-    /// Pins the batch's `draw_challenges` to the inline draw: the instruction gamma, then the
-    /// RAM-RA gamma. The register value-evaluation member draws nothing, and so does the
-    /// `field-inline` field-register value-evaluation member (`NoChallenges`) — composing it
-    /// changes no stage-5 draw.
+    /// The batch draws the instruction gamma, then the RAM-RA gamma, each one
+    /// uniform challenge. The register value-evaluation member draws nothing,
+    /// and so does the `field-inline` field-register value-evaluation member
+    /// (`NoChallenges`) — composing it changes no stage-5 draw.
     #[test]
-    fn draw_challenges_matches_inline_draw_sequence() {
+    fn draw_challenges_follow_member_order() {
         let sumchecks = sumchecks();
-        let (inline_events, inline_gammas) =
-            record(|t| (0..2).map(|_| t.challenge_scalar()).collect::<Vec<Fr>>());
-        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
-
-        assert_eq!(draw_events, inline_events);
-        assert_eq!(
-            draw_events,
-            vec![DrawEvent::Squeeze(1), DrawEvent::Squeeze(2)]
+        let (challenges, gammas) = assert_same_draws(
+            |t| sumchecks.draw_challenges(t).unwrap(),
+            |t| (0..2).map(|_| t.challenge()).collect::<Vec<Fr>>(),
         );
+
         assert_eq!(
             vec![
                 challenges.instruction_read_raf.gamma,
                 challenges.ram_ra_claim_reduction.gamma,
             ],
-            inline_gammas
+            gammas
         );
-    }
-
-    /// The field-register value-evaluation member's wire set is exactly the two spec outputs
-    /// (`FieldRdInc`, `FieldRdWa` at `FieldRegistersValEvaluation`), so composing it grows the
-    /// stage-5 absorbed/committed opening count by two.
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn field_registers_val_evaluation_wire_set_is_the_two_spec_outputs() {
-        use crate::stages::relations::ConcreteSumcheck as _;
-        use jolt_claims::protocols::field_inline::geometry::registers::val_evaluation_output_openings;
-
-        let sumchecks = sumchecks();
-        let wire = sumchecks
-            .field_registers_val_evaluation
-            .wire_output_openings();
-        assert_eq!(wire, val_evaluation_output_openings().into_iter().collect());
-
-        let others = sumchecks.instruction_read_raf.wire_output_openings().len()
-            + sumchecks
-                .ram_ra_claim_reduction
-                .wire_output_openings()
-                .len()
-            + sumchecks
-                .registers_val_evaluation
-                .wire_output_openings()
-                .len();
-        assert_eq!(sumchecks.output_claim_count(), others + 2);
     }
 }

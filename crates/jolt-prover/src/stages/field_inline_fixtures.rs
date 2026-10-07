@@ -20,9 +20,14 @@ use std::sync::Arc;
 
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-use jolt_claims::protocols::jolt::JoltOneHotConfig;
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
+#[cfg(feature = "zk")]
+use jolt_crypto::{Bn254, JoltGroup, PedersenSetup};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
+use jolt_field::Fr;
+#[cfg(feature = "zk")]
+use jolt_field::Ring;
 use jolt_program::execution::{
     JoltProgram, OwnedTrace, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
     TraceOutput, TraceRow,
@@ -35,9 +40,13 @@ use jolt_riscv::{
     FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
 };
+use jolt_transcript::{Channel, ProverTranscript, VerifierTranscript};
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
-use jolt_verifier::stages::PrecommittedSchedule;
-use jolt_verifier::CheckedInputs;
+use jolt_verifier::stages::{
+    build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6a, stage6b,
+    PrecommittedSchedule,
+};
+use jolt_verifier::{jolt_protocol_id, CheckedInputs, JoltSponge, JOLT_SESSION};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 use crate::{JoltProverPreprocessing, ProverConfig};
@@ -49,6 +58,8 @@ pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
 pub(crate) const LOG_T: usize = 3;
 // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
 pub(crate) const RAM_LOG_K: usize = 6;
+
+pub(crate) type FixturePreprocessing = JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
 fn instruction(
     instruction_kind: JoltInstructionKind,
@@ -353,9 +364,7 @@ pub(crate) fn field_arithmetic_backend() -> TraceBackend<OwnedTrace> {
 /// fixture program: a full-program verifier preprocessing (the same
 /// `JoltProgramPreprocessing` the witness backend holds) and a minimal Dory
 /// setup — the reference-tier stage recipes never commit through it.
-fn prover_preprocessing(
-    bytecode: Vec<JoltInstructionRow>,
-) -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
+fn prover_preprocessing(bytecode: Vec<JoltInstructionRow>) -> FixturePreprocessing {
     JoltProverPreprocessing {
         verifier: JoltVerifierPreprocessing::new(
             ProgramPreprocessing::Full(fixture_program_preprocessing(bytecode)),
@@ -368,24 +377,29 @@ fn prover_preprocessing(
     }
 }
 
-pub(crate) fn field_arithmetic_preprocessing(
-) -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
+pub(crate) fn field_arithmetic_preprocessing() -> FixturePreprocessing {
     prover_preprocessing(field_arithmetic_program().0)
 }
 
-pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
+pub(crate) fn addi_only_preprocessing() -> FixturePreprocessing {
     prover_preprocessing(addi_only_program().0)
 }
 
 /// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
 /// mirroring what shape validation derives for a field-inline proof at this scale
-/// (no advice, no precommitted objects, full program).
+/// (no advice, no precommitted objects, full program) under
+/// [`test_prover_config`]'s shape.
 pub(crate) fn test_checked_inputs() -> CheckedInputs {
+    let config = test_prover_config();
     CheckedInputs {
         public_io: test_public_io(),
         zk: cfg!(feature = "zk"),
-        trace_length: 1 << LOG_T,
-        ram_K: 1 << RAM_LOG_K,
+        trace_length: config.trace_length,
+        ram_K: config.ram_K,
+        rw_config: config.rw_config,
+        one_hot_config: config.one_hot_config,
+        trace_polynomial_order: config.trace_polynomial_order,
+        untrusted_advice_commitment_present: false,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
         trusted_advice_commitment_present: false,
@@ -438,470 +452,110 @@ pub(crate) fn test_public_io() -> JoltDevice {
     }
 }
 
-/// Twin-transcript replays of the already-round-tripped upstream stages, for
-/// the downstream stage twins: each helper advances `transcript` exactly as
-/// `stageN::verify`'s clear body does over the prover's outputs (with
-/// `verify_clear` hard-checking the wire rounds on the way). The full
-/// `verify` entrypoints need an assembled `JoltProof`, so the twins drive the
-/// same public constituents instead — the stage-1/2 bodies are the ones
-/// stage 2's own round-trip test pins.
-#[cfg(not(feature = "zk"))]
-#[expect(clippy::unwrap_used, reason = "test twin helpers")]
-pub(crate) mod twins {
-    use common::jolt_device::JoltDevice;
-    use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
-    use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
-    use jolt_claims::protocols::jolt::geometry::spartan::{
-        SpartanOuterDimensions, SpartanProductDimensions,
-    };
-    use jolt_claims::protocols::jolt::TraceDimensions;
-    use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, Ring};
-    use jolt_program::preprocess::PublicIoMemory;
-    use jolt_transcript::{AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript};
-    use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
-    use jolt_verifier::stages::relations::ConcreteSumcheck;
-    use jolt_verifier::stages::stage1::outer_remainder::{
-        outer_remainder_input_values_from_uniskip_output, OuterRemainder,
-    };
-    use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
-    use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
-    use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
-    use jolt_verifier::stages::stage2::outputs::Stage2BatchSumchecks;
-    use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-    use jolt_verifier::stages::stage2::product_uniskip::{
-        product_uniskip_input_values_from_stage1, ProductUniskip,
-    };
-    use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
-    use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
-    use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-    use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
-    use jolt_verifier::stages::stage3::outputs::{
-        InstructionInput, RegistersClaimReduction, SpartanShift, Stage3Sumchecks,
-    };
-    use jolt_verifier::stages::stage3::stage3_input_values_from_upstream;
-    use jolt_verifier::stages::uniskip::{
-        self, draw_spartan_outer_tau, draw_spartan_product_tau_high, UniskipParams,
-    };
+/// The BlindFold row-commitment setup for the committed stage recipes:
+/// `MAX_BLINDFOLD_GENERATORS` distinct generator multiples, matching
+/// [`test_checked_inputs`]'s `vc_capacity`.
+#[cfg(feature = "zk")]
+pub(crate) fn test_vc_setup() -> PedersenSetup<Bn254G1> {
+    let generator = Bn254::g1_generator();
+    let generators = (2..2 + MAX_BLINDFOLD_GENERATORS as u64)
+        .map(|k| generator.scalar_mul(&Fr::from_u64(k)))
+        .collect();
+    PedersenSetup::new(generators, generator.scalar_mul(&Fr::from_u64(1)))
+}
 
-    use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
-    #[cfg(feature = "akita")]
-    use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
-    use jolt_claims::protocols::jolt::JoltRelationId;
-    use jolt_crypto::{Bn254G1, Pedersen};
-    use jolt_dory::DoryScheme;
-    use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
-    use jolt_verifier::stages::stage4::outputs::Stage4Sumchecks;
-    use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
-    use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
-    use jolt_verifier::stages::stage4::{
-        public_initial_ram_evaluation, ram_val_check_init_structure,
-        stage4_input_points_from_upstream, stage4_input_values_from_upstream,
-        RamValCheckInitialEvaluation,
-    };
-    use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
-    use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
-    use jolt_verifier::stages::stage5::outputs::Stage5Sumchecks;
-    use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
-    use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
-    use jolt_verifier::stages::stage5::{
-        stage5_input_points_from_upstream, stage5_input_values_from_upstream,
-    };
-    use jolt_verifier::stages::stage6a::batch::Stage6aBuildParts;
-    use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseInputClaims;
-    use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream;
-    use jolt_verifier::stages::stage6a::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
-    use jolt_verifier::stages::stage6a::outputs::{Stage6aInputClaims, Stage6aSumchecks};
-    use jolt_verifier::CheckedInputs;
+/// A fresh prover transcript under Jolt's protocol id and session. The
+/// fixture prover starts at stage 1 (no stage 0), so [`verify_through`]
+/// runs the verifier stages from stage 1 on the same fresh transcript.
+pub(crate) fn fixture_transcript() -> ProverTranscript<JoltSponge> {
+    ProverTranscript::new(&jolt_protocol_id::<JoltSponge>(), JOLT_SESSION)
+}
 
-    use super::{LOG_T, RAM_LOG_K};
-    use crate::stages::stage1::Stage1ProverOutput;
-    use crate::stages::stage2::Stage2ProverOutput;
-    use crate::stages::stage3::Stage3ProverOutput;
-    use crate::stages::stage4::Stage4ProverOutput;
-    use crate::stages::stage5::Stage5ProverOutput;
-    use crate::stages::stage6a::Stage6aProverOutput;
-    use crate::{JoltProverPreprocessing, ProverConfig};
+/// The last production verifier stage [`verify_through`] runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Through {
+    Stage1,
+    Stage2,
+    Stage4,
+    Stage5,
+    Stage6a,
+    Stage6b,
+}
 
-    pub(crate) type FixturePreprocessing = JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
-
-    /// Stage 1's twin (already round-tripped by stage 1's own tests):
-    /// positions the transcript at the stage-2 boundary.
-    pub(crate) fn replay_stage1<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
-        stage1: &Stage1ProverOutput<Fr, C>,
-    ) {
-        let tau = draw_spartan_outer_tau(transcript, LOG_T);
-        let uniskip_challenge = uniskip::verify_clear(
-            &stage1.uniskip_proof,
-            &UniskipParams::spartan_outer(),
-            Fr::from_u64(0),
-            stage1.claims.uniskip_output_claim,
-            transcript,
-        )
-        .unwrap();
-        let sumchecks = Stage1BatchSumchecks {
-            outer_remainder: OuterRemainder::new(
-                SpartanOuterDimensions::rv64(LOG_T),
-                tau,
-                uniskip_challenge,
-            ),
-        };
-        let batch_challenges = sumchecks.draw_challenges(transcript).unwrap();
-        let input_points = sumchecks.empty_input_points();
-        let input_values = Stage1BatchInputClaims {
-            outer_remainder: outer_remainder_input_values_from_uniskip_output(
-                stage1.claims.uniskip_output_claim,
-            ),
-        };
-        let _stage1_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &batch_challenges,
-                &stage1.claims.outer,
-                &stage1.sumcheck_proof,
-                transcript,
-                1,
-            )
+/// Verifies the fixture prover's argument string with the production stage
+/// verifiers through `last`, requiring the verifier to consume every byte
+/// and land on the prover's sponge state.
+pub(crate) fn verify_through(
+    last: Through,
+    checked: &CheckedInputs,
+    preprocessing: &FixturePreprocessing,
+    prover: &mut ProverTranscript<JoltSponge>,
+) {
+    let narg = prover.narg().to_vec();
+    let mut transcript = VerifierTranscript::<JoltSponge>::new(
+        &jolt_protocol_id::<JoltSponge>(),
+        JOLT_SESSION,
+        &narg,
+    );
+    let verifier = &preprocessing.verifier;
+    let formula_dimensions =
+        build_formula_dimensions(verifier, checked, LOG_T, JoltRelationId::InstructionReadRaf)
             .unwrap();
-        sumchecks.append_output_claims(transcript, &stage1.claims.outer);
-    }
-
-    /// Stage 2's twin (already round-tripped by stage 2's own tests):
-    /// positions the transcript at the stage-3 boundary.
-    pub(crate) fn replay_stage2<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
-        config: &ProverConfig,
-        public_io: &JoltDevice,
-        stage1: &Stage1ProverOutput<Fr, C>,
-        stage2: &Stage2ProverOutput<Fr, C>,
-    ) {
-        let log_t = LOG_T;
-        let log_k = config.ram_K.ilog2() as usize;
-        let trace_dimensions = TraceDimensions::new(log_t);
-        let read_write_dimensions = config.rw_config.ram_dimensions(log_t, log_k);
-        let product_dimensions = SpartanProductDimensions::new(log_t);
-        let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap();
-        let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
-
-        let tau_high: Fr = draw_spartan_product_tau_high(transcript);
-        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
-        let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
-        let uniskip_input_claim = uniskip_relation
-            .input_claim(&uniskip_inputs, &NoChallenges::default())
-            .unwrap();
-        let uniskip_challenge = uniskip::verify_clear(
-            &stage2.uniskip_proof,
-            &UniskipParams::spartan_product(),
-            uniskip_input_claim,
-            stage2.claims.product_uniskip_output_claim,
-            transcript,
-        )
-        .unwrap();
-
-        let lowest_address = public_io.memory_layout.get_lowest_address();
-        let public_memory = PublicIoMemory::new(public_io).unwrap();
-        let sumchecks = Stage2BatchSumchecks {
-            ram_read_write: RamReadWriteChecking::new(
-                read_write_dimensions,
-                log_k,
-                tau_low.clone(),
-            ),
-            product_remainder: ProductRemainder::new(
-                product_dimensions,
-                uniskip_challenge,
-                tau_high,
-                tau_low.clone(),
-            ),
-            instruction_claim_reduction: InstructionClaimReduction::new(
-                trace_dimensions,
-                tau_low.clone(),
-            ),
-            field_registers_claim_reduction: FieldRegistersClaimReduction::new(
-                FieldRegistersTraceDimensions::new(log_t),
-                tau_low.clone(),
-            ),
-            ram_raf_evaluation: RamRafEvaluation::new(
-                read_write_dimensions,
-                raf_dimensions,
-                log_k,
-                lowest_address,
-                tau_low.clone(),
-            ),
-            ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
-        };
-        let challenges = sumchecks.draw_challenges(transcript).unwrap();
-        let input_points = sumchecks.empty_input_points();
-        sumchecks
-            .validate_output_claims(&stage2.claims.batch_outputs)
-            .unwrap();
-        let input_values = stage2_batch_input_values_from_upstream(
-            &stage1.clear_output,
-            stage2.claims.product_uniskip_output_claim,
-        );
-        let _stage2_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &challenges,
-                &stage2.claims.batch_outputs,
-                &stage2.sumcheck_proof,
-                transcript,
-                2,
-            )
-            .unwrap();
-        sumchecks.append_output_claims(transcript, &stage2.claims.batch_outputs);
-    }
-
-    /// Stage 3's twin (`stage3::verify`'s clear body — the stage has no field-inline
-    /// member): positions the transcript at the stage-4 boundary.
-    pub(crate) fn replay_stage3<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
-        stage1: &Stage1ProverOutput<Fr, C>,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage3: &Stage3ProverOutput<Fr, C>,
-    ) {
-        let dimensions = TraceDimensions::new(LOG_T);
-        let tau_low = stage2.clear_output.product_tau_low.clone();
-        let product_remainder_point = stage2
-            .clear_output
-            .output_points
-            .product_remainder_point()
-            .to_vec();
-        let sumchecks = Stage3Sumchecks {
-            shift: SpartanShift::new(dimensions, tau_low.clone(), product_remainder_point.clone()),
-            instruction_input: InstructionInput::new(dimensions, product_remainder_point),
-            registers_claim_reduction: RegistersClaimReduction::new(dimensions, tau_low),
-        };
-        let challenges = sumchecks.draw_challenges(transcript).unwrap();
-        sumchecks.validate_output_claims(&stage3.claims).unwrap();
-        let input_values = stage3_input_values_from_upstream(
-            &stage1.clear_output.output_values,
-            &stage2.clear_output.output_values,
-        );
-        let input_points = sumchecks.empty_input_points();
-        let _stage3_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &challenges,
-                &stage3.claims,
-                &stage3.sumcheck_proof,
-                transcript,
-                3,
-            )
-            .unwrap();
-        sumchecks.append_output_claims(transcript, &stage3.claims);
-    }
-
-    /// Stage 4's twin (already round-tripped by stage 4's own test):
-    /// `stage4::verify`'s clear body, positioning the transcript at the
-    /// stage-5 boundary. The fixtures carry no advice and no committed
-    /// program image, so the attached-claims step degenerates to the public
-    /// initial-RAM evaluation alone.
-    pub(crate) fn replay_stage4<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
-        config: &ProverConfig,
-        checked: &CheckedInputs,
-        preprocessing: &FixturePreprocessing,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage3: &Stage3ProverOutput<Fr, C>,
-        stage4: &Stage4ProverOutput<Fr, C>,
-    ) {
-        let register_dimensions = config
-            .rw_config
-            .register_dimensions(LOG_T, REGISTER_ADDRESS_BITS);
-        let ram_read_write_opening_point = stage2.clear_output.output_points.ram_read_write_point();
-        let (r_address, _) = ram_read_write_opening_point.split_at(RAM_LOG_K);
-        let public_eval =
-            public_initial_ram_evaluation(checked, &preprocessing.verifier, r_address).unwrap();
-        let init_structure =
-            ram_val_check_init_structure(checked, false, r_address, public_eval).unwrap();
-        let sumchecks = Stage4Sumchecks {
-            registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
-            field_registers_read_write: FieldRegistersReadWriteChecking::new(
-                JOLT_VERIFIER_CONFIG
-                    .field_inline
-                    .read_write_dimensions(LOG_T),
-            ),
-            ram_val_check: RamValCheck::new(
-                TraceDimensions::new(LOG_T),
-                RAM_LOG_K,
-                init_structure.decomposition(),
-            ),
-        };
-        let challenges = sumchecks.draw_challenges(transcript).unwrap();
-        sumchecks.validate_output_claims(&stage4.claims).unwrap();
-        let ram_val_check_init = RamValCheckInitialEvaluation {
-            public_eval,
-            program_image_contribution: None,
-            advice_contributions: Vec::new(),
-        };
-        let input_values = stage4_input_values_from_upstream(
-            &stage2.clear_output.output_values,
-            &stage3.clear_output.output_values,
-            &ram_val_check_init,
-        );
-        let input_points = stage4_input_points_from_upstream(
-            &stage2.clear_output.output_points,
-            &stage3.clear_output.output_points,
-            &init_structure,
-        );
-        let _stage4_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &challenges,
-                &stage4.claims,
-                &stage4.sumcheck_proof,
-                transcript,
-                4,
-            )
-            .unwrap();
-        stage4.claims.append_to_transcript(transcript);
-    }
-
-    /// Stage 5's twin (`stage5::verify`'s clear body): positions the
-    /// transcript at the stage-6a boundary.
-    pub(crate) fn replay_stage5<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
-        config: &ProverConfig,
-        checked: &CheckedInputs,
-        preprocessing: &FixturePreprocessing,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage4: &Stage4ProverOutput<Fr, C>,
-        stage5: &Stage5ProverOutput<Fr, C>,
-    ) {
-        let formula_dimensions = crate::stages::formula_dimensions(
+    'stages: {
+        let t = &mut transcript;
+        let stage1 = stage1::verify::<Fr, Bn254G1, JoltSponge>(checked, t).unwrap();
+        if last == Through::Stage1 {
+            break 'stages;
+        }
+        let stage2 = stage2::verify(checked, t, &stage1).unwrap();
+        if last == Through::Stage2 {
+            break 'stages;
+        }
+        let stage3 = stage3::verify(checked, t, &stage1, &stage2).unwrap();
+        let stage4 = stage4::verify(checked, verifier, t, &stage2, &stage3).unwrap();
+        if last == Through::Stage4 {
+            break 'stages;
+        }
+        let stage5 = stage5::verify(checked, &formula_dimensions, t, &stage2, &stage4).unwrap();
+        if last == Through::Stage5 {
+            break 'stages;
+        }
+        let stage6a = stage6a::verify(
             checked,
-            config,
-            preprocessing.verifier.program.bytecode_len(),
-            JoltRelationId::InstructionReadRaf,
+            verifier,
+            &formula_dimensions,
+            t,
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
         )
         .unwrap();
-        let trace_dimensions = formula_dimensions.trace;
-        let sumchecks = Stage5Sumchecks {
-            instruction_read_raf: InstructionReadRaf::new(formula_dimensions.instruction_read_raf),
-            ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, RAM_LOG_K),
-            registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
-            field_registers_val_evaluation: FieldRegistersValEvaluation::new(
-                FieldRegistersTraceDimensions::new(trace_dimensions.log_t()),
-            ),
-        };
-        let challenges = sumchecks.draw_challenges(transcript).unwrap();
-        sumchecks.validate_output_claims(&stage5.claims).unwrap();
-        let input_values = stage5_input_values_from_upstream(
-            &stage2.clear_output.output_values,
-            &stage4.clear_output.output_values,
-        );
-        let input_points = stage5_input_points_from_upstream(
-            &stage2.clear_output.output_points,
-            &stage4.clear_output.output_points,
-        );
-        let _stage5_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &challenges,
-                &stage5.claims,
-                &stage5.sumcheck_proof,
-                transcript,
-                5,
-            )
-            .unwrap();
-        sumchecks.append_output_claims(transcript, &stage5.claims);
-    }
-
-    /// Stage 6a's twin (`stage6a::verify`'s clear body): positions the
-    /// transcript at the stage-6b boundary.
-    #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
-    pub(crate) fn replay_stage6a<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
-        config: &ProverConfig,
-        checked: &CheckedInputs,
-        preprocessing: &FixturePreprocessing,
-        stage1: &Stage1ProverOutput<Fr, C>,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage3: &Stage3ProverOutput<Fr, C>,
-        stage4: &Stage4ProverOutput<Fr, C>,
-        stage5: &Stage5ProverOutput<Fr, C>,
-        stage6a: &Stage6aProverOutput<Fr, C>,
-    ) {
-        let formula_dimensions = crate::stages::formula_dimensions(
+        if last == Through::Stage6a {
+            break 'stages;
+        }
+        let _stage6b = stage6b::verify(
             checked,
-            config,
-            preprocessing.verifier.program.bytecode_len(),
-            JoltRelationId::BytecodeReadRaf,
+            verifier,
+            &formula_dimensions,
+            t,
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            &stage6a,
         )
         .unwrap();
-        let stage1_cycle_binding = stage1
-            .clear_output
-            .cycle_binding_checked(JoltRelationId::BytecodeReadRaf)
-            .unwrap();
-        let entry_bytecode_index = preprocessing
-            .verifier
-            .program
-            .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)
-            .unwrap();
-        let sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
-            formula_dimensions: &formula_dimensions,
-            committed_chunk_bits: config.one_hot_config.committed_chunk_bits(),
-            committed_program: false,
-            entry_bytecode_index,
-            stage1_cycle_binding: &stage1_cycle_binding,
-            stage2_points: &stage2.clear_output.output_points,
-            stage3_points: &stage3.clear_output.output_points,
-            stage4_points: &stage4.clear_output.output_points,
-            stage5_points: &stage5.clear_output.output_points,
-        })
-        .unwrap();
-        let challenges = sumchecks.draw_challenges(transcript).unwrap();
-        sumchecks.validate_output_claims(&stage6a.claims).unwrap();
-        let base_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.clear_output.output_values,
-            &stage2.clear_output.output_values,
-            &stage3.clear_output.output_values,
-            &stage4.clear_output.output_values,
-            &stage5.clear_output.output_values,
-        );
-        // The packed shape folds the four reduced Inc claims into the
-        // fused-inc consumer stage slots (stage6a::verify's own wrapper).
-        #[cfg(feature = "akita")]
-        let base_input_values = LatticeReadRafAddressPhaseInputClaims {
-                base: base_input_values,
-                inc: jolt_verifier::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
-                    &stage2.clear_output.output_values,
-                    &stage4.clear_output.output_values,
-                    &stage5.clear_output.output_values,
-                ),
-            };
-        use jolt_claims::protocols::composed::ComposedClaims;
-        let base_input_values = ComposedClaims {
-            base: base_input_values,
-            field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
-                &stage4.clear_output.output_values,
-                &stage5.clear_output.output_values,
-            ),
-        };
-        let input_values = Stage6aInputClaims {
-            bytecode_read_raf: base_input_values,
-            booleanity: BooleanityAddressPhaseInputClaims::default(),
-        };
-        let input_points = sumchecks.empty_input_points();
-        let _stage6a_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &challenges,
-                &stage6a.claims,
-                &stage6a.sumcheck_proof,
-                transcript,
-                6,
-            )
-            .unwrap();
-        sumchecks.append_output_claims(transcript, &stage6a.claims);
     }
+    assert_eq!(transcript.remaining(), 0, "unconsumed argument bytes");
+    assert_eq!(
+        transcript.challenge_bytes::<32>(),
+        prover.challenge_bytes::<32>(),
+        "verifier and prover sponge states diverge"
+    );
+    transcript.finish().unwrap();
 }
 
 pub(crate) mod proving {
@@ -913,19 +567,16 @@ pub(crate) mod proving {
     use crate::stages::stage5::{prove_stage5, Stage5ProverOutput};
     use crate::stages::stage6a::{prove_stage6a, Stage6aProverOutput};
     use crate::{JoltBackend, ProofMode};
-    use jolt_field::Fr;
     use jolt_kernels::ProofSession;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_witness::JoltWitnessPlane;
-    type Commitment = Bn254G1;
     type Stages3 = (
-        Stage1ProverOutput<Fr, Commitment>,
-        Stage2ProverOutput<Fr, Commitment>,
-        Stage3ProverOutput<Fr, Commitment>,
+        Stage1ProverOutput<Fr>,
+        Stage2ProverOutput<Fr>,
+        Stage3ProverOutput<Fr>,
     );
-    type Stages4 = (Stages3, Stage4ProverOutput<Fr, Commitment>);
-    type Stages5 = (Stages4, Stage5ProverOutput<Fr, Commitment>);
-    type Stages6a = (Stages5, Stage6aProverOutput<Fr, Commitment>);
+    type Stages4 = (Stages3, Stage4ProverOutput<Fr>);
+    type Stages5 = (Stages4, Stage5ProverOutput<Fr>);
+    type Stages6a = (Stages5, Stage6aProverOutput<Fr>);
 
     pub(crate) struct FixtureProver<'a> {
         pub(crate) backend: &'a JoltBackend<Fr, DoryScheme>,
@@ -934,14 +585,14 @@ pub(crate) mod proving {
         pub(crate) config: &'a ProverConfig,
         pub(crate) public_io: &'a JoltDevice,
         pub(crate) checked: &'a CheckedInputs,
-        pub(crate) preprocessing: &'a JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
+        pub(crate) preprocessing: &'a FixturePreprocessing,
         pub(crate) witness: &'a dyn JoltWitnessPlane<Fr>,
-        pub(crate) transcript: &'a mut Blake2bTranscript,
+        pub(crate) transcript: &'a mut ProverTranscript<JoltSponge>,
     }
 
     impl FixtureProver<'_> {
         pub(crate) fn through_stage3(&mut self) -> Stages3 {
-            let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
                 self.session,
                 self.mode,
@@ -950,7 +601,7 @@ pub(crate) mod proving {
                 self.transcript,
             )
             .unwrap();
-            let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
                 self.session,
                 self.mode,
@@ -961,7 +612,7 @@ pub(crate) mod proving {
                 self.transcript,
             )
             .unwrap();
-            let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
                 self.session,
                 self.mode,
@@ -976,7 +627,7 @@ pub(crate) mod proving {
         }
         pub(crate) fn through_stage4(&mut self) -> Stages4 {
             let (stage1, stage2, stage3) = self.through_stage3();
-            let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
                 self.session,
                 self.mode,
@@ -993,7 +644,7 @@ pub(crate) mod proving {
         }
         pub(crate) fn through_stage5(&mut self) -> Stages5 {
             let ((stage1, stage2, stage3), stage4) = self.through_stage4();
-            let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
                 self.session,
                 self.mode,
@@ -1010,7 +661,7 @@ pub(crate) mod proving {
         }
         pub(crate) fn through_stage6a(&mut self) -> Stages6a {
             let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
-            let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 self.backend,
                 self.session,
                 self.mode,

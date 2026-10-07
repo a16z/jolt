@@ -51,6 +51,11 @@ weekly-seconds = 900
 [features]
 zk = ["jolt-verifier/zk"]
 
+[lib]
+path = "src/lib.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-verifier = { path = "..", features = ["fuzzing"] }
@@ -58,8 +63,6 @@ jolt-claims = { path = "../../jolt-claims" }
 jolt-crypto = { path = "../../jolt-crypto" }
 jolt-dory = { path = "../../jolt-dory" }
 jolt-field = { path = "../../jolt-field", features = ["bn254"] }
-jolt-poly = { path = "../../jolt-poly" }
-jolt-sumcheck = { path = "../../jolt-sumcheck" }
 jolt-transcript = { path = "../../jolt-transcript" }
 common = { path = "../../../common" }
 bincode = { version = "2", features = ["serde"] }

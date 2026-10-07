@@ -1,3 +1,4 @@
+use jolt_sdk::ProtocolSponge;
 use std::time::Instant;
 use tracing::info;
 
@@ -24,7 +25,10 @@ pub fn main() {
     let prove_time_advice = now.elapsed();
     info!("Prover runtime: {} s", prove_time_advice.as_secs_f64());
 
-    let trace_length_advice = proof_advice.trace_length;
+    let trace_length_advice = proof_advice
+        .header::<ProtocolSponge>()
+        .expect("proof header")
+        .trace_length;
 
     let is_valid_advice = verify_modinv(a, m, output_advice, io_device_advice.panic, proof_advice);
 

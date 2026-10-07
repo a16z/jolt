@@ -17,7 +17,9 @@ default = ["transcript-blake2b"]
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = []
-fs-audit = []
+# Records every transcript operation with its protocol site (crate::sites)
+# and argument-string range, for the transcript test suites.
+logging = ["jolt-transcript/logging"]
 fuzzing = []
 field-inline = [
   "common/field-inline",
@@ -46,7 +48,6 @@ transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-ark-serialize.workspace = true
 bincode.workspace = true
 blake2.workspace = true
 common.workspace = true
@@ -61,7 +62,8 @@ jolt-poly.workspace = true
 jolt-program = { workspace = true, features = ["serialization"] }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
-jolt-transcript.workspace = true
+# Blake2b is always built: it is `JoltSponge` unless another sponge is selected.
+jolt-transcript = { workspace = true, features = ["transcript-blake2b"] }
 jolt-verifier-derive.workspace = true
 num-traits.workspace = true
 serde.workspace = true

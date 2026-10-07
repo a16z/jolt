@@ -609,17 +609,14 @@ fn checked_sum(
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use crate::{
-        BlindFoldStage, BlindFoldStatement, CommittedClaimRows, FinalOpeningBinding, OpeningAlias,
-    };
+    use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
     use jolt_claims::{constant, opening, Expr};
     use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
     use jolt_field::{Fr, Ring};
     use jolt_sumcheck::{
-        CommittedOutputClaims, CommittedRound, CommittedSumcheckProof, SumcheckDomainSpec,
-        SumcheckStatement,
+        CommittedOutputClaims, CommittedSumcheckConsistency, SumcheckDomainSpec, SumcheckStatement,
+        VerifiedCommittedRound,
     };
-    use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
     #[derive(Clone, Debug)]
     struct TestStage {
@@ -639,44 +636,64 @@ mod tests {
         }
     }
 
-    fn proof(rounds: &[(u64, usize)], output_claims: &[u64]) -> CommittedSumcheckProof<Fr> {
-        CommittedSumcheckProof {
-            rounds: rounds
-                .iter()
-                .map(|&(commitment, degree)| CommittedRound {
-                    commitment: Fr::from_u64(commitment),
-                    degree,
-                })
-                .collect(),
-            output_claims: CommittedOutputClaims {
-                commitments: output_claims
-                    .iter()
-                    .map(|&commitment| Fr::from_u64(commitment))
+    /// A stage's committed messages as `SumcheckVerifier::verify_committed`
+    /// returns them: one commitment per round at the statement degree, then
+    /// the output-claim row commitments.
+    #[derive(Clone, Debug)]
+    struct Committed<Com> {
+        consistency: CommittedSumcheckConsistency<Fr, Com>,
+        output_claims: CommittedOutputClaims<Com>,
+    }
+
+    fn committed<Com>(
+        stage: &TestStage,
+        rounds: Vec<Com>,
+        output_claims: Vec<Com>,
+    ) -> Committed<Com> {
+        assert_eq!(rounds.len(), stage.statement.num_vars);
+        Committed {
+            consistency: CommittedSumcheckConsistency {
+                rounds: rounds
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, commitment)| VerifiedCommittedRound {
+                        commitment,
+                        degree: stage.statement.degree,
+                        challenge: Fr::from_u64(index as u64 + 2),
+                    })
                     .collect(),
+            },
+            output_claims: CommittedOutputClaims {
+                commitments: output_claims,
             },
         }
     }
 
-    fn commitment_proof(
+    fn scalar_committed(stage: &TestStage, rounds: &[u64], output_claims: &[u64]) -> Committed<Fr> {
+        committed(
+            stage,
+            rounds.iter().copied().map(Fr::from_u64).collect(),
+            output_claims.iter().copied().map(Fr::from_u64).collect(),
+        )
+    }
+
+    fn pedersen_committed(
         setup: &PedersenSetup<Bn254G1>,
-        rounds: &[(u64, usize)],
+        stage: &TestStage,
+        rounds: &[u64],
         output_claims: &[u64],
-    ) -> CommittedSumcheckProof<Bn254G1> {
-        CommittedSumcheckProof {
-            rounds: rounds
+    ) -> Committed<Bn254G1> {
+        committed(
+            stage,
+            rounds
                 .iter()
-                .map(|&(commitment, degree)| CommittedRound {
-                    commitment: pedersen_commitment(setup, commitment),
-                    degree,
-                })
+                .map(|&value| pedersen_commitment(setup, value))
                 .collect(),
-            output_claims: CommittedOutputClaims {
-                commitments: output_claims
-                    .iter()
-                    .map(|&commitment| pedersen_commitment(setup, commitment))
-                    .collect(),
-            },
-        }
+            output_claims
+                .iter()
+                .map(|&value| pedersen_commitment(setup, value))
+                .collect(),
+        )
     }
 
     fn pedersen_setup() -> PedersenSetup<Bn254G1> {
@@ -691,65 +708,40 @@ mod tests {
         Pedersen::<Bn254G1>::commit(setup, &[Fr::from_u64(value)], &Fr::from_u64(value + 1000))
     }
 
-    fn try_statement_from_proofs<Com>(
+    fn statement_from_committed<Com: Clone>(
         stages: &[TestStage],
-        proofs: &[CommittedSumcheckProof<Com>],
-        final_openings: Vec<FinalOpeningBinding<Fr, usize, Com>>,
-    ) -> Result<BlindFoldStatement<Fr, usize, Com>, VerificationError<Fr>>
-    where
-        Com: Clone + AppendToTranscript,
-    {
-        if stages.len() != proofs.len() {
-            return Err(VerificationError::StageCountMismatch {
-                claim_stages: stages.len(),
-                proof_stages: proofs.len(),
-            });
-        }
-
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold");
+        committed: &[Committed<Com>],
+    ) -> BlindFoldStatement<Fr, usize, Com> {
+        assert_eq!(stages.len(), committed.len());
         let mut next_opening_id = 0usize;
         let stages = stages
             .iter()
-            .zip(proofs)
-            .enumerate()
-            .map(|(stage_index, (stage, proof))| {
-                let consistency = proof
-                    .verify_committed_consistency(stage.statement, &mut transcript)
-                    .map_err(|source| VerificationError::Sumcheck {
-                        stage_index,
-                        source,
-                    })?;
+            .zip(committed)
+            .map(|(stage, committed)| {
                 let row_len = stage.statement.degree + 1;
-                let output_opening_count = proof.output_claims.commitments.len() * row_len;
+                let output_opening_count = committed.output_claims.commitments.len() * row_len;
                 let opening_ids =
                     (next_opening_id..next_opening_id + output_opening_count).collect();
                 next_opening_id += output_opening_count;
-                Ok::<BlindFoldStage<Fr, usize, Com>, VerificationError<Fr>>(BlindFoldStage::new(
+                BlindFoldStage::new(
                     stage.name.clone(),
                     stage.statement,
                     SumcheckDomainSpec::BooleanHypercube,
-                    consistency,
-                    CommittedClaimRows::new(opening_ids, row_len, proof.output_claims.clone()),
+                    committed.consistency.clone(),
+                    CommittedClaimRows::new(opening_ids, row_len, committed.output_claims.clone()),
                     stage.input_claim.clone(),
                     stage.output_claim.clone(),
-                ))
+                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(BlindFoldStatement::new(stages, final_openings))
+            .collect();
+        BlindFoldStatement::new(stages, Vec::new())
     }
 
-    fn protocol_from_proofs<Com>(
+    fn protocol_from_committed<Com: Clone>(
         stages: &[TestStage],
-        proofs: &[CommittedSumcheckProof<Com>],
-        final_openings: Vec<FinalOpeningBinding<Fr, usize, Com>>,
-    ) -> BlindFoldProtocol<Fr, Com>
-    where
-        Com: Clone + AppendToTranscript,
-    {
-        let statement = try_statement_from_proofs(stages, proofs, final_openings)
-            .expect("statement builds from committed proofs");
-        protocol_from_statement(&statement)
+        committed: &[Committed<Com>],
+    ) -> BlindFoldProtocol<Fr, Com> {
+        protocol_from_statement(&statement_from_committed(stages, committed))
     }
 
     fn protocol_from_statement<Com>(
@@ -775,13 +767,6 @@ mod tests {
                 .finish_stage()
                 .expect("test stage statement is complete");
         }
-        for binding in &statement.final_openings {
-            builder = builder.final_opening(
-                binding.opening_ids.clone(),
-                binding.coefficients.clone(),
-                binding.evaluation_commitment.clone(),
-            );
-        }
         builder.build().expect("BlindFold protocol builds")
     }
 
@@ -793,18 +778,18 @@ mod tests {
             Alias,
         }
 
-        let statement = SumcheckStatement::new(1, 1);
-        let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-alias");
-        let consistency = proof
-            .verify_committed_consistency(statement, &mut transcript)
-            .expect("committed proof is consistent");
+        let stage = stage(1, 1);
+        let statement = stage.statement;
+        let Committed {
+            consistency,
+            output_claims,
+        } = scalar_committed(&stage, &[11], &[21]);
         let protocol = BlindFoldProtocol::<Fr, Fr>::builder::<Opening, (), usize>()
             .stage("alias")
             .sumcheck(statement)
             .domain(SumcheckDomainSpec::BooleanHypercube)
             .consistency(consistency)
-            .output_claim_rows(vec![Opening::Source], 1, proof.output_claims.clone())
+            .output_claim_rows(vec![Opening::Source], 1, output_claims)
             .output_claim_aliases([OpeningAlias::new(Opening::Alias, Opening::Source)])
             .input_claim(constant(Fr::from_u64(0)))
             .output_claim(opening(Opening::Alias))
@@ -825,18 +810,18 @@ mod tests {
             Other,
         }
 
-        let statement = SumcheckStatement::new(1, 1);
-        let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-alias");
-        let consistency = proof
-            .verify_committed_consistency(statement, &mut transcript)
-            .expect("committed proof is consistent");
+        let stage = stage(1, 1);
+        let statement = stage.statement;
+        let Committed {
+            consistency,
+            output_claims,
+        } = scalar_committed(&stage, &[11], &[21]);
         let error = BlindFoldProtocol::<Fr, Fr>::builder::<Opening, (), usize>()
             .stage("alias")
             .sumcheck(statement)
             .domain(SumcheckDomainSpec::BooleanHypercube)
             .consistency(consistency)
-            .output_claim_rows(vec![Opening::Other], 1, proof.output_claims.clone())
+            .output_claim_rows(vec![Opening::Other], 1, output_claims)
             .output_claim_aliases([OpeningAlias::new(Opening::Alias, Opening::Source)])
             .input_claim(constant(Fr::from_u64(0)))
             .output_claim(opening(Opening::Alias))
@@ -853,31 +838,21 @@ mod tests {
 
     #[test]
     fn rejects_malformed_final_opening_binding() {
-        let stages = vec![stage(1, 1)];
-        let proofs = vec![proof(&[(11, 1)], &[21])];
-        let statement = try_statement_from_proofs(
-            &stages,
-            &proofs,
-            vec![FinalOpeningBinding::new(
-                vec![0],
-                Vec::new(),
-                Fr::from_u64(99),
-            )],
-        )
-        .expect("statement construction verifies committed proof");
+        let stage = stage(1, 1);
+        let committed = scalar_committed(&stage, &[11], &[21]);
 
         let error = BlindFoldProtocol::<Fr, Fr>::builder::<usize, (), usize>()
             .stage("stage")
-            .sumcheck(stages[0].statement)
+            .sumcheck(stage.statement)
             .domain(SumcheckDomainSpec::BooleanHypercube)
-            .consistency(statement.stages[0].consistency.clone())
+            .consistency(committed.consistency.clone())
             .output_claim_rows(
                 vec![0, 1],
-                stages[0].statement.degree + 1,
-                proofs[0].output_claims.clone(),
+                stage.statement.degree + 1,
+                committed.output_claims.clone(),
             )
-            .input_claim(stages[0].input_claim.clone())
-            .output_claim(stages[0].output_claim.clone())
+            .input_claim(stage.input_claim.clone())
+            .output_claim(stage.output_claim.clone())
             .finish_stage()
             .expect("stage is complete")
             .final_opening(vec![0], Vec::new(), Fr::from_u64(99))
@@ -896,26 +871,20 @@ mod tests {
 
     #[test]
     fn rejects_empty_final_opening_binding() {
-        let stages = vec![stage(1, 1)];
-        let proofs = vec![proof(&[(11, 1)], &[21])];
+        let stage = stage(1, 1);
+        let committed = scalar_committed(&stage, &[11], &[21]);
         let error = BlindFoldProtocol::<Fr, Fr>::builder::<usize, (), usize>()
             .stage("stage")
-            .sumcheck(stages[0].statement)
+            .sumcheck(stage.statement)
             .domain(SumcheckDomainSpec::BooleanHypercube)
-            .consistency(
-                try_statement_from_proofs(&stages, &proofs, Vec::new())
-                    .expect("statement construction verifies committed proof")
-                    .stages[0]
-                    .consistency
-                    .clone(),
-            )
+            .consistency(committed.consistency.clone())
             .output_claim_rows(
                 vec![0, 1],
-                stages[0].statement.degree + 1,
-                proofs[0].output_claims.clone(),
+                stage.statement.degree + 1,
+                committed.output_claims.clone(),
             )
-            .input_claim(stages[0].input_claim.clone())
-            .output_claim(stages[0].output_claim.clone())
+            .input_claim(stage.input_claim.clone())
+            .output_claim(stage.output_claim.clone())
             .finish_stage()
             .expect("stage is complete")
             .final_opening(Vec::new(), Vec::new(), Fr::from_u64(99))
@@ -930,18 +899,18 @@ mod tests {
 
     #[test]
     fn rejects_extra_output_claim_rows_without_typed_openings() {
-        let statement = SumcheckStatement::new(1, 1);
-        let proof = proof(&[(11, 1)], &[21, 22]);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"blindfold-output-row-count");
-        let consistency = proof
-            .verify_committed_consistency(statement, &mut transcript)
-            .expect("committed proof is consistent");
+        let stage = stage(1, 1);
+        let statement = stage.statement;
+        let Committed {
+            consistency,
+            output_claims,
+        } = scalar_committed(&stage, &[11], &[21, 22]);
         let error = BlindFoldProtocol::<Fr, Fr>::builder::<usize, (), usize>()
             .stage("row-count")
             .sumcheck(statement)
             .domain(SumcheckDomainSpec::BooleanHypercube)
             .consistency(consistency)
-            .output_claim_rows(vec![0, 1], 2, proof.output_claims.clone())
+            .output_claim_rows(vec![0, 1], 2, output_claims)
             .input_claim(constant(Fr::from_u64(0)))
             .output_claim(constant(Fr::from_u64(0)))
             .finish_stage()
@@ -962,11 +931,11 @@ mod tests {
     #[test]
     fn dimensions_account_for_multiple_stages_and_padding() {
         let stages = vec![stage(2, 2), stage(1, 1)];
-        let proofs = vec![
-            proof(&[(11, 1), (12, 2)], &[21, 22, 23]),
-            proof(&[(13, 1)], &[34, 55]),
+        let committed = vec![
+            scalar_committed(&stages[0], &[11, 12], &[21, 22, 23]),
+            scalar_committed(&stages[1], &[13], &[34, 55]),
         ];
-        let protocol = protocol_from_proofs(&stages, &proofs, Vec::new());
+        let protocol = protocol_from_committed(&stages, &committed);
 
         assert_eq!(
             protocol.dimensions,
@@ -998,11 +967,11 @@ mod tests {
     fn committed_relaxed_instance_assembles_witness_rows_in_layout_order() {
         let setup = pedersen_setup();
         let stages = vec![stage(2, 2), stage(1, 1)];
-        let proofs = vec![
-            commitment_proof(&setup, &[(11, 1), (12, 2)], &[21, 22]),
-            commitment_proof(&setup, &[(13, 1)], &[34]),
+        let committed = vec![
+            pedersen_committed(&setup, &stages[0], &[11, 12], &[21, 22]),
+            pedersen_committed(&setup, &stages[1], &[13], &[34]),
         ];
-        let protocol = protocol_from_proofs(&stages, &proofs, Vec::new());
+        let protocol = protocol_from_committed(&stages, &committed);
 
         let auxiliary_rows = vec![
             pedersen_commitment(&setup, 41),
@@ -1047,8 +1016,8 @@ mod tests {
     fn committed_relaxed_instance_rejects_auxiliary_row_count_mismatch() {
         let setup = pedersen_setup();
         let stages = vec![stage(1, 1)];
-        let proofs = vec![commitment_proof(&setup, &[(11, 1)], &[21])];
-        let protocol = protocol_from_proofs(&stages, &proofs, Vec::new());
+        let committed = vec![pedersen_committed(&setup, &stages[0], &[11], &[21])];
+        let protocol = protocol_from_committed(&stages, &committed);
 
         let error = protocol
             .committed_relaxed_instance(&[])
@@ -1068,8 +1037,8 @@ mod tests {
     fn random_relaxed_instance_accepts_exact_dimensions() {
         let setup = pedersen_setup();
         let stages = vec![stage(1, 1)];
-        let proofs = vec![commitment_proof(&setup, &[(11, 1)], &[21])];
-        let protocol = protocol_from_proofs(&stages, &proofs, Vec::new());
+        let committed = vec![pedersen_committed(&setup, &stages[0], &[11], &[21])];
+        let protocol = protocol_from_committed(&stages, &committed);
 
         let round_rows = vec![pedersen_commitment(&setup, 7); protocol.dimensions.coefficient_rows];
         let output_claim_rows =
@@ -1196,8 +1165,8 @@ mod tests {
 
     fn one_stage_protocol(setup: &PedersenSetup<Bn254G1>) -> BlindFoldProtocol<Fr, Bn254G1> {
         let stages = vec![stage(1, 1)];
-        let proofs = vec![commitment_proof(setup, &[(11, 1)], &[21])];
+        let committed = vec![pedersen_committed(setup, &stages[0], &[11], &[21])];
 
-        protocol_from_proofs(&stages, &proofs, Vec::new())
+        protocol_from_committed(&stages, &committed)
     }
 }

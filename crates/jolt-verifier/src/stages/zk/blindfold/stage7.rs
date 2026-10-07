@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage7<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage7<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -13,7 +13,7 @@ where
     let formula_dimensions = formula_dimensions(input)?;
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.checked.one_hot_config.committed_chunk_bits(),
     );
     let hamming_claims =
         relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);
@@ -121,31 +121,21 @@ where
         add_program_image_reduction_address_publics(input, values, layout, &point)?;
     }
 
-    let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
-    let mut output_ids = composite_ids(output_openings.all());
     let mut claims = vec![relation_claim(&hamming_claims)];
     if let Some(claim) = trusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted).into());
     }
     if let Some(claim) = untrusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted).into());
     }
-    if let (Some(layout), Some(claim)) = (
+    if let (Some(_), Some(claim)) = (
         bytecode_reduction_layout.as_ref(),
         bytecode_reduction_claims,
     ) {
         claims.push(relation_claim(&claim));
-        output_ids.extend(
-            (0..layout.chunk_count())
-                .map(bytecode_reduction::final_bytecode_chunk_opening)
-                .map(ComposedOpeningId::from),
-        );
     }
     if let Some(claim) = program_image_reduction_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(program_image::final_program_image_opening().into());
     }
     add_batched_stage(
         builder,
@@ -155,7 +145,5 @@ where
         &input.stage7.batch_consistency,
         &input.stage7.batch_output_claims,
         values,
-        output_ids,
-        Vec::new(),
     )
 }

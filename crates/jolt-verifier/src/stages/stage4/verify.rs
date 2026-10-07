@@ -6,11 +6,13 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
+use jolt_field::{CanonicalDecode, JoltField};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE4;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_read_write_checking::{
@@ -26,6 +28,7 @@ use super::{
         ram_val_check_init_structure, ram_val_check_initial_evaluation,
         ram_val_check_input_points_from_upstream, ram_val_check_input_values_from_upstream,
         RamValCheck, RamValCheckInitStructure, RamValCheckInitialEvaluation,
+        RamValCheckStagedOpenings,
     },
     registers_read_write_checking::{
         registers_read_write_input_points_from_upstream,
@@ -36,11 +39,9 @@ use super::{
 use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
-    proof::JoltProof,
     stages::{
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
-        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -82,24 +83,24 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
     }
 }
 
-#[jolt_verifier_derive::fs_scope(Stage4)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, H>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
-    transcript: &mut T,
+    transcript: &mut VerifierTranscript<'_, H>,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
     stage3: &Stage3Output<PCS::Field, VC::Output>,
 ) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    VC::Output: CanonicalDecode,
+    H: Sponge,
 {
+    transcript.site(STAGE4);
     let log_t = crate::num::ilog2(checked.trace_length);
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
-    let register_dimensions = proof
+    let register_dimensions = checked
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
     // Eager: the proof-supplied phase split feeds round-count subtractions
@@ -143,10 +144,11 @@ where
     // decomposition must stay in lockstep with the prover's and BlindFold's.
     let init_structure = ram_val_check_init_structure(
         checked,
-        proof.untrusted_advice_commitment.is_some(),
+        checked.untrusted_advice_commitment_present,
         r_address,
         ram_val_check_public_eval,
     )?;
+    let staged_points = init_structure.staged_points();
 
     // Field-register dimensions use the compile-time config's phase split, so they need
     // no validation of a proof-supplied split like the ordinary register dimensions above.
@@ -158,25 +160,27 @@ where
                 .field_inline
                 .read_write_dimensions(log_t),
         ),
-        ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
+        ram_val_check: RamValCheck::new(
+            trace_dimensions,
+            log_k,
+            init_structure.decomposition(),
+            staged_points.clone(),
+        ),
     };
 
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
-    // the field-register read-write gamma (each a single `challenge_scalar`), then the RAM
-    // value-check gamma behind its `b"ram_val_check_gamma"` domain separator (the relation's
-    // `draw_challenges` override replays the separator at its exact transcript position).
+    // the field-register read-write gamma, then the RAM value-check gamma (each a single
+    // `challenge`).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {
-        let claims = &proof.clear_claims()?.stage4;
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
-        sumchecks.validate_output_claims(claims)?;
-        // Attaches the claimed advice / program-image opening values (consumed by the
-        // input wiring and carried downstream for the stage-6/7 address-phase
-        // reductions); presence against the init structure is validated by the
-        // generated `validate_output_claims` above and re-checked here.
-        let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, claims)?;
+        // The staged advice / program-image openings feed the RAM value-check input
+        // claim, so they arrive before the batch; attaching them also carries them
+        // downstream for the stage-6/7 address-phase reductions.
+        let staged = RamValCheckStagedOpenings::receive(&staged_points, transcript)?;
+        let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, &staged)?;
 
         let input_values = stage4_input_values_from_upstream(
             &stage2.output_values,
@@ -189,53 +193,46 @@ where
             &init_structure,
         );
 
-        let output_points = sumchecks.verify_clear(
+        let (output_points, output_values) = sumchecks.verify_clear_with(
             &input_values,
             &input_points,
             &challenges,
-            claims,
-            &proof.stages.stage4_sumcheck_proof,
             transcript,
             4,
+            |points, transcript| {
+                Stage4Sumchecks::receive_output_claims(
+                    points,
+                    &Stage4Sumchecks::claim_routes(points)?,
+                    staged.by_id(),
+                    transcript,
+                )
+            },
         )?;
 
-        claims.append_to_transcript(transcript);
-
         return Ok(Stage4Output::Clear(Stage4ClearOutput {
-            output_values: claims.clone(),
+            output_values,
             output_points,
             ram_val_check_init,
         }));
     }
 
     {
-        let consistency = sumchecks.verify_zk(&proof.stages.stage4_sumcheck_proof, transcript)?;
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage4_sumcheck_proof,
-            "stage4_sumcheck_proof",
-            sumchecks.output_claim_count(),
-            JoltRelationId::RegistersReadWriteChecking,
-        )?;
-
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points and init structure. Advice / program-image openings live in
-        // BlindFold for ZK proofs, so `derive_opening_points` leaves those leaves
-        // absent in the produced points.
+        // output points and init structure. The staged cells are committed rows
+        // like the rest of the stage's claims.
         let input_points = stage4_input_points_from_upstream(
             stage2.batch_output_points(),
             stage3.output_points(),
             &init_structure,
         );
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        let batch = sumchecks.verify_zk(checked.committed_row_len()?, &input_points, transcript)?;
 
         Ok(Stage4Output::Zk(Stage4ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
+            batch_consistency: batch.consistency,
+            batch_output_claims: batch.output_claims,
             ram_val_check_public_eval,
-            output_points,
+            output_points: batch.output_points,
         }))
     }
 }

@@ -1,6 +1,6 @@
 use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
 use jolt_field::Fr;
-use jolt_transcript::{Transcript, U64Word};
+use jolt_transcript::{Channel, TranscriptError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -61,30 +61,24 @@ impl HyperKZGVerifierSetup {
         Ok(len)
     }
 
-    pub(crate) fn append_statement(
+    /// Binds the setup and the whole opening statement before any opening
+    /// message, on either side.
+    pub(crate) fn bind_statement<C: Channel>(
         &self,
         commitment: &Bn254G1,
         point: &[Fr],
         evaluation: Fr,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        channel: &mut C,
     ) {
-        transcript.append_labeled(b"hyperkzg-binary-bn254-v1", &U64Word(self.num_powers));
-        transcript.append_bytes(&self.setup_id);
-        transcript.append(&self.g1);
-        transcript.append(&self.g2);
-        transcript.append(&self.beta_g2);
-        transcript.append(commitment);
-        transcript.append_values(b"opening-point", point);
-        transcript.append(&evaluation);
+        channel.public(&self.num_powers.to_le_bytes());
+        channel.public(&self.setup_id);
+        channel.public(&self.g1);
+        channel.public(&self.g2);
+        channel.public(&self.beta_g2);
+        channel.public(commitment);
+        channel.public_all(point);
+        channel.public(&evaluation);
     }
-}
-
-/// Binary fold commitments, evaluations at `[r, -r, r^2]`, and KZG witnesses.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HyperKZGProof {
-    pub com: Vec<Bn254G1>,
-    pub v: [Vec<Fr>; 3],
-    pub w: [Bn254G1; 3],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -105,6 +99,8 @@ pub enum HyperKZGError {
     Folding,
     #[error("KZG pairing equation failed")]
     Pairing,
+    #[error(transparent)]
+    Transcript(#[from] TranscriptError),
 }
 
 #[cfg(test)]
@@ -115,10 +111,12 @@ pub enum HyperKZGError {
 mod tests {
     use jolt_crypto::Bn254;
     use jolt_field::{One, Ring, Zero};
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{Blake2b512, ProtocolId, VerifierTranscript};
 
     use super::*;
     use crate::HyperKZGScheme;
+
+    const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-hyperkzg/test");
 
     #[test]
     fn decoded_verifier_metadata_is_rechecked() {
@@ -129,22 +127,22 @@ mod tests {
             g2: Bn254::g2_generator(),
             beta_g2: Bn254::g2_generator().scalar_mul(&Fr::from_u64(7)),
         };
-        let proof = HyperKZGProof {
-            com: vec![],
-            v: std::array::from_fn(|_| vec![Fr::zero()]),
-            w: [Bn254G1::identity(); 3],
-        };
         let verify = |key: &HyperKZGVerifierSetup| {
+            let mut transcript =
+                VerifierTranscript::<Blake2b512>::new(&PROTOCOL, b"decoded-key", &[]);
             HyperKZGScheme::verify_opening(
                 &Bn254G1::identity(),
                 &[Fr::one()],
                 Fr::zero(),
-                &proof,
                 key,
-                &mut Blake2bTranscript::new(b"decoded-key"),
+                &mut transcript,
             )
         };
-        verify(&valid).unwrap();
+        // A valid key reaches the (here empty) opening messages.
+        assert_eq!(
+            verify(&valid),
+            Err(HyperKZGError::Transcript(TranscriptError::Truncated))
+        );
         let mut invalid = std::array::from_fn::<_, 4, _>(|_| valid.clone());
         let [capacity, g1, g2, beta_g2] = &mut invalid;
         capacity.num_powers = 0;

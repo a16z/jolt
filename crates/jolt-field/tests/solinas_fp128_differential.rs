@@ -11,7 +11,7 @@ use jolt_field as two;
 
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{CanonicalBytes, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
+use two::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)
@@ -283,16 +283,16 @@ macro_rules! check_prime128 {
 
         let p_bytes = p.to_le_bytes();
         assert_eq!(
-            <$two as CanonicalEncoding>::from_bytes_le_checked(&p_bytes),
+            <$two as CanonicalDecode>::from_bytes_le_checked(&p_bytes),
             None
         );
         assert_eq!(
-            <$two as CanonicalEncoding>::from_bytes_le_checked(&p_bytes[..15]),
+            <$two as CanonicalDecode>::from_bytes_le_checked(&p_bytes[..15]),
             None,
             "wrong length rejected"
         );
         assert_eq!(
-            <$two as CanonicalEncoding>::from_bytes_le_checked(&[0u8; 17]),
+            <$two as CanonicalDecode>::from_bytes_le_checked(&[0u8; 17]),
             None,
             "over-length rejected"
         );

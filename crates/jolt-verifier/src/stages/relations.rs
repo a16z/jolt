@@ -9,23 +9,27 @@
 //! This makes the canonical opening **order** and **count** a single-sourced
 //! consequence of a struct's field declaration order.
 //!
-//! Transcript I/O stays here: [`OutputAppend::append_openings`] is a thin
-//! verifier-side consumer of [`OutputClaims::opening_values`], so `jolt-claims`
-//! stays transcript-free while the Fiat-Shamir order remains single-sourced.
+//! Transcript I/O stays here: [`receive_member_claims`] reads a relation's
+//! produced claims into the shape of its derived output points, in the
+//! canonical order the claims struct's declaration defines, on the routes of
+//! [`ClaimRoutes`]. `jolt-claims` stays transcript-free while the wire order
+//! remains single-sourced in each claims struct.
 
-pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
+pub use jolt_claims::{InputClaims, MapCells, OutputClaims, SumcheckChallenges};
 
 /// `#[derive(SumcheckBatch)]` generates a stage's aggregate claim types from a
 /// struct of [`ConcreteSumcheck`] instances; re-exported here alongside the
 /// per-relation claim plumbing it composes. See `specs/sumcheck-batch-derive.md`.
 pub use jolt_verifier_derive::SumcheckBatch;
 
+use core::convert::Infallible;
 use core::fmt::Debug;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
+use jolt_blindfold::OpeningAlias;
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
@@ -34,27 +38,6 @@ use crate::VerifierError;
 /// resolver, whose closure is typed at the composite id so members from any
 /// protocol family can chain into it.
 pub use jolt_claims::protocols::composed::ComposedOpeningId;
-
-/// Transcript-side companion to [`OutputClaims`]: append a relation's produced
-/// openings to the Fiat-Shamir transcript in canonical order.
-///
-/// This lives in `jolt-verifier` (not `jolt-claims`) because it needs a
-/// `Transcript`; `jolt-claims` stays transcript-free. It is a blanket extension
-/// over every `OutputClaims` implementor, so the Fiat-Shamir order is
-/// single-sourced by [`OutputClaims::opening_values`] and cannot disagree with it.
-pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
-    /// Append every produced opening to the transcript in canonical
-    /// ([`OutputClaims::opening_values`]) order, each under the `b"opening_claim"`
-    /// label. This is the Fiat-Shamir order and MUST match the order in which the
-    /// prover commits the openings.
-    fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
-    }
-}
-
-impl<F: JoltField, C: OutputClaims<F>> OutputAppend<F> for C {}
 
 /// The drawn Fiat-Shamir challenges of a [`ConcreteSumcheck`] instance: a readable
 /// alias for the relation's `Challenges<F>` projection through its symbolic
@@ -137,27 +120,27 @@ where
     /// transcript, in the exact order the stage's inline draw uses. Batch-level
     /// coefficients and the shared binding vector are NOT drawn here.
     ///
-    /// The default draws one `challenge_scalar` per `Challenges` field, in
-    /// declaration order, via [`SumcheckChallenges::from_transcript_values`]. This is
-    /// the correct draw for the common case — a relation whose challenges are each a
-    /// single `challenge_scalar` (and for [`NoChallenges`](::jolt_claims::NoChallenges),
-    /// which has no fields, it draws nothing). A `challenge_scalar_powers(n)` draw
-    /// reduces to this case: it performs exactly one squeeze and the relation keeps
-    /// the degree-1 power, which equals that squeezed scalar. Only relations whose
-    /// draw is genuinely different — an extra transcript append (a domain
-    /// separator), a value re-roll, or a powers draw whose kept value is not the
-    /// squeezed scalar — override this.
+    /// The default draws one exactly uniform `challenge` per `Challenges` field,
+    /// in declaration order, via [`SumcheckChallenges::from_transcript_values`].
+    /// This is the correct draw for the common case — a relation whose challenges
+    /// are each a single `challenge` (and for
+    /// [`NoChallenges`](::jolt_claims::NoChallenges), which has no fields, it draws
+    /// nothing). A `challenge_powers(n)` draw reduces to this case: it performs
+    /// exactly one draw and the relation keeps the degree-1 power, which equals
+    /// that drawn scalar. Only relations whose draw is genuinely different — an
+    /// extra transcript absorb (a domain separator), a value re-roll, or a powers
+    /// draw whose kept value is not the drawn scalar — override this.
     ///
     /// The bound is `SumcheckChallenges` — which every `Challenges` already
     /// implements — so the default needs no separate `Default` derive. It errors
     /// only if the per-field draw cannot populate the struct, which cannot happen for
-    /// the infinite `challenge_scalar` stream the default supplies.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
+    /// the infinite `challenge` stream the default supplies.
+    fn draw_challenges<C: Channel>(
         &self,
-        transcript: &mut T,
+        transcript: &mut C,
     ) -> Result<ConcreteSumcheckChallenges<F, Self>, VerifierError> {
         SumcheckChallenges::from_transcript_values(::core::iter::repeat_with(|| {
-            transcript.challenge_scalar()
+            transcript.challenge()
         }))
         .map_err(VerifierError::from)
     }
@@ -168,9 +151,9 @@ where
     /// identical) point, as the `source` opening produced by another member of the
     /// same stage batch. Aliased openings appear on the wire claims struct as
     /// plain (present) cells but are absorbed/committed once via their source, so
-    /// the generated drivers use this set three ways: the absorb skips the aliased
-    /// ids, the shape/count arithmetic subtracts them (see
-    /// [`wire_output_openings`](Self::wire_output_openings)), and the generated
+    /// the generated drivers use this set three ways: these cells default to
+    /// [`ClaimRoute::Alias`], so they are neither sent nor committed; BlindFold
+    /// binds them through the generated layout's `OpeningAlias` rows; and the generated
     /// `validate_aliases` — run by every `expected_final_claim` — enforces the
     /// wire copies equal their sources. That equality check is load-bearing: the
     /// aliased cells are never Fiat-Shamir-absorbed and the batch fold pins only
@@ -192,24 +175,6 @@ where
         Self: Sized,
     {
         Vec::new()
-    }
-
-    /// The opening ids this instance absorbs into the transcript (and commits in
-    /// ZK): the output-`Expr`-referenced set minus the aliased openings (absorbed
-    /// once via their canonical source). The generated `output_claim_count` sums
-    /// these; the generated `validate_output_claims` compares the wire claims
-    /// against them. A relation that absorbs openings its own output `Expr` does
-    /// not reference (values whose constraining fold happens downstream, e.g. the
-    /// product remainder's stage-6a-consumed flags) overrides this to add them.
-    fn wire_output_openings(&self) -> BTreeSet<OpeningIdOf<F, Self>>
-    where
-        Self: Sized,
-    {
-        let mut openings = self.symbolic().expected_output_openings::<F>();
-        for (aliased, _) in Self::aliased_output_openings() {
-            let _ = openings.remove(&aliased);
-        }
-        openings
     }
 
     /// The offset of this instance's point within the batch challenge vector: the
@@ -344,65 +309,6 @@ where
     }
 }
 
-/// One member's absorbed opening scalars: its claims' `canonical_order`-aligned
-/// values minus the member's [aliased
-/// openings](ConcreteSumcheck::aliased_output_openings) (absorbed once via
-/// their canonical source relation). Called by the generated `opening_values`
-/// per member, in member declaration order.
-pub fn absorbed_opening_values<F, I>(claims: &SumcheckOutputClaims<F, I>) -> Vec<F>
-where
-    F: JoltField,
-    I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
-    OpeningIdOf<F, I>: Ord,
-{
-    let skip: BTreeSet<_> = I::aliased_output_openings()
-        .into_iter()
-        .map(|(aliased, _)| aliased)
-        .collect();
-    claims
-        .canonical_order()
-        .into_iter()
-        .zip(claims.opening_values())
-        .filter(|(id, _)| !skip.contains(id))
-        .map(|(_, value)| value)
-        .collect()
-}
-
-/// Assert an optional member's output-claims presence agrees with the instance:
-/// reject a present instance missing its claims cell, and reject claims
-/// supplied for an absent instance. Called by the generated
-/// `validate_output_claims` for each `Option` member (before its shape check),
-/// and directly by a stage that curates its own shape checks (stage 6b).
-pub fn validate_member_presence<F, I>(
-    member: Option<&I>,
-    claims: Option<&SumcheckOutputClaims<F, I>>,
-) -> Result<(), VerifierError>
-where
-    F: JoltField,
-    I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
-    // The diagnostic formats the relation id, so the helper spans every
-    // protocol family a batch mixes (the derive's own presence errors use the
-    // same string-typed variant).
-    <SymbolicOf<F, I> as SymbolicSumcheck>::RelationId: Debug,
-{
-    match (member, claims) {
-        (Some(_), Some(_)) | (None, None) => Ok(()),
-        (Some(member), None) => Err(VerifierError::StageClaimSumcheckFailed {
-            stage: format!("{:?}", member.id()),
-            reason: "present instance is missing its output claims".to_string(),
-        }),
-        (None, Some(claims)) => Err(match claims.canonical_order().into_iter().next() {
-            Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening.into() },
-            None => VerifierError::StageClaimSumcheckFailed {
-                stage: format!("{:?}", <I::Symbolic as SymbolicSumcheck>::id()),
-                reason: "output claims supplied for an absent instance".to_string(),
-            },
-        }),
-    }
-}
-
 /// Resolve one batch member's produced opening by composite id: downcast the
 /// composite to the member's own opening-id family, then resolve within the
 /// member's claims. A foreign-family or unknown id is a miss (`None`), so the
@@ -420,6 +326,207 @@ where
 {
     let native = OpeningIdOf::<F, I>::try_from(*id).ok()?;
     claims.resolve_output(&native)
+}
+
+/// How one produced claim cell reaches the verifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaimRoute {
+    /// Sent after the stage's rounds (clear) or committed in the stage's
+    /// output-claim rows (ZK).
+    Sent,
+    /// A copy of an earlier cell of the same batch: never sent or committed,
+    /// filled from that source.
+    Alias(ComposedOpeningId),
+    /// Sent earlier in the stage as part of a typed staged message (clear),
+    /// committed in the output-claim rows (ZK).
+    Staged,
+}
+
+/// One stage batch's claim routes. A cell takes the route set here, else its
+/// member's static alias ([`ConcreteSumcheck::aliased_output_openings`]),
+/// else [`ClaimRoute::Sent`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClaimRoutes {
+    routes: BTreeMap<ComposedOpeningId, ClaimRoute>,
+}
+
+impl ClaimRoutes {
+    /// Routes cell `id` by `route`, overriding its member's static route.
+    pub fn set(&mut self, id: impl Into<ComposedOpeningId>, route: ClaimRoute) {
+        let _ = self.routes.insert(id.into(), route);
+    }
+
+    fn of(
+        &self,
+        id: &ComposedOpeningId,
+        static_aliases: &BTreeMap<ComposedOpeningId, ComposedOpeningId>,
+    ) -> ClaimRoute {
+        self.routes.get(id).copied().unwrap_or_else(|| {
+            static_aliases
+                .get(id)
+                .map_or(ClaimRoute::Sent, |source| ClaimRoute::Alias(*source))
+        })
+    }
+}
+
+fn static_aliases<F, I>() -> BTreeMap<ComposedOpeningId, ComposedOpeningId>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    OpeningIdOf<F, I>: Into<ComposedOpeningId>,
+{
+    I::aliased_output_openings()
+        .into_iter()
+        .map(|(aliased, source)| (aliased.into(), source.into()))
+        .collect()
+}
+
+/// Receive one batch member's output claims in the shape of its derived
+/// output `points`, in the claims struct's canonical order: each `Sent` cell
+/// is read from the transcript, each `Alias` cell copies its already received
+/// source, and each `Staged` cell takes the value the stage received earlier.
+/// `received` holds the batch's values by id (pre-filled with the staged
+/// ones) and gains every cell read here. Called by the generated
+/// `receive_output_claims` per member, in declaration order.
+pub fn receive_member_claims<F, I, H>(
+    points: &SumcheckOutputPoints<F, I>,
+    routes: &ClaimRoutes,
+    received: &mut BTreeMap<ComposedOpeningId, F>,
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<SumcheckOutputClaims<F, I>, VerifierError>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    H: Sponge,
+    SumcheckOutputPoints<F, I>:
+        MapCells<Vec<F>, F, OpeningIdOf<F, I>, Mapped = SumcheckOutputClaims<F, I>>,
+    OpeningIdOf<F, I>: Copy + Into<ComposedOpeningId>,
+{
+    let static_aliases = static_aliases::<F, I>();
+    points.try_map_cells(&mut |id, _point| {
+        let id: ComposedOpeningId = (*id).into();
+        let source = match routes.of(&id, &static_aliases) {
+            ClaimRoute::Sent => {
+                let value: F = transcript.receive()?;
+                let _ = received.insert(id, value);
+                return Ok(value);
+            }
+            ClaimRoute::Alias(source) => source,
+            ClaimRoute::Staged => id,
+        };
+        received
+            .get(&source)
+            .copied()
+            .ok_or(VerifierError::MissingOpeningClaim { id: source })
+    })
+}
+
+/// One member's claim values on the given routes, in canonical order:
+/// `Sent` cells, plus `Staged` cells when `with_staged`. Clear proofs send
+/// `with_staged = false` after the rounds; committed proofs commit
+/// `with_staged = true`.
+pub fn member_claim_values<F, I>(
+    claims: &SumcheckOutputClaims<F, I>,
+    routes: &ClaimRoutes,
+    with_staged: bool,
+) -> Vec<F>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Copy + Into<ComposedOpeningId>,
+{
+    let static_aliases = static_aliases::<F, I>();
+    claims
+        .canonical_order()
+        .into_iter()
+        .zip(claims.opening_values())
+        .filter(|(id, _)| match routes.of(&(*id).into(), &static_aliases) {
+            ClaimRoute::Sent => true,
+            ClaimRoute::Staged => with_staged,
+            ClaimRoute::Alias(_) => false,
+        })
+        .map(|(_, value)| value)
+        .collect()
+}
+
+/// A stage's committed claim layout over its derived output points: the
+/// committed (`Sent` and `Staged`) cells' ids in row order, and each `Alias`
+/// cell bound to its source row.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommittedClaimLayout {
+    pub ids: Vec<ComposedOpeningId>,
+    pub aliases: Vec<OpeningAlias<ComposedOpeningId>>,
+}
+
+/// Appends one member's committed cells to `layout`, in canonical order over
+/// the member's derived output `points`.
+pub fn extend_committed_layout<F, I>(
+    layout: &mut CommittedClaimLayout,
+    points: &SumcheckOutputPoints<F, I>,
+    routes: &ClaimRoutes,
+) where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputPoints<F, I>:
+        MapCells<Vec<F>, F, OpeningIdOf<F, I>, Mapped = SumcheckOutputClaims<F, I>>,
+    OpeningIdOf<F, I>: Copy + Into<ComposedOpeningId>,
+{
+    let static_aliases = static_aliases::<F, I>();
+    for id in point_cell_ids::<F, I>(points).into_iter().map(Into::into) {
+        match routes.of(&id, &static_aliases) {
+            ClaimRoute::Alias(source) => layout.aliases.push(OpeningAlias::new(id, source)),
+            ClaimRoute::Sent | ClaimRoute::Staged => layout.ids.push(id),
+        }
+    }
+}
+
+/// The ids of a member's output-point cells, in canonical order.
+fn point_cell_ids<F, I>(points: &SumcheckOutputPoints<F, I>) -> Vec<OpeningIdOf<F, I>>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputPoints<F, I>:
+        MapCells<Vec<F>, F, OpeningIdOf<F, I>, Mapped = SumcheckOutputClaims<F, I>>,
+    OpeningIdOf<F, I>: Copy,
+{
+    let mut ids = Vec::new();
+    let Ok(_) = points.try_map_cells(&mut |id, _point| {
+        ids.push(*id);
+        Ok::<F, Infallible>(F::zero())
+    });
+    ids
+}
+
+/// Assert a member's claim values have the shape of its derived output
+/// points: the same canonical ids, so every `Vec` family has its length and
+/// every `Option` cell its presence. The prover's self-check before sending.
+pub fn validate_member_output_shape<F, I>(
+    member: &I,
+    claims: &SumcheckOutputClaims<F, I>,
+    points: &SumcheckOutputPoints<F, I>,
+) -> Result<(), VerifierError>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    SumcheckOutputPoints<F, I>:
+        MapCells<Vec<F>, F, OpeningIdOf<F, I>, Mapped = SumcheckOutputClaims<F, I>>,
+    OpeningIdOf<F, I>: Copy + PartialEq,
+    RelationIdOf<F, I>: Debug,
+{
+    let point_ids = point_cell_ids::<F, I>(points);
+    if claims.canonical_order() != point_ids {
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", member.id()),
+            reason: format!(
+                "output claim shape mismatch: the points have {} cells, the claims {}",
+                point_ids.len(),
+                claims.canonical_order().len(),
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Enforce one member's declared cross-relation opening aliases: each aliased
@@ -463,47 +570,6 @@ where
     Ok(())
 }
 
-/// Assert one member's wire claims match its expected output shape: the
-/// provided `canonical_order` id-set, minus the member's aliased openings
-/// (absorbed via their canonical source; their value equality is enforced
-/// separately by `validate_aliases`), must equal the member's
-/// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings). Called by
-/// the generated `validate_output_claims` per member. Family-agnostic (the
-/// mismatch is attributed by the member's Debug-formatted relation id), so
-/// mixed-family batches validate every member through it.
-pub fn validate_member_output_shape<F, I>(
-    member: &I,
-    claims: &SumcheckOutputClaims<F, I>,
-) -> Result<(), VerifierError>
-where
-    F: JoltField,
-    I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
-    OpeningIdOf<F, I>: Ord,
-{
-    let expected = member.wire_output_openings();
-    let aliased: BTreeSet<_> = I::aliased_output_openings()
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect();
-    let provided: BTreeSet<_> = claims
-        .canonical_order()
-        .into_iter()
-        .filter(|id| !aliased.contains(id))
-        .collect();
-    if provided != expected {
-        return Err(VerifierError::StageClaimSumcheckFailed {
-            stage: format!("{:?}", member.id()),
-            reason: format!(
-                "output claim shape mismatch: expected {} openings, got {}",
-                expected.len(),
-                provided.len(),
-            ),
-        });
-    }
-    Ok(())
-}
-
 /// Project a composite-family derived id onto one relation's own public enum —
 /// the typed destructure every `derive_output_term` starts with, driven by the
 /// id family's generated `TryFrom` inverses of its `From` embeddings. A foreign
@@ -528,114 +594,41 @@ pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierE
     }
 }
 
-/// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
-/// reproduces a stage's inline Fiat-Shamir draw exactly.
-///
-/// Unlike the `append_openings` recorder, challenge *squeezes*
-/// (`challenge`/`challenge_scalar`/`challenge_scalar_powers`) append no bytes, so a
-/// byte-chunk recorder cannot observe them. This double instead records an ordered
-/// event log that distinguishes a squeeze from a byte-append (e.g. the
-/// `ram_val_check` gamma domain separator), and returns a *distinct sequential*
-/// scalar from each squeeze so a relation's stored challenge can be checked against
-/// the squeeze that produced it.
+/// Test-only transcripts for pinning a production Fiat-Shamir draw against
+/// its documented sequence. Every transcript starts from the same protocol and
+/// session, so two of them yield equal challenges and equal sponge fingerprints
+/// exactly when they performed the same operations.
 #[cfg(test)]
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "tests use plain arithmetic on fixture data"
-)]
-pub(crate) mod draw_recording {
-    use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+pub(crate) mod test_transcript {
+    use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript};
 
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) enum DrawEvent {
-        /// A challenge squeeze (`challenge`/`challenge_scalar`/the single squeeze
-        /// inside `challenge_scalar_powers`). Carries the 1-based squeeze index so
-        /// the value a relation kept can be matched to its squeeze.
-        Squeeze(u64),
-        /// A raw byte append (a domain separator preceding a squeeze).
-        Append(Vec<u8>),
+    pub(crate) type TestTranscript = ProverTranscript<Blake2b512>;
+
+    pub(crate) fn fresh() -> TestTranscript {
+        ProverTranscript::new(
+            &ProtocolId::new::<Blake2b512>("jolt-verifier/unit-tests"),
+            b"unit-tests",
+        )
     }
 
-    /// A `Transcript` that logs every squeeze and byte-append in order. Each
-    /// squeeze returns `Fr(index)` for the 1-based squeeze counter, so the powers
-    /// `challenge_scalar_powers` derives are distinct and a stored `gamma` can be
-    /// asserted to equal the squeezed value.
-    #[derive(Clone, Default)]
-    pub(crate) struct DrawRecordingTranscript {
-        pub(crate) events: Vec<DrawEvent>,
-        squeezes: u64,
-    }
-
-    impl Transcript for DrawRecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.events.push(DrawEvent::Append(bytes.to_vec()));
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            self.squeezes += 1;
-            self.events.push(DrawEvent::Squeeze(self.squeezes));
-            Fr::from_u64(self.squeezes)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
-    }
-
-    /// Run `draw` against a fresh recorder, returning its ordered event log and the
-    /// draw's result. A `draw_challenges` and a hand-written replica of the inline
-    /// draw, each passed through this, are directly comparable: equal event logs
-    /// prove the same squeeze/append sequence, and the recorder's distinct
-    /// sequential squeeze values let the returned challenge be checked against the
-    /// replica's captured value.
-    pub(crate) fn record<R>(
-        draw: impl FnOnce(&mut DrawRecordingTranscript) -> R,
-    ) -> (Vec<DrawEvent>, R) {
-        let mut transcript = DrawRecordingTranscript::default();
-        let result = draw(&mut transcript);
-        (transcript.events, result)
-    }
-}
-
-/// The append-order recorder shared by the stage `append_output_claims` ordering
-/// locks: unlike the challenge recorder, it observes only byte appends.
-#[cfg(test)]
-pub(crate) mod append_recording {
-    use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
-
-    /// A minimal `Transcript` double that records each appended byte chunk, so
-    /// that append order can be compared without depending on the digest.
-    #[derive(Clone, Default)]
-    pub(crate) struct RecordingTranscript {
-        pub(crate) chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
+    /// Runs `production` and `documented` on identical fresh transcripts and
+    /// asserts they leave the sponge in the same state, which pins the number,
+    /// kind, and order of their operations. Returns both results so the caller
+    /// can compare the values `production` kept against the documented draws.
+    pub(crate) fn assert_same_draws<A, B>(
+        production: impl FnOnce(&mut TestTranscript) -> A,
+        documented: impl FnOnce(&mut TestTranscript) -> B,
+    ) -> (A, B) {
+        let mut left = fresh();
+        let produced = production(&mut left);
+        let mut right = fresh();
+        let expected = documented(&mut right);
+        assert_eq!(
+            left.challenge_bytes::<32>(),
+            right.challenge_bytes::<32>(),
+            "production and documented draws diverge"
+        );
+        (produced, expected)
     }
 }
 
@@ -661,22 +654,6 @@ mod tests {
 
     fn committed(polynomial: JoltCommittedPolynomial, relation: JoltRelationId) -> JoltOpeningId {
         JoltOpeningId::committed(polynomial, relation)
-    }
-
-    use super::append_recording::RecordingTranscript;
-
-    /// The chunk stream produced by appending `opening_values()` one-by-one is
-    /// the reference Fiat-Shamir order; `append_openings` must reproduce it.
-    fn assert_append_matches_values<C: OutputClaims<Fr>>(claims: &C) {
-        let mut via_append = RecordingTranscript::default();
-        claims.append_openings(&mut via_append);
-
-        let mut via_values = RecordingTranscript::default();
-        for value in claims.opening_values() {
-            via_values.append_labeled(b"opening_claim", &value);
-        }
-
-        assert_eq!(via_append.chunks, via_values.chunks);
     }
 
     #[derive(OutputClaims)]
@@ -707,7 +684,6 @@ mod tests {
             claims.canonical_order().len(),
             claims.opening_values().len()
         );
-        assert_append_matches_values(&claims);
     }
 
     #[test]
@@ -774,7 +750,6 @@ mod tests {
             )),
             Some(fr(9)),
         );
-        assert_append_matches_values(&claims);
     }
 
     #[derive(OutputClaims)]
@@ -814,7 +789,6 @@ mod tests {
             )),
             None,
         );
-        assert_append_matches_values(&claims);
     }
 
     #[derive(OutputClaims)]
@@ -843,8 +817,8 @@ mod tests {
             present.resolve_output(&committed(JoltCommittedPolynomial::RamInc, relation)),
             Some(fr(8)),
         );
-        assert_append_matches_values(&present);
 
+        // and id resolution.
         let absent = OptionalOutput {
             untrusted: None,
             ram_inc: fr(8),
@@ -855,7 +829,6 @@ mod tests {
             absent.resolve_output(&JoltOpeningId::untrusted_advice(relation)),
             None,
         );
-        assert_append_matches_values(&absent);
     }
 
     #[test]
@@ -1066,25 +1039,19 @@ mod tests {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod sumcheck_batch_derive_tests {
-    use super::SumcheckBatch;
+    use super::{ClaimRoutes, SumcheckBatch};
     use crate::stages::stage5::{
         InstructionReadRaf, InstructionReadRafOutputClaims, RegistersValEvaluation,
         RegistersValEvaluationOutputClaims,
     };
-    use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+    use crate::VerifierError;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_field::{Fr, JoltField, Ring};
 
-    fn instruction_read_raf() -> InstructionReadRaf<Fr> {
-        InstructionReadRaf::new(InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap())
-    }
-
-    fn registers_val_evaluation() -> RegistersValEvaluation<Fr> {
-        RegistersValEvaluation::new(TraceDimensions::new(4))
-    }
-
     #[derive(SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
+    // The generated claim plumbing reads only the claims and routes, so this
+    // fixture's members are never read.
     #[expect(dead_code)]
     struct FixtureSumchecks<F: JoltField> {
         instruction_read_raf: InstructionReadRaf<F>,
@@ -1092,12 +1059,8 @@ mod sumcheck_batch_derive_tests {
     }
 
     #[test]
-    fn output_aggregate_opening_values_follow_declaration_order() {
+    fn wire_claims_follow_declaration_order() {
         let fr = Fr::from_u64;
-        let sumchecks = FixtureSumchecks {
-            instruction_read_raf: instruction_read_raf(),
-            registers_val_evaluation: registers_val_evaluation(),
-        };
         let claims = FixtureOutputClaims::<Fr> {
             instruction_read_raf: InstructionReadRafOutputClaims {
                 lookup_table_flags: vec![fr(1), fr(2)],
@@ -1111,7 +1074,7 @@ mod sumcheck_batch_derive_tests {
         };
 
         assert_eq!(
-            sumchecks.opening_values(&claims),
+            FixtureSumchecks::wire_claim_values(&claims, &ClaimRoutes::default()),
             vec![fr(1), fr(2), fr(3), fr(4), fr(5), fr(6)],
         );
     }
@@ -1124,7 +1087,7 @@ mod sumcheck_batch_derive_tests {
     }
 
     #[test]
-    fn output_aggregate_chains_present_and_skips_absent_option_members() {
+    fn wire_claims_chain_present_and_skip_absent_option_members() {
         let fr = Fr::from_u64;
         let instruction = || InstructionReadRafOutputClaims {
             lookup_table_flags: vec![fr(1)],
@@ -1132,10 +1095,6 @@ mod sumcheck_batch_derive_tests {
             instruction_raf_flag: fr(3),
         };
 
-        let with_registers = FixtureOptionSumchecks {
-            instruction_read_raf: instruction_read_raf(),
-            registers_val_evaluation: Some(registers_val_evaluation()),
-        };
         let present = FixtureOptionOutputClaims::<Fr> {
             instruction_read_raf: instruction(),
             registers_val_evaluation: Some(RegistersValEvaluationOutputClaims {
@@ -1144,33 +1103,31 @@ mod sumcheck_batch_derive_tests {
             }),
         };
         assert_eq!(
-            with_registers.opening_values(&present),
+            FixtureOptionSumchecks::wire_claim_values(&present, &ClaimRoutes::default()),
             vec![fr(1), fr(2), fr(3), fr(4), fr(5)]
         );
 
-        let without_registers = FixtureOptionSumchecks {
-            instruction_read_raf: instruction_read_raf(),
-            registers_val_evaluation: None,
-        };
         let absent = FixtureOptionOutputClaims::<Fr> {
             instruction_read_raf: instruction(),
             registers_val_evaluation: None,
         };
         assert_eq!(
-            without_registers.opening_values(&absent),
+            FixtureOptionSumchecks::wire_claim_values(&absent, &ClaimRoutes::default()),
             vec![fr(1), fr(2), fr(3)]
         );
     }
 
-    /// Wire claims supplied for an `Option` member whose instance did not run are
-    /// rejected by the generated `validate_output_claims` (attributed to the first
-    /// supplied opening id), and the well-formed absent case still validates.
+    /// Claims supplied for an `Option` member whose instance did not run are
+    /// rejected by the generated `validate_output_shape`, and the well-formed
+    /// absent case still validates.
     #[test]
-    fn validate_output_claims_rejects_claims_for_absent_member() {
+    fn validate_output_shape_rejects_claims_for_absent_member() {
+        use super::ConcreteSumcheck as _;
+
         use jolt_claims::protocols::jolt::geometry::instruction::read_raf_output_openings;
 
         let fr = Fr::from_u64;
-        let dimensions = InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap();
+        let dimensions = InstructionReadRafDimensions::try_from((2, 6, 2)).unwrap();
         let sumchecks = FixtureOptionSumchecks::<Fr> {
             instruction_read_raf: InstructionReadRaf::new(dimensions),
             registers_val_evaluation: None,
@@ -1192,74 +1149,22 @@ mod sumcheck_batch_derive_tests {
                 rd_wa: fr(2),
             }),
         };
+        let challenges = vec![fr(7); sumchecks.instruction_read_raf.rounds()];
+        let points = sumchecks
+            .derive_opening_points(&challenges, &sumchecks.empty_input_points())
+            .unwrap();
         assert!(matches!(
-            sumchecks.validate_output_claims(&unexpected),
-            Err(crate::VerifierError::UnexpectedOpeningClaim { .. })
+            sumchecks.validate_output_shape(&unexpected, &points),
+            Err(VerifierError::StageClaimSumcheckFailed { .. })
         ));
 
         let well_formed = FixtureOptionOutputClaims::<Fr> {
             instruction_read_raf: instruction(),
             registers_val_evaluation: None,
         };
-        assert!(sumchecks.validate_output_claims(&well_formed).is_ok());
-    }
-
-    // The opt-out fixture: `#[sumcheck_batch(no_opening_values)]` must still
-    // generate the five aggregate structs but emit NO `opening_values` /
-    // `append_output_claims` on the source struct. The inherent `opening_values`
-    // below would collide with a generated one (the compiler rejects two inherent
-    // methods of the same name), so this module compiling at all proves the
-    // opt-out suppressed it.
-    #[derive(SumcheckBatch)]
-    #[sumcheck_batch(no_opening_values, crate = "crate")]
-    #[expect(dead_code)]
-    struct FixtureCustomSumchecks<F: JoltField> {
-        instruction_read_raf: InstructionReadRaf<F>,
-        registers_val_evaluation: RegistersValEvaluation<F>,
-    }
-
-    impl FixtureCustomSumchecks<Fr> {
-        /// A curated order distinct from the generated declaration order, to prove
-        /// this is the one in effect (the generated method would chain instruction
-        /// then registers; this reverses them).
-        #[expect(
-            clippy::unused_self,
-            reason = "the signature mirrors the generated method it collides with"
-        )]
-        fn opening_values(&self, claims: &FixtureCustomOutputClaims<Fr>) -> Vec<Fr> {
-            use crate::stages::relations::OutputClaims as _;
-            claims
-                .registers_val_evaluation
-                .opening_values()
-                .into_iter()
-                .chain(claims.instruction_read_raf.opening_values())
-                .collect()
-        }
-    }
-
-    #[test]
-    fn no_opening_values_suppresses_generated_impl() {
-        let fr = Fr::from_u64;
-        let sumchecks = FixtureCustomSumchecks {
-            instruction_read_raf: instruction_read_raf(),
-            registers_val_evaluation: registers_val_evaluation(),
-        };
-        let claims = FixtureCustomOutputClaims::<Fr> {
-            instruction_read_raf: InstructionReadRafOutputClaims {
-                lookup_table_flags: vec![fr(1)],
-                instruction_ra: vec![fr(2)],
-                instruction_raf_flag: fr(3),
-            },
-            registers_val_evaluation: RegistersValEvaluationOutputClaims {
-                rd_inc: fr(4),
-                rd_wa: fr(5),
-            },
-        };
-
-        assert_eq!(
-            sumchecks.opening_values(&claims),
-            vec![fr(4), fr(5), fr(1), fr(2), fr(3)]
-        );
+        assert!(sumchecks
+            .validate_output_shape(&well_formed, &points)
+            .is_ok());
     }
 
     // The draw opt-out fixture: `#[sumcheck_batch(no_draw_challenges)]` must emit
@@ -1286,7 +1191,7 @@ mod sumcheck_batch_derive_tests {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod begin_batch_tests {
-    use super::draw_recording::{record, DrawEvent};
+    use super::test_transcript::{assert_same_draws, fresh};
     use super::ConcreteSumcheck as _;
     use crate::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -1294,8 +1199,8 @@ mod begin_batch_tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
     use jolt_field::{Fr, JoltField, Ring};
-    use jolt_sumcheck::{append_sumcheck_claim, BatchMember, ClearSumcheckRecorder};
-    use jolt_transcript::Transcript;
+    use jolt_sumcheck::{BatchMember, ClearSumcheckRecorder};
+    use jolt_transcript::Channel;
 
     #[derive(super::SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
@@ -1323,13 +1228,12 @@ mod begin_batch_tests {
         }
     }
 
-    /// `begin_batch` with a clear recorder must reproduce the exact head
-    /// Fiat-Shamir sequence `verify_clear` performed before the factoring —
-    /// per-member `input_claim` absorbed under `b"sumcheck_claim"` in
-    /// declaration order, then one coefficient squeeze per member — and pack
-    /// the prelude's engine and named views consistently.
+    /// `begin_batch` with a clear recorder absorbs every member's
+    /// `input_claim` as public values in declaration order, then draws one
+    /// uniform batching coefficient per member, and packs the prelude from
+    /// exactly those values.
     #[test]
-    fn begin_batch_matches_head_replica_and_packs_prelude() {
+    fn begin_batch_absorbs_input_claims_then_draws_coefficients() {
         let sumchecks = fixture(true);
         let inputs = HeadFixtureInputClaims::<Fr> {
             instruction_read_raf: instruction_inputs(),
@@ -1337,17 +1241,10 @@ mod begin_batch_tests {
                 registers_val: Fr::from_u64(7),
             }),
         };
-        let (_, challenges) = record(|t| sumchecks.draw_challenges(t));
-        let challenges = challenges.unwrap();
+        let challenges = sumchecks.draw_challenges(&mut fresh()).unwrap();
 
-        let (events, head) = record(|t| {
-            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
-            sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
-        });
-        let (batch, coefficients) = head.unwrap();
-
-        // The replica head: input_claim is transcript-pure, so only the absorbs
-        // and coefficient squeezes are observable events.
+        // `input_claim` is transcript-pure, so the expected sums come from the
+        // members directly.
         let instruction_sum = sumchecks
             .instruction_read_raf
             .input_claim(
@@ -1364,12 +1261,17 @@ mod begin_batch_tests {
                 challenges.registers_val_evaluation.as_ref().unwrap(),
             )
             .unwrap();
-        let (replica_events, (instruction_coeff, registers_coeff)) = record(|t| {
-            append_sumcheck_claim(t, &instruction_sum);
-            append_sumcheck_claim(t, &registers_sum);
-            (t.challenge_scalar(), t.challenge_scalar())
-        });
-        assert_eq!(events, replica_events);
+        let (head, (instruction_coeff, registers_coeff)) = assert_same_draws(
+            |t| {
+                let mut recorder = ClearSumcheckRecorder::<Fr>::new();
+                sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
+            },
+            |t| {
+                t.public_all(&[instruction_sum, registers_sum]);
+                (t.challenge::<Fr>(), t.challenge::<Fr>())
+            },
+        );
+        let (batch, coefficients) = head.unwrap();
 
         let instruction_rounds = sumchecks.instruction_read_raf.rounds();
         let registers_rounds = sumchecks
@@ -1405,6 +1307,7 @@ mod begin_batch_tests {
         assert_eq!(coefficients.registers_val_evaluation, Some(registers_coeff));
     }
 
+    /// An absent `Option` member contributes no absorb, no coefficient draw,
     #[test]
     fn begin_batch_skips_absent_option_member() {
         let sumchecks = fixture(false);
@@ -1412,24 +1315,30 @@ mod begin_batch_tests {
             instruction_read_raf: instruction_inputs(),
             registers_val_evaluation: None,
         };
-        let (_, challenges) = record(|t| sumchecks.draw_challenges(t));
-        let challenges = challenges.unwrap();
+        let challenges = sumchecks.draw_challenges(&mut fresh()).unwrap();
+        let instruction_sum = sumchecks
+            .instruction_read_raf
+            .input_claim(
+                &inputs.instruction_read_raf,
+                &challenges.instruction_read_raf,
+            )
+            .unwrap();
 
-        let (events, head) = record(|t| {
-            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
-            sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
-        });
+        let (head, instruction_coeff) = assert_same_draws(
+            |t| {
+                let mut recorder = ClearSumcheckRecorder::<Fr>::new();
+                sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
+            },
+            |t| {
+                t.public_all(&[instruction_sum]);
+                t.challenge::<Fr>()
+            },
+        );
         let (batch, coefficients) = head.unwrap();
 
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, DrawEvent::Squeeze(_)))
-                .count(),
-            1,
-        );
         assert_eq!(batch.members.len(), 1);
         assert_eq!(batch.max_num_vars, sumchecks.instruction_read_raf.rounds());
+        assert_eq!(coefficients.instruction_read_raf, instruction_coeff);
         assert_eq!(coefficients.registers_val_evaluation, None);
     }
 }

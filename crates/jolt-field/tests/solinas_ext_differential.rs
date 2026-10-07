@@ -22,7 +22,9 @@ use jolt_field as two;
 use num_traits::{One, Zero};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use two::{
+    CanonicalBytes, CanonicalDecode, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring,
+};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xE87_D1FF)
@@ -376,6 +378,18 @@ macro_rules! check_ext {
         assert!(
             bincode::serde::decode_from_slice::<$E2, _>(&bad[..nb * d - 1], cfg).is_err(),
             "truncated encoding must be rejected"
+        );
+        let x = mk2(&sample($rng));
+        let encoded = x.to_bytes_le_vec();
+        assert_eq!(encoded.len(), <$E2 as CanonicalBytes>::NUM_BYTES);
+        assert_eq!(
+            <$E2 as CanonicalDecode>::from_bytes_le_checked(&encoded),
+            Some(x)
+        );
+        assert_eq!(<$E2 as CanonicalDecode>::from_bytes_le_checked(&bad), None);
+        assert_eq!(
+            <$E2 as CanonicalDecode>::from_bytes_le_checked(&encoded[..nb * d - 1]),
+            None
         );
 
         let (mut r1, mut r2) = (

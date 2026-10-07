@@ -4,13 +4,15 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
-use jolt_field::JoltField;
-
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_field::{CanonicalBytes, CanonicalDecode, JoltField};
 
 use crate::JoltGroup;
 
 use super::field_to_fr;
+use serde::de::Error;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 /// BN254 target group element (pairing output).
 ///
@@ -150,24 +152,6 @@ impl MulAssign for Bn254GT {
     }
 }
 
-#[expect(clippy::expect_used)]
-impl AppendToTranscript for Bn254GT {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        use ark_serialize::CanonicalSerialize;
-        let mut buf = Vec::with_capacity(self.0.uncompressed_size());
-        self.0
-            .serialize_uncompressed(&mut buf)
-            .expect("GT serialization cannot fail");
-        buf.reverse();
-        transcript.append_bytes(&buf);
-    }
-
-    fn transcript_payload_len(&self) -> Option<u64> {
-        use ark_serialize::CanonicalSerialize;
-        Some(self.0.uncompressed_size() as u64)
-    }
-}
-
 impl JoltGroup for Bn254GT {
     #[inline(always)]
     fn identity() -> Self {
@@ -211,35 +195,34 @@ impl JoltGroup for Bn254GT {
 
 impl serde::Serialize for Bn254GT {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use ark_serialize::CanonicalSerialize;
-        let mut buf = Vec::with_capacity(self.0.compressed_size());
-        self.0
-            .serialize_compressed(&mut buf)
-            .map_err(serde::ser::Error::custom)?;
-        serializer.serialize_bytes(&buf)
+        serializer.serialize_bytes(&self.to_bytes_le_vec())
     }
 }
 
 impl<'de> serde::Deserialize<'de> for Bn254GT {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
         let buf = <Vec<u8>>::deserialize(deserializer)?;
-        // Exact-size gate: rejects oversized/truncated payloads before any
-        // field parsing and makes the encoding canonical (no trailing bytes).
-        let expected_len = Fq12::ONE.compressed_size();
-        if buf.len() != expected_len {
-            return Err(serde::de::Error::custom(format!(
+        Self::decode_compressed(&buf).map_err(Error::custom)
+    }
+}
+
+impl Bn254GT {
+    /// Decodes exactly one compressed `Fq12` element and checks that it lies
+    /// in the r-torsion subgroup GT.
+    fn decode_compressed(bytes: &[u8]) -> Result<Self, String> {
+        use ark_serialize::CanonicalDeserialize;
+        let expected_len = <Self as CanonicalBytes>::NUM_BYTES;
+        if bytes.len() != expected_len {
+            return Err(format!(
                 "GT element encoding must be exactly {expected_len} bytes, got {}",
-                buf.len()
-            )));
+                bytes.len()
+            ));
         }
-        let inner = Fq12::deserialize_compressed(&buf[..]).map_err(serde::de::Error::custom)?;
+        let inner = Fq12::deserialize_compressed(bytes).map_err(|error| error.to_string())?;
         // Reject Fq12::ZERO: not in any multiplicative subgroup, and later
         // Neg/Sub/SubAssign would call .inverse().expect(...) and panic.
         if inner == Fq12::ZERO {
-            return Err(serde::de::Error::custom(
-                "GT element is zero (not in r-torsion subgroup)",
-            ));
+            return Err("GT element is zero (not in r-torsion subgroup)".to_owned());
         }
         // Unitarity pre-filter: GT ⊂ the norm-1 (unitary) subgroup of Fq12
         // over Fq6, i.e. x^(q^6+1) = conj(x)·x = 1. A non-GT Fq12 element is
@@ -250,18 +233,48 @@ impl<'de> serde::Deserialize<'de> for Bn254GT {
         let mut conj = inner;
         let _ = conj.conjugate_in_place();
         if conj * inner != Fq12::ONE {
-            return Err(serde::de::Error::custom(
-                "GT element is not unitary (not in the r-torsion subgroup)",
-            ));
+            return Err("GT element is not unitary (not in the r-torsion subgroup)".to_owned());
         }
         // Subgroup membership: GT is the r-torsion subgroup, so x^r == 1.
         // Unitarity is necessary but not sufficient; this check is exact.
         if inner.pow(Fr::MODULUS) != Fq12::ONE {
-            return Err(serde::de::Error::custom(
-                "GT element is not in the r-torsion subgroup",
-            ));
+            return Err("GT element is not in the r-torsion subgroup".to_owned());
         }
         Ok(Self(inner))
+    }
+}
+
+/// The compressed arkworks `Fq12` encoding.
+impl CanonicalBytes for Bn254GT {
+    const NUM_BYTES: usize = 384;
+
+    #[expect(
+        clippy::expect_used,
+        reason = "serializing into an exact-size buffer cannot fail"
+    )]
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), Self::NUM_BYTES);
+        self.0
+            .serialize_compressed(out)
+            .expect("GT serialization cannot fail");
+    }
+}
+
+impl Encoding<[u8]> for Bn254GT {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        ::jolt_field::narg::encode(self)
+    }
+}
+
+impl CanonicalDecode for Bn254GT {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        Self::decode_compressed(bytes).ok()
+    }
+}
+
+impl NargDeserialize for Bn254GT {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
+        ::jolt_field::narg::deserialize(buf)
     }
 }
 

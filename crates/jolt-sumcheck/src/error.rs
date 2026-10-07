@@ -1,8 +1,13 @@
 use jolt_field::Field;
+use jolt_transcript::TranscriptError;
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SumcheckError<F: Field> {
+    /// The proof's transcript rejected a round message.
+    #[error("sumcheck transcript: {0}")]
+    Transcript(#[from] TranscriptError),
+
     /// Round check failed: the domain sum did not match the expected value
     /// carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]
@@ -70,17 +75,6 @@ pub enum SumcheckError<F: Field> {
     #[error("sumcheck degree {degree} cannot be represented with its coefficient count")]
     DegreeOverflow { degree: usize },
 
-    /// A round polynomial encoded in compressed form had fewer than two
-    /// coefficients, so there is no linear term to omit. Any valid
-    /// compressed sumcheck round polynomial has degree ≥ 1.
-    #[error("round {round}: compressed round polynomial requires >= 2 coefficients, got {got}")]
-    CompressedPolynomialTooShort {
-        /// Zero-indexed round number where the malformed polynomial appeared.
-        round: usize,
-        /// Actual number of coefficients received.
-        got: usize,
-    },
-
     /// The domain-sum coefficient vector must have exactly one scalar per
     /// round-polynomial coefficient.
     #[error("round {round}: expected {expected} round-sum coefficients, got {got}")]
@@ -98,16 +92,6 @@ pub enum SumcheckError<F: Field> {
     InvalidIntegerDomain {
         /// Number of integer points in the domain.
         domain_size: usize,
-    },
-
-    /// The number of round polynomials in the proof does not match
-    /// the number of variables in the claim.
-    #[error("expected {expected} rounds, proof contains {got}")]
-    WrongNumberOfRounds {
-        /// Expected number of rounds (equal to `num_vars`).
-        expected: usize,
-        /// Actual number of round polynomials in the proof.
-        got: usize,
     },
 
     #[error("round polynomial must contain at least one coefficient")]
@@ -187,16 +171,6 @@ pub enum SumcheckError<F: Field> {
         member: usize,
         /// Number of members in the batch.
         members: usize,
-    },
-
-    /// The caller selected a verifier path that is incompatible with the proof
-    /// wire encoding.
-    #[error("wrong sumcheck proof encoding: expected {expected}, got {got}")]
-    WrongProofEncoding {
-        /// Expected proof encoding.
-        expected: &'static str,
-        /// Actual proof encoding.
-        got: &'static str,
     },
 
     /// A batched committed consistency was asked for an impossible point slice.

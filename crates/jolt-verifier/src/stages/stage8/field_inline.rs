@@ -1,5 +1,4 @@
-//! Stage 8's field-inline seam: the composed final-opening splice and the field-inline
-//! commitment-payload presence check. `verify.rs` interacts with the field-inline protocol
+//! Stage 8's field-inline seam: the composed final-opening splice. `verify.rs` interacts with the field-inline protocol
 //! only through the functions here.
 
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
@@ -16,22 +15,10 @@ use crate::proof::JoltCommitments;
 use crate::VerifierError;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
-/// The field-inline commitment payload is part of the expected layout: the composed final
-/// opening cannot assemble without the `FieldRdInc` commitment.
-pub(super) fn require_commitment<C>(commitments: &JoltCommitments<C>) -> Result<(), VerifierError> {
-    if commitments.field_inline.is_none() {
-        return Err(VerifierError::MissingProofPayload {
-            field: "commitments.field_inline",
-        });
-    }
-    Ok(())
-}
-
 /// Splice the reduced `FieldRdInc` final opening into the batch entries at the spec's position
 /// — immediately after `RdInc@IncClaimReduction`, before the RA families
 /// (`specs/field-inline-protocol.md`, the field-inline final-opening order). Mirrors `RdInc`'s
-/// treatment exactly: the commitment comes from the proof's field-inline payload (present
-/// fail-closed), the claim and point from the stage-6b field-register increment reduction, and
+/// treatment exactly: the commitment comes from the proof's field-inline payload, the claim and point from the stage-6b field-register increment reduction, and
 /// the dense embedding scale through the same `commitment_embedding_scale` helper. Public
 /// because the prover's stage-8 recipe splices its PCS batch statement identically.
 pub fn splice_final_opening<'a, F, C>(
@@ -45,13 +32,6 @@ pub fn splice_final_opening<'a, F, C>(
 where
     F: JoltField,
 {
-    let field_inline =
-        commitments
-            .field_inline
-            .as_ref()
-            .ok_or(VerifierError::MissingProofPayload {
-                field: "commitments.field_inline",
-            })?;
     let rd_inc_id: ComposedOpeningId = JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::IncClaimReduction,
@@ -69,7 +49,7 @@ where
         splice_position,
         Stage8BatchEntry {
             id: field_rd_inc_reduced().into(),
-            commitment: &field_inline.field_registers.rd_inc,
+            commitment: &commitments.field_inline.field_registers.rd_inc,
             opening_claim,
             scale: commitment_embedding_scale(
                 opening_point,

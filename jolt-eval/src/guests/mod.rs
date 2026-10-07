@@ -11,6 +11,8 @@ pub use jolt_verifier::VerifierError;
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
 use jolt_prover::dory::DoryProverPreprocessing;
+use jolt_sdk::ProtocolSponge;
+use jolt_verifier::JoltProof;
 
 pub use btreemap::BTreeMapOps;
 pub use fibonacci::Fibonacci;
@@ -25,9 +27,8 @@ pub use tracer::JoltDevice;
 pub type VerifierField = jolt_field::Fr;
 pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
-pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
 
-pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+pub type Proof = JoltProof;
 pub type ProverPreprocessing = DoryProverPreprocessing;
 pub type VerifierPreprocessing = jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 
@@ -58,7 +59,7 @@ pub fn verify(
     proof: Proof,
     io_device: &JoltDevice,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript>(
+    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, ProtocolSponge>(
         verifier_pp,
         io_device,
         &proof,
@@ -89,7 +90,7 @@ pub fn verify_with_claims(
     io_device.outputs = claimed_outputs.to_vec();
     io_device.panic = claimed_panic;
 
-    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript>(
+    jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, ProtocolSponge>(
         verifier_pp,
         &io_device,
         &proof,

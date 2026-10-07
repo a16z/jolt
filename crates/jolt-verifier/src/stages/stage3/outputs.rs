@@ -100,7 +100,7 @@ impl<F: JoltField, C> Stage3Output<F, C> {
 )]
 mod tests {
     use super::*;
-    use crate::stages::relations::ConcreteSumcheck;
+    use crate::stages::relations::{ClaimRoutes, ConcreteSumcheck};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_field::{Fr, Ring};
 
@@ -155,27 +155,15 @@ mod tests {
     /// their canonical sources). The aliased cells carry distinct sentinels here
     /// to prove the skip is id-driven, not value-driven.
     #[test]
-    fn opening_values_follow_canonical_order() {
+    fn wire_claims_follow_canonical_order() {
         let mut claims = consistent();
         claims.instruction_input.unexpanded_pc = fr(101);
         claims.registers_claim_reduction.rs1_value = fr(102);
         claims.registers_claim_reduction.rs2_value = fr(103);
 
         assert_eq!(
-            sumchecks().opening_values(&claims),
+            Stage3Sumchecks::wire_claim_values(&claims, &ClaimRoutes::default()),
             (1..=13).map(fr).collect::<Vec<_>>()
-        );
-    }
-
-    /// The generated `output_claim_count` sums the members' wire sets: the 16
-    /// expression-referenced openings minus the 3 aliases.
-    #[test]
-    fn output_claim_count_matches_absorbed_openings() {
-        let sumchecks = sumchecks();
-        assert_eq!(sumchecks.output_claim_count(), 13);
-        assert_eq!(
-            sumchecks.opening_values(&consistent()).len(),
-            sumchecks.output_claim_count(),
         );
     }
 
@@ -187,12 +175,17 @@ mod tests {
     /// on is pinned by `aliased_members_derive_identical_opening_points`.
     #[test]
     fn alias_declarations_are_valid() {
-        use jolt_claims::SymbolicSumcheck as _;
+        use jolt_claims::{OutputClaims as _, SymbolicSumcheck as _};
         use std::collections::BTreeSet;
 
         let sumchecks = sumchecks();
-        let shift_wire = sumchecks.shift.wire_output_openings();
-        let instruction_wire = sumchecks.instruction_input.wire_output_openings();
+        let claims = consistent();
+        let shift_wire: BTreeSet<_> = claims.shift.canonical_order().into_iter().collect();
+        let instruction_wire: BTreeSet<_> = claims
+            .instruction_input
+            .canonical_order()
+            .into_iter()
+            .collect();
 
         let instruction_pairs = InstructionInput::<Fr>::aliased_output_openings();
         assert_eq!(instruction_pairs.len(), 1);

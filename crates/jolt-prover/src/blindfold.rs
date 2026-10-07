@@ -1,13 +1,11 @@
 //! The ZK proof tail: BlindFold over the committed stage proofs.
 //!
 //! The prover does not mirror the verifier's protocol lowering — it *runs*
-//! it, strictly through `jolt-verifier`'s existing public verification
-//! surface. After stage 8 it assembles a shell proof (every wire field real,
-//! the claims slot a unit placeholder) and replays it through the verifier's
-//! own stage functions — `validate_and_seed_transcript`, `stage1::verify` …
-//! `stage8::verify` — to obtain the per-stage ZK outputs and a transcript
-//! positioned exactly where the verifier's will be, then lowers them with
-//! the verifier's own `stages::zk::blindfold::build`. The `BlindFoldProtocol`
+//! it, strictly through `jolt-verifier`'s public verification surface. After
+//! stage 8 it replays its own argument string through the verifier's
+//! `verify_stages` — the seeding messages, `stage1::verify` … `stage8::verify`,
+//! and the lowering with `stages::zk::blindfold::build` — on a verifier
+//! transcript that must land exactly on the prover's own. The `BlindFoldProtocol`
 //! the prover proves against is therefore the same code path the verifier
 //! executes — a claim-formula change that updates the verifier's lowering is
 //! picked up here automatically — and the replay doubles as a full
@@ -19,21 +17,16 @@
 //! stage recipes prove over.
 
 use common::jolt_device::JoltDevice;
-use jolt_blindfold::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
+use jolt_blindfold::BlindFoldWitness;
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
-use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{Accumulator, JoltField, WithAccumulator};
+use jolt_field::{Accumulator, CanonicalDecode, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
-use jolt_transcript::{AppendToTranscript, Label, Transcript};
-use jolt_verifier::proof::JoltProof;
-use jolt_verifier::stages::zk::{blindfold, inputs::BlindFoldInputs};
-use jolt_verifier::stages::{
-    stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
-};
-use jolt_verifier::VerifierError;
+use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_verifier::sites::BLINDFOLD;
+use jolt_verifier::{jolt_protocol_id, verify_stages, VerifiedStages, VerifierError, JOLT_SESSION};
 
 use crate::{JoltProverPreprocessing, ProverError};
 
@@ -97,40 +90,51 @@ pub(crate) struct ZkFinalOpening<F> {
     pub evaluation_blind: F,
 }
 
-/// Prove the BlindFold tail for `shell` (the assembled proof with a unit
-/// claims placeholder). `forward_state` is the prover's own transcript state
-/// at the stage-8 boundary — the replay must land on the same bytes.
-pub(crate) fn prove_blindfold<F, PCS, VC, T>(
+/// Prove the BlindFold tail onto `transcript`, which holds the argument string
+/// through stage 8. The verifier's stage spine is replayed over that prefix to
+/// obtain the BlindFold protocol, and the replay must land on the forward
+/// transcript's exact state.
+pub(crate) fn prove_blindfold<F, PCS, VC, H>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     trusted_advice_commitment: Option<&PCS::Output>,
-    shell: &JoltProof<PCS, VC, ()>,
     witnesses: &ZkStageWitnesses<F>,
     final_opening: &ZkFinalOpening<F>,
-    forward_state: [u8; 32],
-) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
+    transcript: &mut ProverTranscript<H>,
+) -> Result<(), ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    H: Sponge,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
-    let (protocol, mut transcript) = replay_stages::<F, PCS, VC, T>(
+    let mut replay =
+        VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, transcript.narg());
+    let VerifiedStages::Zk {
+        protocol,
+        checkpoint,
+    } = verify_stages::<F, PCS, VC, H>(
         &preprocessing.verifier,
         public_io,
-        shell,
         trusted_advice_commitment,
-    )?;
-    // A 32-byte compare guarding the exact seam the design rests on: the
-    // replay landing on the prover's forward transcript bytes. Hard error
-    // (not debug-only) so release provers diagnose drift here rather than
-    // as a downstream BlindFold verification failure.
-    if transcript.state() != forward_state {
+        &mut replay,
+    )?
+    else {
+        return Err(ProverError::InvariantViolation {
+            reason: "the verifier replay of a ZK proof produced no BlindFold protocol",
+        });
+    };
+    // The prover draws the same checkpoint the verifier draws after the stage
+    // spine; equal checkpoints over the whole argument string mean the replay
+    // reached the prover's sponge state. Hard error (not debug-only) so release
+    // provers diagnose drift here rather than as a downstream BlindFold
+    // verification failure.
+    if replay.remaining() != 0 || transcript.challenge_bytes::<32>() != checkpoint {
         return Err(ProverError::InvariantViolation {
             reason: "the verifier replay diverged from the prover's forward transcript",
         });
@@ -151,11 +155,11 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
-    transcript.append(&Label(b"BlindFold"));
-    let proof = jolt_blindfold::prove::<F, VC, T, _>(
+    transcript.site(BLINDFOLD);
+    jolt_blindfold::prove::<F, VC, H, _>(
         vc_setup,
         &protocol,
-        &mut transcript,
+        transcript,
         BlindFoldWitness {
             rows: &assigned.rows,
             blindings: &assigned.blindings,
@@ -164,124 +168,5 @@ where
         },
         &mut rand_core::OsRng,
     )?;
-    Ok(proof)
-}
-
-/// Replay the shell through the verifier's public stage spine and lower the
-/// ZK outputs into the BlindFold protocol — the same call sequence
-/// `jolt_verifier::verify` runs before its BlindFold tail, expressed against
-/// the same public surface its ZK audit harness uses.
-#[expect(
-    clippy::type_complexity,
-    reason = "the pair is the protocol plus the transcript it was lowered on"
-)]
-fn replay_stages<F, PCS, VC, T>(
-    preprocessing: &jolt_verifier::JoltVerifierPreprocessing<PCS, VC>,
-    public_io: &JoltDevice,
-    shell: &JoltProof<PCS, VC, ()>,
-    trusted_advice_commitment: Option<&PCS::Output>,
-) -> Result<(BlindFoldProtocol<F, VC::Output>, T), ProverError<F>>
-where
-    F: JoltField + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F>
-        + AdditivelyHomomorphic
-        + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
-    VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
-{
-    let (checked, mut transcript) = jolt_verifier::validate_and_seed_transcript::<PCS, VC, T, ()>(
-        preprocessing,
-        public_io,
-        shell,
-        trusted_advice_commitment,
-    )?;
-    let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
-        shell,
-        preprocessing,
-        &checked,
-        checked.trace_length.ilog2() as usize,
-        JoltRelationId::InstructionReadRaf,
-    )?;
-
-    let stage1 = stage1::verify(&checked, shell, &mut transcript)?;
-    let stage2 = stage2::verify(&checked, shell, &mut transcript, &stage1)?;
-    let stage3 = stage3::verify(&checked, shell, &mut transcript, &stage1, &stage2)?;
-    let stage4 = stage4::verify(
-        &checked,
-        preprocessing,
-        shell,
-        &mut transcript,
-        &stage2,
-        &stage3,
-    )?;
-    let stage5 = stage5::verify(
-        &checked,
-        shell,
-        &formula_dimensions,
-        &mut transcript,
-        &stage2,
-        &stage4,
-    )?;
-    let stage6a = stage6a::verify(
-        &checked,
-        preprocessing,
-        shell,
-        &formula_dimensions,
-        &mut transcript,
-        &stage1,
-        &stage2,
-        &stage3,
-        &stage4,
-        &stage5,
-    )?;
-    let stage6b = stage6b::verify(
-        &checked,
-        preprocessing,
-        shell,
-        &formula_dimensions,
-        &mut transcript,
-        &stage1,
-        &stage2,
-        &stage3,
-        &stage4,
-        &stage5,
-        &stage6a,
-    )?;
-    let stage7 = stage7::verify(
-        &checked,
-        shell,
-        &formula_dimensions,
-        &mut transcript,
-        &stage4,
-        &stage6b,
-    )?;
-    let stage8 = stage8::verify(
-        &checked,
-        preprocessing,
-        shell,
-        &formula_dimensions,
-        trusted_advice_commitment,
-        &mut transcript,
-        &stage6b,
-        &stage7,
-    )?;
-
-    let protocol = blindfold::build(BlindFoldInputs {
-        checked: &checked,
-        preprocessing,
-        proof: shell,
-        stage1: stage1.zk()?,
-        stage2: stage2.zk()?,
-        stage3: stage3.zk()?,
-        stage4: stage4.zk()?,
-        stage5: stage5.zk()?,
-        stage6a: stage6a.zk()?,
-        stage6b: stage6b.zk()?,
-        stage7: stage7.zk()?,
-        stage8: stage8.zk()?,
-    })?;
-
-    Ok((protocol, transcript))
+    Ok(())
 }

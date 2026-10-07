@@ -179,7 +179,7 @@ macro_rules! impl_serde_bytes {
         impl<'de, $($g)*> ::serde::Deserialize<'de> for $ty {
             fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 let buf = <[u8; $n]>::deserialize(deserializer)?;
-                <$ty as $crate::CanonicalEncoding>::from_bytes_le_checked(&buf)
+                <$ty as $crate::CanonicalDecode>::from_bytes_le_checked(&buf)
                     .ok_or_else(|| ::serde::de::Error::custom("non-canonical field element encoding"))
             }
         }

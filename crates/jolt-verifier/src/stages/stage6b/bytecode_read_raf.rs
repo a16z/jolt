@@ -953,9 +953,9 @@ impl<F: JoltField> BytecodeReadRafCycle<F> {
 /// the differing halves — `expected_output` (output `Expr`) and
 /// `derive_opening_points` — is overridden to dispatch per variant, converting
 /// the anchor's `Challenges` into the full variant's. It stays sound only while
-/// those overrides stand and the batch keeps `no_output_shape` (the
-/// committed output `Expr` references the staged `BytecodeValClaim` openings,
-/// which the full mode never produces).
+/// those overrides stand: the committed output `Expr` references the staged
+/// `BytecodeValClaim` openings, which the full mode never produces, and the
+/// claim shape comes from the per-variant derived points, never the `Expr`.
 impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
     type Symbolic = CycleSymbolicCommitted;
 

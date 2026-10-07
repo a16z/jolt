@@ -2,9 +2,10 @@
 //!
 //! Acceptance across protocol modes lives in `e2e_matrix.rs`. These tests use
 //! the same guest cases and preparation, and cover distinct field-inline wire
-//! properties: reference/optimized proof equality in clear mode, field commitment
-//! presence and binding, and rejection of corrupted BlindFold payloads. Claim and
-//! round-polynomial mutations live in the verifier fixture matrix.
+//! properties: reference/optimized proof equality in clear mode and the binding
+//! of the `FieldRdInc` commitment in both modes. Claim and round-polynomial
+//! mutations live in the verifier fixture matrix; BlindFold tampering lives in
+//! `zk_e2e.rs`.
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -12,6 +13,65 @@
     not(feature = "akita")
 ))]
 mod support;
+
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "field-inline",
+    not(feature = "akita")
+))]
+#[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
+mod tamper {
+    use common::jolt_device::JoltDevice;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_transcript::VerifierTranscript;
+    use jolt_verifier::proof::ProofHeader;
+    use jolt_verifier::{jolt_protocol_id, seed_transcript, JoltSponge, JOLT_SESSION};
+
+    use crate::support::field_inline::dory::{Proof, VerifierPreprocessing};
+
+    /// `proof` with its `FieldRdInc` commitment bytes overwritten by its `RamInc`
+    /// commitment bytes: a well-formed commitment to a different polynomial. The
+    /// byte ranges come from the verifier's own header and commitment reads, in
+    /// `ProofCommitments::send` order (`RdInc`, `RamInc`, the RA commitments,
+    /// then `FieldRdInc`; the fixtures carry no untrusted advice).
+    pub(crate) fn with_field_inline_commitment_replaced(
+        preprocessing: &VerifierPreprocessing,
+        public_io: &JoltDevice,
+        proof: &Proof,
+    ) -> Proof {
+        let narg = proof.narg.as_slice();
+        let consumed =
+            |transcript: &VerifierTranscript<'_, JoltSponge>| narg.len() - transcript.remaining();
+        let protocol = jolt_protocol_id::<JoltSponge>();
+
+        let mut transcript = VerifierTranscript::<JoltSponge>::new(&protocol, JOLT_SESSION, narg);
+        let _header = ProofHeader::receive(&mut transcript).expect("proof header");
+        let header_end = consumed(&transcript);
+
+        let mut transcript = VerifierTranscript::<JoltSponge>::new(&protocol, JOLT_SESSION, narg);
+        let seeded = seed_transcript::<DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+            preprocessing,
+            public_io,
+            None,
+            &mut transcript,
+        )
+        .expect("proof commitments");
+        let commitments_end = consumed(&transcript);
+        assert!(seeded.commitments.untrusted_advice.is_none());
+        let trace = &seeded.commitments.trace;
+        let count = 3 + trace.instruction_ra.len() + trace.ram_ra.len() + trace.bytecode_ra.len();
+        let span = commitments_end - header_end;
+        assert_eq!(span % count, 0, "Dory commitments have one width");
+        let width = span / count;
+        assert_ne!(trace.ram_inc, trace.field_inline.field_registers.rd_inc);
+
+        let mut tampered = proof.clone();
+        let ram_inc = header_end + width..header_end + 2 * width;
+        tampered.narg.copy_within(ram_inc, commitments_end - width);
+        tampered
+    }
+}
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -28,7 +88,6 @@ mod clear {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_prover::JoltBackend;
-    use jolt_verifier::proof::JoltProofClaims;
 
     use crate::support::field_inline::dory;
     use crate::support::field_inline::{field_ops, muldiv};
@@ -42,7 +101,7 @@ mod clear {
         ]
     }
 
-    /// Both backends' proofs must verify AND be equal wire objects — clear
+    /// Both backends' proofs must verify AND be equal argument strings — clear
     /// mode draws nothing outside Fiat-Shamir, so reference/optimized
     /// divergence anywhere in the composed pipeline shows up here as a proof
     /// inequality even when both sides individually verify.
@@ -51,11 +110,6 @@ mod clear {
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
             let (preprocessing, public_io, proof) = dory::prove(&field_ops(), backend());
-            assert!(
-                proof.commitments.field_inline.is_some(),
-                "field-inline proofs must carry the field-inline commitment payload ({label})",
-            );
-            assert!(matches!(proof.claims, JoltProofClaims::Clear(_)));
             dory::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
                 panic!("modular field-inline proof must verify ({label}): {error}")
             });
@@ -63,7 +117,7 @@ mod clear {
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized field-inline proofs must be identical wire objects",
+            "reference and optimized field-inline proofs must be identical argument strings",
         );
     }
 
@@ -75,7 +129,6 @@ mod clear {
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
             let (preprocessing, public_io, proof) = dory::prove(&muldiv(), backend());
-            assert!(proof.commitments.field_inline.is_some());
             dory::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
                 panic!("field-inactive modular proof must verify ({label}): {error}")
             });
@@ -83,7 +136,7 @@ mod clear {
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized field-inactive proofs must be identical wire objects",
+            "reference and optimized field-inactive proofs must be identical argument strings",
         );
     }
 
@@ -91,18 +144,14 @@ mod clear {
     /// this checks that the prover's emitted commitment is transcript-bound.
     #[test]
     fn field_inline_tampered_commitment_is_rejected() {
-        let (preprocessing, public_io, mut proof) =
-            dory::prove(&field_ops(), JoltBackend::optimized());
+        let (preprocessing, public_io, proof) = dory::prove(&field_ops(), JoltBackend::optimized());
         dory::verify_full(&preprocessing, &public_io, &proof).expect("honest proof");
-        let replacement = proof.commitments.ram_inc.clone();
-        let field_inline = proof
-            .commitments
-            .field_inline
-            .as_mut()
-            .expect("field-inline commitment");
-        assert_ne!(field_inline.field_registers.rd_inc, replacement);
-        field_inline.field_registers.rd_inc = replacement;
-        assert!(dory::verify_full(&preprocessing, &public_io, &proof).is_err());
+        let tampered = crate::tamper::with_field_inline_commitment_replaced(
+            &preprocessing,
+            &public_io,
+            &proof,
+        );
+        assert!(dory::verify_full(&preprocessing, &public_io, &tampered).is_err());
     }
 }
 
@@ -112,51 +161,29 @@ mod clear {
     feature = "zk",
     not(feature = "akita")
 ))]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "integration tests should fail loudly"
-)]
+#[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod zk {
-    use jolt_field::{Fr, Ring};
     use jolt_prover::JoltBackend;
-    use jolt_verifier::proof::JoltProofClaims;
 
     use crate::support;
     use crate::support::field_inline::{dory, field_ops, muldiv};
 
+    /// The FieldRdInc commitment is bound on the ZK wire too.
     #[test]
-    fn field_inline_tampered_proofs_are_rejected() {
+    fn field_inline_tampered_commitment_is_rejected() {
         support::with_zk_stack(|| {
             let (preprocessing, public_io, proof) =
                 dory::prove(&field_ops(), JoltBackend::optimized());
-            assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
-            assert!(proof.commitments.field_inline.is_some());
             dory::verify_full(&preprocessing, &public_io, &proof)
                 .expect("modular field-inline ZK proof must verify");
-
-            let mut commitment_tampered = proof.clone();
-            let replacement = commitment_tampered.commitments.ram_inc.clone();
-            let field_inline = commitment_tampered
-                .commitments
-                .field_inline
-                .as_mut()
-                .expect("field-inline proof carries the field-inline payload");
-            assert_ne!(field_inline.field_registers.rd_inc, replacement);
-            field_inline.field_registers.rd_inc = replacement;
-            assert!(
-                dory::verify_full(&preprocessing, &public_io, &commitment_tampered).is_err(),
-                "a tampered FieldRdInc commitment must be rejected in ZK mode",
+            let tampered = crate::tamper::with_field_inline_commitment_replaced(
+                &preprocessing,
+                &public_io,
+                &proof,
             );
-
-            let mut blindfold_tampered = proof;
-            let JoltProofClaims::Zk { blindfold_proof } = &mut blindfold_tampered.claims else {
-                panic!("ZK proof must carry the BlindFold claims variant");
-            };
-            blindfold_proof.random_u += Fr::from_u64(1);
             assert!(
-                dory::verify_full(&preprocessing, &public_io, &blindfold_tampered).is_err(),
-                "a tampered BlindFold proof must be rejected",
+                dory::verify_full(&preprocessing, &public_io, &tampered).is_err(),
+                "a tampered FieldRdInc commitment must be rejected in ZK mode",
             );
         });
     }

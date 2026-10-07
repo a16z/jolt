@@ -16,7 +16,4 @@ pub mod ram_ra_virtualization;
 pub mod verify;
 
 pub use outputs::{Stage6bClearOutput, Stage6bOutput, Stage6bZkOutput};
-pub use verify::{
-    stage6b_input_points_from_upstream, stage6b_input_values_from_upstream, stage6b_opening_values,
-    verify,
-};
+pub use verify::{stage6b_input_points_from_upstream, stage6b_input_values_from_upstream, verify};

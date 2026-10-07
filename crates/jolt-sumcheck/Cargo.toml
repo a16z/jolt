@@ -33,7 +33,7 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-bincode = { workspace = true }
+spongefish = { workspace = true, features = ["sha3"] }
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["bn254", "solinas"] }
 jolt-transcript = { workspace = true, features = [

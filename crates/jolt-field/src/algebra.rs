@@ -20,6 +20,8 @@ use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::signed::S256;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
 
 pub trait AdditiveGroup:
     Sized
@@ -254,7 +256,9 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
 ///   produce equal bytes, distinct values produce distinct bytes.
 /// - [`to_bytes_le`](Self::to_bytes_le) always writes exactly
 ///   [`NUM_BYTES`](Self::NUM_BYTES) bytes of the unique representative.
-pub trait CanonicalBytes {
+/// - The spongefish [`Encoding`](spongefish::Encoding) is this encoding;
+///   implement it with [`narg::encode`].
+pub trait CanonicalBytes: Encoding<[u8]> {
     /// Byte length of the fixed-size canonical encoding.
     const NUM_BYTES: usize;
 
@@ -270,28 +274,119 @@ pub trait CanonicalBytes {
     }
 }
 
+/// Checked decoding half of a fixed-width canonical codec.
+///
+/// Proof transport and wire serialization decode through this trait, so a
+/// verifier accepts exactly one byte string per value.
+///
+/// # Invariants
+///
+/// - `from_bytes_le_checked(&x.to_bytes_le_vec()) == Some(x)` for every `x`.
+/// - Every other input, including any input whose length is not
+///   [`CanonicalBytes::NUM_BYTES`], decodes to `None`.
+/// - The spongefish [`NargDeserialize`](spongefish::NargDeserialize) reads
+///   exactly this decoding; implement it with [`narg::deserialize`].
+pub trait CanonicalDecode: CanonicalBytes + NargDeserialize + Sized {
+    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
+    /// `None` on wrong length or a non-canonical value.
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
+}
+
+/// The spongefish codec of a fixed-width canonical type, shared by every
+/// implementing crate so each type's `Encoding` and `NargDeserialize` are its
+/// [`CanonicalBytes`]/[`CanonicalDecode`] codec and nothing else.
+pub mod narg {
+    use spongefish::{VerificationError, VerificationResult};
+
+    use super::{CanonicalBytes, CanonicalDecode};
+
+    /// The `Encoding::encode` body: the canonical little-endian bytes.
+    #[inline]
+    pub fn encode<T: CanonicalBytes + ?Sized>(value: &T) -> Vec<u8> {
+        let mut out = vec![0u8; T::NUM_BYTES];
+        value.to_bytes_le(&mut out);
+        out
+    }
+
+    /// The `NargDeserialize::deserialize_from_narg` body: decodes exactly
+    /// `NUM_BYTES` canonical bytes and advances `buf` only on success.
+    ///
+    /// # Errors
+    ///
+    /// When `buf` is shorter than `NUM_BYTES` or the bytes are not canonical.
+    #[inline]
+    pub fn deserialize<T: CanonicalDecode>(buf: &mut &[u8]) -> VerificationResult<T> {
+        let (head, tail) = buf
+            .split_at_checked(T::NUM_BYTES)
+            .ok_or(VerificationError)?;
+        let value = T::from_bytes_le_checked(head).ok_or(VerificationError)?;
+        *buf = tail;
+        Ok(value)
+    }
+}
+
+/// Fixed-width little-endian codecs for unsigned integers, so protocol
+/// counters and nonces travel as transcript atoms like field elements do.
+/// spongefish owns their `Encoding`; only `u32` also has its
+/// `NargDeserialize`, so only `u32` is a [`CanonicalDecode`] atom. Wider
+/// header fields travel inside their message type's own codec.
+macro_rules! impl_uint_codec {
+    ($($t:ty),*) => {$(
+        impl CanonicalBytes for $t {
+            const NUM_BYTES: usize = <$t>::BITS as usize / 8;
+
+            #[inline]
+            fn to_bytes_le(&self, out: &mut [u8]) {
+                out.copy_from_slice(&self.to_le_bytes());
+            }
+        }
+    )*};
+}
+
+impl_uint_codec!(u8, u16, u32, u64, u128);
+
+impl CanonicalDecode for u32 {
+    #[inline]
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        bytes.try_into().ok().map(Self::from_le_bytes)
+    }
+}
+
+/// Raw bytes are their own canonical encoding.
+impl<const N: usize> CanonicalBytes for [u8; N] {
+    const NUM_BYTES: usize = N;
+
+    #[inline]
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        out.copy_from_slice(self);
+    }
+}
+
+impl<const N: usize> CanonicalDecode for [u8; N] {
+    #[inline]
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        bytes.try_into().ok()
+    }
+}
+
 /// Canonical decode-and-introspect surface of a field element, on top of the
-/// [`CanonicalBytes`] encoding: the single source of canonicity for wire
-/// serialization.
+/// [`CanonicalBytes`]/[`CanonicalDecode`] codec: the single source of
+/// canonicity for wire serialization.
 ///
 /// Transcript absorption and challenge derivation use the explicit
 /// [`CanonicalBytes`] encoding so the hashed byte stream is specified
 /// independently of any serialization library. Proof/wire serialization goes
 /// through serde + bincode, reusing
-/// [`from_bytes_le_checked`](Self::from_bytes_le_checked) so non-canonical
-/// encodings are rejected uniformly.
+/// [`from_bytes_le_checked`](CanonicalDecode::from_bytes_le_checked) so
+/// non-canonical encodings are rejected uniformly.
 pub trait CanonicalEncoding:
-    CanonicalBytes + Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
+    CanonicalDecode + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
 {
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
-
-    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
-    /// `None` on wrong length or a non-canonical value.
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
 
     /// Returns the canonical representative if it fits in a `u128`.
     ///

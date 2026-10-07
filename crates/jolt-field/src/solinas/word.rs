@@ -9,7 +9,10 @@
 //! path for sub-word primes, with a BMI2 variant on x86-64).
 
 use crate::PseudoMersenne;
-use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{
+    CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator, Ring,
+    WithAccumulator,
+};
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
 use rand_core::RngCore;
@@ -305,6 +308,26 @@ macro_rules! define_solinas_prime {
             }
         }
 
+        impl<const P: $word> ::spongefish::Encoding<[u8]> for $name<P> {
+            fn encode(&self) -> impl AsRef<[u8]> {
+                crate::narg::encode(self)
+            }
+        }
+
+        impl<const P: $word> CanonicalDecode for $name<P> {
+            #[inline]
+            fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+                let arr: [u8; (<$word>::BITS / 8) as usize] = bytes.try_into().ok()?;
+                Self::from_u128_checked(<$word>::from_le_bytes(arr) as u128)
+            }
+        }
+
+        impl<const P: $word> ::spongefish::NargDeserialize for $name<P> {
+            fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+                crate::narg::deserialize(buf)
+            }
+        }
+
         impl<const P: $word> CanonicalEncoding for $name<P> {
             const MODULUS_BITS: u32 = Self::BITS;
 
@@ -318,11 +341,6 @@ macro_rules! define_solinas_prime {
                 $crate::solinas::reduce_le_bytes_mod_order(bytes)
             }
 
-            #[inline]
-            fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-                let arr: [u8; (<$word>::BITS / 8) as usize] = bytes.try_into().ok()?;
-                Self::from_u128_checked(<$word>::from_le_bytes(arr) as u128)
-            }
 
             #[inline]
             fn to_u128_checked(&self) -> Option<u128> {

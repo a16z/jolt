@@ -69,6 +69,8 @@ jobs:
         run: scripts/check-shared-field-identity.sh
       - name: Keep Metal out of the verifier
         run: scripts/check-metal-isolation.sh
+      - name: Keep spongefish's sponge state private (no yolocrypto)
+        run: scripts/check-no-yolocrypto.sh
       - name: Check no backend
         run: cargo check -p jolt-field --no-default-features
       - name: Check BN254 backend
@@ -100,18 +102,19 @@ jobs:
       # jolt-verifier's prover-fixtures feature gates live prover artifact
       # generation for verifier tests. It is not enabled by the workspace-wide
       # invocations above, so build it explicitly in both modes.
-      - name: cargo clippy -p jolt-verifier --features prover-fixtures
-        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures
-      - name: cargo clippy -p jolt-verifier --features prover-fixtures,zk
-        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,zk
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,logging
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,logging
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,zk,logging
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,zk,logging
       # The akita feature selects the lattice (Akita) PIOP; it is not enabled
       # by the workspace-wide invocations above.
       - name: cargo clippy -p jolt-verifier --features akita
         run: cargo clippy -p jolt-verifier --all-targets --features akita
       # The akita fixture-driven tamper suite compiles under akita,prover-fixtures
-      # (the real packed prover generates its fixtures). Lint it explicitly.
-      - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures
-        run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
+      # (the real packed prover generates its fixtures) with `logging`, whose
+      # transcript event log locates each rejection. Lint it explicitly.
+      - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures,logging
+        run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures,logging
       # The modular prover's packed (Akita) path: lint alone and with
       # prover-fixtures so the acceptance suites keep compiling.
       - name: cargo clippy -p jolt-prover --features akita
@@ -176,14 +179,14 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline
       - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,zk
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
-      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
-        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline,logging
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline,logging
       # The packed field-inline combination: the full-width increment group rides the
       # dense-group heterogeneous batch beside advice.
       - name: cargo clippy -p jolt-verifier --features field-inline,akita
         run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
-      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline,akita
-        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline,akita
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline,akita,logging
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline,akita,logging
       - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,akita
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,akita
       - name: cargo clippy -p jolt-sdk --features host,field-inline
@@ -373,7 +376,7 @@ jobs:
       # step existed they were clippy-only, so the golden BlindFold shape pins
       # in completeness/zk.rs could go stale without any lane noticing.
       - name: Run jolt-verifier fixtures with zk feature
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --test-threads 1 --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk,logging --test-threads 1 --cargo-quiet
       # The jolt-kernels unit suite in its zk flavor.
       - name: Run jolt-kernels tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
@@ -512,7 +515,7 @@ jobs:
       - name: Run jolt-akita with field-inline
         run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita,logging --test-threads 1
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest
@@ -545,11 +548,11 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       # The fixture-driven field-inline suites: valid-fixture acceptance
-      # (completeness/field_inline.rs) and the typed field-inline clear-claim tamper
-      # sweep (tampering/field_inline.rs), backed by fixtures the modular
-      # prover generates at test time.
+      # (completeness/field_inline.rs) and the argument-string tamper sweep
+      # (soundness/dory.rs, `logging` for its event log), backed by fixtures
+      # the modular prover generates at test time.
       - name: Run jolt-verifier field-inline fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,logging --test-threads 1
 
   test-verifier-akita-fixtures:
     runs-on: ubuntu-latest
@@ -582,11 +585,12 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
       # The fixture-driven akita suites: valid-fixture acceptance
-      # (completeness/akita.rs) and the typed clear-claim, commitment-byte,
-      # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
-      # by fixtures the real packed prover generates at test time.
+      # (completeness/akita.rs) and the argument-string message, structural,
+      # and statement tamper sweeps (soundness/akita.rs, `logging` for their
+      # event log), backed by fixtures the real packed prover generates at
+      # test time.
       - name: Run jolt-verifier akita fixture and tamper suites
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures,logging --test-threads 1
 
   typos:
     runs-on: ubuntu-latest
@@ -826,7 +830,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
       - name: Run verifier fixtures
-        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --test-threads 1 --cargo-quiet
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,logging --test-threads 1 --cargo-quiet
 
   test-inlines:
     name: Test inlines

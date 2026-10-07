@@ -106,6 +106,19 @@ impl<E, const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaFie
 impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, D>
     for CpuBackend<AkitaField, E>
 {
+    fn evaluate_and_fold_batch(
+        &self,
+        _prepared: Option<&Self::PreparedSetup>,
+        source: TracePackedOneHotBatchView<'_, D>,
+        plan: OpeningFoldPlan<'_, AkitaField>,
+    ) -> Result<Vec<OpeningFoldOutput<AkitaField, D>>, AkitaError> {
+        source
+            .sources
+            .iter()
+            .map(|source| opening_fold_packed(source, plan))
+            .collect()
+    }
+
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,

@@ -15,15 +15,21 @@ use jolt_claims::protocols::composed::geometry::{
 use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use jolt_claims::protocols::jolt::geometry::spartan::{
+    outer_uniskip_opening, product_uniskip_opening,
+};
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_field::CanonicalDecode;
 use jolt_field::JoltField;
 use jolt_sumcheck::{
-    CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
-    SumcheckStatement, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckStatement,
+    SumcheckVerifier,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
-use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
+use crate::stages::relations::CommittedClaimLayout;
+use crate::stages::zk::outputs::{CommittedOutputClaimOutput, CommittedOutputClaimShape};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
@@ -36,10 +42,11 @@ const UNISKIP_ROUNDS: usize = 1;
 /// two constructors are the only instances.
 pub struct UniskipParams {
     stage: JoltRelationId,
+    /// The round's single output opening.
+    output_opening: JoltOpeningId,
     stage_number: usize,
     degree: usize,
     domain_size: usize,
-    proof_field: &'static str,
 }
 
 impl UniskipParams {
@@ -47,10 +54,10 @@ impl UniskipParams {
     pub fn spartan_outer() -> Self {
         Self {
             stage: JoltRelationId::SpartanOuter,
+            output_opening: outer_uniskip_opening(),
             stage_number: 1,
             degree: SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
-            proof_field: "stage1_uni_skip_first_round_proof",
         }
     }
 
@@ -58,10 +65,10 @@ impl UniskipParams {
     pub fn spartan_product() -> Self {
         Self {
             stage: JoltRelationId::SpartanProductVirtualization,
+            output_opening: product_uniskip_opening(),
             stage_number: 2,
             degree: SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            proof_field: "stage2_uni_skip_first_round_proof",
         }
     }
 
@@ -89,29 +96,27 @@ impl UniskipParams {
 /// uni-skip round (the Spartan outer relation's cycle variables plus the two
 /// uni-skip-collapsed row variables). Both fronts call this, so the draw is
 /// single-sourced.
-pub fn draw_spartan_outer_tau<F, T>(transcript: &mut T, log_t: usize) -> Vec<F>
+pub fn draw_spartan_outer_tau<F, C>(transcript: &mut C, log_t: usize) -> Vec<F>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    C: Channel,
 {
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
     )]
-    transcript.challenge_vector(log_t + 2)
+    transcript.challenges_small(log_t + 2)
 }
 
-/// The stage-2 product tau_high, drawn before the product uni-skip round.
-/// Both fronts call this, so the draw is single-sourced. MUST stay the raw
-/// `challenge()` (not `challenge_scalar()`): both decode the same 16-byte
-/// squeeze, but differently, so switching would silently change the value
-/// without changing the transcript bytes.
-pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> F
+/// The stage-2 product tau_high, drawn before the product uni-skip round from
+/// the small challenge set. Both fronts call this, so the draw is
+/// single-sourced.
+pub fn draw_spartan_product_tau_high<F, C>(transcript: &mut C) -> F
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    C: Channel,
 {
-    transcript.challenge()
+    transcript.challenge_small()
 }
 
 /// The ZK uni-skip step's outputs: the committed round consistency and output
@@ -123,79 +128,78 @@ pub struct UniskipZk<F: JoltField, C> {
     pub challenge: F,
 }
 
-/// Verify a clear-mode uni-skip round against its input and output claims and
-/// return the single reduction challenge.
+/// The clear uni-skip step's outputs: the single reduction challenge and the
+/// received output claim.
+pub struct UniskipClear<F> {
+    pub challenge: F,
+    pub output_claim: F,
+}
+
+/// Verify a clear-mode uni-skip round against its input claim.
 ///
-/// Protocol contract (byte-exact; the prover's uni-skip round must mirror it):
-/// the wire proof is verified as a one-round sumcheck of `params`' degree over
-/// `params`' centered integer domain, the reduced value is hard-checked
-/// against `output_claim`, and `output_claim` is then absorbed under the
-/// `b"opening_claim"` label — BEFORE any post-uni-skip draw (the remainder
-/// batch's coefficient squeeze in particular). Errors are attributed to
+/// Protocol contract (the prover's uni-skip round must mirror it): the round
+/// polynomial is read as a one-round sumcheck of `params`' degree over
+/// `params`' centered integer domain, then the output claim is received and
+/// hard-checked against the reduced value — BEFORE any post-uni-skip draw (the
+/// remainder batch's coefficient draw in particular). Errors are attributed to
 /// `params`' stage.
-pub fn verify_clear<F, C, T>(
-    proof: &SumcheckProof<F, C>,
+pub fn verify_clear<F, H>(
     params: &UniskipParams,
     input_claim: F,
-    output_claim: F,
-    transcript: &mut T,
-) -> Result<F, VerifierError>
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<UniskipClear<F>, VerifierError>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
 {
-    let reduction = proof
-        .verify(
-            &SumcheckClaim::new(UNISKIP_ROUNDS, params.degree, input_claim),
-            CenteredIntegerDomain::new(params.domain_size),
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
-            transcript,
-        )
-        .map_err(|error| params.sumcheck_failed(error))?;
+    let reduction = SumcheckVerifier::verify(
+        &SumcheckClaim::new(UNISKIP_ROUNDS, params.degree, input_claim),
+        CenteredIntegerDomain::new(params.domain_size),
+        transcript,
+    )
+    .map_err(|error| params.sumcheck_failed(error))?;
+    let output_claim: F = transcript.receive()?;
     if reduction.value != output_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: params.stage_number,
         });
     }
 
-    // Match the prover transcript: the uni-skip output is absorbed as an
-    // opening claim before any post-uni-skip draw (the remainder batch's RLC
-    // coefficient squeeze in particular).
-    transcript.append_labeled(b"opening_claim", &output_claim);
-
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));
     };
-    Ok(*challenge)
+    Ok(UniskipClear {
+        challenge: *challenge,
+        output_claim,
+    })
 }
 
-/// Verify a ZK-mode uni-skip round: committed round consistency plus the
-/// output-claim commitment count. The claims themselves stay committed
-/// (BlindFold verifies them at stage 8).
-pub fn verify_zk<F, C, T>(
+/// Verify a ZK-mode uni-skip round: the committed round and the single
+/// output-claim commitment. The claims themselves stay committed (BlindFold
+/// verifies them at stage 8).
+pub fn verify_zk<F, C, H>(
     checked: &CheckedInputs,
-    proof: &SumcheckProof<F, C>,
     params: &UniskipParams,
-    transcript: &mut T,
+    transcript: &mut VerifierTranscript<'_, H>,
 ) -> Result<UniskipZk<F, C>, VerifierError>
 where
     F: JoltField,
-    C: Clone + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    C: CanonicalDecode,
+    H: Sponge,
 {
-    let consistency = proof
-        .verify_committed_consistency(
-            SumcheckStatement::new(UNISKIP_ROUNDS, params.degree),
-            transcript,
-        )
-        .map_err(|error| params.sumcheck_failed(error))?;
-    let output_claims = committed::verify_output_claim_commitments(
-        checked,
-        proof,
-        params.proof_field,
-        1,
-        params.stage,
-    )?;
+    let shape = CommittedOutputClaimShape::new(
+        checked.committed_row_len()?,
+        CommittedClaimLayout {
+            ids: vec![params.output_opening.into()],
+            aliases: Vec::new(),
+        },
+    );
+    let (consistency, commitments) = SumcheckVerifier::verify_committed(
+        SumcheckStatement::new(UNISKIP_ROUNDS, params.degree),
+        shape.row_count(),
+        transcript,
+    )
+    .map_err(|error| params.sumcheck_failed(error))?;
     let [round] = consistency.rounds.as_slice() else {
         return Err(
             params.sumcheck_failed("uni-skip committed consistency did not produce one challenge")
@@ -204,7 +208,7 @@ where
     let challenge = round.challenge;
     Ok(UniskipZk {
         consistency,
-        output_claims,
+        output_claims: CommittedOutputClaimOutput { shape, commitments },
         challenge,
     })
 }

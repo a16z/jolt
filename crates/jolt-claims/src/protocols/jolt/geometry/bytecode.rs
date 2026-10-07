@@ -22,7 +22,7 @@ use super::registers::{
 use super::spartan::{pc_shift, unexpanded_pc_shift};
 
 /// Per-stage (1..=5) gamma-power vector lengths for the bytecode read-RAF stage
-/// folds — the arities of the prover's `challenge_scalar_powers` draws. The
+/// folds — the arities of the powers of each stage's drawn gamma. The
 /// verifier stores each stage's single drawn scalar and expands it with
 /// [`stage_gamma_powers`], so these lengths are single-sourced with the
 /// fold-side `require_len` guards.

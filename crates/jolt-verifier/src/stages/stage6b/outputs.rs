@@ -2,8 +2,11 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::Bytecode
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
-use crate::stages::relations::SumcheckBatch;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
+
+use crate::stages::relations::{ClaimRoute, ClaimRoutes, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::VerifierError;
 
 // The per-relation produced-claim structs live in their relation modules
 // (cell-generic, `#[derive(OutputClaims)]`); re-export them so consumers and the
@@ -65,21 +68,12 @@ use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBoolean
 /// per-member draw would squeeze at the wrong transcript position if it
 /// existed to be called.
 ///
-/// The opt-out `#[sumcheck_batch(no_opening_values)]` suppresses the generated
-/// absorb methods: booleanity's `bytecode_ra` openings
-/// alias the bytecode-read-RAF points and must NOT be re-absorbed, so the canonical
-/// order is curated by [`stage6b_opening_values`](super::verify::stage6b_opening_values)
-/// which threads the dedup points (the verifier absorbs its output; the
-/// prover's recorder absorbs the same sequence). `no_output_shape`: shape methods are inapplicable — the committed
-/// bytecode output `Expr` consumes the 6a-produced `BytecodeValClaim` openings
-/// (not 6b outputs), and the ZK commitment count dedups runtime point aliases.
+/// A booleanity `bytecode_ra` opening whose point equals its bytecode
+/// read-RAF source's point is that source's copy, routed
+/// [`ClaimRoute::Alias`] by [`Stage6bOutputPoints::claim_routes`]: it is
+/// neither sent nor committed.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(
-    no_opening_values,
-    no_draw_challenges,
-    no_output_shape,
-    crate = "crate"
-)]
+#[sumcheck_batch(no_draw_challenges, routes, crate = "crate")]
 pub struct Stage6bSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
@@ -113,6 +107,32 @@ pub struct Stage6bSumchecks<F: JoltField> {
 /// `reverse(opening_point)` (see `cycle_phase_opening_point` in `jolt-claims`
 /// `claim_reductions::precommitted`).
 impl<F: JoltField> Stage6bOutputPoints<F> {
+    /// The stage's claim routes: each booleanity `bytecode_ra` opening at its
+    /// bytecode read-RAF source's point aliases that source. A runtime point
+    /// equality, so it is a route rather than a static alias pair.
+    pub fn claim_routes(&self) -> Result<ClaimRoutes, VerifierError> {
+        let booleanity_point = self.booleanity_opening_point().ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: "Stage 6 booleanity produced no opening point".to_string(),
+            }
+        })?;
+        let mut routes = ClaimRoutes::default();
+        for (index, point) in self.bytecode_read_raf.bytecode_ra.iter().enumerate() {
+            if point.as_slice() == booleanity_point {
+                let polynomial = JoltCommittedPolynomial::BytecodeRa(index);
+                routes.set(
+                    JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity),
+                    ClaimRoute::Alias(
+                        JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf)
+                            .into(),
+                    ),
+                );
+            }
+        }
+        Ok(routes)
+    }
+
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
@@ -207,37 +227,6 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     /// The bytecode-reduction cycle-phase `cycle_phase_variables` (`reverse(opening_point)`).
     pub fn bytecode_cycle_phase_variables(&self) -> Option<Vec<F>> {
         Some(reversed(self.bytecode_reduction_opening_point()?))
-    }
-
-    /// The total number of produced opening-point cells across every member. This
-    /// is the derived, layout-independent claim count; the ZK path subtracts its
-    /// runtime bytecode/booleanity point-alias dedup from it to size the committed
-    /// output claims. ZK-only, hence base-only (no zk protocol exists over the
-    /// packed axis).
-    #[cfg(not(feature = "akita"))]
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "a sum of in-memory vector lengths and small constants cannot overflow usize"
-    )]
-    pub fn point_count(&self) -> usize {
-        self.bytecode_read_raf.bytecode_ra.len()
-            + self.booleanity.instruction_ra.len()
-            + self.booleanity.bytecode_ra.len()
-            + self.booleanity.ram_ra.len()
-            + 1
-            + self.ram_ra_virtualization.ram_ra.len()
-            + self
-                .instruction_ra_virtualization
-                .committed_instruction_ra
-                .len()
-            + 2
-            + usize::from(cfg!(feature = "field-inline"))
-            + usize::from(self.trusted_advice.is_some())
-            + usize::from(self.untrusted_advice.is_some())
-            + self.bytecode_reduction.as_ref().map_or(0, |reduction| {
-                usize::from(reduction.intermediate.is_some()) + reduction.chunks.len()
-            })
-            + usize::from(self.program_image_reduction.is_some())
     }
 }
 

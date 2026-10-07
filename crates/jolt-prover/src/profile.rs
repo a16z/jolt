@@ -73,8 +73,7 @@ type ProfileTrace = OwnedTrace;
 type FieldInlineField = Fr;
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 type FieldInlineField = AkitaField;
-#[cfg(not(feature = "akita"))]
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_verifier::JoltSponge;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 #[cfg(not(feature = "akita"))]
 use rayon::ThreadPoolBuilder;
@@ -831,7 +830,7 @@ fn prove_workload(
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
         &backend,
         &prover_preprocessing,
         &config,
@@ -858,7 +857,7 @@ fn prove_workload(
         .build()
         .expect("single-threaded verifier pool must build");
     let verify = || {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,
@@ -887,7 +886,7 @@ fn prove_workload(
     trace_output: TraceOutput<ProfileTrace>,
     backend: BackendKind,
 ) -> ProvenRun {
-    use crate::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::CommitmentScheme;
@@ -964,7 +963,7 @@ fn prove_workload(
     // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
-    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
         &backend,
         &prover_preprocessing,
         &config,
@@ -975,23 +974,17 @@ fn prove_workload(
     .expect("modular packed prove");
     let duration = now.elapsed();
 
-    let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
-    let akita_opening_unframed_size = proof
-        .joint_opening_proof
-        .unframed_payload_size()
-        .expect("packed opening component lengths must fit usize");
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize packed proof")
         .len();
     tracing::info!(
-        akita_proof_body_size,
-        akita_opening_unframed_size,
+        argument_string_size = proof.narg.len(),
         jolt_proof_wire_size = proof_size,
         "packed proof sizes"
     );
 
     let verify = || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,

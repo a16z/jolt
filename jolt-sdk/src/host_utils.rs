@@ -15,34 +15,12 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryHint;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 use jolt_dory::{DoryCommitment, DoryScheme};
-#[cfg(any(feature = "host", feature = "guest-verifier"))]
-use jolt_field::Fr;
 #[cfg(feature = "host")]
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 #[cfg(feature = "host")]
 use jolt_prover::{JoltProverPreprocessing as GenericJoltProverPreprocessing, ProverConfig};
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-keccak"
-))]
-use jolt_transcript::KeccakTranscript;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    any(
-        feature = "transcript-blake2b",
-        not(any(
-            feature = "transcript-poseidon",
-            feature = "transcript-keccak",
-            feature = "transcript-blake2b"
-        ))
-    )
-))]
-use jolt_transcript::LegacyBlake2bTranscript;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-poseidon"
-))]
-use jolt_transcript::PoseidonTranscript;
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+use jolt_verifier::JoltProof as VerifierJoltProof;
 #[cfg(feature = "host")]
 use jolt_verifier::ProgramPreprocessing as GenericProgramPreprocessing;
 #[cfg(feature = "host")]
@@ -52,32 +30,11 @@ use tracer::TracerInlineExpansionProvider;
 
 #[cfg(feature = "host")]
 pub use jolt_host as host;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-poseidon"
-))]
-pub type ProtocolTranscript = PoseidonTranscript<Fr>;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-keccak"
-))]
-pub type ProtocolTranscript = KeccakTranscript<Fr>;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-blake2b"
-))]
-pub type ProtocolTranscript = LegacyBlake2bTranscript<Fr>;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    not(any(
-        feature = "transcript-poseidon",
-        feature = "transcript-keccak",
-        feature = "transcript-blake2b"
-    ))
-))]
-pub type ProtocolTranscript = LegacyBlake2bTranscript<Fr>;
-#[cfg(feature = "host")]
-pub type ProofTranscript = ProtocolTranscript;
+/// The sponge every SDK proof runs on: the verifier's
+/// [`JoltSponge`](jolt_verifier::JoltSponge), chosen by the `transcript-*`
+/// feature (Blake2b by default).
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+pub type ProtocolSponge = jolt_verifier::JoltSponge;
 #[cfg(feature = "host")]
 pub use jolt_program::execution::{
     ExecutionBackend, OwnedTrace, TraceError, TraceInputs, TraceOutput, TraceSource,
@@ -110,12 +67,10 @@ pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(feature = "host")]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(feature = "host")]
-pub type VerifierTranscript = ProtocolTranscript;
-#[cfg(feature = "host")]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 #[cfg(feature = "host")]
-pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+pub type RV64IMACProof = VerifierJoltProof;
 #[cfg(feature = "host")]
 pub type JoltProof = RV64IMACProof;
 #[cfg(feature = "host")]
@@ -186,12 +141,10 @@ pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierTranscript = ProtocolTranscript;
-#[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type RV64IMACProof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
+pub type RV64IMACProof = VerifierJoltProof;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltProof = RV64IMACProof;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
@@ -359,7 +312,7 @@ pub fn prove_program(
         }
     };
     let backend = jolt_prover::JoltBackend::<F, PCS>::optimized();
-    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProofTranscript, _>(
+    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProtocolSponge, _>(
         &backend,
         preprocessing,
         &config,

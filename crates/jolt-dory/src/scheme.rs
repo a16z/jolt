@@ -14,12 +14,12 @@ use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, Pedersen
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use rayon::prelude::*;
 
 use crate::routines::{JoltG1Routines, JoltG2Routines};
-use crate::transcript::JoltToDoryTranscript;
-use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
+use crate::transcript::{read_proof, DoryProverChannel, DoryVerifierChannel};
+use crate::types::{DoryCommitment, DoryHint, DoryProverSetup, DoryVerifierSetup};
 
 // All jolt types below are #[repr(transparent)] over the same arkworks
 // inner type as their dory-pcs counterpart, guaranteeing identical layout.
@@ -200,7 +200,6 @@ impl Commitment for DoryScheme {
 
 impl CommitmentScheme for DoryScheme {
     type Field = Fr;
-    type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
     type OpeningHint = DoryHint;
@@ -226,15 +225,30 @@ impl CommitmentScheme for DoryScheme {
         Self::commit_with_mode::<P, Transparent>(poly, setup)
     }
 
+    fn send_commitment<H: Sponge>(commitment: &Self::Output, transcript: &mut ProverTranscript<H>) {
+        transcript.send(commitment);
+    }
+
+    fn receive_commitment<H: Sponge>(
+        _setup: &Self::VerifierSetup,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Self::Output, OpeningsError> {
+        Ok(transcript.receive()?)
+    }
+
+    fn absorb_commitment<C: Channel>(commitment: &Self::Output, channel: &mut C) {
+        channel.public(commitment);
+    }
+
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
-    fn open<P: MultilinearPoly<Fr> + ?Sized>(
+    fn open<P: MultilinearPoly<Fr> + ?Sized, H: Sponge>(
         poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<Self::Proof, OpeningsError> {
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
@@ -253,9 +267,10 @@ impl CommitmentScheme for DoryScheme {
         );
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+        let mut dory_transcript = DoryProverChannel::new(transcript);
 
-        let (proof, _blind) =
+        // Every message of the returned proof is already in the transcript.
+        let (_proof, _blind) =
             dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, Transparent>(
                 &adapter,
                 &ark_point,
@@ -267,42 +282,33 @@ impl CommitmentScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove failed: {e:?}")))?;
-
-        Ok(DoryProof(proof))
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::verify")]
-    fn verify(
+    fn verify<H: Sponge>(
         commitment: &Self::Output,
         point: &[Fr],
         eval: Fr,
-        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), OpeningsError> {
+        let proof = read_proof(transcript.unread(), point.len(), false)?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
-        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
-
-        if proof.0.e2.is_some()
-            || proof.0.y_com.is_some()
-            || proof.0.sigma1_proof.is_some()
-            || proof.0.sigma2_proof.is_some()
-            || proof.0.scalar_product_proof.is_some()
-        {
-            return Err(OpeningsError::VerificationFailed);
-        }
+        let mut dory_transcript = DoryVerifierChannel::new(transcript);
 
         dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             ark_eval,
             &ark_point,
-            &proof.0,
+            &proof,
             setup.0.clone().into_inner(),
             &mut dory_transcript,
         )
-        .map_err(|_| OpeningsError::VerificationFailed)
+        .map_err(|_| OpeningsError::VerificationFailed)?;
+        dory_transcript.finish(&proof)
     }
 }
 
@@ -369,19 +375,15 @@ impl ZkOpeningScheme for DoryScheme {
         Self::commit_with_mode::<P, dory::ZK>(poly, setup)
     }
 
-    #[expect(
-        clippy::type_complexity,
-        reason = "ZK openings return the native proof, hiding commitment, and blind"
-    )]
     #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
-    fn open_zk<P: MultilinearPoly<Fr> + ?Sized>(
+    fn open_zk<P: MultilinearPoly<Fr> + ?Sized, H: Sponge>(
         poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(Self::HidingCommitment, Self::Blind), OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
         let sigma = num_vars.div_ceil(2);
@@ -389,7 +391,7 @@ impl ZkOpeningScheme for DoryScheme {
         let (row_commitments, commit_blind) = hint.into_ark_parts();
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+        let mut dory_transcript = DoryProverChannel::new(transcript);
 
         let (proof, y_blinding) =
             dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, ZK>(
@@ -403,6 +405,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove (ZK) failed: {e:?}")))?;
+        dory_transcript.send_sigma1_responses(&proof)?;
 
         let y_com = proof
             .y_com
@@ -412,38 +415,38 @@ impl ZkOpeningScheme for DoryScheme {
             OpeningsError::ProveFailed("ZK proof must return y_blinding".to_owned())
         })?;
 
-        Ok((DoryProof(proof), y_com, blinding))
+        Ok((y_com, blinding))
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::verify_zk")]
-    fn verify_zk(
+    fn verify_zk<H: Sponge>(
         commitment: &Self::Output,
         point: &[Fr],
-        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
+        let proof = read_proof(transcript.unread(), point.len(), true)?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
         // so the caller-side eval is unused here.
         let dummy_eval = <ArkFr as DoryField>::zero();
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
-        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
         let hiding_commitment = proof
-            .0
             .y_com
             .map(ark_to_jolt_g1)
             .ok_or(OpeningsError::VerificationFailed)?;
+        let mut dory_transcript = DoryVerifierChannel::new(transcript);
 
         dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             dummy_eval,
             &ark_point,
-            &proof.0,
+            &proof,
             setup.0.clone().into_inner(),
             &mut dory_transcript,
         )
         .map_err(|_| OpeningsError::VerificationFailed)?;
+        dory_transcript.finish(&proof)?;
 
         Ok(hiding_commitment)
     }

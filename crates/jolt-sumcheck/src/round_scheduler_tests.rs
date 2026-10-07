@@ -6,9 +6,8 @@
     reason = "tests use unwrap on fallible prove paths under assertion"
 )]
 
-use jolt_crypto::Bn254G1;
 use jolt_field::{Fr, Ring};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Blake2b512, Channel, ProverTranscript};
 
 use crate::batch::{BatchMember, BatchPrelude};
 use crate::error::SumcheckError;
@@ -16,7 +15,7 @@ use crate::prover::{
     prove_batch, MemberFinish, MemberRound, ProveRounds, RoundScheduler, SequentialRounds,
 };
 use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
-use crate::tests::DenseMember;
+use crate::tests::{fingerprint, prover, DenseMember};
 
 type F = Fr;
 
@@ -53,19 +52,19 @@ fn traversal_fixture() -> (
     DenseMember,
     DenseMember,
     BatchPrelude<F>,
-    Blake2bTranscript,
-    ClearSumcheckRecorder<F, Bn254G1>,
+    ProverTranscript<Blake2b512>,
+    ClearSumcheckRecorder<F>,
 ) {
     let sum_long = F::from_u64(4242);
     let sum_short = F::from_u64(99);
     let long = DenseMember::with_sum(3, sum_long, 7);
     let short = DenseMember::with_sum(1, sum_short, 13);
 
-    let mut transcript = Blake2bTranscript::new(b"traversal-seam");
-    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let mut transcript = prover(b"traversal-seam");
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[sum_long, sum_short], &mut transcript);
-    let coeff_long: F = transcript.challenge_scalar();
-    let coeff_short: F = transcript.challenge_scalar();
+    let coeff_long: F = transcript.challenge_small();
+    let coeff_short: F = transcript.challenge_small();
     let prelude = BatchPrelude::new(
         vec![
             BatchMember {
@@ -104,18 +103,19 @@ fn proof_is_invariant_under_a_reordering_traversal() {
             &mut transcript,
         )
         .unwrap();
-        let recorded = recorder
+        recorder
             .finish(&proved.member_claims, &mut transcript)
             .unwrap();
-        (proved, recorded.proof, transcript.state())
+        let state = fingerprint(&mut transcript);
+        (proved, transcript.finish(), state)
     };
 
-    let (sequential, sequential_proof, sequential_state) = prove(false);
-    let (chaotic, chaotic_proof, chaotic_state) = prove(true);
+    let (sequential, sequential_narg, sequential_state) = prove(false);
+    let (chaotic, chaotic_narg, chaotic_state) = prove(true);
     assert_eq!(sequential.challenges, chaotic.challenges);
     assert_eq!(sequential.final_claim, chaotic.final_claim);
     assert_eq!(sequential.member_claims, chaotic.member_claims);
-    assert_eq!(sequential_proof, chaotic_proof);
+    assert_eq!(sequential_narg, chaotic_narg);
     assert_eq!(sequential_state, chaotic_state);
 }
 

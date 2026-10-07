@@ -12,8 +12,8 @@
 //! uses the same one-hot data expanded into a dense evaluation table, forcing
 //! the slower dense path and making the expected sparse speedup visible. The
 //! `akita_prover` groups use the same Akita-order data without Jolt commitment
-//! wrappers or transcript bridging; those numbers bound the overhead introduced
-//! by the adapter. The Dory groups run the same logical dense,
+//! wrappers, proving on Akita's standalone transcript; those numbers bound the
+//! overhead introduced by the adapter. The Dory groups run the same logical dense,
 //! sparse one-hot, and sparse materialized inputs over BN254 Fr as a familiar
 //! PCS baseline, not as a field-for-field security comparison.
 //!
@@ -55,9 +55,10 @@ use jolt_openings::{
     VerifierOpeningClaim,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript};
 
 const LAYOUT_DIGEST: [u8; 32] = [0xA5; 32];
+const BENCH_PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-akita/bench");
 const NUM_POLYS: usize = 1;
 const BATCH_POLYS: usize = 4;
 const BATCH_PREFIX_BITS: usize = 2;
@@ -483,12 +484,16 @@ fn native_batch_commit(case: &AkitaBatchCase) -> (jolt_akita::AkitaCommitment, A
     .expect("black-box batch commit should succeed")
 }
 
+fn bench_transcript(session: &[u8]) -> ProverTranscript<Blake2b512> {
+    ProverTranscript::new(&BENCH_PROTOCOL, session)
+}
+
 fn native_batch_open(
     case: &AkitaBatchCase,
     commitment: jolt_akita::AkitaCommitment,
     hint: AkitaProverHint,
-) -> jolt_akita::AkitaBatchProof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/black-box-batch-bench");
+) -> Vec<u8> {
+    let mut transcript = bench_transcript(b"jolt-akita/black-box-batch-bench");
     <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &case.native_setup,
         native_batch_statement(case, commitment),
@@ -496,18 +501,16 @@ fn native_batch_open(
         hint,
         &mut transcript,
     )
-    .expect("black-box batch proof should succeed")
+    .expect("black-box batch proof should succeed");
+    transcript.finish()
 }
 
 fn packed_batch_commit(case: &AkitaBatchCase) -> (jolt_akita::AkitaCommitment, AkitaProverHint) {
     AkitaScheme::commit(black_box(&case.packed_polynomial), &case.packed_pcs_setup).unwrap()
 }
 
-fn packed_batch_open(
-    case: &AkitaBatchCase,
-    hint: AkitaProverHint,
-) -> <AkitaScheme as CommitmentScheme>::Proof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/packed-batch-bench");
+fn packed_batch_open(case: &AkitaBatchCase, hint: AkitaProverHint) -> Vec<u8> {
+    let mut transcript = bench_transcript(b"jolt-akita/packed-batch-bench");
     let physical = case
         .packing
         .reduce_claims(&case.packed_claims, &mut transcript)
@@ -520,7 +523,8 @@ fn packed_batch_open(
         Some(hint),
         &mut transcript,
     )
-    .expect("packed batch proof should succeed")
+    .expect("packed batch proof should succeed");
+    transcript.finish()
 }
 
 fn wrapper_commit(
@@ -543,12 +547,8 @@ fn wrapper_commit(
     }
 }
 
-fn wrapper_open(
-    case: &AkitaCase,
-    path: DataPath,
-    hint: AkitaProverHint,
-) -> jolt_akita::AkitaBatchProof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/bench");
+fn wrapper_open(case: &AkitaCase, path: DataPath, hint: AkitaProverHint) -> Vec<u8> {
+    let mut transcript = bench_transcript(b"jolt-akita/bench");
     match path {
         DataPath::DenseData => AkitaScheme::open(
             &case.dense_poly,
@@ -557,8 +557,7 @@ fn wrapper_open(
             &case.setup,
             Some(hint),
             &mut transcript,
-        )
-        .unwrap(),
+        ),
         DataPath::SparseDataSparsePath => AkitaScheme::open(
             &case.sparse_one_hot,
             &case.point,
@@ -566,8 +565,7 @@ fn wrapper_open(
             &case.setup,
             Some(hint),
             &mut transcript,
-        )
-        .unwrap(),
+        ),
         DataPath::SparseDataDensePath => AkitaScheme::open(
             &case.sparse_dense_poly,
             &case.point,
@@ -575,9 +573,10 @@ fn wrapper_open(
             &case.setup,
             Some(hint),
             &mut transcript,
-        )
-        .unwrap(),
+        ),
     }
+    .unwrap();
+    transcript.finish()
 }
 
 const NATIVE_BENCH_SESSION: &[u8] = b"jolt-akita/native-bench";
@@ -637,7 +636,7 @@ fn akita_prover_open_dense(
 ) -> Vec<u8> {
     case.akita_prover_setup
         .dense_scheme
-        .batched_prove(
+        .prove_standalone(
             &case.akita_prover_setup.dense_prover,
             akita_prover_claims::<AkitaConfig>(
                 case.akita_prover_setup.dense_scheme.schedules(),
@@ -662,7 +661,7 @@ fn akita_prover_open_one_hot(
     let backend_point = reverse_point(&case.point);
     case.akita_prover_setup
         .one_hot_scheme
-        .batched_prove(
+        .prove_standalone(
             &case.akita_prover_setup.one_hot_prover,
             akita_prover_claims::<AkitaOneHotConfig>(
                 case.akita_prover_setup.one_hot_scheme.schedules(),
@@ -692,8 +691,8 @@ fn dory_commit(case: &DoryCase, path: DataPath) -> (DoryCommitment, DoryHint) {
     }
 }
 
-fn dory_open(case: &DoryCase, path: DataPath, hint: DoryHint) -> jolt_dory::DoryProof {
-    let mut transcript = Blake2bTranscript::new(b"jolt-akita/dory-baseline-bench");
+fn dory_open(case: &DoryCase, path: DataPath, hint: DoryHint) -> Vec<u8> {
+    let mut transcript = bench_transcript(b"jolt-akita/dory-baseline-bench");
     match path {
         DataPath::DenseData => DoryScheme::open(
             &case.dense_poly,
@@ -702,8 +701,7 @@ fn dory_open(case: &DoryCase, path: DataPath, hint: DoryHint) -> jolt_dory::Dory
             &case.setup,
             Some(hint),
             &mut transcript,
-        )
-        .unwrap(),
+        ),
         DataPath::SparseDataSparsePath => DoryScheme::open(
             &case.sparse_one_hot,
             &case.point,
@@ -711,8 +709,7 @@ fn dory_open(case: &DoryCase, path: DataPath, hint: DoryHint) -> jolt_dory::Dory
             &case.setup,
             Some(hint),
             &mut transcript,
-        )
-        .unwrap(),
+        ),
         DataPath::SparseDataDensePath => DoryScheme::open(
             &case.sparse_dense_poly,
             &case.point,
@@ -720,9 +717,10 @@ fn dory_open(case: &DoryCase, path: DataPath, hint: DoryHint) -> jolt_dory::Dory
             &case.setup,
             Some(hint),
             &mut transcript,
-        )
-        .unwrap(),
+        ),
     }
+    .unwrap();
+    transcript.finish()
 }
 
 fn bench_jolt_akita_commit(c: &mut Criterion) {

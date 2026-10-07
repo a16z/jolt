@@ -1,8 +1,26 @@
 use jolt_field::{Field, Fr, Ring};
 use jolt_openings::{CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};
+use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+
+pub fn protocol() -> ProtocolId {
+    ProtocolId::new::<Blake2b512>("jolt-openings/tests")
+}
+
+pub fn prover(session: &[u8]) -> ProverTranscript<Blake2b512> {
+    ProverTranscript::new(&protocol(), session)
+}
+
+pub fn verifier<'a>(session: &[u8], narg: &'a [u8]) -> VerifierTranscript<'a, Blake2b512> {
+    VerifierTranscript::new(&protocol(), session, narg)
+}
+
+/// Sponge state after both sides finish, which must agree for an honest run.
+pub fn fingerprint<C: Channel>(channel: &mut C) -> [u8; 32] {
+    channel.challenge_bytes::<32>()
+}
 
 pub fn fr(value: u64) -> Fr {
     Fr::from_u64(value)

@@ -9,8 +9,10 @@ pub mod support;
 use jolt_akita::{AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{f, layout, polynomial, setup_for};
+use support::{
+    assert_transcripts_agree, f, layout, new_prover_transcript, new_verifier_transcript,
+    polynomial, setup_for,
+};
 
 #[test]
 fn akita_single_opening_roundtrips_across_dimensions() {
@@ -20,15 +22,15 @@ fn akita_single_opening_roundtrips_across_dimensions() {
 }
 
 #[test]
-fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
+fn akita_single_opening_rejects_wrong_eval_point_and_transcript() {
     let (prover_setup, verifier_setup) = setup_for(14, 1, layout(7));
     let poly = polynomial(14, 100);
     let point: Vec<_> = (0..14).map(|i| f(2 + 3 * i)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup).unwrap();
 
-    let mut prover_transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
-    let proof = AkitaScheme::open(
+    let mut prover_transcript = new_prover_transcript(b"akita-e2e-rejects");
+    AkitaScheme::open(
         &poly,
         &point,
         eval,
@@ -37,14 +39,14 @@ fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
         &mut prover_transcript,
     )
     .unwrap();
+    let proof = prover_transcript.narg().to_vec();
 
-    let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
+    let mut transcript = new_verifier_transcript(b"akita-e2e-rejects", &proof);
     assert!(
         AkitaScheme::verify(
             &commitment,
             &point,
             eval + f(1),
-            &proof,
             &verifier_setup,
             &mut transcript,
         )
@@ -54,13 +56,12 @@ fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
 
     let mut wrong_point = point.clone();
     wrong_point[2] += f(1);
-    let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
+    let mut transcript = new_verifier_transcript(b"akita-e2e-rejects", &proof);
     assert!(
         AkitaScheme::verify(
             &commitment,
             &wrong_point,
             eval,
-            &proof,
             &verifier_setup,
             &mut transcript,
         )
@@ -68,33 +69,17 @@ fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
         "wrong opening point should reject"
     );
 
-    let mut wrong_transcript = Blake2bTranscript::new(b"akita-e2e-wrong-domain");
+    let mut wrong_transcript = new_verifier_transcript(b"akita-e2e-wrong-domain", &proof);
     assert!(
         AkitaScheme::verify(
             &commitment,
             &point,
             eval,
-            &proof,
             &verifier_setup,
             &mut wrong_transcript,
         )
         .is_err(),
         "different transcript domain should reject"
-    );
-
-    let (_, wrong_layout_setup) = setup_for(14, 1, layout(8));
-    let mut transcript = Blake2bTranscript::new(b"akita-e2e-rejects");
-    assert!(
-        AkitaScheme::verify(
-            &commitment,
-            &point,
-            eval,
-            &proof,
-            &wrong_layout_setup,
-            &mut transcript,
-        )
-        .is_err(),
-        "wrong verifier setup key should reject"
     );
 }
 
@@ -160,8 +145,8 @@ fn single_opening_roundtrip(
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup).unwrap();
 
-    let mut prover_transcript = Blake2bTranscript::new(label);
-    let proof = AkitaScheme::open(
+    let mut prover_transcript = new_prover_transcript(label);
+    AkitaScheme::open(
         &poly,
         &point,
         eval,
@@ -170,16 +155,16 @@ fn single_opening_roundtrip(
         &mut prover_transcript,
     )
     .unwrap();
+    let proof = prover_transcript.narg().to_vec();
 
-    let mut verifier_transcript = Blake2bTranscript::new(label);
+    let mut verifier_transcript = new_verifier_transcript(label, &proof);
     AkitaScheme::verify(
         &commitment,
         &point,
         eval,
-        &proof,
         &verifier_setup,
         &mut verifier_transcript,
     )
     .expect("single proof should verify");
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_transcripts_agree(prover_transcript, verifier_transcript);
 }

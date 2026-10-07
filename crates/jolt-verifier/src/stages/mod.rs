@@ -15,7 +15,6 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 
 use crate::preprocessing::JoltVerifierPreprocessing;
-use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
@@ -42,8 +41,7 @@ pub mod zk;
 /// length, RAM size), mapping the layout error to `stage`. Built once during
 /// verification and shared by the stages (5-8) that derive their RA layouts from
 /// it, and reused by the BlindFold input derivation.
-pub fn build_formula_dimensions<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn build_formula_dimensions<PCS, VC>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     checked: &CheckedInputs,
     log_t: usize,
@@ -54,7 +52,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     formula_dimensions_from_parts(
-        proof.one_hot_config,
+        checked.one_hot_config,
         log_t,
         preprocessing.program.bytecode_len(),
         checked.ram_K,

@@ -2,11 +2,10 @@ use jolt_crypto::{Bn254G1, Commitment, JoltGroup};
 use jolt_field::{Fr, One, Zero};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 
-use crate::{
-    HyperKZGError, HyperKZGProof, HyperKZGProverSetup, HyperKZGSetupParams, HyperKZGVerifierSetup,
-};
+use crate::kzg::exchange_evaluations;
+use crate::{HyperKZGError, HyperKZGProverSetup, HyperKZGSetupParams, HyperKZGVerifierSetup};
 
 /// Clear binary HyperKZG with high-to-low multilinear coordinates.
 ///
@@ -45,14 +44,16 @@ impl HyperKZGScheme {
         })
     }
 
-    fn open_table(
+    /// Writes the opening: the binary fold commitments, the fold evaluations at
+    /// `[r, -r, r^2]`, then the KZG witnesses.
+    fn open_table<H: Sponge>(
         evaluations: &[Fr],
         point: &[Fr],
         evaluation: Fr,
         setup: &HyperKZGProverSetup,
         hint: Option<Bn254G1>,
-        transcript: &mut impl Transcript<Challenge = Fr>,
-    ) -> Result<HyperKZGProof, HyperKZGError> {
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), HyperKZGError> {
         let len = setup.verifier.check_arity(point.len())?;
         if evaluations.len() != len {
             return Err(HyperKZGError::PolynomialShape);
@@ -78,46 +79,46 @@ impl HyperKZGScheme {
         };
         setup
             .verifier
-            .append_statement(&commitment, point, evaluation, transcript);
-        let com = polynomials
+            .bind_statement(&commitment, point, evaluation, transcript);
+        let mut com = polynomials
             .iter()
             .skip(1)
             .map(|polynomial| setup.commit_coefficients(polynomial))
             .collect::<Result<Vec<_>, _>>()?;
-        for commitment in &com {
-            transcript.append(commitment);
-        }
-        let r = transcript.challenge();
+        let r = Self::exchange_fold_commitments(&mut com, transcript)?;
+        setup.open_batch(&polynomials, [r, -r, r * r], transcript)
+    }
+
+    /// Exchanges the binary fold commitments and draws the nonzero fold point.
+    fn exchange_fold_commitments<C: Channel>(
+        com: &mut [Bn254G1],
+        channel: &mut C,
+    ) -> Result<Fr, HyperKZGError> {
+        channel.exchange_all(com)?;
+        let r: Fr = channel.challenge();
         if r.is_zero() {
             return Err(HyperKZGError::DegenerateChallenge);
         }
-        let (w, v) = setup.open_batch(&polynomials, [r, -r, r * r], transcript)?;
-        Ok(HyperKZGProof { com, v, w })
+        Ok(r)
     }
 
-    /// Verifies shape, binary fold identities, and the batched KZG equation.
-    pub fn verify_opening(
+    /// Reads an opening of `commitment` at `point` and checks the binary fold
+    /// identities and the batched KZG equation. The arity is checked against
+    /// the setup before anything is bound or read.
+    pub fn verify_opening<H: Sponge>(
         commitment: &Bn254G1,
         point: &[Fr],
         evaluation: Fr,
-        proof: &HyperKZGProof,
         setup: &HyperKZGVerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), HyperKZGError> {
         let _ = setup.check_arity(point.len())?;
-        if proof.com.len() != point.len() - 1 || proof.v.iter().any(|row| row.len() != point.len())
-        {
-            return Err(HyperKZGError::ProofShape);
-        }
-        setup.append_statement(commitment, point, evaluation, transcript);
-        for commitment in &proof.com {
-            transcript.append(commitment);
-        }
-        let r = transcript.challenge();
-        if r.is_zero() {
-            return Err(HyperKZGError::DegenerateChallenge);
-        }
-        let [positive, negative, squared] = &proof.v;
+        setup.bind_statement(commitment, point, evaluation, transcript);
+        let mut com = vec![Bn254G1::identity(); point.len() - 1];
+        let r = Self::exchange_fold_commitments(&mut com, transcript)?;
+        let mut evaluations: [Vec<Fr>; 3] = std::array::from_fn(|_| vec![Fr::zero(); point.len()]);
+        let powers = exchange_evaluations(&mut evaluations, transcript)?;
+        let [positive, negative, squared] = &evaluations;
         let next = squared
             .iter()
             .skip(1)
@@ -137,8 +138,14 @@ impl HyperKZGScheme {
         }
         let mut commitments = Vec::with_capacity(point.len());
         commitments.push(*commitment);
-        commitments.extend_from_slice(&proof.com);
-        setup.verify_batch(&commitments, [r, -r, r * r], &proof.v, &proof.w, transcript)
+        commitments.extend_from_slice(&com);
+        setup.verify_batch(
+            &commitments,
+            [r, -r, r * r],
+            &evaluations,
+            &powers,
+            transcript,
+        )
     }
 }
 
@@ -148,7 +155,6 @@ impl Commitment for HyperKZGScheme {
 
 impl CommitmentScheme for HyperKZGScheme {
     type Field = Fr;
-    type Proof = HyperKZGProof;
     type ProverSetup = HyperKZGProverSetup;
     type VerifierSetup = HyperKZGVerifierSetup;
     /// The commitment returned by `commit`. `open` binds it into the statement
@@ -189,14 +195,29 @@ impl CommitmentScheme for HyperKZGScheme {
             .map_err(|error| OpeningsError::CommitFailed(error.to_string()))
     }
 
-    fn open<P: MultilinearPoly<Fr> + ?Sized>(
+    fn send_commitment<H: Sponge>(commitment: &Bn254G1, transcript: &mut ProverTranscript<H>) {
+        transcript.send(commitment);
+    }
+
+    fn receive_commitment<H: Sponge>(
+        _setup: &Self::VerifierSetup,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Bn254G1, OpeningsError> {
+        Ok(transcript.receive()?)
+    }
+
+    fn absorb_commitment<C: Channel>(commitment: &Bn254G1, channel: &mut C) {
+        channel.public(commitment);
+    }
+
+    fn open<P: MultilinearPoly<Fr> + ?Sized, H: Sponge>(
         poly: &P,
         point: &[Fr],
         evaluation: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Fr>,
-    ) -> Result<Self::Proof, OpeningsError> {
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), OpeningsError> {
         if poly.num_vars() != point.len() {
             return Err(OpeningsError::ProveFailed(
                 HyperKZGError::PolynomialShape.to_string(),
@@ -210,15 +231,14 @@ impl CommitmentScheme for HyperKZGScheme {
             .map_err(|error| OpeningsError::ProveFailed(error.to_string()))
     }
 
-    fn verify(
+    fn verify<H: Sponge>(
         commitment: &Self::Output,
         point: &[Fr],
         evaluation: Fr,
-        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), OpeningsError> {
-        Self::verify_opening(commitment, point, evaluation, proof, setup, transcript)
+        Self::verify_opening(commitment, point, evaluation, setup, transcript)
             .map_err(|_| OpeningsError::VerificationFailed)
     }
 }

@@ -9,6 +9,7 @@ description = "Dory commitment scheme implementation for the Jolt zkVM"
 workspace = true
 
 [dependencies]
+spongefish = { workspace = true, features = ["sha3"] }
 jolt-crypto = { workspace = true }
 jolt-field = { workspace = true }
 jolt-openings = { workspace = true }
@@ -32,7 +33,7 @@ profiling = ["jolt-akita/profiling"]
 jolt-akita.workspace = true
 akita-config.workspace = true
 akita-params.workspace = true
-akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
+akita-pcs = { workspace = true, features = ["parallel"] }
 akita-types.workspace = true
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
 criterion = { workspace = true }

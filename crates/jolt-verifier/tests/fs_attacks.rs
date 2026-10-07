@@ -1,4 +1,15 @@
-#![cfg(all(feature = "fs-audit", feature = "prover-fixtures"))]
+//! Live Fiat-Shamir attacks: each test shows one transcript binding is
+//! load-bearing.
+//!
+//! An attack is valid only when all four steps hold:
+//! 1. the honest fixture verifies and its squeeze stream is recorded;
+//! 2. a coordinated mutation of the argument string (or statement) makes an
+//!    individual protocol claim false;
+//! 3. verification with the recorded squeezes replayed accepts, so the
+//!    mutation survives every algebraic check once the binding is removed;
+//! 4. live verification changes the squeeze stream and rejects.
+
+#![cfg(all(feature = "logging", feature = "prover-fixtures"))]
 #![expect(
     dead_code,
     reason = "the shared support module is compiled into every integration-test target but only partially used per feature configuration"
@@ -6,441 +17,319 @@
 
 mod support;
 
-#[cfg(not(feature = "akita"))]
-use support::fs_mutations::cancel_dory_final_opening_commitments;
-#[cfg(not(feature = "zk"))]
-use support::fs_mutations::equivocate_stage1_clear;
-use support::fs_transcript::{record_challenges, replay_challenges, AuditTranscript};
+#[path = "support/fs_mutations.rs"]
+mod fs_mutations;
+#[path = "support/fs_transcript.rs"]
+mod fs_transcript;
 
-#[cfg(not(feature = "akita"))]
-use jolt_crypto::{Bn254G1, Pedersen};
-#[cfg(not(feature = "akita"))]
-use jolt_dory::DoryScheme;
-#[cfg(not(feature = "akita"))]
-use jolt_field::Fr;
-#[cfg(all(not(feature = "akita"), not(feature = "zk")))]
-use jolt_field::Ring;
-#[cfg(not(feature = "akita"))]
-use jolt_transcript::LegacyBlake2bTranscript;
+use fs_transcript::{record, replay, AuditSponge, ChallengeTape};
+use jolt_verifier::VerifierError;
 
-#[cfg(all(not(feature = "akita"), not(feature = "zk")))]
-#[test]
-fn dory_clear_preprocessing_digest_requires_fiat_shamir_binding() {
-    use support::verifier_fixtures::standard_muldiv_case;
+/// Step 1: the honest proof verifies on the audit sponge.
+fn record_honest(verify: impl FnOnce() -> Result<(), VerifierError>) -> ChallengeTape {
+    let (honest, tape) = record(verify);
+    assert!(honest.is_ok(), "honest fixture rejected: {honest:?}");
+    tape
+}
 
-    let case = standard_muldiv_case();
-    let (honest, tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &case.preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        honest.is_ok(),
-        "honest Dory clear fixture rejected: {honest:?}"
-    );
-
-    let mut preprocessing = case.preprocessing.clone();
-    preprocessing.preprocessing_digest[0] ^= 1;
-    let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
+/// Steps 3 and 4 for an attacked verification.
+fn assert_binding_load_bearing(
+    tape: &ChallengeTape,
+    attacked: impl Fn() -> Result<(), VerifierError>,
+    attack: &str,
+) {
+    let frozen = replay(tape, &attacked);
     assert!(
         frozen.output.is_ok(),
-        "frozen Dory clear verifier rejected the replay attack: {:?}",
+        "frozen-challenge verifier rejected {attack}: {:?}",
         frozen.output
     );
-    assert_eq!(frozen.consumed, frozen.expected);
-
-    let (production, mutated_tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        production.is_err(),
-        "production Dory clear verifier accepted a proof under different preprocessing"
+    assert_eq!(
+        frozen.consumed, frozen.recorded,
+        "{attack} changed the squeeze schedule under frozen challenges"
     );
+
+    let (live, live_tape) = record(&attacked);
+    assert!(live.is_err(), "production verifier accepted {attack}");
     assert!(
-        tape.first_value_divergence(&mutated_tape).is_some(),
-        "preprocessing mutation did not alter a production challenge"
+        tape.first_divergence(&live_tape).is_some(),
+        "{attack} did not alter a production challenge"
     );
 }
 
-#[cfg(all(not(feature = "akita"), not(feature = "zk")))]
-#[test]
-fn dory_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
-    use support::verifier_fixtures::standard_muldiv_case;
+mod audit_sponge {
+    use jolt_transcript::DuplexSpongeInterface;
+    use jolt_transcript::{Blake2b512, Fork, FORK_SEED_LEN};
 
-    let case = standard_muldiv_case();
-    let (honest, tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &case.preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        honest.is_ok(),
-        "honest Dory clear fixture rejected: {honest:?}"
-    );
+    use super::fs_transcript::{record, replay, AuditSponge};
 
-    let mut proof = case.proof.clone();
-    equivocate_stage1_clear(&mut proof, &tape, Fr::from_u64(1));
-    let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &case.preprocessing,
-            &case.public_io,
-            &proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Dory clear verifier rejected stage-1 equivocation: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
+    fn squeeze<const N: usize>(sponge: &mut impl DuplexSpongeInterface<U = u8>) -> [u8; N] {
+        let mut out = [0u8; N];
+        let _ = sponge.squeeze(&mut out);
+        out
+    }
 
-    let (production, mutated_tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &case.preprocessing,
-            &case.public_io,
-            &proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        production.is_err(),
-        "production Dory clear verifier accepted stage-1 equivocation"
-    );
-    assert!(
-        tape.first_value_divergence(&mutated_tape).is_some(),
-        "stage-1 equivocation did not alter a production challenge"
-    );
+    #[test]
+    fn records_the_blake2b_stream() {
+        let mut reference = Blake2b512::default();
+        let _ = reference.absorb(b"statement");
+        let expected: [u8; 48] = squeeze(&mut reference);
+
+        let (squeezed, tape) = record(|| {
+            let mut sponge = AuditSponge::default();
+            let _ = sponge.absorb(b"statement");
+            let head: [u8; 16] = squeeze(&mut sponge);
+            let tail: [u8; 32] = squeeze(&mut sponge);
+            [head.as_slice(), tail.as_slice()].concat()
+        });
+        assert_eq!(squeezed, expected);
+        assert_eq!(tape.bytes, expected);
+    }
+
+    /// Forks are untaped: their squeezes match plain Blake2b forks in and out
+    /// of a session, on any thread, and leave the session's tape untouched.
+    #[test]
+    #[expect(clippy::expect_used, reason = "a panicking fork thread fails the test")]
+    fn forks_pass_through_untaped() {
+        let seed = [7u8; FORK_SEED_LEN];
+        let expected: [u8; 32] = Fork::<Blake2b512>::new(&seed, 3).squeeze();
+        let (squeezed, tape) = record(|| {
+            let on_session_thread: [u8; 32] = Fork::<AuditSponge>::new(&seed, 3).squeeze();
+            let on_worker_thread: [u8; 32] =
+                std::thread::spawn(move || Fork::<AuditSponge>::new(&seed, 3).squeeze())
+                    .join()
+                    .expect("fork thread");
+            assert_eq!(on_worker_thread, on_session_thread);
+            on_session_thread
+        });
+        assert_eq!(squeezed, expected);
+        assert!(tape.bytes.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "outside a record or replay session")]
+    fn transcript_sponge_needs_a_session() {
+        let _ = AuditSponge::default().absorb(b"statement");
+    }
+
+    #[test]
+    #[should_panic(expected = "challenge replay exhausted")]
+    fn replay_past_the_tape_panics() {
+        let (_, tape) = record(|| squeeze::<16>(&mut AuditSponge::default()));
+        let _ = replay(&tape, || squeeze::<17>(&mut AuditSponge::default()));
+    }
 }
 
-#[cfg(all(not(feature = "akita"), not(feature = "zk")))]
-#[test]
-fn dory_clear_final_opening_batch_requires_commitment_binding() {
-    use support::verifier_fixtures::standard_muldiv_case;
+#[cfg(not(feature = "akita"))]
+mod dory {
+    use common::jolt_device::JoltDevice;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::{DoryCommitment, DoryScheme};
+    use jolt_field::Fr;
+    use jolt_verifier::{
+        verify, verify_stages, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError,
+    };
 
-    let case = standard_muldiv_case();
-    let (honest, tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &case.preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        honest.is_ok(),
-        "honest Dory clear fixture rejected: {honest:?}"
-    );
+    use super::fs_mutations::{cancel_dory_final_opening_commitments, locate_events, LocatedEvent};
+    use super::{assert_binding_load_bearing, record_honest, AuditSponge};
 
-    let mut proof = case.proof.clone();
-    cancel_dory_final_opening_commitments(&mut proof, &tape);
-    let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &case.preprocessing,
-            &case.public_io,
-            &proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Dory clear verifier rejected opening-batch cancellation: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
+    type Preprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
-    let (production, mutated_tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(
-            &case.preprocessing,
-            &case.public_io,
-            &proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        production.is_err(),
-        "production Dory clear verifier accepted false individual openings"
-    );
-    assert!(
-        tape.first_value_divergence(&mutated_tape).is_some(),
-        "commitment cancellation did not alter a production challenge"
-    );
-}
+    pub(super) struct Statement<'a> {
+        pub preprocessing: &'a Preprocessing,
+        pub public_io: &'a JoltDevice,
+        pub trusted_advice_commitment: Option<&'a DoryCommitment>,
+    }
 
-#[cfg(all(not(feature = "akita"), feature = "zk"))]
-#[test]
-fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
-    use support::verifier_fixtures::zk_muldiv_case;
+    impl Statement<'_> {
+        pub(super) fn verify(&self, proof: &JoltProof) -> Result<(), VerifierError> {
+            verify::<Fr, DoryScheme, Pedersen<Bn254G1>, AuditSponge>(
+                self.preprocessing,
+                self.public_io,
+                proof,
+                self.trusted_advice_commitment,
+            )
+        }
 
-    let case = zk_muldiv_case();
-    let (honest, tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(&case.preprocessing, &case.public_io, &case.proof, None)
-    });
-    assert!(
-        honest.is_ok(),
-        "honest Dory ZK fixture rejected: {honest:?}"
-    );
+        /// The honest proof's events through stage 8 (BlindFold excluded).
+        pub(super) fn events(&self, proof: &JoltProof) -> Vec<LocatedEvent> {
+            locate_events(&proof.narg, |transcript| {
+                verify_stages::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+                    self.preprocessing,
+                    self.public_io,
+                    self.trusted_advice_commitment,
+                    transcript,
+                )
+                .map(drop)
+            })
+        }
+    }
 
-    let mut preprocessing = case.preprocessing.clone();
-    preprocessing.preprocessing_digest[0] ^= 1;
-    let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(&preprocessing, &case.public_io, &case.proof, None)
-    });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Dory ZK verifier rejected the replay attack: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
+    pub(super) fn preprocessing_digest_attack(statement: &Statement<'_>, proof: &JoltProof) {
+        let tape = record_honest(|| statement.verify(proof));
+        let mut preprocessing = statement.preprocessing.clone();
+        preprocessing.preprocessing_digest[0] ^= 1;
+        let attacked = Statement {
+            preprocessing: &preprocessing,
+            ..*statement
+        };
+        assert_binding_load_bearing(
+            &tape,
+            || attacked.verify(proof),
+            "a proof under different preprocessing",
+        );
+    }
 
-    let (production, mutated_tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(&preprocessing, &case.public_io, &case.proof, None)
-    });
-    assert!(
-        production.is_err(),
-        "production Dory ZK verifier accepted a proof under different preprocessing"
-    );
-    assert!(
-        tape.first_value_divergence(&mutated_tape).is_some(),
-        "preprocessing mutation did not alter a production challenge"
-    );
-}
+    pub(super) fn final_opening_commitment_attack(statement: &Statement<'_>, proof: &JoltProof) {
+        let tape = record_honest(|| statement.verify(proof));
+        let events = statement.events(proof);
+        let mut attacked = proof.clone();
+        cancel_dory_final_opening_commitments::<DoryCommitment>(&mut attacked.narg, &events, &tape);
+        assert_binding_load_bearing(
+            &tape,
+            || statement.verify(&attacked),
+            "commitments cancelled in the final-opening batch",
+        );
+    }
 
-#[cfg(all(not(feature = "akita"), feature = "zk"))]
-#[test]
-fn dory_zk_final_opening_batch_requires_commitment_binding() {
-    use support::verifier_fixtures::zk_muldiv_case;
+    #[cfg(not(feature = "zk"))]
+    mod clear {
+        use jolt_field::{Fr, Ring};
 
-    let case = zk_muldiv_case();
-    let (honest, tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(&case.preprocessing, &case.public_io, &case.proof, None)
-    });
-    assert!(
-        honest.is_ok(),
-        "honest Dory ZK fixture rejected: {honest:?}"
-    );
+        use super::super::fs_mutations::equivocate_stage1_clear;
+        use super::super::support::verifier_fixtures::{standard_muldiv_case, VerifierFixtureCase};
+        use super::super::{assert_binding_load_bearing, record_honest};
+        use super::{final_opening_commitment_attack, preprocessing_digest_attack, Statement};
 
-    let mut proof = case.proof.clone();
-    cancel_dory_final_opening_commitments(&mut proof, &tape);
-    let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(&case.preprocessing, &case.public_io, &proof, None)
-    });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Dory ZK verifier rejected opening-batch cancellation: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
+        fn statement(case: &VerifierFixtureCase) -> Statement<'_> {
+            Statement {
+                preprocessing: &case.preprocessing,
+                public_io: &case.public_io,
+                trusted_advice_commitment: case.trusted_advice_commitment.as_ref(),
+            }
+        }
 
-    let (production, mutated_tape) = record_challenges::<Fr, _>(|| {
-        jolt_verifier::verify::<
-            Fr,
-            DoryScheme,
-            Pedersen<Bn254G1>,
-            AuditTranscript<LegacyBlake2bTranscript<Fr>>,
-        >(&case.preprocessing, &case.public_io, &proof, None)
-    });
-    assert!(
-        production.is_err(),
-        "production Dory ZK verifier accepted false individual openings"
-    );
-    assert!(
-        tape.first_value_divergence(&mutated_tape).is_some(),
-        "commitment cancellation did not alter a production challenge"
-    );
+        #[test]
+        fn dory_clear_preprocessing_digest_requires_fiat_shamir_binding() {
+            let case = standard_muldiv_case();
+            preprocessing_digest_attack(&statement(&case), &case.proof);
+        }
+
+        #[test]
+        fn dory_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
+            let case = standard_muldiv_case();
+            let statement = statement(&case);
+            let tape = record_honest(|| statement.verify(&case.proof));
+            let events = statement.events(&case.proof);
+            let mut attacked = case.proof.clone();
+            equivocate_stage1_clear(&mut attacked.narg, &events, &tape, Fr::from_u64(1));
+            assert_binding_load_bearing(
+                &tape,
+                || statement.verify(&attacked),
+                "a stage-1 sumcheck equivocation",
+            );
+        }
+
+        #[test]
+        fn dory_clear_final_opening_batch_requires_commitment_binding() {
+            let case = standard_muldiv_case();
+            final_opening_commitment_attack(&statement(&case), &case.proof);
+        }
+    }
+
+    #[cfg(feature = "zk")]
+    mod zk {
+        use super::super::support::verifier_fixtures::{zk_muldiv_case, ZkVerifierFixtureCase};
+        use super::{final_opening_commitment_attack, preprocessing_digest_attack, Statement};
+
+        fn statement(case: &ZkVerifierFixtureCase) -> Statement<'_> {
+            Statement {
+                preprocessing: &case.preprocessing,
+                public_io: &case.public_io,
+                trusted_advice_commitment: case.trusted_advice_commitment.as_ref(),
+            }
+        }
+
+        #[test]
+        fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
+            let case = zk_muldiv_case();
+            preprocessing_digest_attack(&statement(&case), &case.proof);
+        }
+
+        #[test]
+        fn dory_zk_final_opening_batch_requires_commitment_binding() {
+            let case = zk_muldiv_case();
+            final_opening_commitment_attack(&statement(&case), &case.proof);
+        }
+    }
 }
 
 #[cfg(feature = "akita")]
-#[test]
-fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
+mod akita {
     use jolt_akita::{AkitaField, AkitaScheme};
-    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
-    use support::akita_fixtures::akita_muldiv_case;
-
-    let case = akita_muldiv_case();
-    let (honest, tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
-            &case.preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(honest.is_ok(), "honest Akita fixture rejected: {honest:?}");
-
-    let mut preprocessing = case.preprocessing.clone();
-    preprocessing.preprocessing_digest[0] ^= 1;
-    let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
-            &preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Akita verifier rejected the replay attack: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
-
-    let (production, mutated_tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
-            &preprocessing,
-            &case.public_io,
-            &case.proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        production.is_err(),
-        "production Akita verifier accepted a proof under different preprocessing"
-    );
-    assert!(
-        tape.first_value_divergence(&mutated_tape).is_some(),
-        "preprocessing mutation did not alter a production challenge"
-    );
-}
-
-#[cfg(feature = "akita")]
-#[test]
-fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
-    use jolt_akita::{AkitaField, AkitaScheme};
+    use jolt_crypto::Commitment;
     use jolt_field::Ring;
-    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
-    use support::akita_fixtures::akita_muldiv_case;
+    use jolt_prover::akita::preprocessing::AkitaVc;
+    use jolt_verifier::{
+        seed_transcript, stages::stage1, verify, JoltProof, JoltSponge, JoltVerifierPreprocessing,
+        VerifierError,
+    };
 
-    let case = akita_muldiv_case();
-    let (honest, tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
-            &case.preprocessing,
+    use super::fs_mutations::{equivocate_stage1_clear, locate_events};
+    use super::support::akita_fixtures::{akita_muldiv_case, AkitaFixtureCase};
+    use super::{assert_binding_load_bearing, record_honest, AuditSponge};
+
+    fn verify_with(
+        case: &AkitaFixtureCase,
+        preprocessing: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
+        proof: &JoltProof,
+    ) -> Result<(), VerifierError> {
+        verify::<AkitaField, AkitaScheme, AkitaVc, AuditSponge>(
+            preprocessing,
             &case.public_io,
-            &case.proof,
+            proof,
             case.trusted_advice_commitment.as_ref(),
         )
-    });
-    assert!(honest.is_ok(), "honest Akita fixture rejected: {honest:?}");
+    }
 
-    let mut proof = case.proof.clone();
-    equivocate_stage1_clear(&mut proof, &tape, AkitaField::from_u64(1));
-    let frozen = replay_challenges(&tape, || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
-            &case.preprocessing,
-            &case.public_io,
-            &proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        frozen.output.is_ok(),
-        "frozen Akita verifier rejected stage-1 equivocation: {:?}",
-        frozen.output
-    );
-    assert_eq!(frozen.consumed, frozen.expected);
+    #[test]
+    fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
+        let case = akita_muldiv_case();
+        let tape = record_honest(|| verify_with(case, &case.preprocessing, &case.proof));
+        let mut preprocessing = case.preprocessing.clone();
+        preprocessing.preprocessing_digest[0] ^= 1;
+        assert_binding_load_bearing(
+            &tape,
+            || verify_with(case, &preprocessing, &case.proof),
+            "a proof under different preprocessing",
+        );
+    }
 
-    let (production, mutated_tape) = record_challenges::<AkitaField, _>(|| {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<AkitaTranscript>>(
-            &case.preprocessing,
-            &case.public_io,
-            &proof,
-            case.trusted_advice_commitment.as_ref(),
-        )
-    });
-    assert!(
-        production.is_err(),
-        "production Akita verifier accepted stage-1 equivocation"
-    );
-    assert!(
-        tape.first_value_divergence(&mutated_tape).is_some(),
-        "stage-1 equivocation did not alter a production challenge"
-    );
+    #[test]
+    fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
+        let case = akita_muldiv_case();
+        let tape = record_honest(|| verify_with(case, &case.preprocessing, &case.proof));
+        // Stage 1 is the attack's last transcript dependency, so the event log
+        // stops there.
+        let events = locate_events(&case.proof.narg, |transcript| {
+            let seeded = seed_transcript::<AkitaScheme, AkitaVc, JoltSponge>(
+                &case.preprocessing,
+                &case.public_io,
+                case.trusted_advice_commitment.as_ref(),
+                transcript,
+            )?;
+            stage1::verify::<AkitaField, <AkitaVc as Commitment>::Output, JoltSponge>(
+                &seeded.checked,
+                transcript,
+            )
+            .map(drop)
+        });
+        let mut attacked = case.proof.clone();
+        equivocate_stage1_clear(&mut attacked.narg, &events, &tape, AkitaField::from_u64(1));
+        assert_binding_load_bearing(
+            &tape,
+            || verify_with(case, &case.preprocessing, &attacked),
+            "a stage-1 sumcheck equivocation",
+        );
+    }
 }

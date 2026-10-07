@@ -14,11 +14,7 @@ mod support;
     feature = "akita",
     not(feature = "field-inline")
 ))]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "integration tests should fail loudly"
-)]
+#[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod akita_tests {
     use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
     use common::jolt_device::JoltDevice;
@@ -26,21 +22,57 @@ mod akita_tests {
         AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
     };
     use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltOneHotConfig, TracePolynomialOrder};
-    use jolt_field::Ring;
     use jolt_program::execution::OwnedTrace;
-    use jolt_prover::akita::preprocessing::{
-        self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
-    };
+    use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
     use jolt_prover::akita::witness::commit_advice;
     use jolt_prover::akita::{self, JoltAkitaBackend};
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
-    use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-    use jolt_verifier::VerifierError;
+    use jolt_transcript::VerifierTranscript;
+    use jolt_verifier::proof::JoltProof;
+    use jolt_verifier::{
+        jolt_protocol_id, seed_transcript, JoltSponge, VerifierError, JOLT_SESSION,
+    };
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
     use crate::support::{self, GuestCase, PreparedGuest};
 
-    type Proof = JoltProof<AkitaScheme, AkitaVc>;
+    type Proof = JoltProof;
+
+    /// `proof` with one bit flipped in each sampled region of its argument
+    /// string: the header, the stage spine, and the trailing Akita opening.
+    fn bit_flips(proof: &Proof) -> impl Iterator<Item = Proof> + '_ {
+        let len = proof.narg.len();
+        [0, len / 2, len - 1].into_iter().map(move |position| {
+            let mut tampered = proof.clone();
+            tampered.narg[position] ^= 1;
+            tampered
+        })
+    }
+
+    /// Whether the proof sends an untrusted-advice commitment, as the
+    /// verifier's own stage-0 read sees it.
+    fn sends_untrusted_advice_commitment(
+        preprocessing: &AkitaProverPreprocessing,
+        public_io: &JoltDevice,
+        proof: &Proof,
+        trusted_advice_commitment: Option<&AkitaCommitment>,
+    ) -> bool {
+        let mut transcript = VerifierTranscript::<JoltSponge>::new(
+            &jolt_protocol_id::<JoltSponge>(),
+            JOLT_SESSION,
+            &proof.narg,
+        );
+        seed_transcript::<AkitaScheme, AkitaVc, JoltSponge>(
+            &preprocessing.verifier,
+            public_io,
+            trusted_advice_commitment,
+            &mut transcript,
+        )
+        .expect("proof commitments")
+        .commitments
+        .untrusted_advice
+        .is_some()
+    }
 
     struct ProvedGuest {
         preprocessing: AkitaProverPreprocessing,
@@ -116,7 +148,7 @@ mod akita_tests {
             witness_config(&config, untrusted_advice, has_trusted_advice),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
             &JoltAkitaBackend::optimized(),
             &preprocessing,
             &config,
@@ -134,7 +166,7 @@ mod akita_tests {
     }
 
     fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
             &proved.preprocessing.verifier,
             &proved.public_io,
             &proved.proof,
@@ -169,30 +201,7 @@ mod akita_tests {
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("Akita proof must verify");
 
-        let tamper = |mutate: &dyn Fn(&mut ClearProofClaims<AkitaField>)| {
-            let mut proof = proved.proof.clone();
-            let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-                panic!("Akita proofs carry clear claims");
-            };
-            mutate(claims);
-            proof
-        };
-        let one = AkitaField::from_u64(1);
-        for proof in [
-            tamper(&|claims| claims.stage6b.bytecode_read_raf.fused_inc += one),
-            tamper(&|claims| {
-                claims
-                    .stage7
-                    .hamming_weight_claim_reduction
-                    .balanced_inc_digits[0] += one;
-            }),
-            tamper(&|claims| {
-                claims
-                    .stage7
-                    .hamming_weight_claim_reduction
-                    .balanced_inc_carry += one;
-            }),
-        ] {
+        for proof in bit_flips(&proved.proof) {
             let tampered = ProvedGuest {
                 preprocessing: proved.preprocessing.clone(),
                 public_io: proved.public_io.clone(),
@@ -243,7 +252,7 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
             &JoltAkitaBackend::optimized(),
             &preprocessing,
             &config,
@@ -286,7 +295,7 @@ mod akita_tests {
                     continue;
                 }
                 config.akita_chunk_profile = requested;
-                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
                     &JoltAkitaBackend::optimized(),
                     &preprocessing,
                     &config,
@@ -318,7 +327,12 @@ mod akita_tests {
             let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
             let config = derive_config(&run);
             let proved = prove_guest(run, config, true, &trusted);
-            assert!(proved.proof.untrusted_advice_commitment.is_some());
+            assert!(sends_untrusted_advice_commitment(
+                &proved.preprocessing,
+                &proved.public_io,
+                &proved.proof,
+                proved.trusted_advice_commitment.as_ref(),
+            ));
             verify(&proved).expect("advice proof must verify");
         }
     }
@@ -396,7 +410,7 @@ mod akita_tests {
                 witness_config(&config, true, true),
                 JoltVmWitnessInputs::new(&run.program, &program, run.trace),
             );
-            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
                 &JoltAkitaBackend::optimized(),
                 &preprocessing,
                 &config,
@@ -405,7 +419,7 @@ mod akita_tests {
                 &public_io,
             )
             .expect("reuse the original advice commitment and opening hint");
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,
@@ -444,7 +458,7 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
             &JoltAkitaBackend::optimized(),
             &preprocessing,
             &config,
@@ -454,7 +468,7 @@ mod akita_tests {
         )
         .expect("committed Akita proof");
         let verify = |proof: &Proof| {
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
                 &preprocessing.verifier,
                 &public_io,
                 proof,
@@ -462,18 +476,9 @@ mod akita_tests {
             )
         };
         verify(&proof).expect("committed Akita proof must verify");
-
-        let mut tampered = proof;
-        let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
-            panic!("Akita proofs carry clear claims");
-        };
-        claims
-            .stage7
-            .bytecode_address_phase
-            .as_mut()
-            .expect("committed proofs carry the bytecode address phase")
-            .chunks[0] += AkitaField::from_u64(1);
-        assert!(verify(&tampered).is_err());
+        for tampered in bit_flips(&proof) {
+            assert!(verify(&tampered).is_err());
+        }
     }
 
     #[test]
@@ -513,7 +518,7 @@ mod akita_tests {
             witness_config(&config, true, true),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
             &JoltAkitaBackend::optimized(),
             &preprocessing,
             &config,
@@ -523,8 +528,13 @@ mod akita_tests {
         )
         .expect("committed advice Akita proof");
 
-        assert!(proof.untrusted_advice_commitment.is_some());
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        assert!(sends_untrusted_advice_commitment(
+            &preprocessing,
+            &public_io,
+            &proof,
+            Some(&trusted_object.commitment),
+        ));
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
             &preprocessing.verifier,
             &public_io,
             &proof,

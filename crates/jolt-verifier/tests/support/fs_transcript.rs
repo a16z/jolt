@@ -1,309 +1,259 @@
+//! A challenge-freezing sponge for Fiat-Shamir attack tests.
+//!
+//! [`AuditSponge`] runs the production [`Blake2b512`] duplex and shares its
+//! [`Sponge::ID`], so it verifies honest Blake2b proofs unchanged. Inside a
+//! [`record`] session it also writes every squeezed byte to a tape; inside a
+//! [`replay`] session every squeeze returns the recorded bytes instead, so
+//! the verifier's challenges no longer depend on anything it absorbs. A
+//! mutation the frozen verifier accepts is therefore stopped only by
+//! Fiat-Shamir binding.
+//!
+//! The tape is one byte stream indexed by squeeze position, not a list of
+//! per-call records. Exact challenges rejection-sample a data-dependent number
+//! of bytes, so only the byte stream is invariant under replay.
+//!
+//! Seeded forks ([`jolt_transcript::Fork`]) are not taped. A fork's output is
+//! a function of its seed, squeezed from the taped transcript, and its
+//! counter, a proof message, so freezing the transcript already freezes every
+//! fork. A sponge is a fork when its first absorb is the fork domain tag; it
+//! then runs plain Blake2b on any thread, inside a session or not (Akita
+//! searches fold responses on worker threads).
+
 #![expect(
     clippy::expect_used,
     clippy::panic,
-    reason = "the audit test double must fail loudly on a malformed replay tape"
+    reason = "the audit test double must fail loudly outside a session or on a malformed tape"
 )]
 
-use std::{any::Any, cell::RefCell, collections::BTreeMap, sync::Arc};
+use std::{
+    cell::RefCell,
+    sync::{Arc, Mutex},
+};
 
-use jolt_field::{Field, Ring};
-use jolt_transcript::Transcript;
-use jolt_verifier::fs_audit::{self, FsScope};
+use jolt_field::{CanonicalEncoding, Field};
+use jolt_transcript::DuplexSpongeInterface;
+use jolt_transcript::{Blake2b512, Channel, ProtocolId, Sponge, VerifierTranscript};
 
-/// The transcript API used to derive a challenge.
-///
-/// Multi-value APIs are recorded at draw granularity, mirroring the
-/// production trait defaults: `challenge_vector(len)` is `len` independent
-/// squeezes (one [`ChallengeKind::VectorElement`] record each), and
-/// `challenge_scalar_powers(len)` squeezes only its base scalar (one
-/// [`ChallengeKind::PowersBase`] record) with the powers derived locally.
-/// A verifier refactor that drops or short-consumes an element therefore
-/// registers as a per-element tape divergence instead of hiding inside one
-/// atomic `Vec` record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChallengeKind {
-    Challenge,
-    Scalar,
-    VectorElement { len: usize, index: usize },
-    PowersBase { len: usize },
+enum Mode {
+    Record,
+    Replay,
 }
 
-/// A challenge's verifier scope and ordinal within that scope.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ChallengeId {
-    pub scope: FsScope,
-    pub index: usize,
-    pub kind: ChallengeKind,
-}
-
-/// One typed challenge call and all values it returned.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChallengeRecord<F> {
-    pub id: ChallengeId,
-    pub values: Vec<F>,
-}
-
-/// Challenges produced while verifying one fixture.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChallengeTape<F> {
-    pub records: Vec<ChallengeRecord<F>>,
-}
-
-impl<F: PartialEq> ChallengeTape<F> {
-    /// First record where the tapes diverge in schedule (id sequence or
-    /// length) or value. A dropped or inserted draw shifts every later
-    /// squeeze without necessarily changing any shared-prefix value, so a
-    /// pure `zip` would truncate to the shorter tape and miss it; the
-    /// trailing check surfaces the first unmatched record instead.
-    pub fn first_value_divergence(&self, other: &Self) -> Option<ChallengeId> {
-        self.records
-            .iter()
-            .zip(&other.records)
-            .find_map(|(left, right)| {
-                (left.id != right.id || left.values != right.values).then_some(left.id)
-            })
-            .or_else(|| {
-                self.records
-                    .get(other.records.len())
-                    .map(|record| record.id)
-            })
-            .or_else(|| {
-                other
-                    .records
-                    .get(self.records.len())
-                    .map(|record| record.id)
-            })
-    }
-}
-
-#[derive(Clone)]
-struct ErasedRecord {
-    id: ChallengeId,
-    values: Arc<dyn Any + Send + Sync>,
-}
-
-enum Session {
-    Record {
-        records: Vec<ErasedRecord>,
-        counters: BTreeMap<FsScope, usize>,
-    },
-    Replay {
-        records: Vec<ErasedRecord>,
-        counters: BTreeMap<FsScope, usize>,
-        cursor: usize,
-    },
+#[derive(Debug)]
+struct Tape {
+    mode: Mode,
+    bytes: Vec<u8>,
+    /// Furthest stream position any sponge of the session squeezed to.
+    high_water: usize,
 }
 
 thread_local! {
-    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+    static ACTIVE: RefCell<Option<Arc<Mutex<Tape>>>> = const { RefCell::new(None) };
 }
 
-fn next_id(counters: &mut BTreeMap<FsScope, usize>, kind: ChallengeKind) -> ChallengeId {
-    let scope = fs_audit::current();
-    let index = counters.entry(scope).or_default();
-    let id = ChallengeId {
-        scope,
-        index: *index,
-        kind,
-    };
-    *index += 1;
-    id
+/// The first absorb of every [`jolt_transcript::Fork`].
+const FORK_TAG: &[u8] = b"jolt-transcript/fork/v1";
+
+/// [`Blake2b512`] with a recorded or replayed squeeze stream.
+///
+/// [`Default`] binds the new sponge to the session active on the calling
+/// thread, if any. A transcript sponge must have one; a fork drops it on its
+/// first absorb.
+#[derive(Clone)]
+pub struct AuditSponge {
+    inner: Blake2b512,
+    position: usize,
+    tape: Option<Arc<Mutex<Tape>>>,
+    absorbed: bool,
 }
 
-fn draw<F>(kind: ChallengeKind, produce: impl FnOnce() -> Vec<F>) -> Vec<F>
-where
-    F: Field + 'static,
-{
-    let actual = produce();
-    SESSION.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let Some(session) = slot.as_mut() else {
-            return actual;
-        };
-        match session {
-            Session::Record { records, counters } => {
-                let id = next_id(counters, kind);
-                records.push(ErasedRecord {
-                    id,
-                    values: Arc::new(actual.clone()),
-                });
-                actual
-            }
-            Session::Replay {
-                records,
-                counters,
-                cursor,
-            } => {
-                let id = next_id(counters, kind);
-                let expected = records
-                    .get(*cursor)
-                    .unwrap_or_else(|| panic!("challenge replay exhausted at {id:?}"));
-                assert_eq!(
-                    expected.id, id,
-                    "challenge replay kind or scope diverged at tape index {cursor}"
-                );
-                *cursor += 1;
-                expected
-                    .values
-                    .downcast_ref::<Vec<F>>()
-                    .expect("challenge replay field type changed")
-                    .clone()
-            }
-        }
-    })
-}
-
-/// Transcript wrapper that records or replays challenge calls for the active session.
-pub struct AuditTranscript<T> {
-    inner: T,
-}
-
-impl<T: Default> Default for AuditTranscript<T> {
+impl Default for AuditSponge {
     fn default() -> Self {
         Self {
-            inner: T::default(),
+            inner: Blake2b512::default(),
+            position: 0,
+            tape: ACTIVE.with(|active| active.borrow().clone()),
+            absorbed: false,
         }
     }
 }
 
-impl<T> Transcript for AuditTranscript<T>
-where
-    T: Transcript,
-    T::Challenge: Field + 'static,
-{
-    type Challenge = T::Challenge;
+impl DuplexSpongeInterface for AuditSponge {
+    type U = u8;
 
-    fn new(label: &'static [u8]) -> Self {
-        Self {
-            inner: T::new(label),
+    fn absorb(&mut self, input: &[u8]) -> &mut Self {
+        if !self.absorbed {
+            self.absorbed = true;
+            if input == FORK_TAG {
+                self.tape = None;
+            } else {
+                assert!(
+                    self.tape.is_some(),
+                    "AuditSponge transcript constructed outside a record or replay session"
+                );
+            }
         }
+        let _ = self.inner.absorb(input);
+        self
     }
 
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        self.inner.append_bytes(bytes);
+    fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
+        let Some(tape) = &self.tape else {
+            let _ = self.inner.squeeze(output);
+            return self;
+        };
+        let start = self.position;
+        let end = start + output.len();
+        let mut tape = tape.lock().expect("audit tape lock poisoned");
+        match tape.mode {
+            Mode::Record => {
+                let _ = self.inner.squeeze(output);
+                assert_eq!(
+                    start,
+                    tape.bytes.len(),
+                    "a second transcript sponge squeezed into one session's tape"
+                );
+                tape.bytes.extend_from_slice(output);
+            }
+            Mode::Replay => {
+                let recorded = tape.bytes.get(start..end).unwrap_or_else(|| {
+                    panic!(
+                        "challenge replay exhausted: squeeze {start}..{end} past {} recorded bytes",
+                        tape.bytes.len()
+                    )
+                });
+                output.copy_from_slice(recorded);
+            }
+        }
+        tape.high_water = tape.high_water.max(end);
+        drop(tape);
+        self.position = end;
+        self
     }
 
-    fn challenge(&mut self) -> Self::Challenge {
-        draw(ChallengeKind::Challenge, || vec![self.inner.challenge()])[0]
+    fn ratchet(&mut self) -> &mut Self {
+        panic!("Jolt transcripts never ratchet; the audit tape cannot model one");
     }
+}
 
-    fn challenge_scalar(&mut self) -> Self::Challenge {
-        draw(ChallengeKind::Scalar, || {
-            vec![self.inner.challenge_scalar()]
-        })[0]
-    }
+impl Sponge for AuditSponge {
+    const ID: &'static str = <Blake2b512 as Sponge>::ID;
+}
 
-    // WARNING: both bodies must mirror the `Transcript` trait defaults
-    // (`legacy.rs`), which no production transcript overrides — the audit
-    // records at the same granularity the sponge is actually squeezed.
-    fn challenge_vector(&mut self, len: usize) -> Vec<Self::Challenge> {
-        (0..len)
-            .map(|index| {
-                draw(ChallengeKind::VectorElement { len, index }, || {
-                    vec![self.inner.challenge()]
-                })[0]
+/// Every byte squeezed during one recorded verification, in stream order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChallengeTape {
+    pub bytes: Vec<u8>,
+}
+
+impl ChallengeTape {
+    /// First stream offset at which the tapes differ, including one tape
+    /// ending before the other.
+    pub fn first_divergence(&self, other: &Self) -> Option<usize> {
+        self.bytes
+            .iter()
+            .zip(&other.bytes)
+            .position(|(left, right)| left != right)
+            .or_else(|| {
+                (self.bytes.len() != other.bytes.len())
+                    .then_some(self.bytes.len().min(other.bytes.len()))
             })
-            .collect()
-    }
-
-    fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge> {
-        let base = draw(ChallengeKind::PowersBase { len }, || {
-            vec![self.inner.challenge_scalar()]
-        })[0];
-        let mut powers = vec![Self::Challenge::from_u64(1); len];
-        for index in 1..len {
-            powers[index] = powers[index - 1] * base;
-        }
-        powers
-    }
-
-    fn state(&self) -> [u8; 32] {
-        self.inner.state()
     }
 }
 
-/// Runs `verify` with challenge recording enabled.
-pub fn record_challenges<F, R>(verify: impl FnOnce() -> R) -> (R, ChallengeTape<F>)
-where
-    F: Field + 'static,
-{
-    SESSION.with(|slot| {
-        assert!(
-            slot.borrow().is_none(),
-            "nested Fiat-Shamir audit sessions are unsupported"
-        );
-        *slot.borrow_mut() = Some(Session::Record {
-            records: Vec::new(),
-            counters: BTreeMap::new(),
+/// Clears the thread's session even when the closure under audit panics.
+struct SessionGuard;
+
+impl SessionGuard {
+    fn start(tape: Tape) -> (Self, Arc<Mutex<Tape>>) {
+        let tape = Arc::new(Mutex::new(tape));
+        ACTIVE.with(|active| {
+            let mut active = active.borrow_mut();
+            assert!(
+                active.is_none(),
+                "nested Fiat-Shamir audit sessions are unsupported"
+            );
+            *active = Some(Arc::clone(&tape));
         });
-    });
-
-    let result = verify();
-    let records = SESSION.with(|slot| match slot.borrow_mut().take() {
-        Some(Session::Record { records, .. }) => records,
-        Some(Session::Replay { .. }) => panic!("recording session changed to replay"),
-        None => panic!("recording session disappeared"),
-    });
-    let records = records
-        .into_iter()
-        .map(|record| ChallengeRecord {
-            id: record.id,
-            values: record
-                .values
-                .downcast_ref::<Vec<F>>()
-                .expect("recorded challenge field type changed")
-                .clone(),
-        })
-        .collect();
-    (result, ChallengeTape { records })
+        (Self, tape)
+    }
 }
 
-/// Result of verifying with a frozen challenge tape.
-pub struct ReplayResult<R> {
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        ACTIVE.with(|active| *active.borrow_mut() = None);
+    }
+}
+
+fn finish(guard: SessionGuard, tape: &Mutex<Tape>) -> (Vec<u8>, usize) {
+    drop(guard);
+    let tape = tape.lock().expect("audit tape lock poisoned");
+    (tape.bytes.clone(), tape.high_water)
+}
+
+/// Runs `run` with every [`AuditSponge`] squeeze recorded.
+pub fn record<R>(run: impl FnOnce() -> R) -> (R, ChallengeTape) {
+    let (guard, tape) = SessionGuard::start(Tape {
+        mode: Mode::Record,
+        bytes: Vec::new(),
+        high_water: 0,
+    });
+    let output = run();
+    let (bytes, _) = finish(guard, &tape);
+    (output, ChallengeTape { bytes })
+}
+
+/// Result of running against a frozen tape.
+pub struct Replayed<R> {
     pub output: R,
+    /// Bytes of the tape the run squeezed.
     pub consumed: usize,
-    pub expected: usize,
+    pub recorded: usize,
 }
 
-/// Runs `verify` while returning the recorded values for every challenge call.
-pub fn replay_challenges<F, R>(
-    tape: &ChallengeTape<F>,
-    verify: impl FnOnce() -> R,
-) -> ReplayResult<R>
-where
-    F: Field + 'static,
-{
-    let records = tape
-        .records
-        .iter()
-        .map(|record| ErasedRecord {
-            id: record.id,
-            values: Arc::new(record.values.clone()),
-        })
-        .collect();
-    SESSION.with(|slot| {
-        assert!(
-            slot.borrow().is_none(),
-            "nested Fiat-Shamir audit sessions are unsupported"
-        );
-        *slot.borrow_mut() = Some(Session::Replay {
-            records,
-            counters: BTreeMap::new(),
-            cursor: 0,
-        });
+/// Runs `run` with every [`AuditSponge`] squeeze answered from `tape`.
+pub fn replay<R>(tape: &ChallengeTape, run: impl FnOnce() -> R) -> Replayed<R> {
+    let (guard, session) = SessionGuard::start(Tape {
+        mode: Mode::Replay,
+        bytes: tape.bytes.clone(),
+        high_water: 0,
     });
-
-    let output = verify();
-    let (consumed, expected) = SESSION.with(|slot| match slot.borrow_mut().take() {
-        Some(Session::Replay {
-            records, cursor, ..
-        }) => (cursor, records.len()),
-        Some(Session::Record { .. }) => panic!("replay session changed to recording"),
-        None => panic!("replay session disappeared"),
-    });
-    ReplayResult {
+    let output = run();
+    let (_, consumed) = finish(guard, &session);
+    Replayed {
         output,
         consumed,
-        expected,
+        recorded: tape.bytes.len(),
     }
+}
+
+/// The value a production transcript draws when its squeezes return `bytes`.
+fn draw_from<T>(
+    bytes: &[u8],
+    draw: impl FnOnce(&mut VerifierTranscript<'_, AuditSponge>) -> T,
+) -> T {
+    let tape = ChallengeTape {
+        bytes: bytes.to_vec(),
+    };
+    let replayed = replay(&tape, || {
+        let protocol = ProtocolId::new::<AuditSponge>("jolt/fs-attacks/decode");
+        draw(&mut VerifierTranscript::new(&protocol, b"", &[]))
+    });
+    assert_eq!(
+        replayed.consumed,
+        bytes.len(),
+        "challenge decode consumed a different byte count than the recorded draw"
+    );
+    replayed.output
+}
+
+/// Decodes an exactly uniform [`Channel::challenge`] from the bytes it squeezed.
+pub fn decode_challenge<F: Field>(bytes: &[u8]) -> F {
+    draw_from(bytes, |transcript| transcript.challenge())
+}
+
+/// Decodes a [`Channel::challenge_small`] from the bytes it squeezed.
+pub fn decode_small_challenge<F: CanonicalEncoding>(bytes: &[u8]) -> F {
+    draw_from(bytes, |transcript| transcript.challenge_small())
 }

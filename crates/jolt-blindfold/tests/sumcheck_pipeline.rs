@@ -3,8 +3,7 @@
 mod support;
 
 use jolt_crypto::VectorCommitment;
-use jolt_sumcheck::RoundMessage;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Channel, ProverTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -31,21 +30,21 @@ fn committed_sumcheck_pipeline_satisfies_deep_r1cs_and_randomness_checks() {
 
         assert!(build_deep_relation(&stage1, &stage2, &stage3, &values).is_ok());
         let sample = [
-            transcript_projection(
+            projection(
                 b"stage1_round_commitment",
-                &stage1.proof.rounds[0].commitment,
+                &[stage1.consistency.rounds[0].commitment],
             ),
-            transcript_projection(
+            projection(
                 b"stage2_round_commitment",
-                &stage2.proof.rounds[0].commitment,
+                &[stage2.consistency.rounds[0].commitment],
             ),
-            transcript_projection(
+            projection(
                 b"stage3_round_commitment",
-                &stage3.proof.rounds[0].commitment,
+                &[stage3.consistency.rounds[0].commitment],
             ),
-            field_low_u64(stage1.blindings[0]),
-            field_low_u64(stage2.blindings[0]),
-            field_low_u64(stage3.blindings[0]),
+            field_low_u64(stage1.witness.round_blindings[0]),
+            field_low_u64(stage2.witness.round_blindings[0]),
+            field_low_u64(stage3.witness.round_blindings[0]),
             field_low_u64(*stage1.claim_outs.last().expect("stage 1 output exists")),
             field_low_u64(*stage2.claim_outs.last().expect("stage 2 output exists")),
             field_low_u64(*stage3.claim_outs.last().expect("stage 3 output exists")),
@@ -79,28 +78,20 @@ fn committed_round_blinding_is_empirically_independent_from_commitments_and_chal
 
     for _ in 0..SAMPLES {
         let blinding = rng_field(&mut rng);
-        let round = commit_round_with_blinding(&setup, coefficients.clone(), blinding);
-        let mut transcript = Blake2bTranscript::<F>::new(b"blindfold-r1cs-independence");
-        round.append_to_transcript(&mut transcript);
-        let challenge = transcript.challenge();
+        let commitment = VC::commit(&setup, &coefficients, &blinding);
+        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, b"blindfold-r1cs-independence");
+        transcript.send(&commitment);
+        let challenge: F = transcript.challenge_small();
 
-        assert!(VC::verify(
-            &setup,
-            &round.commitment,
-            &coefficients,
-            &blinding
-        ));
+        assert!(VC::verify(&setup, &commitment, &coefficients, &blinding));
         assert!(!VC::verify(
             &setup,
-            &round.commitment,
+            &commitment,
             &coefficients,
             &(blinding + f(1))
         ));
         blindings.push(field_low_u64(blinding));
-        commitments.push(transcript_projection(
-            b"round_commitment",
-            &round.commitment,
-        ));
+        commitments.push(projection(b"round_commitment", &[commitment]));
         challenges.push(field_low_u64(challenge));
     }
 

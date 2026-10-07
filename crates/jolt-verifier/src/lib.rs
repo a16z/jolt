@@ -46,29 +46,21 @@ pub(crate) mod num {
 
 pub mod config;
 pub mod error;
-#[cfg(feature = "fs-audit")]
-#[doc(hidden)]
-pub mod fs_audit;
 pub mod preprocessing;
 pub mod proof;
+pub mod sites;
 pub mod stages;
 pub mod verifier;
 
-pub use config::{
-    validate_proof_config, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
-    JOLT_VERIFIER_CONFIG,
-};
+pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG};
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
-pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-#[cfg(feature = "akita")]
-pub use verifier::absorb_packed_commitments;
-#[cfg(not(feature = "akita"))]
-pub use verifier::absorb_transcript_commitments;
+pub use proof::{JoltProof, ProofCommitments, ProofHeader};
 pub use verifier::{
-    absorb_committed_program_commitments, absorb_transcript_preamble, validate_and_seed_transcript,
-    validate_inputs_from_parts, verify, verify_until_stage1, CheckedInputs, PreStage1VerifierState,
-    ProofTranscriptConfig,
+    absorb_public_commitments, absorb_public_preamble, jolt_protocol_id, seed_transcript,
+    validate_inputs, verify, CheckedInputs, JoltSponge, JOLT_SESSION,
 };
+#[cfg(not(feature = "akita"))]
+pub use verifier::{verify_stages, VerifiedStages};

@@ -1,6 +1,6 @@
-use jolt_field::JoltField;
+use jolt_field::{CanonicalBytes, JoltField};
 use jolt_poly::EvaluationClaim;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::Channel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZkEvaluationClaim<'a, F, C> {
@@ -17,21 +17,11 @@ impl<'a, F, C> ZkEvaluationClaim<'a, F, C> {
     }
 }
 
-impl<F, C> AppendToTranscript for ZkEvaluationClaim<'_, F, C>
-where
-    F: JoltField,
-    C: AppendToTranscript,
-{
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            b"zk_opening_point",
-            self.point.len() as u64,
-        ));
-        for coordinate in self.point {
-            coordinate.append_to_transcript(transcript);
-        }
-        transcript.append(&Label(b"zk_eval_commitment"));
-        self.hiding_commitment.append_to_transcript(transcript);
+impl<F: JoltField, C: CanonicalBytes> ZkEvaluationClaim<'_, F, C> {
+    /// Absorbs the opening point, then the hiding commitment to the evaluation.
+    pub fn absorb<Ch: Channel>(&self, channel: &mut Ch) {
+        channel.public_all(self.point);
+        channel.public(self.hiding_commitment);
     }
 }
 
@@ -41,16 +31,12 @@ pub struct VerifierOpeningClaim<F: JoltField, C> {
     pub evaluation: EvaluationClaim<F>,
 }
 
-pub(crate) struct VerifierRlcClaims<'a, F: JoltField, C>(pub &'a [VerifierOpeningClaim<F, C>]);
-
-impl<F, C> AppendToTranscript for VerifierRlcClaims<'_, F, C>
-where
-    F: JoltField,
-{
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(b"rlc_claims", self.0.len() as u64));
-        for claim in self.0 {
-            claim.evaluation.value.append_to_transcript(transcript);
-        }
-    }
+/// Absorbs an opening claim's point, then its value.
+pub(crate) fn absorb_evaluation<F: JoltField, Ch: Channel>(
+    channel: &mut Ch,
+    point: &[F],
+    value: &F,
+) {
+    channel.public_all(point);
+    channel.public(value);
 }

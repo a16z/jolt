@@ -25,4 +25,3 @@ jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",
 ] }
-bincode.workspace = true

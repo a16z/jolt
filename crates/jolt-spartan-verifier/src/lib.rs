@@ -21,16 +21,12 @@
 
 mod key;
 
-use jolt_field::JoltField;
+use jolt_field::{CanonicalDecode, JoltField};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrixEvalError;
-use jolt_sumcheck::{
-    BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckError,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-};
-use jolt_transcript::{AppendToTranscript, Transcript};
-use serde::{Deserialize, Serialize};
+use jolt_sumcheck::{SumcheckClaim, SumcheckError, SumcheckVerifier};
+use jolt_transcript::{Sponge, TranscriptError, VerifierTranscript};
 use thiserror::Error;
 
 pub use key::SpartanKey;
@@ -48,20 +44,6 @@ pub fn outer_relation<F: JoltField>(eq: F, a: F, b: F, c: F) -> F {
 #[inline]
 pub fn inner_relation<F: JoltField>(linear: F, witness: F) -> F {
     linear * witness
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "F: Serialize, C: Serialize, O: Serialize",
-    deserialize = "C: Deserialize<'de>, O: Deserialize<'de>"
-))]
-pub struct SpartanProof<F: JoltField, C, O> {
-    pub witness_commitment: C,
-    pub outer: CompressedSumcheckProof<F>,
-    pub outer_evaluations: [F; 3],
-    pub inner: CompressedSumcheckProof<F>,
-    pub witness_evaluation: F,
-    pub opening: O,
 }
 
 #[derive(Debug, Error)]
@@ -86,55 +68,48 @@ pub enum SpartanError<F: JoltField> {
     Matrix(#[from] ConstraintMatrixEvalError),
     #[error(transparent)]
     Opening(#[from] OpeningsError),
+    #[error(transparent)]
+    Transcript(#[from] TranscriptError),
 }
 
-impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
-    /// Verify against this authenticated relation and the application's PCS key.
+impl<F: JoltField + CanonicalDecode> SpartanKey<F> {
+    /// Verify against this authenticated relation and the application's PCS key,
+    /// reading the proof from `transcript`.
     ///
-    /// The application's key policy must fix PCS setup and transcript choices.
-    /// Container decoding limits and authentication remain application-owned.
-    pub fn verify<PCS: CommitmentScheme<Field = F>>(
+    /// The application's key policy must fix PCS setup and transcript choices,
+    /// and the caller finishes the transcript.
+    pub fn verify<PCS: CommitmentScheme<Field = F>, H: Sponge>(
         &self,
         public_inputs: &[F],
-        proof: &SpartanProof<F, PCS::Output, PCS::Proof>,
         pcs_setup: &PCS::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = F>,
-    ) -> Result<(), SpartanError<F>>
-    where
-        PCS::Output: AppendToTranscript,
-    {
-        let tau = self.begin(public_inputs, &proof.witness_commitment, transcript)?;
-        let outer = proof.outer.verify(
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<(), SpartanError<F>> {
+        self.bind_statement(public_inputs, transcript)?;
+        let witness_commitment = PCS::receive_commitment(pcs_setup, transcript)?;
+        let tau = self.draw_tau(transcript);
+        let outer = SumcheckVerifier::verify_compressed(
             &SumcheckClaim {
                 num_vars: self.row_vars(),
                 degree: OUTER_DEGREE,
                 claimed_sum: F::zero(),
             },
-            BooleanHypercube,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )?;
-        self.check_outer(
-            &tau,
-            outer.point.as_slice(),
-            outer.value,
-            proof.outer_evaluations,
-        )?;
+        let mut outer_evaluations = [F::zero(); 3];
         let row_weights = EqPolynomial::new(outer.point.as_slice().to_vec()).evaluations();
         let (weights, claim) = self.begin_inner(
             &row_weights,
             public_inputs,
-            proof.outer_evaluations,
+            &mut outer_evaluations,
             transcript,
         )?;
-        let inner = proof.inner.verify(
+        self.check_outer(&tau, outer.point.as_slice(), outer.value, outer_evaluations)?;
+        let inner = SumcheckVerifier::verify_compressed(
             &SumcheckClaim {
                 num_vars: self.witness_vars(),
                 degree: INNER_DEGREE,
                 claimed_sum: claim,
             },
-            BooleanHypercube,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )?;
         let column_weights = EqPolynomial::new(inner.point.as_slice().to_vec()).evaluations();
@@ -148,15 +123,15 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
             self.witness_len(),
             weights,
         )?;
-        if inner.value != inner_relation(linear, proof.witness_evaluation) {
+        let mut witness_evaluation = F::zero();
+        Self::exchange_witness_evaluation(&mut witness_evaluation, transcript)?;
+        if inner.value != inner_relation(linear, witness_evaluation) {
             return Err(SpartanError::InnerClaim);
         }
-        Self::append_witness_evaluation(proof.witness_evaluation, transcript);
         PCS::verify(
-            &proof.witness_commitment,
+            &witness_commitment,
             inner.point.as_slice(),
-            proof.witness_evaluation,
-            &proof.opening,
+            witness_evaluation,
             pcs_setup,
             transcript,
         )?;

@@ -15,7 +15,6 @@ workspace = true
 allocative = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-utils = { workspace = true }
-jolt-transcript = { path = "../jolt-transcript", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 rayon = { workspace = true, optional = true }
@@ -44,4 +43,3 @@ parallel = ["rayon"]
 # Forwards to jolt-field so `F: JoltField` implies `F: Allocative`; without
 # it this crate's field-generic derives cannot discharge their scalar bound.
 allocative = ["dep:allocative", "jolt-field/allocative"]
-transcript = ["dep:jolt-transcript"]

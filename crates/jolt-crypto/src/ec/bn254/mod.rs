@@ -1,12 +1,12 @@
 /// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
-/// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
-/// size assertions, and a safe `into_inner` accessor.
+/// with all operator impls, serde, the canonical compressed transcript codec,
+/// `JoltGroup`, compile-time size assertions, and a safe `into_inner` accessor.
 ///
 /// Paths are fully qualified so the macro does not inject `use` items into the caller's
 /// module scope — callers can expand the macro multiple times in the same module or
 /// alongside unrelated imports without conflicts.
 macro_rules! impl_jolt_group_wrapper {
-    ($wrapper:ident, $projective:ty, $affine:ty, $doc:literal) => {
+    ($wrapper:ident, $projective:ty, $affine:ty, $compressed_len:expr, $doc:literal) => {
         #[doc = $doc]
         #[derive(Clone, Copy, Default, Eq, PartialEq)]
         #[repr(transparent)]
@@ -129,12 +129,7 @@ macro_rules! impl_jolt_group_wrapper {
 
         impl ::serde::Serialize for $wrapper {
             fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                use ::ark_serialize::CanonicalSerialize;
-                let mut buf = Vec::with_capacity(self.0.compressed_size());
-                self.0
-                    .serialize_compressed(&mut buf)
-                    .map_err(::serde::ser::Error::custom)?;
-                serializer.serialize_bytes(&buf)
+                serializer.serialize_bytes(&::jolt_field::CanonicalBytes::to_bytes_le_vec(self))
             }
         }
 
@@ -142,33 +137,70 @@ macro_rules! impl_jolt_group_wrapper {
             fn deserialize<D: ::serde::Deserializer<'de>>(
                 deserializer: D,
             ) -> Result<Self, D::Error> {
-                use ::ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
                 let buf = <Vec<u8>>::deserialize(deserializer)?;
-                // Exact-size gate (as for `Bn254GT`): `deserialize_compressed`
-                // stops after one point and would silently accept trailing
-                // bytes, giving one group element many wire encodings.
-                let expected_len = <$projective>::default().compressed_size();
-                if buf.len() != expected_len {
-                    return Err(::serde::de::Error::custom(format!(
-                        "{} encoding must be exactly {expected_len} bytes, got {}",
-                        stringify!($wrapper),
-                        buf.len()
-                    )));
-                }
-                let inner = <$projective>::deserialize_compressed(&buf[..])
-                    .map_err(::serde::de::Error::custom)?;
-                Ok(Self(inner))
+                Self::decode_compressed(&buf).map_err(::serde::de::Error::custom)
             }
         }
 
-        impl ::jolt_transcript::AppendToTranscript for $wrapper {
-            fn append_to_transcript<T: ::jolt_transcript::Transcript>(&self, transcript: &mut T) {
+        impl $wrapper {
+            /// Decodes exactly one compressed point, validating it is on the
+            /// curve and in the prime-order subgroup.
+            fn decode_compressed(bytes: &[u8]) -> Result<Self, ::std::string::String> {
+                use ::ark_serialize::CanonicalDeserialize;
+                // Exact-size gate: `deserialize_compressed` stops after one
+                // point and would silently accept trailing bytes, giving one
+                // group element many encodings.
+                let expected_len = <Self as ::jolt_field::CanonicalBytes>::NUM_BYTES;
+                if bytes.len() != expected_len {
+                    return Err(format!(
+                        "{} encoding must be exactly {expected_len} bytes, got {}",
+                        stringify!($wrapper),
+                        bytes.len()
+                    ));
+                }
+                let point = <$projective>::deserialize_compressed(bytes)
+                    .map(Self)
+                    .map_err(|error| error.to_string())?;
+                // arkworks returns the identity for any x under the infinity
+                // flag; only the canonical encoding may decode.
+                if <Self as ::jolt_field::CanonicalBytes>::to_bytes_le_vec(&point) != bytes {
+                    return Err(format!(
+                        "{} encoding is not canonical",
+                        stringify!($wrapper)
+                    ));
+                }
+                Ok(point)
+            }
+        }
+
+        /// The compressed arkworks encoding.
+        impl ::jolt_field::CanonicalBytes for $wrapper {
+            const NUM_BYTES: usize = $compressed_len;
+
+            fn to_bytes_le(&self, out: &mut [u8]) {
                 use ::ark_serialize::CanonicalSerialize;
-                let mut buf = Vec::with_capacity(self.0.compressed_size());
+                assert_eq!(out.len(), Self::NUM_BYTES);
                 self.0
-                    .serialize_compressed(&mut buf)
+                    .serialize_compressed(out)
                     .expect(concat!(stringify!($wrapper), " serialization cannot fail"));
-                transcript.append_bytes(&buf);
+            }
+        }
+
+        impl ::spongefish::Encoding<[u8]> for $wrapper {
+            fn encode(&self) -> impl AsRef<[u8]> {
+                ::jolt_field::narg::encode(self)
+            }
+        }
+
+        impl ::jolt_field::CanonicalDecode for $wrapper {
+            fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+                Self::decode_compressed(bytes).ok()
+            }
+        }
+
+        impl ::spongefish::NargDeserialize for $wrapper {
+            fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+                ::jolt_field::narg::deserialize(buf)
             }
         }
 
@@ -323,8 +355,49 @@ pub(crate) fn field_to_fr<F: JoltField>(f: &F) -> ark_bn254::Fr {
 #[expect(clippy::expect_used, reason = "tests may fail loudly")]
 mod tests {
     use ark_serialize::CanonicalSerialize;
+    use jolt_field::{CanonicalBytes, CanonicalDecode};
 
     use super::{Bn254, Bn254G1, Bn254G2};
+    use crate::JoltGroup;
+    use std::fmt::Debug;
+
+    #[test]
+    fn canonical_codec_is_the_compressed_encoding() {
+        fn check<P: CanonicalBytes + CanonicalDecode + PartialEq + Debug>(
+            point: P,
+            compressed: &impl CanonicalSerialize,
+        ) {
+            let mut expected = Vec::new();
+            compressed
+                .serialize_compressed(&mut expected)
+                .expect("serialize point");
+            assert_eq!(P::NUM_BYTES, compressed.compressed_size());
+            assert_eq!(point.to_bytes_le_vec(), expected);
+            assert_eq!(P::from_bytes_le_checked(&expected), Some(point));
+        }
+        let g1 = Bn254::g1_generator();
+        check(g1, &g1.0);
+        let g2 = Bn254::g2_generator();
+        check(g2, &g2.0);
+    }
+
+    /// The identity decodes from its canonical encoding only: arkworks
+    /// ignores x under the infinity flag, so nonzero x bits there must not
+    /// alias it.
+    #[test]
+    fn identity_has_one_accepted_encoding() {
+        fn check<P: CanonicalBytes + CanonicalDecode + PartialEq + Debug>(identity: P) {
+            let canonical = identity.to_bytes_le_vec();
+            assert_eq!(P::from_bytes_le_checked(&canonical), Some(identity));
+            let mut alias = canonical;
+            if let Some(low) = alias.first_mut() {
+                *low ^= 1;
+            }
+            assert_eq!(P::from_bytes_le_checked(&alias), None);
+        }
+        check(Bn254G1::identity());
+        check(Bn254G2::identity());
+    }
 
     fn encode_with_trailing_byte<P: CanonicalSerialize>(point: &P) -> Vec<u8> {
         let mut bytes = Vec::new();

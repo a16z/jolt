@@ -100,7 +100,7 @@ impl RISCVTrace for FIELD_ADVICE_LIMB {}
 #[cfg(test)]
 mod tests {
     use common::constants::RISCV_REGISTER_COUNT;
-    use jolt_field::{CanonicalBytes, CanonicalEncoding};
+    use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding};
     use jolt_riscv::FIELD_REGISTER_COUNT;
     use rand::SeedableRng;
 

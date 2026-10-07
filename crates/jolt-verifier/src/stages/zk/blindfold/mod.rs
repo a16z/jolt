@@ -54,7 +54,7 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
+use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder};
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -68,13 +68,13 @@ use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDe
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
 use jolt_claims::protocols::jolt::relations;
 #[cfg(feature = "fuzzing")]
-use jolt_claims::protocols::jolt::JoltExpr;
+use jolt_claims::protocols::jolt::{JoltExpr, JoltOpeningId};
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
     opening,
     protocols::jolt::{
         geometry::{
-            booleanity::{self, BooleanityDimensions},
+            booleanity::BooleanityDimensions,
             bytecode::{self, BytecodeReadRafEvaluationInputs},
             claim_reductions::{
                 advice,
@@ -82,10 +82,10 @@ use jolt_claims::{
                 hamming_weight, program_image,
             },
             dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
-            instruction, ram,
+            ram,
             spartan::{
-                outer_opening, outer_uniskip_opening, product_uniskip_opening,
-                SpartanOuterDimensions, SpartanProductDimensions,
+                outer_uniskip_opening, product_uniskip_opening, SpartanOuterDimensions,
+                SpartanProductDimensions,
             },
         },
         AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
@@ -96,16 +96,16 @@ use jolt_claims::{
         InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-        JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-        PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-        ProgramImageClaimReductionPublic, RamHammingBooleanityPublic, RamOutputCheckPublic,
-        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-        RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge,
-        RamValCheckPublic, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+        JoltDerivedId, JoltRelationId, PrecommittedReductionLayout,
+        ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
+        RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
+        RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
+        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic,
     },
-    Expr, OutputClaims, Source, SymbolicSumcheck, Term,
+    Expr, Source, SymbolicSumcheck, Term,
 };
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -122,7 +122,6 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
-use num_traits::Zero;
 
 use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
 use crate::stages::{
@@ -205,8 +204,8 @@ struct SourceValues<F: JoltField> {
     publics: Vec<(VerifierPublicId, F)>,
 }
 
-pub fn build<PCS, VC, ZkProof>(
-    input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub fn build<PCS, VC>(
+    input: BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<BlindFoldProtocol<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -250,10 +249,6 @@ where
     Ok(protocol)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "BlindFold stages are deliberately explicit."
-)]
 fn add_batched_stage<F, C>(
     builder: Builder<F, C>,
     name: &'static str,
@@ -262,8 +257,6 @@ fn add_batched_stage<F, C>(
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<ComposedOpeningId>,
-    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
     F: JoltField,
@@ -317,8 +310,6 @@ where
         consistency.consistency.clone(),
         output_claims,
         values,
-        opening_ids,
-        aliases,
         input_claim,
         output_claim,
     )
@@ -336,8 +327,6 @@ fn add_stage<F, C>(
     consistency: CommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<ComposedOpeningId>,
-    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
     input_claim: VerifierExpr<F>,
     output_claim: VerifierExpr<F>,
 ) -> Result<Builder<F, C>, VerifierError>
@@ -347,26 +336,17 @@ where
 {
     require_expr_sources(name, "input claim", &input_claim, values)?;
     require_expr_sources(name, "output claim", &output_claim, values)?;
-    if opening_ids.len() != output_claims.shape.output_claim_count {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "{name}: output opening id count mismatch: expected {}, got {}",
-                output_claims.shape.output_claim_count,
-                opening_ids.len()
-            ),
-        });
-    }
     builder
         .stage(name)
         .sumcheck(statement)
         .domain(domain)
         .consistency(consistency)
         .output_claim_rows(
-            opening_ids,
+            output_claims.shape.layout.ids.clone(),
             output_claims.shape.row_len,
             output_claims.commitments.clone(),
         )
-        .output_claim_aliases(aliases)
+        .output_claim_aliases(output_claims.shape.layout.aliases.clone())
         .input_claim(input_claim)
         .output_claim(output_claim)
         .finish_stage()
@@ -431,20 +411,6 @@ where
             })
             .collect(),
     }
-}
-
-fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<ComposedOpeningId> {
-    ids.into_iter().map(Into::into).collect()
-}
-
-/// Lift jolt-typed `(aliased, source)` pairs into composite [`OpeningAlias`] rows.
-fn composite_aliases<O: Into<ComposedOpeningId>>(
-    pairs: impl IntoIterator<Item = (O, O)>,
-) -> Vec<OpeningAlias<ComposedOpeningId>> {
-    pairs
-        .into_iter()
-        .map(|(aliased, source)| OpeningAlias::new(aliased.into(), source.into()))
-        .collect()
 }
 
 /// Evaluates the BlindFold form of a Jolt claim expression with the same
@@ -521,15 +487,14 @@ fn domain_spec(domain: SumcheckDomain) -> SumcheckDomainSpec {
     }
 }
 
-fn formula_dimensions<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn formula_dimensions<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<JoltFormulaDimensions, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
     crate::stages::build_formula_dimensions(
-        input.proof,
         input.preprocessing,
         input.checked,
         crate::num::ilog2(input.checked.trace_length),
@@ -541,8 +506,8 @@ where
     clippy::type_complexity,
     reason = "the three RAM output-check publics (eq, mask, val_io)"
 )]
-fn ram_output_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_output_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     output_address_challenges: &[PCS::Field],
     ram_output_address: &[PCS::Field],
 ) -> Result<(PCS::Field, PCS::Field, PCS::Field), VerifierError>
@@ -566,8 +531,8 @@ where
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field negations in the body.
-fn ram_val_check_init<F, PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_init<F, PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<ram::RamValCheckInit<F>, VerifierError>
 where
     F: JoltField,
@@ -581,7 +546,7 @@ where
     if input.checked.precommitted.program_image.is_some() {
         contributions.push(ram::RamValCheckInitContribution::program_image(-F::one()));
     }
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.checked.untrusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
         contributions.push(ram::RamValCheckInitContribution::untrusted(-selector.0));
     }
@@ -595,8 +560,8 @@ where
     ))
 }
 
-fn ram_val_check_address<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_address<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -615,8 +580,8 @@ where
         })
 }
 
-fn advice_selector<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_selector<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
     r_address: &[PCS::Field],
 ) -> Result<(PCS::Field, Vec<PCS::Field>), VerifierError>
@@ -669,8 +634,8 @@ where
     Ok((selector, opening_point))
 }
 
-fn advice_source_point<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_source_point<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
@@ -681,8 +646,8 @@ where
     advice_selector(input, kind, &r_address).map(|(_, point)| point)
 }
 
-fn advice_layout<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_layout<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Option<AdviceClaimReductionLayout>
 where
@@ -696,8 +661,8 @@ where
     clippy::too_many_arguments,
     reason = "Stage 6 has several protocol components."
 )]
-fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_stage6_publics_and_challenges<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     bytecode_address_rounds: usize,
     bytecode_rounds: usize,
@@ -1085,8 +1050,8 @@ where
     Ok(())
 }
 
-fn bytecode_reduction_weights<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn bytecode_reduction_weights<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     layout: &BytecodeClaimReductionLayout,
 ) -> Result<BytecodeReductionWeights<PCS::Field>, VerifierError>
 where
@@ -1142,8 +1107,8 @@ fn add_bytecode_chunk_weight_publics<F: JoltField>(
     Ok(())
 }
 
-fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_bytecode_reduction_cycle_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
 ) -> Result<(), VerifierError>
@@ -1171,8 +1136,8 @@ where
     add_bytecode_chunk_weight_publics(values, chunk_weights)
 }
 
-fn add_bytecode_reduction_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_bytecode_reduction_address_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
     sumcheck_point: &[PCS::Field],
@@ -1199,8 +1164,8 @@ where
     add_bytecode_chunk_weight_publics(values, chunk_weights)
 }
 
-fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_program_image_reduction_cycle_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
 ) -> Result<(), VerifierError>
@@ -1230,8 +1195,8 @@ where
     )
 }
 
-fn add_program_image_reduction_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_program_image_reduction_address_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
     sumcheck_point: &[PCS::Field],
@@ -1257,8 +1222,8 @@ where
     )
 }
 
-fn add_advice_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_cycle_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1290,8 +1255,8 @@ where
     )
 }
 
-fn add_advice_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_address_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1318,8 +1283,8 @@ where
     )
 }
 
-fn stage6_virtualization_points<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn stage6_virtualization_points<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
 ) -> Result<Vec<Vec<PCS::Field>>, VerifierError>
 where
@@ -1454,7 +1419,7 @@ mod field_inline_relation_parity {
         FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
         FieldRegistersTraceDimensions,
     };
-    use jolt_claims::{InputClaims, SumcheckChallenges};
+    use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
     use jolt_field::{Fr, Ring};
     use jolt_sumcheck::VerifiedCommittedRound;
 

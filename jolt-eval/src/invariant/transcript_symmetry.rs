@@ -1,18 +1,21 @@
-//! `transcript_prover_verifier_consistency` — for each spongefish sponge,
-//! a `ProverState` / `VerifierState` pair driven by the same operation
-//! sequence must round-trip every prover message and produce the same
-//! verifier challenges.
+//! `transcript_prover_verifier_consistency` — for each sponge, a NARG
+//! `ProverTranscript` / `VerifierTranscript` pair driven by the same operation
+//! sequence must round-trip every prover message, agree on every challenge,
+//! and consume the argument string exactly.
 
 use arbitrary::{Arbitrary, Result as ArbitraryResult, Unstructured};
-use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr as JFr};
-use spongefish::instantiations::{Blake2b512, Keccak};
-
-use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};
+use jolt_field::{CanonicalEncoding, Fr as JFr};
+use jolt_transcript::{
+    Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
+    TranscriptError, VerifierTranscript,
+};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
 const SESSION: &[u8] = b"jolt-eval/transcript-symmetry/v1";
-const INSTANCE_DIGEST: [u8; 32] = [0u8; 32];
+const PROTOCOL: &str = "jolt-eval/transcript-symmetry";
+/// The longest byte message an [`Op::ProverBytes`] carries.
+const MAX_PROVER_BYTES: usize = 64;
 
 /// One operation in the prover/verifier sequence.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -21,9 +24,9 @@ pub enum Op {
     PublicBytes(Vec<u8>),
     /// Both sides absorb the same public BN254 `Fr` scalar.
     PublicScalar(#[schemars(with = "[u8; 32]")] JFr),
-    /// Prover absorbs + emits bytes; verifier reads them back from the NARG.
+    /// Prover sends length-prefixed bytes; verifier reads them back.
     ProverBytes(Vec<u8>),
-    /// Prover absorbs + emits a BN254 `Fr` scalar; verifier reads it back.
+    /// Prover sends a BN254 `Fr` scalar; verifier reads it back.
     ProverScalar(#[schemars(with = "[u8; 32]")] JFr),
     /// Both sides squeeze a verifier challenge.
     Challenge,
@@ -55,7 +58,7 @@ impl<'a> Arbitrary<'a> for Input {
 }
 
 fn arb_bytes(u: &mut Unstructured<'_>) -> ArbitraryResult<Vec<u8>> {
-    let len = u.int_in_range(0u8..=64)? as usize;
+    let len = u.int_in_range(0..=MAX_PROVER_BYTES)?;
     (0..len).map(|_| u.arbitrary()).collect()
 }
 
@@ -64,52 +67,49 @@ fn arb_scalar(u: &mut Unstructured<'_>) -> ArbitraryResult<JFr> {
     Ok(JFr::from_bytes_le_reduced(&bytes))
 }
 
-fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
-where
-    H: spongefish::DuplexSpongeInterface<U = u8>,
-{
-    let mut prover = prover_transcript(SESSION, INSTANCE_DIGEST, build_sponge());
+fn run_check<H: Sponge>(input: &Input) -> Result<(), CheckError> {
+    let protocol = ProtocolId::new::<H>(PROTOCOL);
+    let mut prover = ProverTranscript::<H>::new(&protocol, SESSION);
     let mut prover_challenges: Vec<[u8; 32]> = Vec::new();
 
-    for op in &input.ops {
+    for (op_idx, op) in input.ops.iter().enumerate() {
         match op {
-            Op::PublicBytes(b) => prover.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => prover.public_message(&scalar_bytes(*f)),
-            Op::ProverBytes(b) => prover.prover_message(&BytesMsg(b.clone())),
-            Op::ProverScalar(f) => prover.prover_message(&scalar_bytes(*f)),
-            Op::Challenge => {
-                let c: [u8; 32] = prover.verifier_message();
-                prover_challenges.push(c);
-            }
+            Op::PublicBytes(b) => prover.public_bytes(b),
+            Op::PublicScalar(f) => prover.public(f),
+            Op::ProverBytes(b) => prover
+                .send_bounded_bytes(b, MAX_PROVER_BYTES)
+                .map_err(|e| violation("send_bounded_bytes", op_idx, e))?,
+            Op::ProverScalar(f) => prover.send(f),
+            Op::Challenge => prover_challenges.push(prover.challenge_bytes()),
         }
     }
 
-    let narg: Vec<u8> = prover.narg_string().to_vec();
-    let mut verifier = verifier_transcript(SESSION, INSTANCE_DIGEST, build_sponge(), &narg);
+    let narg = prover.finish();
+    let mut verifier = VerifierTranscript::<H>::new(&protocol, SESSION, &narg);
     let mut challenge_idx = 0usize;
 
     for (op_idx, op) in input.ops.iter().enumerate() {
         match op {
-            Op::PublicBytes(b) => verifier.public_message(&BytesMsg(b.clone())),
-            Op::PublicScalar(f) => verifier.public_message(&scalar_bytes(*f)),
+            Op::PublicBytes(b) => verifier.public_bytes(b),
+            Op::PublicScalar(f) => verifier.public(f),
             Op::ProverBytes(expected) => {
-                let got: BytesMsg = verifier
-                    .prover_message()
-                    .map_err(|e| violation("prover_message<BytesMsg>", op_idx, e))?;
-                if got.as_slice() != expected.as_slice() {
+                let got = verifier
+                    .receive_bounded_bytes(MAX_PROVER_BYTES)
+                    .map_err(|e| violation("receive_bounded_bytes", op_idx, e))?;
+                if got != expected.as_slice() {
                     return Err(mismatch("ProverBytes round-trip", op_idx));
                 }
             }
             Op::ProverScalar(expected) => {
-                let got: [u8; 32] = verifier
-                    .prover_message()
-                    .map_err(|e| violation("prover_message<[u8; 32]>", op_idx, e))?;
-                if got != scalar_bytes(*expected) {
+                let got: JFr = verifier
+                    .receive()
+                    .map_err(|e| violation("receive<Fr>", op_idx, e))?;
+                if got != *expected {
                     return Err(mismatch("ProverScalar round-trip", op_idx));
                 }
             }
             Op::Challenge => {
-                let verifier_c: [u8; 32] = verifier.verifier_message();
+                let verifier_c: [u8; 32] = verifier.challenge_bytes();
                 if verifier_c != prover_challenges[challenge_idx] {
                     return Err(mismatch("Challenge", op_idx));
                 }
@@ -119,18 +119,12 @@ where
     }
 
     verifier
-        .check_eof()
-        .map_err(|e| violation("check_eof", input.ops.len(), e))?;
+        .finish()
+        .map_err(|e| violation("finish", input.ops.len(), e))?;
     Ok(())
 }
 
-fn scalar_bytes(value: JFr) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    value.to_bytes_le(&mut out);
-    out
-}
-
-fn violation(what: &str, op_idx: usize, err: spongefish::VerificationError) -> CheckError {
+fn violation(what: &str, op_idx: usize, err: TranscriptError) -> CheckError {
     CheckError::Violation(InvariantViolation::with_details(
         format!("{what} failed on verifier"),
         format!("op_idx={op_idx}, err={err:?}"),
@@ -194,16 +188,15 @@ fn seed_corpus_shared() -> Vec<Input> {
 
 fn description_for(label: &str) -> String {
     format!(
-        "spongefish ProverState/VerifierState pair ({label} sponge) replaying \
-         the same operation sequence must round-trip every prover message \
-         and agree on every challenge."
+        "NARG prover/verifier transcript pair ({label} sponge) replaying \
+         the same operation sequence must round-trip every prover message, \
+         agree on every challenge, and consume the argument string exactly."
     )
 }
 
-/// Sponge selector for the merged fuzz target. Blake2b512 and Keccak are
-/// upstream spongefish instantiations over the same generic layer, so per-
-/// sponge fuzz targets duplicated coverage; one target fuzzes all three with
-/// the fuzzer choosing the sponge.
+/// Sponge selector for the merged fuzz target. The three sponges share one
+/// transcript layer, so per-sponge fuzz targets duplicated coverage; one
+/// target fuzzes all three with the fuzzer choosing the sponge.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum SpongeKind {
     Blake2b,
@@ -255,9 +248,9 @@ impl Invariant for TranscriptConsistencyInvariant {
     fn check(&self, _setup: &(), input: SpongeInput) -> Result<(), CheckError> {
         let ops = Input { ops: input.ops };
         match input.sponge {
-            SpongeKind::Blake2b => run_check::<Blake2b512>(&ops, Blake2b512::default),
-            SpongeKind::Keccak => run_check::<Keccak>(&ops, Keccak::default),
-            SpongeKind::Poseidon => run_check::<PoseidonSponge>(&ops, PoseidonSponge::new),
+            SpongeKind::Blake2b => run_check::<Blake2b512>(&ops),
+            SpongeKind::Keccak => run_check::<Keccak>(&ops),
+            SpongeKind::Poseidon => run_check::<PoseidonSponge>(&ops),
         }
     }
 
@@ -280,6 +273,7 @@ impl Invariant for TranscriptConsistencyInvariant {
     }
 }
 
+/// Transcript symmetry invariant for the Blake2b512 sponge.
 #[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyBlake2bInvariant;
@@ -299,7 +293,7 @@ impl Invariant for TranscriptConsistencyBlake2bInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
-        run_check::<Blake2b512>(&input, Blake2b512::default)
+        run_check::<Blake2b512>(&input)
     }
 
     fn seed_corpus(&self) -> Vec<Input> {
@@ -307,6 +301,7 @@ impl Invariant for TranscriptConsistencyBlake2bInvariant {
     }
 }
 
+/// Transcript symmetry invariant for the Keccak sponge.
 #[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyKeccakInvariant;
@@ -326,7 +321,7 @@ impl Invariant for TranscriptConsistencyKeccakInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
-        run_check::<Keccak>(&input, Keccak::default)
+        run_check::<Keccak>(&input)
     }
 
     fn seed_corpus(&self) -> Vec<Input> {
@@ -334,6 +329,7 @@ impl Invariant for TranscriptConsistencyKeccakInvariant {
     }
 }
 
+/// Transcript symmetry invariant for the Poseidon sponge.
 #[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyPoseidonInvariant;
@@ -353,7 +349,7 @@ impl Invariant for TranscriptConsistencyPoseidonInvariant {
     fn setup(&self) {}
 
     fn check(&self, _setup: &(), input: Input) -> Result<(), CheckError> {
-        run_check::<PoseidonSponge>(&input, PoseidonSponge::new)
+        run_check::<PoseidonSponge>(&input)
     }
 
     fn seed_corpus(&self) -> Vec<Input> {

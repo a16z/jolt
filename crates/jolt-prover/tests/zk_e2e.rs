@@ -15,30 +15,27 @@ mod support;
     feature = "zk",
     not(feature = "field-inline")
 ))]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "integration tests should fail loudly"
-)]
+#[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod zk {
     extern crate jolt_inlines_keccak256;
 
     use common::jolt_device::JoltDevice;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Fr;
     use jolt_program::execution::OwnedTrace;
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_riscv::JoltTraceRow;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_verifier::proof::{JoltProof, JoltProofClaims};
+    use jolt_verifier::proof::JoltProof;
+    use jolt_verifier::JoltProtocolConfig;
+    use jolt_verifier::JoltSponge;
     use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
 
-    type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+    type Proof = JoltProof;
 
     struct ProvedGuest {
         preprocessing: DoryProverPreprocessing,
@@ -97,16 +94,15 @@ mod zk {
             jolt_prover::dory::commit_trusted_advice(&preprocessing, &case.trusted_advice)
                 .expect("trusted advice commitment")
         });
-        let proof =
-            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &backend,
-                &preprocessing,
-                &config,
-                trusted.as_ref(),
-                &witness,
-                &public_io,
-            )
-            .expect("modular ZK prove");
+        let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
+            &backend,
+            &preprocessing,
+            &config,
+            trusted.as_ref(),
+            &witness,
+            &public_io,
+        )
+        .expect("modular ZK prove");
         ProvedGuest {
             trusted_advice_commitment: trusted.map(|entry| entry.commitment),
             preprocessing,
@@ -120,7 +116,7 @@ mod zk {
     }
 
     fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &proved.preprocessing.verifier,
             &proved.public_io,
             &proved.proof,
@@ -134,7 +130,7 @@ mod zk {
     fn zk_muldiv_reference_backend_proof_is_accepted() {
         with_zk_stack(|| {
             let proved = prove_muldiv(JoltBackend::reference());
-            assert!(matches!(proved.proof.claims, JoltProofClaims::Zk { .. }));
+            assert_eq!(proved.proof.protocol, JoltProtocolConfig::for_zk(true));
             verify(&proved).expect("modular ZK proof must verify");
         });
     }
@@ -143,11 +139,28 @@ mod zk {
     fn zk_muldiv_tampered_blindfold_is_rejected() {
         with_zk_stack(|| {
             let mut proved = prove_muldiv(JoltBackend::reference());
-            let JoltProofClaims::Zk { blindfold_proof } = &mut proved.proof.claims else {
-                panic!("ZK proof must carry BlindFold claims");
-            };
-            blindfold_proof.random_u += Fr::from_u64(1);
+            // The argument string ends with BlindFold's openings.
+            *proved.proof.narg.last_mut().expect("non-empty proof") ^= 1;
             assert!(verify(&proved).is_err());
+        });
+    }
+
+    #[test]
+    fn zk_advice_consumer_modular_proof_is_accepted() {
+        with_zk_stack(|| {
+            let proved = prove_guest(
+                GuestCase {
+                    inputs: postcard::to_stdvec(&12u64).expect("serialize input"),
+                    untrusted_advice: postcard::to_stdvec(&5u64)
+                        .expect("serialize untrusted advice"),
+                    trusted_advice: postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
+                    ..GuestCase::new("advice-consumer-guest")
+                },
+                JoltBackend::reference(),
+                |_| {},
+            );
+            assert!(!proved.public_io.untrusted_advice.is_empty());
+            verify(&proved).expect("modular ZK advice proof must verify");
         });
     }
 
@@ -168,22 +181,17 @@ mod zk {
                 ),
                 JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
             );
-            let proof = jolt_prover::dory::prove::<
-                Fr,
-                DoryScheme,
-                Pedersen<Bn254G1>,
-                Blake2bTranscript,
-                _,
-            >(
-                &JoltBackend::reference(),
-                &preprocessing,
-                &config,
-                None,
-                &witness,
-                &public_io,
-            )
-            .expect("committed ZK prove");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let proof =
+                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
+                    &JoltBackend::reference(),
+                    &preprocessing,
+                    &config,
+                    None,
+                    &witness,
+                    &public_io,
+                )
+                .expect("committed ZK prove");
+            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

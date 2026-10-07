@@ -32,6 +32,15 @@ impl TracePolynomialOrder {
         }
     }
 
+    /// Inverse of [`transcript_scalar`](Self::transcript_scalar).
+    pub const fn from_transcript_scalar(scalar: u64) -> Option<Self> {
+        match scalar {
+            0 => Some(Self::CycleMajor),
+            1 => Some(Self::AddressMajor),
+            _ => None,
+        }
+    }
+
     pub const fn address_cycle_to_index(
         self,
         address: usize,

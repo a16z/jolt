@@ -3,6 +3,7 @@ use jolt_crypto::VectorOpeningError;
 use jolt_field::JoltField;
 use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::{SumcheckError, SumcheckR1csError};
+use jolt_transcript::TranscriptError;
 use thiserror::Error as ThisError;
 
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
@@ -155,6 +156,8 @@ pub enum ProverError<F: JoltField> {
 
 #[derive(Debug, ThisError)]
 pub enum VerificationError<F: JoltField> {
+    #[error("BlindFold proof transcript: {0}")]
+    Transcript(#[from] TranscriptError),
     #[error("claims have {claim_stages} stages but proof has {proof_stages}")]
     StageCountMismatch {
         claim_stages: usize,

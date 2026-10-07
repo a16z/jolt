@@ -1,9 +1,7 @@
 use jolt_claims::protocols::field_inline::{FieldInlineRelationId, FIELD_REGISTERS_LOG_K};
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_claims::OutputClaims as _;
 use jolt_field::JoltField;
 
-use super::outputs::Stage6bOutputClaims;
 use crate::stages::field_inline_bytecode::{
     field_inline_checked_split, field_inline_stage_gamma_powers, FieldInlineBytecodeFold,
 };
@@ -73,15 +71,4 @@ pub(super) fn bytecode_fold_and_cycles<F: JoltField>(
         read_write_cycle: read_write_cycle.to_vec(),
         val_evaluation_cycle: val_evaluation_cycle.to_vec(),
     })
-}
-
-/// Splice the reduced `FieldRdInc` opening into the stage-6b Fiat-Shamir value
-/// order: at its member position, after the ordinary increment reduction and
-/// before the optional advice cycle phases (the spec's committed output row
-/// order).
-pub(super) fn splice_inc_values<F: JoltField>(
-    values: &mut Vec<F>,
-    claims: &Stage6bOutputClaims<F>,
-) {
-    values.extend(claims.field_registers_inc_claim_reduction.opening_values());
 }

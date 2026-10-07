@@ -6,7 +6,7 @@ use jolt_akita::TraceOneHotCommitment;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_crypto::VectorCommitment;
-use jolt_field::{CanonicalBytes, JoltField};
+use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_kernels::FieldInlineWitnessCommitment;
 use jolt_kernels::{
@@ -16,7 +16,7 @@ use jolt_kernels::{
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Sponge;
 use jolt_verifier::proof::JoltProof;
 use jolt_witness::{JoltWitnessPlane, RowSource};
 
@@ -201,28 +201,29 @@ where
     }
 }
 
-/// Prove one execution using the packed Akita commitment path.
+/// Prove one execution using the packed Akita commitment path, returning the
+/// argument string. Akita's opening runs on the Jolt transcript, so its
+/// messages are the proof's last ones.
 ///
 /// Trusted advice is precommitted; untrusted advice is committed from public input.
-pub fn prove<F, PCS, VC, T, W>(
+pub fn prove<F, PCS, VC, H, W>(
     backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
-) -> Result<JoltProof<PCS, VC>, ProverError<F>>
+) -> Result<JoltProof, ProverError<F>>
 where
-    F: JoltField + CanonicalBytes + AppendToTranscript,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
     PCS::ProverSetup: GroupSetupMetadata,
-    PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
+    PCS::Output: Clone + PartialEq + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Clone + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
     W: JoltWitnessPlane<F>,
 {
-    prover::prove::<F, PCS, VC, T, W>(
+    prover::prove::<F, PCS, VC, H, W>(
         backend,
         preprocessing,
         config,

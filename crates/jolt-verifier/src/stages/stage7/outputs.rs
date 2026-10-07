@@ -159,9 +159,9 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use super::*;
     #[cfg(not(feature = "akita"))]
-    use crate::stages::stage7::hamming_weight_claim_reduction::{
-        hamming_weight_claim_reduction_dimensions, HammingWeightClaimReductionOutputClaims,
-    };
+    use crate::stages::relations::ClaimRoutes;
+    #[cfg(not(feature = "akita"))]
+    use crate::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
     #[cfg(not(feature = "akita"))]
     use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
         TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
@@ -189,49 +189,7 @@ mod tests {
     /// member carries only its own kind's slot.
     #[cfg(not(feature = "akita"))]
     #[test]
-    #[expect(clippy::unwrap_used)]
-    fn opening_values_follow_canonical_order() {
-        use crate::stages::{CommittedProgramSchedule, PrecommittedSchedule};
-        use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-        use jolt_claims::protocols::jolt::TracePolynomialOrder;
-
-        let schedule = PrecommittedSchedule::new(
-            TracePolynomialOrder::CycleMajor,
-            4,
-            2,
-            Some(64),
-            Some(64),
-            Some(CommittedProgramSchedule {
-                bytecode_len: 8,
-                bytecode_chunk_count: 2,
-                program_image_len_words: 8,
-                program_image_start_index: 0,
-            }),
-        )
-        .unwrap();
-        let hamming_instance = || {
-            let dimensions = hamming_weight_claim_reduction_dimensions(
-                JoltRaPolynomialLayout::new(2, 1, 1).unwrap(),
-                4,
-            )
-            .unwrap();
-            HammingWeightClaimReduction::new(dimensions, Vec::new(), Vec::new(), Vec::new())
-        };
-        let trusted_instance = || {
-            TrustedAdviceAddressPhase::new(
-                schedule.trusted_advice.as_ref().unwrap(),
-                None,
-                Vec::new(),
-            )
-        };
-        let untrusted_instance = || {
-            UntrustedAdviceAddressPhase::new(
-                schedule.untrusted_advice.as_ref().unwrap(),
-                None,
-                Vec::new(),
-            )
-        };
-
+    fn wire_claims_follow_canonical_order() {
         let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
             (5, 6, 7, 8, 9, 6, 9);
         let hamming = HammingWeightClaimReductionOutputClaims {
@@ -246,13 +204,6 @@ mod tests {
             untrusted: fr(untrusted),
         };
 
-        let without_committed_sumchecks = Stage7Sumchecks::<Fr> {
-            hamming_weight_claim_reduction: hamming_instance(),
-            trusted_advice: Some(trusted_instance()),
-            untrusted_advice: Some(untrusted_instance()),
-            bytecode_address_phase: None,
-            program_image_address_phase: None,
-        };
         let without_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming.clone(),
             trusted_advice: Some(trusted_advice.clone()),
@@ -261,25 +212,10 @@ mod tests {
             program_image_address_phase: None,
         };
         assert_eq!(
-            without_committed_sumchecks.opening_values(&without_committed),
+            Stage7Sumchecks::wire_claim_values(&without_committed, &ClaimRoutes::default()),
             (1..=plain_last).map(fr).collect::<Vec<_>>()
         );
 
-        let with_committed_sumchecks = Stage7Sumchecks::<Fr> {
-            hamming_weight_claim_reduction: hamming_instance(),
-            trusted_advice: Some(trusted_instance()),
-            untrusted_advice: Some(untrusted_instance()),
-            bytecode_address_phase: Some(BytecodeReductionAddressPhase::new(
-                schedule.bytecode.as_ref().unwrap(),
-                None,
-                Vec::new(),
-            )),
-            program_image_address_phase: Some(ProgramImageReductionAddressPhase::new(
-                schedule.program_image.as_ref().unwrap(),
-                None,
-                Vec::new(),
-            )),
-        };
         let with_committed = Stage7OutputClaims::<Fr> {
             hamming_weight_claim_reduction: hamming,
             trusted_advice: Some(trusted_advice),
@@ -292,16 +228,14 @@ mod tests {
             }),
         };
         assert_eq!(
-            with_committed_sumchecks.opening_values(&with_committed),
+            Stage7Sumchecks::wire_claim_values(&with_committed, &ClaimRoutes::default()),
             (1..=committed_last).map(fr).collect::<Vec<_>>()
         );
     }
 
-    /// Locks the `output_shape` commitment count against Expr/geometry drift: the
-    /// per-member `expected_output_openings` counts (which the generated
-    /// `output_claim_count` sums) must match the hand-derived opening counts each
-    /// configuration commits. Guards the ZK commitment count switching from the
-    /// old hand count to the Expr-derived sums.
+    /// Locks each member's output `Expr` against geometry drift: the per-member
+    /// `expected_output_openings` counts must match the hand-derived opening
+    /// counts each configuration commits.
     #[test]
     #[expect(clippy::unwrap_used)]
     fn output_shape_column_counts_match_hand_derived_openings() {

@@ -1,70 +1,58 @@
 #![no_main]
 
-//! `validate_inputs_from_parts` performs the verifier's pre-crypto input
-//! checks — memory-layout match, input/output size bounds, trace-length and
-//! RAM-size validity — over attacker-influenced dimensions. It must return a
-//! typed `Ok`/`Err` for any inputs, never panic or over-allocate.
+//! The verifier's pre-crypto input checks — proof-header decoding, then
+//! `validate_inputs`' memory-layout match, input/output size bounds, and
+//! trace-length, RAM-size, one-hot, read-write, and trace-order validity —
+//! over attacker-chosen header bytes and public I/O sizes. They must return
+//! a typed `Ok`/`Err` for any input, never panic or over-allocate.
 //!
-//! The honest preprocessing and proof metadata come from the checked-in
-//! fixture; the fuzzer drives the scalar dimensions (trace length, RAM size,
-//! advice presence, ZK flag) and the public I/O buffer sizes.
-//!
-//! `one_hot_config` is held at its fixture value; `rw_config` is not a
-//! parameter of `validate_inputs_from_parts`. Configuration mutations and
-//! the full verifier are outside this target's scope.
+//! The honest preprocessing and public I/O come from the checked-in muldiv
+//! fixture. Input layout: `data[0]` bit 0 declares a trusted-advice
+//! commitment, `data[1]` sets the public input length in 64-byte units, and
+//! `data[2..]` is read as an argument string: the proof header first, with
+//! the bytes after it becoming the public outputs.
 
 use std::sync::OnceLock;
 
-use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
-use jolt_dory::{DoryCommitment, DoryScheme};
-use jolt_verifier::{validate_inputs_from_parts, JoltProof, JoltVerifierPreprocessing};
+use jolt_dory::DoryScheme;
+use jolt_transcript::VerifierTranscript;
+use jolt_verifier::{jolt_protocol_id, validate_inputs, JoltSponge, ProofHeader, JOLT_SESSION};
+use jolt_verifier_fuzz::Bundle;
 use libfuzzer_sys::fuzz_target;
-
-type Preprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
-type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
-type Bundle = (Preprocessing, JoltDevice, Proof, Option<DoryCommitment>);
 
 static FIXTURE: &[u8] = include_bytes!("../fixtures/muldiv-bundle.bin");
 
 fn bundle() -> &'static Bundle {
     static BUNDLE: OnceLock<Bundle> = OnceLock::new();
-    BUNDLE.get_or_init(|| {
-        let (bundle, _): (Bundle, usize) =
-            bincode::serde::decode_from_slice(FIXTURE, bincode::config::standard())
-                .expect("fixture decodes");
-        bundle
-    })
+    BUNDLE.get_or_init(|| Bundle::decode(FIXTURE))
 }
 
 fuzz_target!(|data: &[u8]| {
-    if data.len() < 18 {
+    if data.len() < 2 {
         return;
     }
-    let (preprocessing, public_io, proof, _) = bundle();
+    let bundle = bundle();
+    let trusted_advice_present = data[0] & 1 == 1;
+    let narg = &data[2..];
+    let mut transcript = VerifierTranscript::<JoltSponge>::new(
+        &jolt_protocol_id::<JoltSponge>(),
+        JOLT_SESSION,
+        narg,
+    );
+    let Ok(header) = ProofHeader::receive(&mut transcript) else {
+        return;
+    };
+    let header_len = narg.len() - transcript.remaining();
 
-    let trace_length = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
-    let ram_k = u64::from_le_bytes(data[8..16].try_into().unwrap()) as usize;
-    let trusted_present = data[16] & 1 == 1;
-    let untrusted_present = data[16] & 2 == 2;
-    let zk = data[16] & 4 == 4;
+    let mut public_io = bundle.public_io.clone();
+    public_io.inputs = vec![0u8; data[1] as usize * 64];
+    public_io.outputs = narg[header_len..].to_vec();
 
-    // Fuzzer-chosen public I/O sizes, bounded so the harness itself does not
-    // allocate unreasonably; the validator enforces the real limits.
-    let input_len = (data[17] as usize) * 64;
-    let mut io = public_io.clone();
-    io.inputs = vec![0u8; input_len.min(1 << 16)];
-    io.outputs = data[18..].to_vec();
-
-    let _ = validate_inputs_from_parts::<DoryScheme, Pedersen<Bn254G1>>(
-        preprocessing,
-        &io,
-        trace_length,
-        ram_k,
-        proof.trace_polynomial_order,
-        proof.one_hot_config,
-        trusted_present,
-        untrusted_present,
-        zk,
+    let _ = validate_inputs::<DoryScheme, Pedersen<Bn254G1>>(
+        &bundle.preprocessing,
+        &public_io,
+        &header,
+        trusted_advice_present,
     );
 });
