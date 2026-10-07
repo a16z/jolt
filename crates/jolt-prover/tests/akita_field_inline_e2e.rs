@@ -1,4 +1,4 @@
-//! Akita (Akita) field-inline parity and tamper tests over fp128.
+//! Akita field-inline parity and tamper tests over fp128.
 //!
 //! Both kernel backends prove the field-ops guest with full-width `FieldRdInc`
 //! values and muldiv with an identically zero `FieldRdInc`, producing identical

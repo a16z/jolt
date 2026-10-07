@@ -10,8 +10,8 @@ use jolt_field::{CanonicalBytes, JoltField};
 #[cfg(feature = "field-inline")]
 use jolt_kernels::FieldInlineWitnessCommitment;
 use jolt_kernels::{
-    CommitmentGrid, JoltBackend, KernelError, KernelSlots, ProofSession, ReferenceBackend,
-    WitnessCommitment,
+    CommitWitness, CommitmentGrid, JoltBackend, KernelError, KernelSlots, ProofSession,
+    ReferenceBackend, WitnessCommitment,
 };
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
@@ -57,9 +57,9 @@ where
 /// The Akita path's stand-in for the streaming witness-commit slot: stage 0
 /// commits the native `OneHotTrace` group directly, so this slot is never
 /// reached.
-struct PackedCommitStub;
+struct AkitaCommitStub;
 
-impl<F, PCS> jolt_kernels::CommitWitness<F, PCS> for PackedCommitStub
+impl<F, PCS> CommitWitness<F, PCS> for AkitaCommitStub
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -120,7 +120,7 @@ where
     pub fn reference() -> Self {
         Self {
             base: JoltBackend {
-                commit: Box::new(PackedCommitStub),
+                commit: Box::new(AkitaCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),
                 spartan_outer_uniskip: Box::new(ReferenceBackend),
                 spartan_outer_remainder: Box::new(jolt_kernels::reference::spartan_outer::ReferenceOuterRemainder),

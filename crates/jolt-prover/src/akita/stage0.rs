@@ -203,7 +203,6 @@ where
         }
     }
     let required_batch_polys = auxiliary_groups.len() + plan.ids().len();
-    // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.num_vars()
         || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != plan.ids().len()
         || preprocessing.pcs_setup.max_total_batch_polys() < required_batch_polys

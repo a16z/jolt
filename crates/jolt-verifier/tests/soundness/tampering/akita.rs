@@ -89,7 +89,7 @@ fn one() -> AkitaField {
 fn clear_claims_mut(proof: &mut AkitaJoltProof) -> &mut ClearProofClaims<AkitaField> {
     match &mut proof.claims {
         JoltProofClaims::Clear(claims) => claims,
-        JoltProofClaims::Zk { .. } => panic!("Akita akita fixtures always carry clear claims"),
+        JoltProofClaims::Zk { .. } => panic!("Akita fixtures always carry clear claims"),
     }
 }
 
