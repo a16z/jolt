@@ -9,6 +9,8 @@ use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_host::Program;
 use jolt_program::execution::OwnedTrace;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
@@ -107,15 +109,25 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     prove_prepared::<AkitaTranscript>(run, config, preprocessing, &[])
 }
 
+/// The derived config, at the byte trace's K=2^8 under the byte link.
 pub fn derive_config(run: &PreparedGuest) -> ProverConfig {
-    ProverConfig::derive_compact::<AkitaField>(
+    let config = ProverConfig::derive_compact::<AkitaField>(
         run.trace.trace.as_slice(),
         &run.program_preprocessing.memory_layout,
         run.program_preprocessing.ram.min_bytecode_address,
         run.program_preprocessing.ram.bytecode_words.len(),
         MAX_PADDED_TRACE_LENGTH,
     )
-    .expect("derive Akita prover config")
+    .expect("derive Akita prover config");
+    #[cfg(feature = "akita-byte-link")]
+    let config = ProverConfig {
+        one_hot_config: JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: 32,
+        },
+        ..config
+    };
+    config
 }
 
 pub fn prove_prepared<T: Transcript<Challenge = AkitaField>>(

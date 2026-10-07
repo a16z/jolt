@@ -1,6 +1,7 @@
 //! Fixture-driven tamper suite for the akita path.
 //!
-//! Three layers, all over real packed-prover fixtures:
+//! Three layers, all over real packed-prover fixtures, and a fourth under the
+//! byte link:
 //!
 //! - An exhaustive typed sweep ([`every_clear_claim_wire_rejects_offset`]):
 //!   every field-element leaf of the clear claims is offset by one, one at a
@@ -8,8 +9,11 @@
 //!   ([`for_each_scalar_mut`]) fully destructures every aggregate, so a future
 //!   claim wire cannot be added without failing to compile until it is covered.
 //! - A byte-level commitment sweep ([`every_commitment_wire_rejects_perturbation`]):
-//!   every serde leaf of each trace, advice, and direct-program commitment is
-//!   perturbed; a deserialization failure or a verifier rejection both count.
+//!   every serde leaf of each trace, advice, direct-program and histogram
+//!   commitment is perturbed; a deserialization failure or a verifier rejection
+//!   both count.
+//! - The byte-link wire sweep ([`every_byte_link_wire_slice_rejects_offset`]):
+//!   the first and last element of every wire slice is offset by one.
 //! - Proof-shape tampers ([`akita_proof_shape_tampers_reject`],
 //!   [`akita_advice_commitment_presence_rejects`]): a swapped phase proof,
 //!   reordered direct-program commitments, and an absent trusted-advice
@@ -33,6 +37,8 @@ use jolt_field::{JoltField, Ring};
 use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
 use jolt_verifier::preprocessing::ProgramPreprocessing;
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
+#[cfg(feature = "akita-byte-link")]
+use jolt_verifier::stages::byte_link::{ByteLinkProof, GkrLayerProof, ReductionProof};
 use jolt_verifier::stages::{
     stage1::{
         outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
@@ -644,8 +650,8 @@ fn sweep_commitment(
     }
 }
 
-/// Every trace, advice, and direct-program commitment rejects a leaf-level
-/// perturbation.
+/// Every trace, advice, direct-program and histogram commitment rejects a
+/// leaf-level perturbation.
 #[test]
 fn every_commitment_wire_rejects_perturbation() {
     for case in [
@@ -658,6 +664,22 @@ fn every_commitment_wire_rejects_perturbation() {
             proof.commitments = commitment;
             case.verify_proof(&proof)
         });
+    }
+
+    #[cfg(feature = "akita-byte-link")]
+    {
+        let muldiv = akita_muldiv_case();
+        for group in 0..2 {
+            sweep_commitment(
+                &muldiv.proof.byte_link.histogram_commitments[group],
+                6,
+                |commitment| {
+                    let mut proof = muldiv.proof.clone();
+                    proof.byte_link.histogram_commitments[group] = commitment;
+                    muldiv.verify_proof(&proof)
+                },
+            );
+        }
     }
 
     let advice = akita_advice_case();
@@ -703,6 +725,62 @@ fn every_commitment_wire_rejects_perturbation() {
             )
         });
     }
+}
+
+/// Every slice of the byte-link wire — each root array, and each layer's
+/// rounds and children and each reduction's rounds and finals — of the real
+/// fixture rejects a one-off offset of its first and of its last element.
+#[cfg(feature = "akita-byte-link")]
+#[test]
+fn every_byte_link_wire_slice_rejects_offset() {
+    let case = akita_muldiv_case();
+    let lengths = byte_link_wire_slices(&mut case.proof.byte_link.clone())
+        .iter()
+        .map(|slice| slice.len())
+        .collect::<Vec<_>>();
+    for (slice, length) in lengths.into_iter().enumerate() {
+        let mut elements = vec![0, length.saturating_sub(1)];
+        elements.dedup();
+        for element in elements.into_iter().filter(|&element| element < length) {
+            let mut proof = case.proof.clone();
+            byte_link_wire_slices(&mut proof.byte_link)[slice][element] += one();
+            assert_rejects(case.verify_proof(&proof));
+        }
+    }
+}
+
+/// Every field element of the byte-link wire, slice by slice. Each aggregate
+/// is destructured, so a new wire field fails to compile until it is swept.
+#[cfg(feature = "akita-byte-link")]
+fn byte_link_wire_slices(
+    link: &mut ByteLinkProof<AkitaField, AkitaCommitment>,
+) -> Vec<&mut [AkitaField]> {
+    let ByteLinkProof {
+        histogram_commitments: _,
+        trace_roots,
+        table_roots,
+        trace,
+        triples,
+        ram,
+        triple_query,
+        ram_query,
+        source,
+    } = link;
+    let mut slices = vec![
+        trace_roots.as_flattened_mut(),
+        table_roots.as_flattened_mut(),
+    ];
+    for layers in [trace, triples, ram] {
+        for GkrLayerProof { rounds, children } in layers {
+            slices.push(rounds.as_flattened_mut());
+            slices.push(children.as_flattened_mut());
+        }
+    }
+    for ReductionProof { rounds, finals } in [triple_query, ram_query, source] {
+        slices.push(rounds.as_flattened_mut());
+        slices.push(finals);
+    }
+    slices
 }
 
 /// A swapped phase proof and reordered direct-program commitments both fail

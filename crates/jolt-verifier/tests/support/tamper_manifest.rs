@@ -1092,10 +1092,9 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "proof.byte_link",
         VerifierPhase::ByteLink,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "the akita verifier fixtures sit outside the byte trace's K=2^8 geometry; the \
-         jolt-prover link and 2^16 end-to-end tests offset roots, rounds, finals and \
-         histogram commitments",
+        TamperCoverage::Active,
+        "the akita sweep offsets the first and last element of every wire slice and \
+         perturbs both histogram commitments",
     ),
 ];
 

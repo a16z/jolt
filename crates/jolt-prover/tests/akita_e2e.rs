@@ -12,8 +12,6 @@ mod akita_tests {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
     #[cfg(feature = "akita-byte-link")]
-    use jolt_claims::protocols::jolt::lattice::byte_link::ByteLinkBatch;
-    #[cfg(feature = "akita-byte-link")]
     use jolt_claims::protocols::jolt::lattice::LatticeGeometryError;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
@@ -30,7 +28,7 @@ mod akita_tests {
     use jolt_verifier::proof::ClearProofClaims;
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     #[cfg(feature = "akita-byte-link")]
-    use jolt_verifier::{error::ByteLinkError, VerifierError};
+    use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -287,9 +285,8 @@ mod akita_tests {
     }
 
     /// The byte link at 2^16 cycles: the fibonacci guest at K=2^8 proves and
-    /// verifies, survives a serialization round trip, and rejects an altered
-    /// link round polynomial, an altered `Q` final, swapped histogram
-    /// commitments, and a K=2^4 shape before stage 1.
+    /// verifies, survives a serialization round trip, and rejects swapped
+    /// histogram commitments and a K=2^4 shape before stage 1.
     #[cfg(feature = "akita-byte-link")]
     #[test]
     fn byte_link_e2e_akita_at_2_16() {
@@ -322,18 +319,6 @@ mod akita_tests {
                 trusted_advice_commitment: None,
             })
         };
-        let one = AkitaField::from_u64(1);
-        assert!(matches!(
-            rejects(&|proof| proof.byte_link.trace[3].rounds[1][0] += one),
-            Err(VerifierError::ByteLink(ByteLinkError::Gate {
-                batch: ByteLinkBatch::Trace,
-                layer: 3
-            }))
-        ));
-        assert!(matches!(
-            rejects(&|proof| proof.byte_link.source.finals[0] += one),
-            Err(VerifierError::ByteLink(ByteLinkError::Source))
-        ));
         assert!(rejects(&|proof| proof.byte_link.histogram_commitments.swap(0, 1)).is_err());
         assert!(matches!(
             rejects(&|proof| proof.one_hot_config.log_k_chunk = 4),
