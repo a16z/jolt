@@ -1,8 +1,8 @@
 //! Lattice (Akita) mode: the additional protocol semantics for running the
-//! Jolt PIOP over a packed one-hot witness committed with a
+//! Jolt PIOP over native one-hot trace columns committed with a
 //! non-homomorphic PCS. Design: `specs/lattice-claims.md`.
 //!
-//! This module names facts only — the canonical OneHotTrace selector layout,
+//! This module names facts only — the canonical OneHotTrace native column layout,
 //! precommitted fixed-prefix layouts, extra relations,
 //! and final-opening map. Witness generation, transcripts, and stage
 //! orchestration live in the verifier and prover crates.
@@ -25,9 +25,9 @@
 //! - **final claim** — claims flow through the relation DAG until, per
 //!   polynomial, one claim remains that no relation consumes. In base mode
 //!   the stage-8 RLC batch settles it; in lattice mode the semantic
-//!   OneHotTrace claims are reduced at a random selector and the single
-//!   physical polynomial is opened once. Precommitted columns use packed-slot
-//!   claims.
+//!   OneHotTrace claims retain one evaluation per native column at a shared
+//!   point. They join independently committed auxiliary objects in one grouped
+//!   opening proof.
 
 pub mod geometry;
 pub mod packing;

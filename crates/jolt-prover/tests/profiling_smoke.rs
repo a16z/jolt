@@ -6,7 +6,7 @@
 //!
 //! Scale 2^13 — fibonacci's minimum guest scale. Label coverage is
 //! scale-independent. Compiled with the `akita` feature the same run drives
-//! the packed prover and asserts its presence set (and the `_akita`-suffixed
+//! the Akita prover and asserts its presence set (and the `_akita`-suffixed
 //! artifact names).
 //!
 //! NOT wired into CI yet: the reference backend's naive RAM kernels retain
@@ -21,6 +21,8 @@
 #![cfg(feature = "profiling")]
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaChunkProfile;
 use jolt_profiling::summary::ProfileSummary;
 use jolt_profiling::taxonomy::{self, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
@@ -33,6 +35,8 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: AkitaChunkProfile::Single,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");
@@ -75,7 +79,7 @@ fn profile_run_emits_conformant_artifacts() {
     // Every always-present current taxonomy label fired, for the mode this
     // prover was compiled in — the `zk` feature swaps the uni-skip and
     // stage-8 opening seams for their committed siblings, and the `akita`
-    // feature swaps the commitment seams for the packed set. (The advice
+    // feature swaps the commitment seams for the Akita set. (The advice
     // seams are exempt: fibonacci exercises no advice.)
     let mode = if cfg!(feature = "akita") {
         taxonomy::ProverMode::Akita

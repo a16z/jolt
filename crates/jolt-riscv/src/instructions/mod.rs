@@ -6,7 +6,7 @@
 //! instruction kind: with the default `T = ()` it is a zero-sized marker
 //! (used by `JoltInstruction` variants and static-flag tests); with `T` set
 //! to an `Instruction`/`Cycle` payload it becomes the constructed form used
-//! by `LookupQuery` impls. `#[derive(Flags)]` declares the R1CS circuit and
+//! by `LookupQuery` impls. `jolt_instruction!` declares the R1CS circuit and
 //! witness-generation flags. The `InstructionLookupTable` impls (in
 //! `jolt-lookup-tables`) map instructions to lookup tables.
 

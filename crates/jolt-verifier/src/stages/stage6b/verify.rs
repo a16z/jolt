@@ -118,7 +118,7 @@ where
         stage5.output_points(),
     );
 
-    // No zk protocol exists over the packed axis, so the committed arm (and its
+    // No zk protocol exists over the Akita axis, so the committed arm (and its
     // runtime point-alias dedup arithmetic) is base-only.
     #[cfg(not(feature = "akita"))]
     if checked.zk {

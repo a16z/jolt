@@ -186,7 +186,3 @@ pub(crate) fn decode_instruction(row: &TraceRow) -> Result<JoltInstruction, Witn
         }
     })
 }
-
-pub(crate) fn row_is_noop(row: &TraceRow) -> bool {
-    row.is_noop()
-}

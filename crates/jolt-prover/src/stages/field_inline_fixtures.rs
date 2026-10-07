@@ -411,6 +411,8 @@ pub(crate) fn test_prover_config() -> ProverConfig {
         rw_config: crate::config::read_write_config(LOG_T, RAM_LOG_K),
         one_hot_config: crate::config::one_hot_config(LOG_T),
         trace_polynomial_order: Default::default(),
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: Default::default(),
     }
 }
 
@@ -863,7 +865,7 @@ pub(crate) mod twins {
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,
         );
-        // The packed shape folds the four reduced Inc claims into the
+        // The Akita shape folds the four reduced Inc claims into the
         // fused-inc consumer stage slots (stage6a::verify's own wrapper).
         #[cfg(feature = "akita")]
         let base_input_values = LatticeReadRafAddressPhaseInputClaims {

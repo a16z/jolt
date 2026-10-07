@@ -207,6 +207,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage8", log_t, &session, &());
+    jolt_kernels::mem::drop_in_background_thread(session);
 
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

@@ -42,14 +42,6 @@ enum MemoryAccessType {
     Write,
 }
 
-fn _get_addressing_mode_name(mode: &AddressingMode) -> &'static str {
-    match mode {
-        AddressingMode::None => "None",
-        AddressingMode::SV39 => "SV39",
-        AddressingMode::SV48 => "SV48",
-    }
-}
-
 impl Mmu {
     pub fn new(_terminal: Box<dyn Terminal>) -> Self {
         Mmu {

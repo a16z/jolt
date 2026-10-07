@@ -15,8 +15,7 @@
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     is_valid_committed_bytecode_chunking_for_len, is_valid_committed_program_immediate,
-    total_lanes, BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY,
-    INVALID_COMMITTED_PROGRAM_IMMEDIATE,
+    BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
@@ -148,8 +147,4 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     let mut words = bytecode_words.to_vec();
     words.resize(padded_len, 0);
     words
-}
-
-pub const fn committed_total_lanes() -> usize {
-    total_lanes()
 }

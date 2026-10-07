@@ -12,11 +12,11 @@
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
-use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::JoltField;
-use jolt_r1cs::constraints::jolt::{
+use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_field::JoltField;
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
     SumcheckStatement, OPENING_CLAIM_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,

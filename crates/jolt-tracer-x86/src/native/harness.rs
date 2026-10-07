@@ -143,6 +143,7 @@ impl Prepared {
             row_limit: u64::MAX,
             obs_cursor: core::ptr::null_mut(),
             obs_end: core::ptr::null_mut(),
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
         guest.x[0] = 0;
         self.compiled.run(&mut guest)?;
@@ -211,6 +212,7 @@ pub fn run_program(
         row_limit: u64::MAX,
         obs_cursor: core::ptr::null_mut(),
         obs_end: core::ptr::null_mut(),
+        canary_offset: GuestState::canary_offset(&host.device.memory_layout),
     });
     guest.x[0] = 0;
 

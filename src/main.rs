@@ -239,6 +239,13 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         std::env::set_var(&cflags_key, &cflags);
     }
 
+    // Builder paths (CARGO_HOME, checkout location, sysroot) otherwise end up in panic
+    // locations and debuginfo, making the ELF and its proof digest machine-dependent.
+    // Cargo accepts -Ztrim-paths because zeroos-build sets RUSTC_BOOTSTRAP for this build.
+    std::env::set_var("CARGO_UNSTABLE_TRIM_PATHS", "true");
+    std::env::set_var("CARGO_PROFILE_DEV_TRIM_PATHS", "all");
+    std::env::set_var("CARGO_PROFILE_RELEASE_TRIM_PATHS", "all");
+
     if !preserve_symbols {
         jolt_rustflags.push("-Cstrip=symbols");
     }

@@ -65,7 +65,7 @@ pub use preprocessing::{
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "akita")]
-pub use verifier::absorb_packed_commitments;
+pub use verifier::absorb_akita_commitments;
 #[cfg(not(feature = "akita"))]
 pub use verifier::absorb_transcript_commitments;
 pub use verifier::{

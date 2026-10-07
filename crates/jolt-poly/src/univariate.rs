@@ -292,105 +292,9 @@ impl<F: Field> UnivariatePoly<F> {
         Self { coefficients }
     }
 
-    /// Computes the cubic polynomial `s(X) = l(X) * q(X)`, where `l(X)` is linear
-    /// and `q(X)` is quadratic, given partial information and a hint.
-    ///
-    /// - `linear_coeffs = [l(0), l(∞)]` (constant and leading coefficient)
-    /// - `quadratic_coeff_0 = q(0)` (constant)
-    /// - `quadratic_coeff_2 = q(∞)` (quadratic coefficient, i.e., leading coeff)
-    /// - `hint = s(0) + s(1)`
-    ///
-    /// Used by the split-eq evaluator to construct round polynomials.
-    ///
-    /// # Panics
-    /// Panics if `l(1) = linear_coeffs[0] + linear_coeffs[1]` is zero, since the
-    /// hint equation cannot then be solved for the missing quadratic coefficient.
-    #[expect(clippy::expect_used)]
-    pub fn from_linear_times_quadratic_with_hint(
-        linear_coeffs: [F; 2],
-        quadratic_coeff_0: F,
-        quadratic_coeff_2: F,
-        hint: F,
-    ) -> Self {
-        let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
-        let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
-
-        // s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = hint
-        // l(1) = l(0) + l(∞) = linear_eval_one
-        // q(1) = q(0) + q(1_coeff) + q(2_coeff)
-        // Solve for the linear coefficient of q:
-        assert!(
-            !linear_eval_one.is_zero(),
-            "linear polynomial vanishes at x=1"
-        );
-        let linear_eval_one_inv = linear_eval_one
-            .inverse()
-            .expect("nonzero linear_eval_one has an inverse");
-        let quadratic_coeff_1 =
-            (hint - cubic_coeff_0) * linear_eval_one_inv - quadratic_coeff_0 - quadratic_coeff_2;
-
-        let coefficients = vec![
-            cubic_coeff_0,
-            linear_coeffs[0] * quadratic_coeff_1 + linear_coeffs[1] * quadratic_coeff_0,
-            linear_coeffs[0] * quadratic_coeff_2 + linear_coeffs[1] * quadratic_coeff_1,
-            linear_coeffs[1] * quadratic_coeff_2,
-        ];
-        Self { coefficients }
-    }
-
     /// Returns `true` if all coefficients are zero (or the vector is empty).
     pub fn is_zero(&self) -> bool {
         self.coefficients.is_empty() || self.coefficients.iter().all(|c| *c == F::zero())
-    }
-
-    pub fn leading_coefficient(&self) -> Option<&F> {
-        self.coefficients.last()
-    }
-
-    /// Polynomial long division: `self = quotient * divisor + remainder`.
-    ///
-    /// Returns `Some((quotient, remainder))`, or `None` if `divisor` is the
-    /// zero polynomial.
-    #[expect(clippy::unwrap_used, clippy::expect_used)]
-    pub fn divide_with_remainder(&self, divisor: &Self) -> Option<(Self, Self)> {
-        if self.is_zero() {
-            return Some((Self::zero(), Self::zero()));
-        }
-        // Divide by the effective (mathematical) degree: trailing zero
-        // coefficients would otherwise make the stored leading coefficient
-        // zero and non-invertible. `None` here means the zero divisor.
-        let divisor_len = divisor.coefficients.iter().rposition(|c| *c != F::zero())? + 1;
-        if self.coefficients.len() < divisor_len {
-            return Some((Self::zero(), self.clone()));
-        }
-
-        let divisor_coeffs = &divisor.coefficients[..divisor_len];
-        let divisor_leading_inv = divisor_coeffs[divisor_len - 1]
-            .inverse()
-            .expect("leading coefficient must be invertible");
-
-        let mut remainder = self.clone();
-        let mut quotient = vec![F::zero(); self.coefficients.len() - divisor_len + 1];
-
-        while !remainder.is_zero() && remainder.coefficients.len() >= divisor_len {
-            let cur_q_coeff = *remainder.leading_coefficient().unwrap() * divisor_leading_inv;
-            let cur_q_degree = remainder.coefficients.len() - divisor_len;
-            quotient[cur_q_degree] = cur_q_coeff;
-
-            for (i, div_coeff) in divisor_coeffs.iter().enumerate() {
-                remainder.coefficients[cur_q_degree + i] -= cur_q_coeff * *div_coeff;
-            }
-
-            while remainder
-                .coefficients
-                .last()
-                .is_some_and(|c| *c == F::zero())
-            {
-                let _ = remainder.coefficients.pop();
-            }
-        }
-
-        Some((Self::new(quotient), remainder))
     }
 }
 
@@ -668,61 +572,6 @@ mod tests {
     }
 
     #[test]
-    fn divide_exact() {
-        let dividend = UnivariatePoly::new(vec![-Fr::one(), Fr::zero(), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![-Fr::one(), Fr::one()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-        assert_eq!(q, UnivariatePoly::new(vec![Fr::one(), Fr::one()]));
-        assert!(r.is_zero());
-    }
-
-    #[test]
-    fn divide_with_remainder_nonzero() {
-        let dividend = UnivariatePoly::new(vec![Fr::one(), Fr::zero(), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![-Fr::one(), Fr::one()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-
-        for x_val in 0..5u64 {
-            let x = Fr::from_u64(x_val);
-            assert_eq!(
-                q.evaluate(x) * divisor.evaluate(x) + r.evaluate(x),
-                dividend.evaluate(x),
-            );
-        }
-    }
-
-    #[test]
-    fn divide_by_zero_returns_none() {
-        let p = UnivariatePoly::new(vec![Fr::one()]);
-        assert!(p.divide_with_remainder(&UnivariatePoly::zero()).is_none());
-    }
-
-    #[test]
-    fn divide_by_all_zero_divisor_returns_none() {
-        let p = UnivariatePoly::new(vec![Fr::one(), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![Fr::zero(), Fr::zero()]);
-        assert!(p.divide_with_remainder(&divisor).is_none());
-    }
-
-    #[test]
-    fn divide_by_divisor_with_trailing_zeros() {
-        let dividend = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::from_u64(3), Fr::one()]);
-        let divisor = UnivariatePoly::new(vec![Fr::from_u64(2), Fr::one(), Fr::zero()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-        assert_eq!(q, UnivariatePoly::new(vec![Fr::one(), Fr::one()]));
-        assert!(r.is_zero());
-    }
-
-    #[test]
-    fn divide_lower_degree_returns_self_as_remainder() {
-        let dividend = UnivariatePoly::new(vec![Fr::from_u64(3)]);
-        let divisor = UnivariatePoly::new(vec![Fr::one(), Fr::one()]);
-        let (q, r) = dividend.divide_with_remainder(&divisor).unwrap();
-        assert!(q.is_zero());
-        assert_eq!(r, dividend);
-    }
-
-    #[test]
     fn from_evals_cubic() {
         let evals = vec![
             Fr::from_u64(1),
@@ -797,23 +646,5 @@ mod tests {
                 assert_eq!(UnivariatePoly::from_evals_toom(&samples), expected);
             }
         }
-    }
-
-    #[test]
-    fn from_linear_times_quadratic_with_hint() {
-        let linear_coeffs = [Fr::from_u64(1), Fr::from_u64(1)];
-        let q0 = Fr::from_u64(3);
-        let q2 = Fr::from_u64(1);
-        let hint = Fr::from_u64(15);
-        let poly =
-            UnivariatePoly::from_linear_times_quadratic_with_hint(linear_coeffs, q0, q2, hint);
-
-        let expected = UnivariatePoly::new(vec![
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(3),
-            Fr::from_u64(1),
-        ]);
-        assert_eq!(poly, expected);
     }
 }

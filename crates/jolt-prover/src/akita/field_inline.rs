@@ -43,7 +43,7 @@ where
             order: TracePolynomialOrder::CycleMajor,
         },
     )
-    .ok_or_else(|| commit_failed("FieldRdInc disagrees with the packed trace arity"))?;
+    .ok_or_else(|| commit_failed("FieldRdInc disagrees with the Akita trace arity"))?;
     let (commitment, hint) = tracing::info_span!("commit_field_inc", num_vars = layout.num_vars())
         .in_scope(|| PCS::commit_full_width_object(setup, &polynomial, layout.layout_digest()))
         .map_err(commit_failed)?;

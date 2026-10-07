@@ -1,12 +1,15 @@
 //! Per-proof configuration, derived from the execution trace.
 //!
-//! These five values are exactly the proof's wire config block
+//! The five proof-shape values are exactly the proof's wire config block
 //! (`JoltProof::{trace_length, ram_K, rw_config, one_hot_config,
-//! trace_polynomial_order}`) plus the Fiat-Shamir preamble inputs. The
-//! derivation policies here must match the verifier's choices byte-for-byte.
+//! trace_polynomial_order}`) plus the Fiat-Shamir preamble inputs. Akita's
+//! witness chunk profile is a setup choice carried by its verifier setup.
+//! The proof-shape derivation policies must match the verifier's choices byte-for-byte.
 
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaChunkProfile;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
@@ -24,7 +27,7 @@ const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
 /// (legacy's `PCS::MIN_PADDED_TRACE_LENGTH`). Dory needs `T >= K^(1/D)`
 /// (256); Akita's folded-only protocol cannot schedule the K=16
 /// `OneHotTrace` group below 16 variables, and column arity is
-/// `log_k_chunk + log_T`, so the packed pipeline pads every trace to at
+/// `log_k_chunk + log_T`, so the Akita pipeline pads every trace to at
 /// least 2^12 cycles.
 #[cfg(not(feature = "akita"))]
 const MIN_PADDED_TRACE_LENGTH: usize = 256;
@@ -48,6 +51,11 @@ pub struct ProverConfig {
     /// to `preprocess_committed_with_order` and keep the values equal. Akita
     /// supports only cycle-major order.
     pub trace_polynomial_order: TracePolynomialOrder,
+    /// Selects the Akita witness chunk profile during preprocessing. Proving
+    /// rejects a profile that differs from the prepared setup. The verifier
+    /// setup carries this choice; it is not part of the proof's wire config block.
+    #[cfg(feature = "akita")]
+    pub akita_chunk_profile: AkitaChunkProfile,
 }
 
 impl ProverConfig {
@@ -157,6 +165,8 @@ impl ProverConfig {
             rw_config: read_write_config(log_T, ram_K.ilog2() as usize),
             one_hot_config: one_hot_config(log_T),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+            #[cfg(feature = "akita")]
+            akita_chunk_profile: AkitaChunkProfile::Single,
         })
     }
 

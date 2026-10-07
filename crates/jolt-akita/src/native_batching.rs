@@ -32,9 +32,9 @@ use crate::adapters::{
     invalid_batch, prove_failed, reverse_point, serialize_akita, validate_one_hot_k,
     with_backend_pool, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
     AkitaBackendHint, AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource,
-    AkitaOneHotK16Config, AkitaOneHotK256Config, AkitaProverHint, AkitaProverSetup,
-    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
+use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
@@ -110,10 +110,10 @@ fn validate_trace_batch_statement(
     validate_grouped_claim("main-trace", main)?;
     if main.commitment.backend_flavor != AkitaBackendFlavor::OneHot
         || main.commitment.one_hot_k != setup.one_hot_k
-        || main.commitment.poly_count != 1
+        || main.commitment.poly_count != setup.max_num_polys_per_commitment_group
     {
         return Err(invalid_batch(
-            "Akita final trace group must be one setup-matched one-hot polynomial",
+            "Akita final trace group must be a setup-matched one-hot batch",
         ));
     }
     let supported_grouped_config =
@@ -160,7 +160,7 @@ where
     T: Transcript<Challenge = AkitaField>,
 {
     append_verifier_setup(transcript, setup, AkitaBackendFlavor::OneHot)?;
-    transcript.append(&Label(b"akita_precommit_batch_v3"));
+    transcript.append(&Label(b"akita_precommit_batch_v4"));
     transcript.append_bytes(&serialize_akita(&selection)?);
     let group_count = auxiliary_groups
         .len()
@@ -194,7 +194,7 @@ where
     }
     Ok(bridged_akita_session(
         transcript,
-        b"jolt-akita/precommitted-group-batch/v3",
+        b"jolt-akita/precommitted-group-batch/v4",
     ))
 }
 
@@ -205,34 +205,15 @@ fn prove_one_hot_opening(
 ) -> Result<Vec<u8>, OpeningsError> {
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
+    let scheme = setup.verifier.one_hot_scheme()?;
     with_backend_pool(|| {
-        let proof = match setup.one_hot_k() {
-            AKITA_ONE_HOT_K16 => setup
-                .verifier
-                .one_hot_k16_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .batched_prove(
-                    backend_prover_setup,
-                    opening,
-                    backend,
-                    session,
-                    BasisMode::Lagrange,
-                ),
-            AKITA_ONE_HOT_K256 => setup
-                .verifier
-                .one_hot_k256_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .batched_prove(
-                    backend_prover_setup,
-                    opening,
-                    backend,
-                    session,
-                    BasisMode::Lagrange,
-                ),
-            _ => unreachable!("the one-hot setup geometry was validated during setup"),
-        }?;
-        // Akita never trims its NTT caches itself; drop the root and suffix
-        // transforms built for this proof instead of keeping them resident.
+        let proof = with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove(
+            backend_prover_setup,
+            opening,
+            backend,
+            session,
+            BasisMode::Lagrange,
+        ))?;
         let _ = backend.trim_caches()?;
         Ok::<_, AkitaError>(proof)
     })
@@ -245,35 +226,15 @@ fn verify_one_hot_statement(
     session: &[u8],
     statement: GroupBatchStatement<'_, AkitaBackendExtField, AkitaField>,
 ) -> Result<(), OpeningsError> {
-    let verified = match setup.one_hot_k {
-        AKITA_ONE_HOT_K16 => {
-            let verifier = setup.one_hot_k16_verifier()?;
-            with_backend_pool(|| {
-                verifier.batched_verify(
-                    &proof.backend_proof,
-                    session,
-                    statement,
-                    BasisMode::Lagrange,
-                )
-            })
-        }
-        AKITA_ONE_HOT_K256 => {
-            let verifier = setup.one_hot_k256_verifier()?;
-            with_backend_pool(|| {
-                verifier.batched_verify(
-                    &proof.backend_proof,
-                    session,
-                    statement,
-                    BasisMode::Lagrange,
-                )
-            })
-        }
-        other => {
-            return Err(invalid_batch(format!(
-                "unsupported Akita one-hot K={other}"
-            )))
-        }
-    };
+    let verifier = setup.one_hot_verifier()?;
+    let verified = with_backend_pool(|| {
+        with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
+            &proof.backend_proof,
+            session,
+            statement,
+            BasisMode::Lagrange,
+        ))
+    });
     verified.map_err(|_| OpeningsError::VerificationFailed)
 }
 
@@ -327,10 +288,10 @@ impl AkitaNativeBatching {
         }
         if !matches!(
             main_hint.source,
-            AkitaHintSource::TraceOneHot { .. } | AkitaHintSource::OneHot { poly_count: 1, .. }
+            AkitaHintSource::TraceOneHot { .. } | AkitaHintSource::OneHot { .. }
         ) {
             return Err(invalid_batch(
-                "Akita main-trace hint must retain one one-hot source",
+                "Akita main-trace hint must retain the one-hot batch",
             ));
         }
         let (main_backend_commitment, main_backend_hint) = main_hint
@@ -361,23 +322,13 @@ impl AkitaNativeBatching {
         .map_err(prove_failed)?;
         handles.push(main_backend_hint);
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
-        let opening = match setup.one_hot_k() {
-            AKITA_ONE_HOT_K256 => {
-                SelectedProverOpeningData::from_committed_claims::<AkitaOneHotK256Config>(
-                    claims,
-                    handles,
-                    setup.verifier.one_hot_k256_scheme()?.schedules(),
-                )
-            }
-            AKITA_ONE_HOT_K16 => {
-                SelectedProverOpeningData::from_committed_claims::<AkitaOneHotK16Config>(
-                    claims,
-                    handles,
-                    setup.verifier.one_hot_k16_scheme()?.schedules(),
-                )
-            }
-            _ => unreachable!("one-hot K was validated by setup"),
-        }
+        let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
+            SelectedProverOpeningData::from_committed_claims::<Cfg>(
+                claims,
+                handles,
+                scheme.schedules(),
+            )
+        })
         .map_err(akita_error)?;
         let selection = opening.selection();
         let session = bind_grouped_statement_transcripts(
@@ -407,25 +358,14 @@ impl AkitaNativeBatching {
             .iter()
             .map(|entry| &entry.claim.commitment)
             .collect::<Vec<_>>();
-        let (auxiliary_backend, main_backend) = match setup.one_hot_k {
-            AKITA_ONE_HOT_K16 => crate::shape_guard::deserialize_checked_grouped_backend_payload(
-                setup.one_hot_k16_scheme()?.schedules(),
+        let (auxiliary_backend, main_backend) = with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| {
+            crate::shape_guard::deserialize_checked_grouped_backend_payload(
+                scheme.schedules(),
                 &auxiliary_commitments,
                 &main.commitment,
                 proof.selection(),
-            ),
-            AKITA_ONE_HOT_K256 => crate::shape_guard::deserialize_checked_grouped_backend_payload(
-                setup.one_hot_k256_scheme()?.schedules(),
-                &auxiliary_commitments,
-                &main.commitment,
-                proof.selection(),
-            ),
-            other => {
-                return Err(invalid_batch(format!(
-                    "unsupported Akita one-hot K={other}"
-                )))
-            }
-        }?;
+            )
+        })?;
         let selection = proof.selection();
         let session = bind_grouped_statement_transcripts(
             transcript,
@@ -626,25 +566,16 @@ fn prove_one_hot(
     session: &[u8],
 ) -> Result<(OpeningScheduleSelection, Vec<u8>), OpeningsError> {
     let backend_point = reverse_point(point);
-    let opening = match setup.one_hot_k() {
-        AKITA_ONE_HOT_K16 => single_group_batch::<AkitaOneHotK16Config>(
-            setup.verifier.one_hot_k16_scheme()?.schedules(),
+    let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
+        single_group_batch::<Cfg>(
+            scheme.schedules(),
             &backend_point,
             evaluations,
             backend_commitment,
             backend_hint,
         )
-        .map_err(akita_error)?,
-        AKITA_ONE_HOT_K256 => single_group_batch::<AkitaOneHotK256Config>(
-            setup.verifier.one_hot_k256_scheme()?.schedules(),
-            &backend_point,
-            evaluations,
-            backend_commitment,
-            backend_hint,
-        )
-        .map_err(akita_error)?,
-        _ => unreachable!("the one-hot setup geometry was validated during setup"),
-    };
+    })
+    .map_err(akita_error)?;
     let selection = opening.selection();
     let proof = prove_one_hot_opening(setup, opening, session)?;
     Ok((selection, proof))
@@ -769,27 +700,17 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 statement.len(),
                 &backend_point,
             ),
-            AkitaBackendFlavor::OneHot => match setup.one_hot_k {
-                AKITA_ONE_HOT_K16 => crate::shape_guard::deserialize_checked_backend_payload(
-                    setup.one_hot_k16_scheme()?.schedules(),
-                    commitment,
-                    proof.selection(),
-                    statement.len(),
-                    &backend_point,
-                ),
-                AKITA_ONE_HOT_K256 => crate::shape_guard::deserialize_checked_backend_payload(
-                    setup.one_hot_k256_scheme()?.schedules(),
-                    commitment,
-                    proof.selection(),
-                    statement.len(),
-                    &backend_point,
-                ),
-                other => {
-                    return Err(invalid_batch(format!(
-                        "unsupported Akita one-hot K={other}"
-                    )))
-                }
-            },
+            AkitaBackendFlavor::OneHot => {
+                with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| {
+                    crate::shape_guard::deserialize_checked_backend_payload(
+                        scheme.schedules(),
+                        commitment,
+                        proof.selection(),
+                        statement.len(),
+                        &backend_point,
+                    )
+                })
+            }
         }?;
 
         let session = bind_statement_transcripts(transcript, setup, statement, commitment, point)?;

@@ -7,14 +7,14 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
+use jolt_claims::protocols::composed::r1cs::{
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-};
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
@@ -76,7 +76,6 @@ where
                 .spartan_outer_uniskip
                 .first_round_poly(session, &[], &())
         })?;
-    // The selected jolt-r1cs shape includes the field-inline rows when enabled.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),

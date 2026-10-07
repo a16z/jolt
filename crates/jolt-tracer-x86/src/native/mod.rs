@@ -168,6 +168,7 @@ impl X86TracerBackend {
             row_limit: u64::MAX,
             obs_cursor: obs_start,
             obs_end,
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
         compiled.run_record(&mut guest)?;
@@ -229,6 +230,7 @@ impl X86TracerBackend {
             row_limit: u64::MAX,
             obs_cursor: core::ptr::null_mut(),
             obs_end: core::ptr::null_mut(),
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
         compiled.run(&mut guest)?;
@@ -507,6 +509,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             row_limit: 0,
             obs_cursor: core::ptr::null_mut(),
             obs_end: core::ptr::null_mut(),
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
         let mut boundaries: Vec<(usize, Arc<Boundary>)> = Vec::new();
@@ -604,6 +607,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             row_limit: needed as u64,
             obs_cursor: obs_start,
             obs_end,
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;

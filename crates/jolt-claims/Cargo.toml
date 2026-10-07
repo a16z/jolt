@@ -27,6 +27,7 @@ jolt-claims-derive.workspace = true
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-poly.workspace = true
+jolt-r1cs.workspace = true
 jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-utils.workspace = true
@@ -35,5 +36,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
+num-traits.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true

@@ -59,7 +59,7 @@ pub struct BytecodeStagePoints<F: JoltField> {
     pub stage_cycle_points: [Vec<F>; 5],
     pub register_read_write_point: Vec<F>,
     pub register_val_evaluation_point: Vec<F>,
-    /// The packed fused-inc consumer cycle points in stage order (`γ^5..8`):
+    /// The Akita fused-inc consumer cycle points in stage order (`γ^5..8`):
     /// RAM read-write, RAM val-check, registers read-write, registers
     /// val-evaluation — the four reduced `Inc` claims' own cycle points, which
     /// the prover's address-phase kernel weights its fused pushforwards by.
@@ -318,7 +318,7 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         &self.stage_points.stage_cycle_points
     }
 
-    /// The packed fused-inc consumer cycle points (`γ^5..8` stage order);
+    /// The Akita fused-inc consumer cycle points (`γ^5..8` stage order);
     /// empty on the base build. See [`BytecodeStagePoints`].
     pub fn fused_inc_cycle_points(&self) -> &[Vec<F>] {
         &self.stage_points.fused_inc_cycle_points
@@ -421,8 +421,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     }
 }
 
-// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
-// composition is covered by the prover's field-inline stage round-trips and the packed e2e
+// The dory-shaped composition pins (base input-claims struct, five stage points); the Akita
+// composition is covered by the prover's field-inline stage round-trips and the Akita e2e
 // suite.
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(

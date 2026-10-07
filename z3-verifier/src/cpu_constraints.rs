@@ -2,13 +2,11 @@
 #![allow(non_upper_case_globals)]
 
 use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
-use jolt_field::{Fr, Ring};
-use jolt_r1cs::{
-    constraints::rv64::{
-        self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE, V_BRANCH, V_CONST, V_NEXT_IS_NOOP,
-    },
-    SparseRow,
+use jolt_claims::protocols::composed::r1cs::rv64::{
+    self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE, V_BRANCH, V_CONST, V_NEXT_IS_NOOP,
 };
+use jolt_field::{Fr, Ring};
+use jolt_r1cs::SparseRow;
 use jolt_riscv::{
     CircuitFlags, Flags, InstructionFlags, JoltInstruction, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
     NUM_INSTRUCTION_FLAGS,

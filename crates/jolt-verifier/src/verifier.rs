@@ -169,8 +169,8 @@ where
     Ok(())
 }
 
-/// The Akita verification path: the same stage spine, with a random-selector
-/// reduction of the packed trace and one native opening for the trace, advice,
+/// The Akita verification path: the same stage spine, with ordered native
+/// trace-column claims and one batch opening for the trace, advice,
 /// and committed-program objects. No homomorphism bounds and no ZK tail.
 #[cfg(feature = "akita")]
 pub fn verify<F, PCS, VC, T>(
@@ -552,7 +552,7 @@ where
 {
     // A build with field-inline enabled proves every guest under the composed protocol, so the
     // field-inline committed payload is unconditionally required (absence means a producer
-    // without field-inline semantics — reject before any stage logic). On the packed axis the
+    // without field-inline semantics — reject before any stage logic). On the Akita axis the
     // field-increment commitment slot is equally unconditional: presence is never claim-gated
     // (an all-zero group still commits).
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
@@ -740,7 +740,7 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         }
     }
     #[cfg(feature = "akita")]
-    absorb_packed_commitments(
+    absorb_akita_commitments(
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
@@ -754,11 +754,11 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     );
 }
 
-/// Absorbs the packed commitment objects in canonical object order: `OneHotTrace`, untrusted
+/// Absorbs the Akita commitment objects in canonical object order: `OneHotTrace`, untrusted
 /// advice, trusted advice, the field-increment commitment (field-inline builds), then direct
-/// bytecode chunks and program image. Shared verbatim by the packed prover's stage 0.
+/// bytecode chunks and program image. Shared verbatim by the Akita prover's stage 0.
 #[cfg(feature = "akita")]
-pub fn absorb_packed_commitments<C, T>(
+pub fn absorb_akita_commitments<C, T>(
     one_hot_trace: &C,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
@@ -780,11 +780,11 @@ pub fn absorb_packed_commitments<C, T>(
     if let Some(commitment) = field_inc_commitment {
         append_length_prefixed(transcript, b"field_inc", commitment);
     }
-    absorb_packed_program_commitments(direct_program_commitments, transcript);
+    absorb_akita_program_commitments(direct_program_commitments, transcript);
 }
 
 #[cfg(feature = "akita")]
-pub fn absorb_packed_program_commitments<C, T>(commitments: &[C], transcript: &mut T)
+pub fn absorb_akita_program_commitments<C, T>(commitments: &[C], transcript: &mut T)
 where
     C: AppendToTranscript,
     T: Transcript,
@@ -1492,7 +1492,7 @@ mod tests {
     #[test]
     fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
         use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
-        use jolt_r1cs::constraints::jolt::SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
+        use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
 
         const {
             assert!(MAX_BLINDFOLD_GENERATORS > SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE);

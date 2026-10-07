@@ -189,7 +189,6 @@ fn validate_fs_scope(scope: &Ident) -> syn::Result<()> {
             | "Stage6a"
             | "Stage6b"
             | "Stage7"
-            | "Reconstruction"
             | "Stage8"
             | "BlindFold"
     );
