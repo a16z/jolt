@@ -51,10 +51,10 @@ pub use error::TranscriptError;
 pub use fork::{Fork, FORK_SEED_LEN};
 pub use grinding::{
     grinding_predicate_accepts, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_LEN,
-    GRINDING_SEED_LEN, MAX_GRINDING_BITS,
+    MAX_GRINDING_BITS,
 };
 pub use nonce::Nonce;
-pub use protocol::{ProtocolId, PROTOCOL_ID_LEN};
+pub use protocol::ProtocolId;
 pub use prover::ProverTranscript;
 #[cfg(feature = "logging")]
 pub use site::TranscriptEvent;
@@ -67,7 +67,6 @@ pub use spongefish::instantiations::Keccak;
 /// The duplex interface every [`Sponge`] implements; re-exported so a custom
 /// sponge needs no direct spongefish dependency.
 pub use spongefish::DuplexSpongeInterface;
-pub use state::SMALL_CHALLENGE_BYTES;
 pub use verifier::VerifierTranscript;
 
 #[cfg(feature = "transcript-poseidon")]

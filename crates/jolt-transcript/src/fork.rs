@@ -14,7 +14,7 @@ const FORK_TAG: &[u8] = b"jolt-transcript/fork/v1";
 ///
 /// A prover that must search (proof of work, or Fiat-Shamir with aborts) squeezes
 /// one [`FORK_SEED_LEN`]-byte seed, tries counters on forks, then sends the
-/// accepted counter as a `u32` prover message. The verifier squeezes the same
+/// accepted counter as a canonical LEB128 [`Nonce`](crate::Nonce) message. The verifier squeezes the same
 /// seed, receives the counter, and rebuilds the same fork. The seed binds the
 /// whole prechallenge transcript, and the counter is in the argument string,
 /// so nothing a fork derives can be chosen independently of the transcript.

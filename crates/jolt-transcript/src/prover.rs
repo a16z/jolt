@@ -194,7 +194,7 @@ impl<H: Sponge> Channel for ProverTranscript<H> {
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
         let value = self.state.small_challenge();
         self.log
-            .record(TranscriptOp::Challenge, crate::SMALL_CHALLENGE_BYTES, None);
+            .record(TranscriptOp::Challenge, crate::state::SMALL_CHALLENGE_BYTES, None);
         value
     }
 

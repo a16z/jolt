@@ -23,6 +23,10 @@ pub enum TranscriptError {
     /// Bytes remain after the protocol's last prover message.
     #[error("proof has trailing bytes")]
     TrailingBytes,
+    /// The bytes a read returned differ from the bytes the sponge absorbed:
+    /// an atom's decoder consumed other than its `NUM_BYTES`.
+    #[error("the transcript's byte cursor disagrees with the sponge's")]
+    CursorMismatch,
     /// The proof-of-work predicate rejected the received nonce.
     #[error("proof-of-work predicate rejected the nonce")]
     GrindingRejected,

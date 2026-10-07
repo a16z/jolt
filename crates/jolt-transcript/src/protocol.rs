@@ -3,7 +3,7 @@
 use crate::Sponge;
 
 /// Byte width of a [`ProtocolId`].
-pub const PROTOCOL_ID_LEN: usize = 64;
+pub(crate) const PROTOCOL_ID_LEN: usize = 64;
 
 /// The 64-byte domain separator every transcript absorbs first.
 ///

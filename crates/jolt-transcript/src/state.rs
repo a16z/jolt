@@ -7,7 +7,7 @@ use spongefish::{Encoding, ProverState, VerifierState};
 use crate::{ProtocolId, Sponge};
 
 /// Bytes squeezed for a [`Channel::challenge_small`](crate::Channel::challenge_small).
-pub const SMALL_CHALLENGE_BYTES: usize = 16;
+pub(crate) const SMALL_CHALLENGE_BYTES: usize = 16;
 
 /// Width of the squeeze blocks a challenge is drawn in.
 const SQUEEZE_BLOCK: usize = 32;
@@ -128,5 +128,50 @@ impl<S: Squeeze> RngCore for SqueezeRng<'_, S> {
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
         self.fill_bytes(dest);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "test squeezes stay inside their fixed buffer"
+)]
+mod tests {
+    use super::Squeeze;
+    use jolt_field::Fr;
+
+    /// A squeeze stream that replays fixed bytes.
+    struct Replayed {
+        bytes: Vec<u8>,
+        position: usize,
+    }
+
+    impl Squeeze for Replayed {
+        fn squeeze_into(&mut self, out: &mut [u8]) {
+            out.copy_from_slice(&self.bytes[self.position..self.position + out.len()]);
+            self.position += out.len();
+        }
+    }
+
+    /// A candidate at or above the modulus is rejected and the draw resamples
+    /// from the next 32 squeezed bytes, so it equals a draw from those bytes
+    /// alone.
+    #[test]
+    fn exact_challenge_rejects_out_of_range_candidates_and_resamples() {
+        let accepted: Vec<u8> = (1..=32).collect();
+        let mut direct = Replayed {
+            bytes: accepted.clone(),
+            position: 0,
+        };
+        let (expected, squeezed): (Fr, usize) = direct.exact_challenge();
+        assert_eq!(squeezed, 32);
+
+        let mut resampled = Replayed {
+            bytes: [vec![0xff; 32], accepted].concat(),
+            position: 0,
+        };
+        let (value, squeezed): (Fr, usize) = resampled.exact_challenge();
+        assert_eq!(squeezed, 64);
+        assert_eq!(value, expected);
     }
 }

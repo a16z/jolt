@@ -2,8 +2,9 @@
 //!
 //! A grind squeezes a seed from the live transcript, then searches nonces off
 //! the transcript: a candidate passes when the first 32 bytes its
-//! [`Fork`] squeezes start with `bits` zero bits, low bit first. The nonce is then sent as a `u32` prover
-//! message, so the protected challenge drawn after it binds the solution.
+//! [`Fork`] squeezes start with `bits` zero bits, low bit first. The nonce is then sent as a
+//! canonical LEB128 [`Nonce`](crate::Nonce) message, so the protected challenge drawn after it
+//! binds the solution.
 //! Nonces are searched over `bits + GRINDING_NONCE_SLACK_BITS` bits, so an
 //! honest search exhausts its range with probability about `exp(-2^7)`.
 
@@ -18,7 +19,7 @@ pub const MAX_GRINDING_BITS: u8 = u32::BITS as u8 - GRINDING_NONCE_SLACK_BITS;
 /// Byte length of the squeezed proof-of-work predicate.
 pub const GRINDING_PREDICATE_LEN: usize = 32;
 /// Byte length of the seed a grind squeezes from the transcript.
-pub const GRINDING_SEED_LEN: usize = crate::FORK_SEED_LEN;
+pub(crate) const GRINDING_SEED_LEN: usize = crate::FORK_SEED_LEN;
 /// Returns whether the low `bits` bits of `predicate`, low byte first and low
 /// bit first within each byte, are all zero.
 #[must_use]

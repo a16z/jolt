@@ -6,6 +6,7 @@ use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
 use spongefish::VerifierState;
 
 use crate::grinding::{grinding_accepts, nonce_bits, GRINDING_SEED_LEN};
+use crate::nonce::NONCE_MAX_BYTES;
 use crate::site::{Log, TranscriptOp};
 use crate::state::{domain, Framed, Squeeze, BYTE_BLOCK};
 #[cfg(feature = "logging")]
@@ -97,14 +98,20 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
             .ok_or(TranscriptError::Truncated);
         let bytes = self.check(bytes)?;
         // The same block split the prover sends in, so both sides make the
-        // same absorb calls whatever the sponge's block handling.
-        let read = (0..len / BYTE_BLOCK)
-            .try_for_each(|_| self.state.prover_message::<[u8; BYTE_BLOCK]>().map(|_| ()))
-            .and_then(|()| {
-                (0..len % BYTE_BLOCK)
-                    .try_for_each(|_| self.state.prover_message::<[u8; 1]>().map(|_| ()))
-            });
-        self.check(read.map_err(|_| TranscriptError::Truncated))?;
+        // same absorb calls whatever the sponge's block handling. The returned
+        // slice comes from this wrapper's cursor, so each block is compared
+        // with what spongefish read and absorbed: a cursor that drifted from
+        // spongefish's (an atom whose decode consumed other than `NUM_BYTES`)
+        // fails here rather than handing out unbound bytes.
+        let (blocks, rest) = bytes.as_chunks::<BYTE_BLOCK>();
+        let mut read = Ok(());
+        for block in blocks {
+            read = read.and_then(|()| self.read_matching(block));
+        }
+        for byte in rest {
+            read = read.and_then(|()| self.read_matching(&[*byte]));
+        }
+        self.check(read)?;
         self.advance(len);
         Ok(bytes)
     }
@@ -134,11 +141,24 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
     /// encoding, [`TranscriptError::OutOfBounds`] for a value at or above
     /// `2^nonce_bits`.
     pub fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError> {
-        self.check(Ok(()))?;
+        // A proof that ends inside the nonce (no byte, or only continuation
+        // bytes) is truncated, not malformed.
+        let unread = self.unread();
+        let truncated =
+            unread.len() < NONCE_MAX_BYTES && unread.iter().all(|byte| byte & 0x80 != 0);
+        self.check(if truncated {
+            Err(TranscriptError::Truncated)
+        } else {
+            Ok(())
+        })?;
         let nonce = self.state.prover_message::<Nonce>();
         let Nonce(nonce) = self.check(nonce.map_err(|_| TranscriptError::NonCanonical))?;
         self.advance(Nonce(nonce).encoded_len());
-        let in_range = if u64::from(nonce) >> nonce_bits == 0 {
+        let in_range = if u64::from(nonce)
+            .checked_shr(u32::from(nonce_bits))
+            .unwrap_or(0)
+            == 0
+        {
             Ok(nonce)
         } else {
             Err(TranscriptError::OutOfBounds)
@@ -211,6 +231,15 @@ impl<'a, H: Sponge> VerifierTranscript<'a, H> {
             self.state
                 .check_eof()
                 .map_err(|_| TranscriptError::TrailingBytes)
+        }
+    }
+
+    /// Reads one fixed-width byte message and requires it to equal `expected`.
+    fn read_matching<const N: usize>(&mut self, expected: &[u8; N]) -> Result<(), TranscriptError> {
+        match self.state.prover_message::<[u8; N]>() {
+            Ok(read) if &read == expected => Ok(()),
+            Ok(_) => Err(TranscriptError::CursorMismatch),
+            Err(_) => Err(TranscriptError::Truncated),
         }
     }
 
@@ -289,7 +318,7 @@ impl<H: Sponge> Channel for VerifierTranscript<'_, H> {
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
         let value = self.state.small_challenge();
         self.log
-            .record(TranscriptOp::Challenge, crate::SMALL_CHALLENGE_BYTES, None);
+            .record(TranscriptOp::Challenge, crate::state::SMALL_CHALLENGE_BYTES, None);
         value
     }
 

@@ -6,7 +6,7 @@
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr, Ring};
 use jolt_transcript::{
     Blake2b512, Channel, Keccak, Nonce, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
-    TranscriptError, VerifierTranscript, GRINDING_NONCE_SLACK_BITS, SMALL_CHALLENGE_BYTES,
+    TranscriptError, VerifierTranscript, GRINDING_NONCE_SLACK_BITS,
 };
 use spongefish::Encoding as _;
 
@@ -202,7 +202,7 @@ fn small_challenge_decodes_the_next_squeezed_bytes() {
     let mut small = ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION);
     let mut raw = ProverTranscript::<Blake2b512>::new(&protocol::<Blake2b512>(), SESSION);
     for _ in 0..8 {
-        let expected = Fr::from_challenge_bytes(&raw.challenge_bytes::<SMALL_CHALLENGE_BYTES>());
+        let expected = Fr::from_challenge_bytes(&raw.challenge_bytes::<16>());
         assert_eq!(small.challenge_small::<Fr>(), expected);
     }
 }

@@ -3,7 +3,7 @@
 use spongefish::{Encoding, NargDeserialize, VerificationError, VerificationResult};
 
 /// Largest encoded nonce: a `u32` in 7-bit groups.
-const NONCE_MAX_BYTES: usize = 5;
+pub(crate) const NONCE_MAX_BYTES: usize = 5;
 
 /// A prover-chosen search counter (proof of work, fold response) as a prover
 /// message: canonical unsigned LEB128, so small counters cost few bytes. The
