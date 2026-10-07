@@ -22,7 +22,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
 use jolt_profiling::summary::ProfileSummary;
-use jolt_profiling::taxonomy::{self, TAXONOMY_VERSION};
+use jolt_profiling::taxonomy::{self, ProverMode, STAGE_SPANS, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
 use serde_json::Value;
 
@@ -83,12 +83,14 @@ fn profile_run_emits_conformant_artifacts() {
     // stage-8 opening seams for their committed siblings, and the `akita`
     // feature swaps the commitment seams for the packed set. (The advice
     // seams are exempt: fibonacci exercises no advice.)
-    let mode = if cfg!(feature = "akita") {
-        taxonomy::ProverMode::Akita
+    let mode = if cfg!(feature = "akita-byte-link") {
+        ProverMode::AkitaByteLink
+    } else if cfg!(feature = "akita") {
+        ProverMode::Akita
     } else if cfg!(feature = "zk") {
-        taxonomy::ProverMode::Zk
+        ProverMode::Zk
     } else {
-        taxonomy::ProverMode::Clear
+        ProverMode::Clear
     };
     let emitted: std::collections::HashSet<&str> = trace
         .iter()
@@ -111,7 +113,11 @@ fn profile_run_emits_conformant_artifacts() {
     assert_eq!(root.label, taxonomy::ROOT_SPAN);
     assert!(root.wall_time_ns > 0);
     assert!(root.dark_time_fraction >= 0.0 && root.dark_time_fraction <= 1.0);
-    assert_eq!(summary.stages.len(), taxonomy::STAGE_SPANS.len());
+    let stages = taxonomy::always_present_spans(mode)
+        .into_iter()
+        .filter(|label| STAGE_SPANS.contains(label))
+        .count();
+    assert_eq!(summary.stages.len(), stages);
     assert!(summary.stages.iter().all(|s| s.rss_open_gib.is_some()));
     assert_eq!(summary.run.workload, "fibonacci");
     assert_eq!(summary.run.scale_log2, 13);

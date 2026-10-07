@@ -37,8 +37,10 @@
 //! one native `OneHotTrace` group in stage 0 (no `commit_witness` stream, no
 //! homomorphic stage-8 batch) and discharges it with a native same-point
 //! opening after stage 7:
-//! [`AKITA_MODE_SPANS`]. Every other label is mode-neutral (the sumcheck
-//! engine's `prove_batch` differs only in its recorder, not its function).
+//! [`AKITA_MODE_SPANS`]. `akita-byte-link` commits the signed-byte trace
+//! instead ([`AKITA_BYTE_LINK_MODE_SPANS`]) and adds [`BYTE_LINK_STAGE_SPAN`].
+//! Every other label is mode-neutral (the sumcheck engine's `prove_batch`
+//! differs only in its recorder, not its function).
 //!
 //! # Level policy
 //!
@@ -88,7 +90,7 @@ pub const ROOT_SPAN: &str = "jolt_prover::prove";
 /// The per-stage recipe spans, in pipeline order — depth-1 children of
 /// [`ROOT_SPAN`], sequential on the root thread. The per-stage summary
 /// rollup (wallclock, boundary RSS, windowed peak memory) keys on these.
-pub const STAGE_SPANS: [&str; 10] = [
+pub const STAGE_SPANS: [&str; 11] = [
     "prove_stage0",
     "prove_stage1",
     "prove_stage2",
@@ -98,8 +100,13 @@ pub const STAGE_SPANS: [&str; 10] = [
     "prove_stage6a",
     "prove_stage6b",
     "prove_stage7",
+    BYTE_LINK_STAGE_SPAN,
     "prove_stage8",
 ];
+
+/// The byte-link stage between stages 7 and 8; fires only in
+/// [`ProverMode::AkitaByteLink`].
+pub const BYTE_LINK_STAGE_SPAN: &str = "prove_stage_byte_link";
 
 /// The generated stage drivers' per-batch spans (`<StageLabel>::prove`,
 /// emitted by `impl_stage_prover!`). Stages 0 and 8 have no sumcheck batch —
@@ -185,6 +192,15 @@ pub const AKITA_MODE_SPANS: [&str; 4] = [
     "prove_uniskip_clear",
 ];
 
+/// `akita-byte-link` siblings of [`AKITA_MODE_SPANS`]: stage 0 assembles and
+/// commits the signed-byte trace instead of the one-hot trace.
+pub const AKITA_BYTE_LINK_MODE_SPANS: [&str; 4] = [
+    "assemble_byte_trace",
+    "akita_byte_trace_commit",
+    "akita_main_batched_prove",
+    "prove_uniskip_clear",
+];
+
 /// Which compiled prover emitted a trace: the `zk` feature swaps the
 /// [`CLEAR_MODE_SPANS`] seams for their [`ZK_MODE_SPANS`] siblings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +209,8 @@ pub enum ProverMode {
     Zk,
     /// The packed (lattice) prover — transparent by construction.
     Akita,
+    /// The packed prover with the `akita-byte-link` feature.
+    AkitaByteLink,
 }
 
 /// Every v2 label that fires on all proves of the given mode: the presence
@@ -205,7 +223,11 @@ pub enum ProverMode {
 /// seams.
 pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
     let mut labels = vec![ROOT_SPAN];
-    labels.extend(STAGE_SPANS);
+    labels.extend(
+        STAGE_SPANS
+            .into_iter()
+            .filter(|&stage| stage != BYTE_LINK_STAGE_SPAN || mode == ProverMode::AkitaByteLink),
+    );
     labels.extend(DRIVER_BATCH_SPANS);
     labels.extend(SUMCHECK_ENGINE_SPANS);
     match mode {
@@ -216,7 +238,7 @@ pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
         // The packed prover streams no witness commit and runs no
         // homomorphic joint opening; its bundle collection and oracle reads
         // still fire (stage-0 assembly, the naive kernels).
-        ProverMode::Akita => {
+        ProverMode::Akita | ProverMode::AkitaByteLink => {
             labels.extend(UNISKIP_SEAM_SPANS);
             labels.extend(["collect_bundles", "TraceBackend::oracle_table"]);
         }
@@ -225,6 +247,7 @@ pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
         ProverMode::Clear => CLEAR_MODE_SPANS.as_slice(),
         ProverMode::Zk => ZK_MODE_SPANS.as_slice(),
         ProverMode::Akita => AKITA_MODE_SPANS.as_slice(),
+        ProverMode::AkitaByteLink => AKITA_BYTE_LINK_MODE_SPANS.as_slice(),
     });
     labels
 }
