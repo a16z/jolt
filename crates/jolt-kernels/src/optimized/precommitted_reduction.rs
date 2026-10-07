@@ -656,7 +656,7 @@ mod tests {
 
     impl<RC, RA> PhasePair<'_, RC, RA>
     where
-        RC: ConcreteSumcheck<Fr>,
+        RC: ConcreteSumcheck<Fr> + 'static,
         RA: ConcreteSumcheck<Fr> + 'static,
         SumcheckInputClaims<Fr, RC>: InputClaims<Fr>,
         SumcheckOutputClaims<Fr, RC>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,

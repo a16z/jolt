@@ -33,12 +33,7 @@ mod stage8;
 pub mod witness;
 use witness::AdviceObject;
 
-/// The Akita slot registry: the akita analog of a bare [`JoltBackend`]. A
-/// parallel struct rather than cfg-gated [`JoltBackend`] fields —
-/// `jolt-kernels` deliberately has no `akita` feature (a local `cfg!` there
-/// would silently read `false` and desynchronize the prover from the
-/// verifier; see `jolt_claims`'s `CANONICAL_INSTRUCTION_ADDRESS`), so the
-/// Akita-only pieces live on this crate's Akita-only side of the fence.
+/// The Akita slot registry: the akita analog of a bare [`JoltBackend`].
 ///
 /// The Akita PIOP shares its stage 1–7 members with the base protocol, so
 /// they resolve through the embedded [`JoltBackend`] registry (whose commit

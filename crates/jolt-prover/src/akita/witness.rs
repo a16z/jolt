@@ -416,7 +416,8 @@ where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
     let bytecode_len = program.bytecode.bytecode.len();
-    let image_words = program_image_words_padded(program);
+    let image_words =
+        jolt_kernels::committed_program::program_image_words_padded(&program.ram.bytecode_words);
     let plan = committed_program_packing_plan(
         bytecode_len,
         bytecode_chunk_count,
@@ -481,15 +482,4 @@ where
         })
         .collect::<Result<Vec<_>, ProverError<PCS::Field>>>()?;
     Ok(DirectProgramObjects { objects })
-}
-
-/// The padded program-image words: the RAM preprocessing's bytecode words,
-/// zero-padded to `committed_program_image_num_words` (the next power of two,
-/// at least 2 — the packed word-domain convention legacy shares).
-pub fn program_image_words_padded(program: &JoltProgramPreprocessing) -> Vec<u64> {
-    let words = &program.ram.bytecode_words;
-    let padded_len = words.len().next_power_of_two().max(2);
-    let mut padded = words.clone();
-    padded.resize(padded_len, 0);
-    padded
 }

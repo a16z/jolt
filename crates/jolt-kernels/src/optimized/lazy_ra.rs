@@ -36,7 +36,7 @@ use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-pub(crate) trait ChunkIndexSource: Send + Sync {
+pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     fn num_polys(&self) -> usize;
 
     /// The unbound cycle-domain length.
@@ -145,8 +145,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// until the fourth bind materializes dense (and drops the source), then
-    /// use plain multilinear binds.
+    /// until the fourth bind materializes dense, then use plain multilinear binds.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
@@ -164,8 +163,8 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
                     let dense = Self::Dense(materialize(&tables, &source, width * 2));
-                    drop(tables);
-                    drop(source);
+                    crate::mem::drop_in_background_thread(tables);
+                    crate::mem::drop_in_background_thread(source);
                     crate::mem::purge_retained_memory(log_t);
                     dense
                 }
