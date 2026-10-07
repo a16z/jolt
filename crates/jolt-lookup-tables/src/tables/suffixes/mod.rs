@@ -196,8 +196,6 @@ pub enum Suffixes {
     BottomXBit,
 }
 
-pub const NUM_SUFFIXES: usize = <Suffixes as strum::EnumCount>::COUNT;
-
 impl Suffixes {
     /// Returns `true` if this suffix's output is guaranteed to be in {0, 1}.
     ///
