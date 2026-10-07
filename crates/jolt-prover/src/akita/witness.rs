@@ -41,6 +41,14 @@ struct OneHotTraceSourceRow {
     fused_inc: FusedInc,
 }
 
+/// Cycles per block of the byte-trace assembly.
+#[cfg(feature = "akita-byte-link")]
+const BYTE_BLOCK_ROWS: usize = 1 << 12;
+/// A slot's run in a block's staging buffer: one cache line longer than the
+/// block, so that the stores of one row land in distinct L1 sets.
+#[cfg(feature = "akita-byte-link")]
+const BYTE_BLOCK_RUN: usize = BYTE_BLOCK_ROWS + 64;
+
 /// Column counts of one row in the plan's canonical order, which
 /// `OneHotTraceLayout::plan` fixes: instruction chunks, balanced-increment
 /// digits then their carry, bytecode chunks, and the remaining RAM chunks.
@@ -106,6 +114,34 @@ impl OneHotTraceRowLayout {
                 physical_rows
             },
         )
+    }
+
+    /// Fills the first `rows` cycles of one block of byte-trace slots, one
+    /// slice per slot, with `row(i)` at index `i`. The rows go to `staged`, one
+    /// [`BYTE_BLOCK_RUN`] per slot, then out one slot at a time: storing a row
+    /// straight into slots `2^log_t` bytes apart sends all of its stores to one
+    /// L1 set.
+    #[cfg(feature = "akita-byte-link")]
+    fn fill_byte_block<E>(
+        self,
+        slots: Vec<&mut [i8]>,
+        staged: &mut [i8],
+        rows: usize,
+        row: impl Fn(usize) -> Result<OneHotTraceSourceRow, E>,
+    ) -> Result<(), E> {
+        let width = slots.len() - 1;
+        let mut selected = vec![0u8; width];
+        for offset in 0..rows {
+            let ram_active = self.fill_row(row(offset)?, &mut selected);
+            for (slot, &byte) in selected.iter().enumerate() {
+                staged[slot * BYTE_BLOCK_RUN + offset] = byte as i8;
+            }
+            staged[width * BYTE_BLOCK_RUN + offset] = i8::from(ram_active);
+        }
+        for (slot, bytes) in slots.into_iter().enumerate() {
+            bytes[..rows].copy_from_slice(&staged[slot * BYTE_BLOCK_RUN..][..rows]);
+        }
+        Ok(())
     }
 
     /// A filled row's committed entries: its nonzero selected rows, plus every
@@ -331,7 +367,6 @@ pub fn assemble_byte_trace<F: JoltField>(
     byte_trace: &ByteTraceLayoutPlan,
     log_t: usize,
 ) -> Result<(Vec<i8>, usize), ProverError<F>> {
-    const BLOCK_ROWS: usize = 1 << 12;
     let row_columns = one_hot_trace.packing().ids();
     let slots = byte_trace.packing().ids();
     let width = row_columns.len();
@@ -343,50 +378,41 @@ pub fn assemble_byte_trace<F: JoltField>(
         });
     }
     let layout = OneHotTraceRowLayout::new(one_hot_trace, BYTE_BITS);
-    let write = |columns: &mut [&mut [i8]], selected_rows: &mut [u8], offset, row| {
-        let ram_active = layout.fill_row(row, selected_rows);
-        for (column, &selected) in columns.iter_mut().zip(selected_rows.iter()) {
-            column[offset] = selected as i8;
-        }
-        columns[width][offset] = i8::from(ram_active);
-    };
     let num_rows = 1usize << log_t;
     let zero_suffix_start = layout.zero_suffix_start(witness, num_rows, width)?;
+    let block_rows = |block: usize| {
+        zero_suffix_start
+            .saturating_sub(block * BYTE_BLOCK_ROWS)
+            .min(BYTE_BLOCK_ROWS)
+    };
+    let staged = || vec![0i8; (width + 1) * BYTE_BLOCK_RUN];
     let mut bytes = vec![0i8; slots.len() * num_rows];
-    let mut blocks = (0..num_rows.div_ceil(BLOCK_ROWS))
+    let mut blocks = (0..num_rows.div_ceil(BYTE_BLOCK_ROWS))
         .map(|_| Vec::with_capacity(width + 1))
         .collect::<Vec<Vec<&mut [i8]>>>();
     for column in bytes.chunks_exact_mut(num_rows).take(width + 1) {
-        for (block, rows) in blocks.iter_mut().zip(column.chunks_mut(BLOCK_ROWS)) {
+        for (block, rows) in blocks.iter_mut().zip(column.chunks_mut(BYTE_BLOCK_ROWS)) {
             block.push(rows);
         }
     }
     #[cfg(feature = "parallel")]
     if let Some(access) = direct_row_access(witness, num_rows) {
-        blocks
-            .into_par_iter()
-            .enumerate()
-            .try_for_each(|(block, mut columns)| {
-                let mut selected_rows = vec![0u8; width];
-                for offset in 0..columns[0].len() {
-                    let row = access.window::<OneHotTraceSourceRow>(block * BLOCK_ROWS + offset)?;
-                    write(&mut columns, &mut selected_rows, offset, row);
-                }
-                Ok::<_, ProverError<F>>(())
-            })?;
+        blocks.into_par_iter().enumerate().try_for_each_init(
+            staged,
+            |staged, (block, slots)| {
+                layout.fill_byte_block(slots, staged, block_rows(block), |offset| {
+                    access.window::<OneHotTraceSourceRow>(block * BYTE_BLOCK_ROWS + offset)
+                })
+            },
+        )?;
         return Ok((bytes, zero_suffix_start));
     }
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
-    let mut selected_rows = vec![0u8; width];
-    for (block, mut columns) in blocks.into_iter().enumerate() {
-        for offset in 0..columns[0].len() {
-            write(
-                &mut columns,
-                &mut selected_rows,
-                offset,
-                rows[block * BLOCK_ROWS + offset],
-            );
-        }
+    let mut staged = staged();
+    for (block, slots) in blocks.into_iter().enumerate() {
+        layout.fill_byte_block(slots, &mut staged, block_rows(block), |offset| {
+            Ok::<_, ProverError<F>>(rows[block * BYTE_BLOCK_ROWS + offset])
+        })?;
     }
     Ok((bytes, zero_suffix_start))
 }
