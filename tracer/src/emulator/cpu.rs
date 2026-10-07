@@ -11,7 +11,7 @@ use tracing::{info, warn};
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
 use crate::utils::virtual_registers::VirtualRegisterAllocator;
 
-use super::mmu::{AddressingMode, Mmu};
+use super::mmu::Mmu;
 use super::terminal::Terminal;
 
 /// A FIFO queue for storing and retrieving advice data between emulation passes.
@@ -153,23 +153,18 @@ const CSR_FRM_ADDRESS: u16 = 0x002;
 const CSR_FCSR_ADDRESS: u16 = 0x003;
 const CSR_UIE_ADDRESS: u16 = 0x004;
 const CSR_UTVEC_ADDRESS: u16 = 0x005;
-const _CSR_USCRATCH_ADDRESS: u16 = 0x040;
 const CSR_UEPC_ADDRESS: u16 = 0x041;
 const CSR_UCAUSE_ADDRESS: u16 = 0x042;
 const CSR_UTVAL_ADDRESS: u16 = 0x043;
-const _CSR_UIP_ADDRESS: u16 = 0x044;
 const CSR_SSTATUS_ADDRESS: u16 = 0x100;
 const CSR_SEDELEG_ADDRESS: u16 = 0x102;
 const CSR_SIDELEG_ADDRESS: u16 = 0x103;
 const CSR_SIE_ADDRESS: u16 = 0x104;
 const CSR_STVEC_ADDRESS: u16 = 0x105;
-const _CSR_SSCRATCH_ADDRESS: u16 = 0x140;
 const CSR_SEPC_ADDRESS: u16 = 0x141;
 const CSR_SCAUSE_ADDRESS: u16 = 0x142;
 const CSR_STVAL_ADDRESS: u16 = 0x143;
 const CSR_SIP_ADDRESS: u16 = 0x144;
-#[allow(dead_code)]
-const CSR_SATP_ADDRESS: u16 = 0x180;
 const CSR_MSTATUS_ADDRESS: u16 = 0x300;
 const CSR_MISA_ADDRESS: u16 = 0x301;
 const CSR_MEDELEG_ADDRESS: u16 = 0x302;
@@ -177,18 +172,11 @@ const CSR_MIDELEG_ADDRESS: u16 = 0x303;
 const CSR_MIE_ADDRESS: u16 = 0x304;
 
 const CSR_MTVEC_ADDRESS: u16 = 0x305;
-const _CSR_MSCRATCH_ADDRESS: u16 = 0x340;
 const CSR_MEPC_ADDRESS: u16 = 0x341;
 const CSR_MCAUSE_ADDRESS: u16 = 0x342;
 const CSR_MTVAL_ADDRESS: u16 = 0x343;
 const CSR_MIP_ADDRESS: u16 = 0x344;
-const _CSR_PMPCFG0_ADDRESS: u16 = 0x3a0;
-const _CSR_PMPADDR0_ADDRESS: u16 = 0x3b0;
-const _CSR_MCYCLE_ADDRESS: u16 = 0xb00;
-const _CSR_CYCLE_ADDRESS: u16 = 0xc00;
 const CSR_TIME_ADDRESS: u16 = 0xc01;
-const _CSR_INSERT_ADDRESS: u16 = 0xc02;
-const _CSR_MHARTID_ADDRESS: u16 = 0xf14;
 
 const MIP_MEIP: u64 = 0x800;
 pub const MIP_MTIP: u64 = 0x080;
@@ -345,7 +333,6 @@ pub struct Cpu {
     reservation: u64,
     is_reservation_set: bool,
     reservation_width: ReservationWidth,
-    _dump_flag: bool,
     unsigned_data_mask: u64,
     pub trace_len: usize,
     executed_instrs: u64, // "real" RV64IMAC cycles
@@ -411,15 +398,6 @@ pub enum TrapType {
     MachineExternalInterrupt,
 }
 
-fn _get_privilege_mode_name(mode: &PrivilegeMode) -> &'static str {
-    match mode {
-        PrivilegeMode::User => "User",
-        PrivilegeMode::Supervisor => "Supervisor",
-        PrivilegeMode::Reserved => "Reserved",
-        PrivilegeMode::Machine => "Machine",
-    }
-}
-
 fn get_privilege_encoding(mode: &PrivilegeMode) -> u8 {
     match mode {
         PrivilegeMode::User => 0,
@@ -435,34 +413,6 @@ pub fn get_privilege_mode(encoding: u64) -> PrivilegeMode {
         1 => PrivilegeMode::Supervisor,
         3 => PrivilegeMode::Machine,
         _ => panic!("Unknown privilege encoding"),
-    }
-}
-
-fn _get_trap_type_name(trap_type: &TrapType) -> &'static str {
-    match trap_type {
-        TrapType::InstructionAddressMisaligned => "InstructionAddressMisaligned",
-        TrapType::InstructionAccessFault => "InstructionAccessFault",
-        TrapType::IllegalInstruction => "IllegalInstruction",
-        TrapType::Breakpoint => "Breakpoint",
-        TrapType::LoadAddressMisaligned => "LoadAddressMisaligned",
-        TrapType::LoadAccessFault => "LoadAccessFault",
-        TrapType::StoreAddressMisaligned => "StoreAddressMisaligned",
-        TrapType::StoreAccessFault => "StoreAccessFault",
-        TrapType::EnvironmentCallFromUMode => "EnvironmentCallFromUMode",
-        TrapType::EnvironmentCallFromSMode => "EnvironmentCallFromSMode",
-        TrapType::EnvironmentCallFromMMode => "EnvironmentCallFromMMode",
-        TrapType::InstructionPageFault => "InstructionPageFault",
-        TrapType::LoadPageFault => "LoadPageFault",
-        TrapType::StorePageFault => "StorePageFault",
-        TrapType::UserSoftwareInterrupt => "UserSoftwareInterrupt",
-        TrapType::SupervisorSoftwareInterrupt => "SupervisorSoftwareInterrupt",
-        TrapType::MachineSoftwareInterrupt => "MachineSoftwareInterrupt",
-        TrapType::UserTimerInterrupt => "UserTimerInterrupt",
-        TrapType::SupervisorTimerInterrupt => "SupervisorTimerInterrupt",
-        TrapType::MachineTimerInterrupt => "MachineTimerInterrupt",
-        TrapType::UserExternalInterrupt => "UserExternalInterrupt",
-        TrapType::SupervisorExternalInterrupt => "SupervisorExternalInterrupt",
-        TrapType::MachineExternalInterrupt => "MachineExternalInterrupt",
     }
 }
 
@@ -509,7 +459,6 @@ impl Cpu {
             reservation: 0,
             is_reservation_set: false,
             reservation_width: ReservationWidth::Word,
-            _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
             trace_len: 0,
             executed_instrs: 0,
@@ -694,7 +643,7 @@ impl Cpu {
 
     fn decode_and_cache(&mut self) -> Result<Instruction, Trap> {
         let original_word = self.fetch()?;
-        let instruction_address = normalize_u64(self.pc);
+        let instruction_address = self.pc;
         let is_compressed = (original_word & 0x3) != 0x3;
         let word = match is_compressed {
             false => {
@@ -1006,40 +955,6 @@ impl Cpu {
         Ok(word)
     }
 
-    #[allow(dead_code)]
-    fn has_csr_access_privilege(&self, address: u16) -> bool {
-        let privilege = (address >> 8) & 0x3; // the lowest privilege level that can access the CSR
-        privilege as u8 <= get_privilege_encoding(&self.privilege_mode)
-    }
-
-    #[allow(dead_code)]
-    fn read_csr(&mut self, address: u16) -> Result<u64, Trap> {
-        match self.has_csr_access_privilege(address) {
-            true => Ok(self.read_csr_raw(address)),
-            false => Err(Trap {
-                trap_type: TrapType::IllegalInstruction,
-                value: self.pc.wrapping_sub(4),
-            }),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn write_csr(&mut self, address: u16, value: u64) -> Result<(), Trap> {
-        match self.has_csr_access_privilege(address) {
-            true => {
-                self.write_csr_raw(address, value);
-                if address == CSR_SATP_ADDRESS {
-                    self.update_addressing_mode(value);
-                }
-                Ok(())
-            }
-            false => Err(Trap {
-                trap_type: TrapType::IllegalInstruction,
-                value: self.pc.wrapping_sub(4),
-            }),
-        }
-    }
-
     // SSTATUS, SIE, and SIP are subsets of MSTATUS, MIE, and MIP
     pub fn read_csr_raw(&self, address: u16) -> u64 {
         match address {
@@ -1092,44 +1007,6 @@ impl Cpu {
                 self.csr[address as usize] = value;
             }
         };
-    }
-
-    fn _set_fcsr_nv(&mut self) {
-        self.csr[CSR_FCSR_ADDRESS as usize] |= 0x10;
-    }
-
-    #[allow(dead_code)]
-    fn set_fcsr_dz(&mut self) {
-        self.csr[CSR_FCSR_ADDRESS as usize] |= 0x8;
-    }
-
-    fn _set_fcsr_of(&mut self) {
-        self.csr[CSR_FCSR_ADDRESS as usize] |= 0x4;
-    }
-
-    fn _set_fcsr_uf(&mut self) {
-        self.csr[CSR_FCSR_ADDRESS as usize] |= 0x2;
-    }
-
-    fn _set_fcsr_nx(&mut self) {
-        self.csr[CSR_FCSR_ADDRESS as usize] |= 0x1;
-    }
-
-    #[allow(dead_code)]
-    fn update_addressing_mode(&mut self, value: u64) {
-        let addressing_mode = match value >> 60 {
-            0 => AddressingMode::None,
-            8 => AddressingMode::SV39,
-            9 => AddressingMode::SV48,
-            _ => {
-                #[cfg(feature = "std")]
-                tracing::error!("Unknown addressing_mode {:x}", value >> 60);
-                panic!();
-            }
-        };
-        let ppn = value & 0xfffffffffff;
-        self.mmu.update_addressing_mode(addressing_mode);
-        self.mmu.update_ppn(ppn);
     }
 
     pub(crate) fn sign_extend(&self, value: i64) -> i64 {
@@ -1302,7 +1179,6 @@ impl Cpu {
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
             reservation_width: self.reservation_width,
-            _dump_flag: self._dump_flag,
             unsigned_data_mask: self.unsigned_data_mask,
             trace_len: self.trace_len,
             executed_instrs: self.executed_instrs,
@@ -1338,7 +1214,6 @@ impl Cpu {
             is_reservation_set,
             reservation_width,
             // Constants, re-established by worker construction.
-            _dump_flag: _,
             unsigned_data_mask: _,
             trace_len,
             executed_instrs,
@@ -1530,7 +1405,6 @@ impl Drop for Cpu {
     }
 }
 
-#[allow(dead_code)]
 pub fn get_register_name(num: usize) -> &'static str {
     match num {
         0 => "zero",
@@ -1567,10 +1441,6 @@ pub fn get_register_name(num: usize) -> &'static str {
         31 => "t6",
         _ => panic!("Unknown register num {num}"),
     }
-}
-
-fn normalize_u64(value: u64) -> u64 {
-    value
 }
 
 #[cold]
