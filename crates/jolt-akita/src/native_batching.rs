@@ -344,10 +344,7 @@ impl AkitaNativeBatching {
             .trace_backend
             .as_ref()
             .and_then(|backend| match trace {
-                TraceFamily::SignedBytes => main_hint
-                    .backend
-                    .as_ref()
-                    .and_then(|(committed, _)| backend.signed_byte_metal(&committed.profile)),
+                TraceFamily::SignedBytes => backend.required_metal(),
                 TraceFamily::OneHotK16 | TraceFamily::OneHotK256 => {
                     TraceCommitmentBackend::opening_shape_is_metal_qualified(
                         setup.one_hot_k(),

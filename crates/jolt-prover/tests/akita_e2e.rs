@@ -655,7 +655,9 @@ mod akita_tests {
         }
 
         /// At 2^16 cycles `Q`, the link and both `W` groups run on the device,
-        /// and the proof is the CPU prover's byte for byte.
+        /// and the proof is the CPU prover's byte for byte. The trace opening
+        /// runs on the backend that committed `Q`, and required Metal commits
+        /// on the device or fails, so a device opening covers both.
         #[cfg(feature = "akita-byte-link")]
         #[test]
         fn byte_link_metal_proof_is_the_cpu_proof_at_2_16() {
@@ -670,8 +672,17 @@ mod akita_tests {
                 bincode::serde::encode_to_vec(&proved.proof, bincode::config::standard())
                     .expect("serialize packed proof")
             };
-            let metal = prove(&metal_backend(1 << 16));
+            let backend = metal_backend(1 << 16);
+            let metal = prove(&backend);
             verify(&metal).expect("the Metal byte-link proof must verify");
+            assert!(
+                backend
+                    .trace_commitment()
+                    .last_metal_opening_metrics()
+                    .expect("read the Metal opening metrics")
+                    .is_some(),
+                "Q must open on the device"
+            );
             let cpu = prove(&JoltAkitaBackend::optimized());
             assert!(
                 encode(&metal) == encode(&cpu),

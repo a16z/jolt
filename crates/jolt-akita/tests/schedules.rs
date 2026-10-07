@@ -6,6 +6,8 @@
 //! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
 
 use akita_config::{SetupRequirements, TrustedScheduleCatalog};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_metal::MetalBackend;
 use akita_planner::emit::{
     GroupedGenerationRequest, MaterializationDiagnostics, PrecommittedProducer,
 };
@@ -25,7 +27,7 @@ use jolt_akita::schedule_registry::{
 use jolt_akita::schedules::emit::{
     family_specs, keys, FIELD_DIGIT_GROUPS, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS,
     K256_PACKING_VARIABLES, ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
-    SIGNED_BYTE_NUM_VARS, SIGNED_BYTE_PACKING_VARIABLES, SIGNED_BYTE_PINNED_ROOT,
+    SIGNED_BYTE_NUM_VARS, SIGNED_BYTE_PACKING_VARIABLES, SIGNED_BYTE_PINNED_ROOTS,
 };
 use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -346,25 +348,26 @@ fn scalar_profile(
 }
 
 #[test]
-fn signed_byte_rows_commit_one_byte_plane_and_pin_the_t29_root() {
+fn signed_byte_rows_commit_one_d128_byte_plane_and_pin_their_roots() {
     let catalog = artifacts()
         .signed_byte_catalog()
         .expect("signed-byte catalog");
     let grid = keys(&[1], SIGNED_BYTE_NUM_VARS);
     assert_eq!(catalog.len(), grid.len());
-    let (pinned_num_vars, root) = SIGNED_BYTE_PINNED_ROOT;
     for key in grid {
-        let geometry = root_geometry(&scalar_profile(&catalog, key));
-        assert_eq!((geometry.log_basis, geometry.digits), (8, 1), "{key:?}");
-        if key.num_vars() == pinned_num_vars {
-            assert_eq!(
-                (
-                    geometry.positions_per_block,
-                    geometry.ring_dimension,
-                    geometry.rank
-                ),
-                (root.positions_per_block, root.ring_dimension, 5)
-            );
+        let profile = scalar_profile(&catalog, key);
+        let geometry = root_geometry(&profile);
+        assert_eq!(
+            (geometry.log_basis, geometry.digits, geometry.ring_dimension),
+            (8, 1, 128),
+            "{key:?}"
+        );
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        assert!(MetalBackend::commits_signed_bytes(&profile), "{key:?}");
+        for (num_vars, root) in SIGNED_BYTE_PINNED_ROOTS {
+            if key.num_vars() == num_vars {
+                assert_eq!(geometry.positions_per_block, root.positions_per_block);
+            }
         }
     }
 }
@@ -417,11 +420,10 @@ fn signed_byte_grouped_rows_keep_each_trace_root_beside_advice_and_field_digits(
         precommitted_producer::<JoltFieldDigits>(scalar_profile(&field_digits, group))
             .expect("field-digit producer")
     }));
-    let (pinned_num_vars, _) = SIGNED_BYTE_PINNED_ROOT;
     for final_num_vars in [
         16 + SIGNED_BYTE_PACKING_VARIABLES,
         20 + SIGNED_BYTE_PACKING_VARIABLES,
-        pinned_num_vars,
+        29 + SIGNED_BYTE_PACKING_VARIABLES,
     ] {
         let final_group = PolynomialGroupLayout::new(final_num_vars, 1);
         let rows = provision::<JoltSignedBytes>(&base, &[producers.clone()], [final_num_vars])
@@ -432,6 +434,10 @@ fn signed_byte_grouped_rows_keep_each_trace_root_beside_advice_and_field_digits(
             .resolve_key(&GroupedGenerationRequest::new(final_group, producers.clone()).key())
             .expect("grouped signed-byte row");
         assert_adaptation_preserves_main_skeleton(&base, resolved, final_group);
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        assert!(MetalBackend::commits_signed_bytes(
+            &resolved.profiles().final_group
+        ));
     }
 }
 

@@ -43,8 +43,11 @@ shape to clear it while keeping total prover time within the 10% budget.
 
 The signed-byte trace family (`akita-byte-link`) commits each coefficient of
 `Q` as one balanced base-2^8 digit and follows the same direct/offloaded
-cutover. Its T29 row pins the root to 2^16 positions at D128; unpinned, the
-setup-first objective picks 2^15 positions and a 27% larger root witness.
+cutover. Every root is D128, the ring of the Metal byte-root kernel. The T20
+row pins its root to 2^11 positions at D128; unpinned, the direct objective
+picks D64 at rank 7, which the kernel cannot commit. The T29 row pins the root
+to 2^16 positions at D128; unpinned, the setup-first objective picks 2^15
+positions and a 27% larger root witness.
 The field-digit family holds the byte link's two histogram groups (six
 24-variable tables, one 17-variable table) as sixteen byte digits each; their
 profiles are fixed at setup and the groups are committed after stage 6b.

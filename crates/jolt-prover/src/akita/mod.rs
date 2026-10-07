@@ -2,7 +2,7 @@
 //! objects, and the packed one-hot trace in one heterogeneous batch.
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::TraceOneHotCommitment;
+use jolt_akita::{TraceCommitmentBackend, TraceOneHotCommitment};
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 #[cfg(feature = "akita-byte-link")]
@@ -52,7 +52,7 @@ where
 {
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
-    trace_commitment: jolt_akita::TraceCommitmentBackend,
+    trace_commitment: TraceCommitmentBackend,
     /// The byte link's prover; [`Self::with_metal_compute`] installs the GPU's.
     #[cfg(feature = "akita-byte-link")]
     byte_link: Box<dyn ByteLinkKernel<F>>,
@@ -112,7 +112,7 @@ where
     /// commit lives in stage 0).
     pub fn reference() -> Self {
         Self {
-            trace_commitment: jolt_akita::TraceCommitmentBackend::cpu(),
+            trace_commitment: TraceCommitmentBackend::cpu(),
             #[cfg(feature = "akita-byte-link")]
             byte_link: Box::new(ReferenceByteLink),
             #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -183,6 +183,11 @@ where
         backend
     }
 
+    /// The backend of the stage-0 commitments and the trace opening.
+    pub fn trace_commitment(&self) -> &TraceCommitmentBackend {
+        &self.trace_commitment
+    }
+
     /// Open the proof-scoped session that slot state lives in — the same
     /// contract as [`JoltBackend::begin_proof`].
     pub fn begin_proof(&self) -> ProofSession {
@@ -223,7 +228,7 @@ where
             self.byte_link = Box::new(metal.clone());
         }
         self.piop_metal = Some(metal.clone());
-        self.trace_commitment = jolt_akita::TraceCommitmentBackend::metal_required()?;
+        self.trace_commitment = TraceCommitmentBackend::metal_required()?;
         Ok(self)
     }
 
@@ -236,7 +241,7 @@ where
     /// the diagnostic split that isolates the commitment routes.
     pub fn metal_commit_only() -> Result<Self, JoltAkitaMetalError> {
         let mut backend = Self::optimized();
-        backend.trace_commitment = jolt_akita::TraceCommitmentBackend::metal_required()?;
+        backend.trace_commitment = TraceCommitmentBackend::metal_required()?;
         Ok(backend)
     }
 }

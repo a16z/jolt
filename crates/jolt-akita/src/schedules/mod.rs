@@ -57,16 +57,26 @@ pub mod emit {
         12 + SIGNED_BYTE_PACKING_VARIABLES,
         30 + SIGNED_BYTE_PACKING_VARIABLES,
     );
-    /// The T29 `Q` root: one D128 byte plane over `2^16` positions. Unpinned,
-    /// the setup-first objective picks `2^15` positions, whose root witness is
-    /// 27% larger.
-    pub const SIGNED_BYTE_PINNED_ROOT: (usize, RootShape) = (
-        29 + SIGNED_BYTE_PACKING_VARIABLES,
-        RootShape {
-            positions_per_block: 1 << 16,
-            ring_dimension: 128,
-        },
-    );
+    /// `Q` roots fixed by arity. T20: unpinned, the direct objective picks a
+    /// D64/rank-7 root, which the Metal byte-root kernel cannot commit. T29:
+    /// unpinned, the setup-first objective picks `2^15` positions, whose root
+    /// witness is 27% larger.
+    pub const SIGNED_BYTE_PINNED_ROOTS: [(usize, RootShape); 2] = [
+        (
+            20 + SIGNED_BYTE_PACKING_VARIABLES,
+            RootShape {
+                positions_per_block: 1 << 11,
+                ring_dimension: 128,
+            },
+        ),
+        (
+            29 + SIGNED_BYTE_PACKING_VARIABLES,
+            RootShape {
+                positions_per_block: 1 << 16,
+                ring_dimension: 128,
+            },
+        ),
+    ];
     /// The byte link's histogram groups (jolt-claims `HistogramGroup::ALL`):
     /// six 24-variable triple tables and one 17-variable RAM table.
     pub const FIELD_DIGIT_GROUPS: [PolynomialGroupLayout; 2] = [
@@ -98,17 +108,17 @@ pub mod emit {
     }
 
     fn regen_signed_bytes(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-        let (pinned_num_vars, pinned_root) = SIGNED_BYTE_PINNED_ROOT;
-        if key.num_vars() == pinned_num_vars {
-            plan_schedule::<JoltSignedBytes>(
-                &AkitaScheduleLookupKey::single(key),
-                &[],
-                Some(pinned_root),
-            )
-        } else if key.num_vars() >= RECURSIVE_TRACE_LOG_T_CUTOVER + SIGNED_BYTE_PACKING_VARIABLES {
-            regen::<JoltSignedBytes>(key)
+        let root = SIGNED_BYTE_PINNED_ROOTS
+            .iter()
+            .find(|(num_vars, _)| *num_vars == key.num_vars())
+            .map(|&(_, root)| root);
+        let recursive =
+            key.num_vars() >= RECURSIVE_TRACE_LOG_T_CUTOVER + SIGNED_BYTE_PACKING_VARIABLES;
+        let key = AkitaScheduleLookupKey::single(key);
+        if recursive {
+            plan_schedule::<JoltSignedBytes>(&key, &[], root)
         } else {
-            regen::<JoltSignedBytesDirect>(key)
+            plan_schedule::<JoltSignedBytesDirect>(&key, &[], root)
         }
     }
 

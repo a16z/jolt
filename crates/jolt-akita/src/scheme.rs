@@ -1,12 +1,12 @@
 #[cfg(all(feature = "metal", target_os = "macos"))]
-use akita_metal::{MetalBackend, MetalExecutionPolicy, MetalPreparedSetup};
+use akita_metal::{MetalBackend, MetalExecutionPolicy, MetalOpeningMetrics, MetalPreparedSetup};
 use akita_pcs::{AkitaError, ComputeBackendSetup, CpuBackend};
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use akita_prover::UniformProverStack;
 use akita_prover::{GroupContext, RootPolyMeta, SignedBytePoly};
 use akita_schedules::ValidatedScheduleCatalog;
 #[cfg(all(feature = "metal", target_os = "macos"))]
-use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams};
+use akita_types::AkitaScheduleLookupKey;
 use akita_types::{PolynomialGroupLayout, PrecommittedGroupProfiles};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
@@ -147,15 +147,13 @@ impl TraceCommitmentBackend {
         }
     }
 
-    /// The Metal backend that commits and opens a signed-byte group whose root
-    /// commits at `root`, when the device commits that root.
+    /// Metrics of the last trace opening this backend ran on the device;
+    /// `None` for the CPU backend and before the first device opening.
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    pub(crate) fn signed_byte_metal(
-        &self,
-        root: &GroupCommitPhaseParams,
-    ) -> Option<&RequiredMetalTraceCommitment> {
-        self.required_metal()
-            .filter(|_| MetalBackend::commits_signed_bytes(root))
+    pub fn last_metal_opening_metrics(&self) -> Result<Option<MetalOpeningMetrics>, OpeningsError> {
+        self.required_metal().map_or(Ok(None), |metal| {
+            metal.backend.last_opening_metrics().map_err(invalid_setup)
+        })
     }
 }
 
@@ -499,8 +497,8 @@ impl AkitaScheme {
     /// Commits the signed-byte trace `Q`: `bytes` in Jolt index order (it
     /// opens at the reversed point), against the profiles of every group its
     /// opening batches: the advice hints' groups, then the setup's field-digit
-    /// groups. A Metal `backend` commits on the device when the scheduled root
-    /// admits it, and the opening then runs there too.
+    /// groups. A Metal `backend` commits on the device, and the opening then
+    /// runs there too; it rejects a scheduled root the device cannot commit.
     pub fn commit_signed_byte_trace(
         backend: &TraceCommitmentBackend,
         setup: &AkitaProverSetup,
@@ -522,30 +520,37 @@ impl AkitaScheme {
                 .map_err(commit_failed)
         };
         #[cfg(all(feature = "metal", target_os = "macos"))]
-        let committed = {
-            let root = scheme
-                .schedules()
-                .resolve_key(&AkitaScheduleLookupKey {
-                    final_group: PolynomialGroupLayout::new(num_vars, 1),
-                    precommitteds: profiles.as_slice().to_vec(),
-                })
-                .map_err(akita_error)?
-                .profiles()
-                .final_group;
-            match backend.signed_byte_metal(&root) {
-                Some(metal) => {
-                    let prepared = metal.prepared_setup(prover_setup)?;
-                    let stack = UniformProverStack::uniform(
-                        &metal.backend,
-                        prepared.as_ref(),
-                        prover_setup.expanded.as_ref(),
-                    )
-                    .map_err(akita_error)?;
-                    with_backend_pool(|| scheme.commit(prover_setup, sources, &stack, context))
-                        .map_err(commit_failed)
+        let committed = match backend.required_metal() {
+            Some(metal) => {
+                let root = scheme
+                    .schedules()
+                    .resolve_key(&AkitaScheduleLookupKey {
+                        final_group: PolynomialGroupLayout::new(num_vars, 1),
+                        precommitteds: profiles.as_slice().to_vec(),
+                    })
+                    .map_err(akita_error)?
+                    .profiles()
+                    .final_group;
+                if !MetalBackend::commits_signed_bytes(&root) {
+                    return Err(invalid_setup(format!(
+                        "required Metal cannot commit the signed-byte trace root at {num_vars} \
+                         variables: D{}, rank {}, base 2^{}",
+                        root.inner.matrix.ring_dimension(),
+                        root.inner.matrix.output_rank(),
+                        root.inner.digits.log_basis,
+                    )));
                 }
-                None => commit_on_cpu(),
+                let prepared = metal.prepared_setup(prover_setup)?;
+                let stack = UniformProverStack::uniform(
+                    &metal.backend,
+                    prepared.as_ref(),
+                    prover_setup.expanded.as_ref(),
+                )
+                .map_err(akita_error)?;
+                with_backend_pool(|| scheme.commit(prover_setup, sources, &stack, context))
+                    .map_err(commit_failed)
             }
+            None => commit_on_cpu(),
         };
         #[cfg(not(all(feature = "metal", target_os = "macos")))]
         let committed = commit_on_cpu();
