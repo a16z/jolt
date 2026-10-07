@@ -81,11 +81,11 @@ where
         Some((stage4.clear()?, stage6.clear()?))
     };
 
-    // One construction serves both paths: the hamming reduction from the stage-6
-    // booleanity point split and the per-RA virtualization points, and each
-    // address phase from its layout + `has_address_phase` presence flag + stage-6b
-    // cycle-phase variables + clear-only reference aux. All point/challenge data is
-    // read mode-agnostically off `stage6.output_points()`.
+    // One construction serves both paths: the hamming reduction (outside the byte
+    // link) from the stage-6 booleanity point split and the per-RA virtualization
+    // points, and each address phase from its layout + `has_address_phase` presence
+    // flag + stage-6b cycle-phase variables + clear-only reference aux. All
+    // point/challenge data is read mode-agnostically off `stage6.output_points()`.
     let sumchecks = build_stage7_sumchecks(
         #[cfg(not(feature = "akita-byte-link"))]
         hamming_dimensions,
@@ -95,9 +95,9 @@ where
     )?;
 
     // Draw the hamming-weight reduction's batching gamma (a single `challenge_scalar`,
-    // matching the relation's default `draw_challenges`) path-agnostically before the
-    // ZK/clear branch; the advice and committed-program address phases draw nothing
-    // (`NoChallenges`). BlindFold sources the gamma from
+    // matching the relation's default `draw_challenges`; none under the byte link)
+    // path-agnostically before the ZK/clear branch; the advice and committed-program
+    // address phases draw nothing (`NoChallenges`). BlindFold sources the gamma from
     // `challenges.hamming_weight_claim_reduction.gamma`.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
@@ -157,11 +157,13 @@ where
 }
 
 /// Build the stage-7 sumcheck batch once, for both proving paths. The hamming
-/// reduction and reduction-backed address phases are constructed from the stage-6
-/// output points (mode-agnostic) and the clear-only stage 4/6 references (`None`
-/// in ZK, where the address phases' `FinalScale` term is proved by BlindFold and
-/// `derive_output_term` never runs). Advice reductions are skipped on Akita: the
-/// final grouped opening checks their direct stage-4 claims.
+/// reduction (outside the byte link) and reduction-backed address phases are
+/// constructed from the stage-6 output points (mode-agnostic) and the clear-only
+/// stage 4/6 references (`None` in ZK, where the address phases' `FinalScale` term
+/// is proved by BlindFold and `derive_output_term` never runs). Advice reductions
+/// are skipped on Akita: the final grouped opening checks their direct stage-4
+/// claims. Under the byte link a run without a committed program has an empty
+/// batch, which sends no messages.
 pub fn build_stage7_sumchecks<F: JoltField>(
     #[cfg(not(feature = "akita-byte-link"))]
     hamming_dimensions: HammingWeightClaimReductionDimensions,

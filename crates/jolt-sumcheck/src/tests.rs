@@ -1334,6 +1334,49 @@ fn prove_batch_rejects_zero_max_degree() {
     ));
 }
 
+/// A batch with no members sends no messages: proving and verifying it leave
+/// the transcript untouched and reduce to the empty point. Degree 0 with
+/// rounds to verify is rejected rather than accepted or panicking.
+#[test]
+fn empty_batch_proves_and_verifies_without_messages() {
+    use crate::batch::BatchPrelude;
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+
+    let fresh = Blake2bTranscript::<F>::new(b"empty-batch").state();
+    let prelude = BatchPrelude::new(Vec::new(), 0, 0);
+    let mut members: Vec<&mut dyn ProveRounds<F>> = Vec::new();
+    let mut prover_transcript = Blake2bTranscript::new(b"empty-batch");
+    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let proved = prove_batch(
+        &prelude,
+        &mut members,
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut prover_transcript,
+    )
+    .unwrap();
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_transcript)
+        .unwrap();
+
+    let mut verifier_transcript = Blake2bTranscript::new(b"empty-batch");
+    let reduction = recorded
+        .proof
+        .verify_compressed_boolean(0, 0, prelude.claimed_sum, &mut verifier_transcript)
+        .unwrap();
+    assert!(reduction.point.is_empty());
+    assert_eq!(reduction.value, proved.final_claim);
+    assert_eq!(prover_transcript.state(), fresh);
+    assert_eq!(verifier_transcript.state(), fresh);
+    assert!(matches!(
+        recorded
+            .proof
+            .verify_compressed_boolean(2, 0, F::from_u64(0), &mut verifier_transcript),
+        Err(SumcheckError::ZeroBatchDegree { max_num_vars: 2 })
+    ));
+}
+
 /// Twin-transcript lock for the batched engine, padding included: a
 /// 3-round and a 1-round member proved through `prove_batch` with the clear
 /// recorder must be byte-identical to the verifier's head-replica +

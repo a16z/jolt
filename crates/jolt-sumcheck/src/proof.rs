@@ -120,7 +120,9 @@ impl<F: jolt_field::JoltField, C> SumcheckProof<F, C> {
     ///
     /// Takes the claim dimensions directly rather than a [`SumcheckClaim`] so a
     /// batched-verify driver that has already reduced its instances to one combined
-    /// claim can call it without constructing a claim value.
+    /// claim can call it without constructing a claim value. As in `prove_batch`,
+    /// an empty batch (no rounds, degree 0) reduces to its claimed sum, and degree
+    /// 0 with rounds to verify is [`SumcheckError::ZeroBatchDegree`].
     pub fn verify_compressed_boolean<T>(
         &self,
         num_vars: usize,
@@ -132,13 +134,24 @@ impl<F: jolt_field::JoltField, C> SumcheckProof<F, C> {
         T: Transcript<Challenge = F>,
     {
         match self {
-            Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
-                &SumcheckClaim::new(num_vars, degree, claimed_sum),
-                proof,
-                BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-                transcript,
-            ),
+            Self::Clear(ClearProof::Compressed(proof)) => {
+                if num_vars > 0 && degree < 1 {
+                    return Err(SumcheckError::ZeroBatchDegree {
+                        max_num_vars: num_vars,
+                    });
+                }
+                SumcheckVerifier::verify_compressed(
+                    &SumcheckClaim {
+                        num_vars,
+                        degree,
+                        claimed_sum,
+                    },
+                    proof,
+                    BooleanHypercube,
+                    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+                    transcript,
+                )
+            }
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "compressed clear",
                 got: "full clear",
