@@ -157,10 +157,7 @@ where
             .zip(&weights)
             .map(|([p, b], [w_p, w_b])| *w_p * *p + *w_b * *b)
             .sum();
-        let sumcheck =
-            transcript::verify_rounds(transcript, claimed_sum, &proof.rounds, layer, || {
-                format!("byte link {batch:?} layer {layer}")
-            })?;
+        let sumcheck = transcript::verify_rounds(transcript, claimed_sum, &proof.rounds, layer)?;
         if proof.children.len() != claims.len() {
             return Err(ByteLinkError::Shape {
                 what: "GKR children",
@@ -227,13 +224,8 @@ where
     transcript::absorb_query_values(transcript, group, &values);
     let weights = transcript::draw_query_weights(transcript, values.len());
     let claimed_sum = values.iter().zip(&weights).map(|(v, a)| *v * *a).sum();
-    let sumcheck = transcript::verify_rounds(
-        transcript,
-        claimed_sum,
-        &proof.rounds,
-        group.num_vars(),
-        || format!("byte link {group:?} query reduction"),
-    )?;
+    let sumcheck =
+        transcript::verify_rounds(transcript, claimed_sum, &proof.rounds, group.num_vars())?;
     if proof.finals.len() != group.packs().len() {
         return Err(ByteLinkError::Shape { what: "W finals" }.into());
     }
@@ -292,10 +284,7 @@ where
         .map(|(b, a)| *a * (compression.beta - *b))
         .sum::<F>()
         + weights.fused_inc * inputs.fused_inc();
-    let sumcheck =
-        transcript::verify_rounds(transcript, claimed_sum, &proof.rounds, r.len(), || {
-            "byte link Q reduction".to_owned()
-        })?;
+    let sumcheck = transcript::verify_rounds(transcript, claimed_sum, &proof.rounds, r.len())?;
     if proof.finals.len() != plan.packing().ids().len() {
         return Err(ByteLinkError::Shape { what: "Q finals" }.into());
     }

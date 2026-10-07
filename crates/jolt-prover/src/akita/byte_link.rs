@@ -334,8 +334,9 @@ mod tests {
         }
     }
 
-    /// The honest link verifies, opens `Q` and `W` at their true values, and
-    /// rejects an altered round polynomial and an altered stage-6b marginal.
+    /// The honest link verifies and opens `Q` and `W` at their true values; an
+    /// altered root, round polynomial or `W` final, and an altered stage-6b
+    /// marginal, are each rejected by the check that owns them.
     #[test]
     fn byte_link_round_trips_and_opens_the_trace() {
         let trace = trace();
@@ -345,13 +346,26 @@ mod tests {
         assert_eq!(verify_link(&trace, &proof, &inputs).unwrap(), openings);
         assert_opens_the_trace(&trace, &inputs, &openings);
 
-        let mut altered = proof.clone();
-        altered.trace[14].rounds[3][0] += F::one();
+        let altered = |alter: fn(&mut ByteLinkProof<F, F>)| {
+            let mut proof = proof.clone();
+            alter(&mut proof);
+            rejection(verify_link(&trace, &proof, &inputs))
+        };
         assert_eq!(
-            rejection(verify_link(&trace, &altered, &inputs)),
+            altered(|proof| proof.trace_roots[0][0] += F::one()),
+            ByteLinkError::Roots { pack: 0 }
+        );
+        assert_eq!(
+            altered(|proof| proof.trace[14].rounds[3][0] += F::one()),
             ByteLinkError::Gate {
                 batch: ByteLinkBatch::Trace,
                 layer: 14
+            }
+        );
+        assert_eq!(
+            altered(|proof| proof.triple_query.finals[2] += F::one()),
+            ByteLinkError::Query {
+                group: HistogramGroup::Triples
             }
         );
 

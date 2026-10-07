@@ -20,6 +20,17 @@ jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::challenge#2
 jolt-transcript::legacy.rs::Transcript::challenge_scalar::challenge#0
 jolt-transcript::legacy.rs::Transcript::challenge_scalar_powers::challenge_scalar#0
 jolt-transcript::legacy.rs::Transcript::challenge_vector::challenge#0
+jolt-verifier::stages/byte_link/transcript.rs::draw_child_selector::challenge_scalar#0
+jolt-verifier::stages/byte_link/transcript.rs::draw_compression::challenge_scalar#0
+jolt-verifier::stages/byte_link/transcript.rs::draw_compression::challenge_scalar#1
+jolt-verifier::stages/byte_link/transcript.rs::draw_layer_weights::challenge_scalar#0
+jolt-verifier::stages/byte_link/transcript.rs::draw_layer_weights::challenge_scalar#1
+jolt-verifier::stages/byte_link/transcript.rs::draw_query_weights::challenge_vector#0
+jolt-verifier::stages/byte_link/transcript.rs::draw_round_challenge::challenge#0
+jolt-verifier::stages/byte_link/transcript.rs::draw_source_weights::challenge_scalar#0
+jolt-verifier::stages/byte_link/transcript.rs::draw_source_weights::challenge_scalar#1
+jolt-verifier::stages/byte_link/transcript.rs::draw_source_weights::challenge_scalar#2
+jolt-verifier::stages/byte_link/transcript.rs::draw_zero_slot_point::challenge_vector#0
 jolt-verifier::stages/relations.rs::ConcreteSumcheck::draw_challenges::challenge_scalar#0
 jolt-verifier::stages/relations.rs::draw_batching_coefficient::challenge_scalar#0
 jolt-verifier::stages/stage1/outputs.rs::Stage1BatchSumchecks::<generated>::batching_coefficient[*]

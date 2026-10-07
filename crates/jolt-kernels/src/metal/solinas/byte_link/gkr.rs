@@ -2,12 +2,11 @@
 //! zero in every column, so their tree nodes, records and round sums are closed forms
 //! ([`TailForm`]); records of at most `2^HOST_LOG` per tree finish on the host.
 
-use jolt_field::{One, Ring, Zero};
+use jolt_field::{One, Zero};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use metal::Buffer;
 
 use jolt_claims::protocols::jolt::lattice::byte_link::ByteLinkBatch;
-use jolt_verifier::stages::byte_link::ByteLinkCompression;
 
 use super::{
     gpu::{
@@ -145,26 +144,6 @@ pub(super) fn suffix_sum(factors: &[[F; 2]], start: usize) -> F {
 
 pub(super) fn eq_factors(point: &[F]) -> Vec<[F; 2]> {
     point.iter().map(|&x| [F::one() - x, x]).collect()
-}
-
-/// `[pack][slot][code]`: `β − γ_0 σ(code)` in slot 0, `γ_i σ(code)` in slots 1 and 2.
-pub(super) fn compression_tables(compression: &ByteLinkCompression<F>) -> Vec<F> {
-    compression
-        .gamma
-        .iter()
-        .flat_map(|gamma| {
-            (0..3).flat_map(move |slot| {
-                (0..256u32).map(move |code| {
-                    let term = gamma[slot] * F::from_i64(i64::from(code as u8 as i8));
-                    if slot == 0 {
-                        compression.beta - term
-                    } else {
-                        term
-                    }
-                })
-            })
-        })
-        .collect()
 }
 
 /// Closed forms of the all-zero suffix of the trace trees: a node of height `h` there is

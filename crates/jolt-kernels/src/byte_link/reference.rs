@@ -211,12 +211,12 @@ fn sigma<F: JoltField>(byte: i8) -> F {
 
 /// Each pack's leaf denominator `β − Σ_i γ_i σ(code_i)` by tuple position:
 /// `β − γ_0 σ` at position 0, `γ_i σ` at positions 1 and 2.
-struct Denominators<F> {
+pub(crate) struct Denominators<F> {
     tables: Vec<[[F; 256]; 3]>,
 }
 
 impl<F: JoltField> Denominators<F> {
-    fn new(compression: &ByteLinkCompression<F>) -> Self {
+    pub(crate) fn new(compression: &ByteLinkCompression<F>) -> Self {
         let tables = compression
             .gamma
             .iter()
@@ -239,6 +239,12 @@ impl<F: JoltField> Denominators<F> {
     fn at(&self, pack: usize, [c0, c1, c2]: [u8; 3]) -> F {
         let [t0, t1, t2] = &self.tables[pack];
         t0[c0 as usize] - t1[c1 as usize] - t2[c2 as usize]
+    }
+
+    /// Every table, `[pack][position][code]`: the Metal shader's layout.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn flat(&self) -> &[F] {
+        self.tables.as_flattened().as_flattened()
     }
 }
 
@@ -565,19 +571,17 @@ fn query<F: JoltField>(
         values: &values,
     });
     let weights = transcript.challenges(ByteLinkDraw::QueryWeights { group }, values.len());
-    // ω_tree(h) = Σ_l α_l eq(p_l, h), each eq a product over the index's bytes
-    // (and the RAM activity bit).
-    let mut factors = vec![Vec::new(); leaves.len()];
+    let mut byte_eqs = vec![Vec::new(); leaves.len()];
     for (&(tree, point), &weight) in terms.iter().zip(&weights) {
         let bytes = point
             .chunks(BYTE_BITS)
             .map(|chunk| EqPolynomial::<F>::evals(chunk, None))
             .collect::<Vec<_>>();
-        factors[tree].push((weight, bytes));
+        byte_eqs[tree].push((weight, bytes));
     }
-    let omega = |tree: usize, h: usize| {
+    let query_weight = |tree: usize, h: usize| {
         let codes = group.table_codes(h);
-        factors[tree]
+        byte_eqs[tree]
             .iter()
             .map(|(weight, bytes)| {
                 bytes
@@ -592,7 +596,7 @@ fn query<F: JoltField>(
         transcript,
         group.num_vars(),
         tables.len(),
-        |tree, h| (tables[tree][h], omega(tree, h)),
+        |tree, h| (tables[tree][h], query_weight(tree, h)),
         |transcript, round, poly| {
             transcript.append(ByteLinkMessage::QueryRound { group, round, poly });
             transcript.challenges(ByteLinkDraw::QueryChallenge { group, round }, 1)[0]

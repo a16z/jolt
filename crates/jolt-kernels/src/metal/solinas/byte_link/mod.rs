@@ -21,6 +21,7 @@ use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpenings};
 use metal::{Buffer, Heap};
 
 use super::{MetalError, SolinasMetal};
+use crate::byte_link::reference::Denominators;
 use crate::byte_link::{ByteLinkMessage, ByteLinkTranscript};
 use gkr::{TailForm, TraceLeaves, Trees};
 use gpu::Gpu;
@@ -172,7 +173,7 @@ impl ByteLinkProver {
     ) -> Result<ByteLinkOpenings<F>, MetalError> {
         let shape = Shape::new(source)?;
         let r_t = &shape.cycle_point(inputs)?;
-        let tables = self.gpu.fields(&gkr::compression_tables(compression));
+        let tables = self.gpu.fields(Denominators::new(compression).flat());
         let w = &histograms.w;
 
         self.gpu.phase("table trees");

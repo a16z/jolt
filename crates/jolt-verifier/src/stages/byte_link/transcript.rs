@@ -11,6 +11,7 @@ use jolt_sumcheck::{BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, 
 use jolt_transcript::{append_length_prefixed, AppendToTranscript, Label, Transcript, U64Word};
 
 use super::{ByteLinkCompression, SourceWeights};
+use crate::error::ByteLinkError;
 use crate::num;
 use crate::stages::relations::{with_draw_role, DrawRole};
 use crate::VerifierError;
@@ -126,13 +127,13 @@ where
 }
 
 /// Verifies `rounds` as a `D`-degree sumcheck of `claimed_sum`; returns the
-/// challenges in round order and the final claim.
+/// challenges in round order and the final claim. A `[F; D]` round meets the
+/// degree bound by its type, so only a wrong round count fails here.
 pub fn verify_rounds<F, T, const D: usize>(
     transcript: &mut T,
     claimed_sum: F,
     rounds: &[[F; D]],
     num_vars: usize,
-    stage: impl FnOnce() -> String,
 ) -> Result<EvaluationClaim<F>, VerifierError>
 where
     F: JoltField,
@@ -163,10 +164,7 @@ where
             )
         },
     )
-    .map_err(|error| VerifierError::StageClaimSumcheckFailed {
-        stage: stage(),
-        reason: error.to_string(),
-    })
+    .map_err(|_| ByteLinkError::Shape { what: "rounds" }.into())
 }
 
 /// `[P_0, B_0, P_1, B_1]` of every tree's children at the layer's final point.
