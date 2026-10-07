@@ -1,8 +1,8 @@
 # PR #51: native trace batching performance
 
-This compares the current PR base and head using repeated, identical-workload
-measurements. All 48 timed proofs passed both parallel and single-threaded
-verification (96 successful verifier calls). Units and aggregation are stated
+This compares base `45fc2e03a` and measured head `f00ec0b5c` using repeated,
+identical-workload measurements. All 48 timed proofs passed both parallel and
+single-threaded verification (96 successful verifier calls). Units and aggregation are stated
 below; positive changes mean the head uses more time or memory. Individual
 samples are retained in the [historical measurement CSV](https://github.com/LayerZero-Research/jolt/blob/201e9b4b9250619306f231555c9850976a5e836e/specs/benchmarks/pr51/samples.csv).
 
@@ -150,9 +150,11 @@ cargo run --release -p jolt-prover --features akita,profiling -- \
 ```
 
 Use `single` (the default), `w2r2`, `w4r2`, or `w8r2`. Chunked runs receive a
-profile suffix in their artifact directory and latest symlink. The harness
-reports proving, setup, both verifier timings, proof size, and process memory;
-use `--format chrome` for per-span telemetry. Repeat fresh-process runs in
+profile suffix in their artifact directory, latest symlink, CSV workload
+name, and summary workload identity. The summary script selects chunked CSV
+rows with `--protocol akita --akita-chunk-profile w8r2`; Single is its default.
+The harness reports proving, setup, both verifier timings, proof size, and
+process memory; use `--format chrome` for per-span telemetry. Repeat fresh-process runs in
 alternating base/head order and record the source revisions and catalog hashes
 with each comparison. Historical revisions need their historical
 instrumentation; the new flag is available only from this review follow-up.

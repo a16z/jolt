@@ -307,6 +307,37 @@ pub struct ProfileArgs {
     pub akita_chunk_profile: AkitaChunkProfile,
 }
 
+impl ProfileArgs {
+    #[cfg(feature = "akita")]
+    fn chunk_profile_suffix(&self) -> String {
+        match self.akita_chunk_profile {
+            AkitaChunkProfile::Single => String::new(),
+            profile => format!("_w{}r2", profile.num_chunks()),
+        }
+    }
+
+    fn workload_name(&self) -> String {
+        let name = self.name.as_str().to_string();
+        #[cfg(feature = "akita")]
+        let name = format!("{name}{}", self.chunk_profile_suffix());
+        name
+    }
+
+    fn benchmark_name(&self) -> String {
+        let name = format!("{}{PROTOCOL_SUFFIX}", self.name.as_str());
+        #[cfg(feature = "akita")]
+        let name = format!("{name}{}", self.chunk_profile_suffix());
+        name
+    }
+
+    fn trace_name(&self, scale: u32) -> String {
+        let name = trace_name(self.name, scale, self.backend);
+        #[cfg(feature = "akita")]
+        let name = format!("{name}{}", self.chunk_profile_suffix());
+        name
+    }
+}
+
 /// `benchmark` subcommand arguments: a multi-scale sweep over the workload
 /// table, one `profile` subprocess per (workload, scale) — the port of the
 /// retired `scripts/jolt_benchmarks.sh` (subprocess-per-run keeps the global
@@ -402,12 +433,7 @@ impl Drop for RunLock {
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
-    let trace_name = trace_name(args.name, scale, args.backend);
-    #[cfg(feature = "akita")]
-    let trace_name = match args.akita_chunk_profile {
-        AkitaChunkProfile::Single => trace_name,
-        profile => format!("{trace_name}_w{}r2", profile.num_chunks()),
-    };
+    let trace_name = args.trace_name(scale);
     let _run_lock = RunLock::acquire(&trace_name);
 
     // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
@@ -455,7 +481,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     }
 
     let ctx = SummaryContext {
-        workload: args.name.as_str().to_string(),
+        workload: args.workload_name(),
         scale_log2: scale,
         backend: args.backend.as_str().to_string(),
     };
@@ -763,8 +789,8 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     // Keep the historical columns first; setup and verifier measurements follow.
     // With no compressed encoding, field 7 repeats the raw proof size.
     let summary_line = format!(
-        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{}\n",
-        bench_name,
+        "{},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{}\n",
+        args.benchmark_name(),
         scale,
         duration.as_secs_f64(),
         trace_length.next_power_of_two(),
@@ -1098,3 +1124,7 @@ fn profile_witness(
             .expect("field-inline witness")
     }
 }
+
+#[cfg(all(test, feature = "akita"))]
+#[path = "profile/tests.rs"]
+mod tests;

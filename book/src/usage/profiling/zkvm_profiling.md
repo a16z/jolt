@@ -37,7 +37,9 @@ cargo run --release -p jolt-prover --features profiling,akita -- \
 
 Chunked profiles append `_w2r2`, `_w4r2`, or `_w8r2` to the artifact name,
 after the optional `_optimized` suffix, so their latest symlinks remain
-independent. The `benchmark` sweep uses Single.
+independent. The CSV workload name and `summary.json`'s `run.workload`
+also carry the chunk-profile suffix. Single keeps its existing names.
+The `benchmark` sweep uses Single.
 
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
@@ -68,8 +70,8 @@ the run identity, so the files inside use fixed names:
   [Perfetto](https://ui.perfetto.dev/) or query with `trace_processor` SQL.
 - `summary.json` — schema-versioned aggregates (see below).
 
-For example, the Akita command above writes its summary to
-`benchmark-runs/latest_modular_fibonacci_akita_16_optimized/summary.json`.
+For example, the W4R2 command above writes its summary to
+`benchmark-runs/latest_modular_fibonacci_akita_16_optimized_w4r2/summary.json`.
 The query examples below use Dory's reference paths; substitute the
 corresponding Akita or optimized path for those runs.
 
@@ -100,8 +102,14 @@ cargo run --release -p jolt-prover --features profiling,akita -- \
 ```
 
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
-in the run directories). Akita rows append `_akita` to the workload name,
-and `--resume` checks the selected protocol and kernel implementation's
+in the run directories). Akita Single rows append `_akita` to the workload
+name; chunked rows also append `_w2r2`, `_w4r2`, or `_w8r2`, for example
+`fibonacci_akita_w4r2`. The summary table defaults to Single; select a
+chunked profile with `--protocol akita --akita-chunk-profile w4r2`.
+The plots group these CSV names separately. Rows produced by the earlier
+chunk-profile flag without a profile suffix cannot be distinguished from
+Single rows; rerun those measurements to identify their profile.
+`--resume` checks the selected protocol and kernel implementation's
 artifact path. In addition to prover throughput and proof size, the
 CSV records `setup_time_s`, `verifier_parallel_time_s`,
 `verifier_single_thread_time_s`, and the explicit parallel worker count.
@@ -112,6 +120,8 @@ values for these new fields. Render them with:
 python3 scripts/benchmark_summary.py     # per-scale table
 python3 scripts/benchmark_summary.py --protocol akita \
     --metric verifier_single_thread_time_s
+python3 scripts/benchmark_summary.py --protocol akita \
+    --akita-chunk-profile w4r2 --metric prover_time_s
 python3 scripts/plot_benchmarks.py       # speed + proof-size plots
 python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
 ```
