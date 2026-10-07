@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791405285714,
+  "lastUpdate": 1791405676691,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -181786,6 +181786,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 862836,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "efc96205cf28689a0491c833d76c6366b4d00f25",
+          "message": "refactor(kernels): delete dead code found in maintenance sweep (#2009)\n\n* refactor(kernels): delete unused fixed-array Lagrange helpers\n\nLagrangeHelper, LagrangePolynomial, and the three centered_* forwarding\nwrappers over them had no callers anywhere in the workspace.\n\n* refactor(kernels): remove test-only Lagrange convenience APIs\n\ncentered_lagrange_evals_array and symmetric_power_sums were only called\nfrom their own unit tests; production uses centered_lagrange_evals and\ncentered_power_sums, which keep their coverage.\n\n* refactor(kernels): delete unused committed-bytecode helper exports\n\ncommitted_total_lanes and bytecode_chunk_ids were defined but never\ncalled; the lane layout and chunk claims are built elsewhere.\n\n* refactor(kernels): delete unused drop_in_background_thread\n\nThe background-drop wrapper had no callers; jolt-utils' thread module now\ndocuments only the parallel collectors it still provides.\n\n* refactor(kernels): delete definition-only Limbs and Polynomial accessors\n\nLimbs::zero_extend_from and Polynomial::evaluations_mut had no callers in\nthe workspace, including tests, fuzz targets, and benches.\n\n* chore(kernels): drop duplicate jolt-riscv dev-dependency\n\nThe normal dependency already declares jolt-riscv with the same\nserialization feature, and tests inherit it.\n\n* refactor(kernels): delete unused EqPolynomial::zero_selector\n\nNo caller remains in the workspace; its only test restated the product\nformula as its own oracle.\n\n* refactor(kernels): delete unused UnivariatePoly::from_linear_times_quadratic_with_hint\n\nNo workspace code has called it since jolt-poly was created;\njolt-prover-legacy carried a separate UniPoly copy. The split-eq\nevaluator builds the same cubic through\nGruenSplitEqPolynomial::gruen_poly_deg_3, so the \"used by the split-eq\nevaluator\" doc was stale.\n\n* refactor(kernels): delete unused UnivariatePoly long division\n\ndivide_with_remainder, and leading_coefficient (called only by it), have\nnever had a workspace caller outside their own unit tests;\njolt-prover-legacy carried a separate UniPoly copy.\n\n* refactor(kernels): delete unused NUM_PREFIXES and NUM_SUFFIXES\n\nNeither constant is referenced anywhere in the workspace; checkpoint\ntables are sized from ALL_PREFIXES.\n\n* docs(kernels): fix the lagrange module's field bound link\n\nThe functions are generic over Field; the JoltField intra-doc link did\nnot resolve in that module.",
+          "timestamp": "2026-10-07T12:34:52-07:00",
+          "tree_id": "acd8b1ae27b1f4d97be9f22305f7ae3ae04adf6b",
+          "url": "https://github.com/a16z/jolt/commit/efc96205cf28689a0491c833d76c6366b4d00f25"
+        },
+        "date": 1791405668931,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.1532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7089,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 511184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 500564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 504296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.9996,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 998868,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.8194,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 511068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8679,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 501624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.8577,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 140668,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.059,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.842,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6114,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 498580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.3726,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.345,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 504376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 42.2836,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1957320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.2736,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 628048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 95.1645,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1104556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8864,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1999,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 20.0584,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866424,
             "unit": "KB",
             "extra": ""
           }
