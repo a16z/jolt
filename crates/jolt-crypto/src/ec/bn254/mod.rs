@@ -158,9 +158,18 @@ macro_rules! impl_jolt_group_wrapper {
                         bytes.len()
                     ));
                 }
-                <$projective>::deserialize_compressed(bytes)
+                let point = <$projective>::deserialize_compressed(bytes)
                     .map(Self)
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| error.to_string())?;
+                // arkworks returns the identity for any x under the infinity
+                // flag; only the canonical encoding may decode.
+                if <Self as ::jolt_field::CanonicalBytes>::to_bytes_le_vec(&point) != bytes {
+                    return Err(format!(
+                        "{} encoding is not canonical",
+                        stringify!($wrapper)
+                    ));
+                }
+                Ok(point)
             }
         }
 
@@ -349,6 +358,7 @@ mod tests {
     use jolt_field::{CanonicalBytes, CanonicalDecode};
 
     use super::{Bn254, Bn254G1, Bn254G2};
+    use crate::JoltGroup;
 
     #[test]
     fn canonical_codec_is_the_compressed_encoding() {
@@ -368,6 +378,24 @@ mod tests {
         check(g1, &g1.0);
         let g2 = Bn254::g2_generator();
         check(g2, &g2.0);
+    }
+
+    /// The identity decodes from its canonical encoding only: arkworks
+    /// ignores x under the infinity flag, so nonzero x bits there must not
+    /// alias it.
+    #[test]
+    fn identity_has_one_accepted_encoding() {
+        fn check<P: CanonicalBytes + CanonicalDecode + PartialEq + std::fmt::Debug>(identity: P) {
+            let canonical = identity.to_bytes_le_vec();
+            assert_eq!(P::from_bytes_le_checked(&canonical), Some(identity));
+            let mut alias = canonical;
+            if let Some(low) = alias.first_mut() {
+                *low ^= 1;
+            }
+            assert_eq!(P::from_bytes_le_checked(&alias), None);
+        }
+        check(Bn254G1::identity());
+        check(Bn254G2::identity());
     }
 
     fn encode_with_trailing_byte<P: CanonicalSerialize>(point: &P) -> Vec<u8> {
