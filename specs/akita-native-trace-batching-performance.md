@@ -4,7 +4,7 @@ This compares the current PR base and head using repeated, identical-workload
 measurements. All 48 timed proofs passed both parallel and single-threaded
 verification (96 successful verifier calls). Units and aggregation are stated
 below; positive changes mean the head uses more time or memory. Individual
-samples are in [the CSV](benchmarks/pr51/samples.csv).
+samples are retained in the [historical measurement CSV](https://github.com/LayerZero-Research/jolt/blob/201e9b4b9250619306f231555c9850976a5e836e/specs/benchmarks/pr51/samples.csv).
 
 ## Proving and memory
 
@@ -112,7 +112,7 @@ beyond the first fold.
 - Every sample passed verification in both modes. Both revisions used identical
   guest ELF SHA-256 hashes and raw trace lengths at each workload/scale.
 - Each reported metric is the median of its three samples; no samples were
-  discarded. The CSV preserves individual timings and memory values.
+  discarded. The historical CSV preserves individual timings and memory values.
 
 The comparison includes the complete PR, including its intentional Akita pin
 upgrade and catalog changes. It does not isolate only the native batching
@@ -136,54 +136,26 @@ deltas should not be treated as established speedups.
 
 ## Reproduction and provenance
 
-The exact source snapshots, binaries, instrumentation patches, logs, JSON
-metadata, and runner are retained locally under
-`benchmark-runs/pr51-performance-20261006/`. They are benchmark artifacts and
-are excluded from Git. The [base patch](benchmarks/pr51/base-profile.patch) and
-[head patch](benchmarks/pr51/head-profile.patch) touch only `profile.rs`: select
-`config.akita_chunk_profile` from `JOLT_PR51_CHUNKS`, and print the existing
-`Instant` durations, proof bytes, canonical PCS geometry, raw trace length,
-and `PeakMemory` values outside the timed windows. No proving, verification,
-planner, or kernel code is patched.
+The tables describe base `45fc2e03a` and head `f00ec0b5c`, not later review
+fixes. Their exact instrumentation and raw samples remain accessible through
+the [historical report](https://github.com/LayerZero-Research/jolt/blob/201e9b4b9250619306f231555c9850976a5e836e/specs/akita-native-trace-batching-performance.md).
+The benchmark-specific patches, CSV, and local runner are not maintained tools.
 
-For each revision, archive the source and apply its versioned instrumentation
-patch with `patch -p1` from the snapshot root. Refresh its source timestamps,
-build sequentially, and copy the executable
-aside:
+The current harness selects chunk profiles through a supported CLI option:
 
 ```sh
-cargo build --offline --locked --profile ci -q -p jolt-prover \
-  --features akita,profiling --bin jolt-prover
+cargo run --release -p jolt-prover --features akita,profiling -- \
+  profile --name fibonacci --scale 24 --backend optimized --format none \
+  --akita-chunk-profile w8r2
 ```
 
-When sharing Cargo's target directory between archived revisions, refresh all
-source timestamps before building the next revision; archive timestamps can
-otherwise cause reuse of newer artifacts. Compile the unchanged Jolt CLI from
-the head and use it for guest builds on both revisions. The CLI needs
-`GIT_SHORT_HASH=f00ec0b5c GIT_DATE=2026-10-06` when built from an archive without
-`.git`. The guest, SDK, host, and CLI sources have no base/head changes.
-
-Run each copied binary from its corresponding snapshot, with that snapshot's
-catalog directory, using this command shape:
-
-```sh
-RAYON_NUM_THREADS=16 CARGO_NET_OFFLINE=true \
-JOLT_PATH=/absolute/path/to/copied/jolt \
-JOLT_AKITA_SCHEDULE_DIR=/absolute/path/to/snapshot/crates/jolt-akita/schedules \
-JOLT_PR51_CHUNKS=w8r2 \
-/absolute/path/to/copied/jolt-prover profile \
-  --name fibonacci --scale 24 --backend optimized --format none
-```
-
-Use `single`, `w2r2`, `w4r2`, or `w8r2` for the profile, and the cases listed in
-the tables. Run the three alternating pairs manually, or use the retained local runner:
-
-```sh
-python3 benchmark-runs/pr51-performance-20261006/run_comparison.py
-```
-
-The runner is a local artifact; the versioned patches and command shape above
-are sufficient to repeat the measurement on a fresh checkout.
+Use `single` (the default), `w2r2`, `w4r2`, or `w8r2`. Chunked runs receive a
+profile suffix in their artifact directory and latest symlink. The harness
+reports proving, setup, both verifier timings, proof size, and process memory;
+use `--format chrome` for per-span telemetry. Repeat fresh-process runs in
+alternating base/head order and record the source revisions and catalog hashes
+with each comparison. Historical revisions need their historical
+instrumentation; the new flag is available only from this review follow-up.
 
 The guest ELF hashes are:
 

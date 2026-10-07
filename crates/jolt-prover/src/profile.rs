@@ -35,11 +35,15 @@ use std::io::{Result, Write as _};
 #[cfg(not(feature = "akita"))]
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "akita")]
+use std::result::Result as ParseResult;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 use common::jolt_device::MemoryConfig;
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaChunkProfile;
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(not(feature = "akita"))]
@@ -268,6 +272,17 @@ impl BackendKind {
     }
 }
 
+#[cfg(feature = "akita")]
+fn parse_akita_chunk_profile(value: &str) -> ParseResult<AkitaChunkProfile, String> {
+    match value {
+        "single" => Ok(AkitaChunkProfile::Single),
+        "w2r2" => Ok(AkitaChunkProfile::Two),
+        "w4r2" => Ok(AkitaChunkProfile::Four),
+        "w8r2" => Ok(AkitaChunkProfile::Eight),
+        _ => Err("expected single, w2r2, w4r2, or w8r2".into()),
+    }
+}
+
 /// `profile` subcommand arguments.
 #[derive(Debug, clap::Args)]
 pub struct ProfileArgs {
@@ -285,6 +300,11 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
+
+    /// Akita witness chunk profile: single, w2r2, w4r2, or w8r2.
+    #[cfg(feature = "akita")]
+    #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "single")]
+    pub akita_chunk_profile: AkitaChunkProfile,
 }
 
 /// `benchmark` subcommand arguments: a multi-scale sweep over the workload
@@ -383,6 +403,11 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
     let trace_name = trace_name(args.name, scale, args.backend);
+    #[cfg(feature = "akita")]
+    let trace_name = match args.akita_chunk_profile {
+        AkitaChunkProfile::Single => trace_name,
+        profile => format!("{trace_name}_w{}r2", profile.num_chunks()),
+    };
     let _run_lock = RunLock::acquire(&trace_name);
 
     // One directory per run — benchmark-runs/{timestamp}_{trace_name}/ —
@@ -413,7 +438,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         )),
     };
 
-    run_workload(args.name, scale, args.backend, &run_dir);
+    run_workload(args, scale, &run_dir);
 
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
@@ -644,7 +669,9 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     fs::write(path, migrated)
 }
 
-fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
+fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
+    let workload = args.name;
+    let backend = args.backend;
     let bench_name = workload.as_str();
     let backend_label = backend.as_str();
     let max_trace_length = 1usize << scale;
@@ -689,7 +716,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     #[cfg(feature = "field-inline")]
     let trace_length = trace_output.trace.rows().len();
 
-    let run = prove_workload(&jolt_program, program_preprocessing, trace_output, backend);
+    let run = prove_workload(
+        &jolt_program,
+        program_preprocessing,
+        trace_output,
+        backend,
+        #[cfg(feature = "akita")]
+        args.akita_chunk_profile,
+    );
     let (duration, proof_size) = (run.duration, run.proof_size);
 
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
@@ -886,6 +920,7 @@ fn prove_workload(
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput<ProfileTrace>,
     backend: BackendKind,
+    chunk_profile: AkitaChunkProfile,
 ) -> ProvenRun {
     use crate::akita::preprocessing::{AkitaTranscript, AkitaVc};
     use crate::JoltProverPreprocessing;
@@ -902,7 +937,7 @@ fn prove_workload(
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
     #[cfg(not(feature = "field-inline"))]
-    let config = ProverConfig::derive_compact::<AkitaField>(
+    let mut config = ProverConfig::derive_compact::<AkitaField>(
         trace_output.trace.as_slice(),
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
@@ -911,7 +946,7 @@ fn prove_workload(
     )
     .expect("derive config");
     #[cfg(feature = "field-inline")]
-    let config = ProverConfig::derive::<AkitaField>(
+    let mut config = ProverConfig::derive::<AkitaField>(
         trace_output.trace.rows(),
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
@@ -919,6 +954,7 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
+    config.akita_chunk_profile = chunk_profile;
     let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let params = crate::akita::preprocessing::grouped_setup_params(
         &schedule_artifacts,

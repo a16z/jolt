@@ -27,6 +27,18 @@ The Akita harness loads its schedule catalogs from
 `crates/jolt-akita/schedules/` by default. Set `JOLT_AKITA_SCHEDULE_DIR` to
 use another directory containing those `.aks` files.
 
+For `profile` with the `akita` feature, `--akita-chunk-profile` selects
+`single` (default), `w2r2`, `w4r2`, or `w8r2`. For example:
+
+```bash
+cargo run --release -p jolt-prover --features profiling,akita -- \
+    profile --name fibonacci --backend optimized --akita-chunk-profile w4r2
+```
+
+Chunked profiles append `_w2r2`, `_w4r2`, or `_w8r2` to the artifact name,
+after the optional `_optimized` suffix, so their latest symlinks remain
+independent. The `benchmark` sweep uses Single.
+
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
 | `--name` | default scale |

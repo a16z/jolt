@@ -21,6 +21,8 @@
 #![cfg(feature = "profiling")]
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaChunkProfile;
 use jolt_profiling::summary::ProfileSummary;
 use jolt_profiling::taxonomy::{self, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
@@ -33,6 +35,8 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: AkitaChunkProfile::Single,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");
