@@ -790,11 +790,12 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             )
         });
         let resident_rows_requested = trace_elements
-            >= self.config.booleanity_address.trace_cutoff_elements
-            || trace_elements >= self.config.bytecode_read_raf_address.trace_cutoff_elements
-            || trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
+            >= self.config.bytecode_read_raf_address.trace_cutoff_elements
             || trace_elements >= self.config.bytecode_read_raf_cycle.trace_cutoff_elements
-            || hamming_rows_requested;
+            || (!cfg!(feature = "akita-byte-link")
+                && (trace_elements >= self.config.booleanity_address.trace_cutoff_elements
+                    || trace_elements >= self.config.booleanity_cycle.trace_cutoff_elements
+                    || hamming_rows_requested));
         if resident_rows_requested && session.state::<BooleanityRows>().is_none() {
             let prepared_rows = if let Some(owner) = stage1_owner.as_ref() {
                 let receipt = owner.receipt();
