@@ -51,6 +51,7 @@ use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
+use crate::stages::relations::{with_draw_role, DrawRole};
 use crate::stages::stage1::Stage1Output;
 use crate::stages::stage2::{Stage2BatchOutputPoints, Stage2Output};
 use crate::stages::stage3::outputs::Stage3OutputPoints;
@@ -115,13 +116,22 @@ impl<F: JoltField> Stage6bDraws<F> {
         transcript: &mut T,
         committed_bytecode: bool,
     ) -> Self {
+        let mut draw = |member| {
+            with_draw_role(
+                DrawRole::MemberChallenges {
+                    batch: "Stage6b",
+                    member,
+                },
+                || transcript.challenge_scalar(),
+            )
+        };
         // Field order is draw order: the struct literal evaluates in
         // declaration order.
         Self {
-            instruction_ra_gamma: transcript.challenge_scalar(),
+            instruction_ra_gamma: draw("instruction_ra_virtualization"),
             #[cfg(not(feature = "akita"))]
-            inc_gamma: transcript.challenge_scalar(),
-            eta: committed_bytecode.then(|| transcript.challenge_scalar()),
+            inc_gamma: draw("inc_claim_reduction"),
+            eta: committed_bytecode.then(|| draw("bytecode_reduction")),
         }
     }
 }

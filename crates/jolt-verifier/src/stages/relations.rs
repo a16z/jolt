@@ -325,6 +325,96 @@ where
     }
 }
 
+/// The batch member, or batch, a challenge draw belongs to. The `fs-audit`
+/// transcript double keys its challenge tape by role, so removing a batch
+/// member leaves the key of every other draw unchanged; other builds ignore it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DrawRole {
+    /// The member's own challenges ([`ConcreteSumcheck::draw_challenges`]).
+    MemberChallenges {
+        batch: &'static str,
+        member: &'static str,
+    },
+    BatchingCoefficient {
+        batch: &'static str,
+        member: &'static str,
+    },
+    /// The batch's sumcheck round challenges.
+    Rounds { batch: &'static str },
+}
+
+#[cfg(feature = "fs-audit")]
+pub(crate) fn with_draw_role<R>(role: DrawRole, draw: impl FnOnce() -> R) -> R {
+    let _role = crate::fs_audit::enter_role(role);
+    draw()
+}
+
+#[cfg(not(feature = "fs-audit"))]
+pub(crate) fn with_draw_role<R>(_: DrawRole, draw: impl FnOnce() -> R) -> R {
+    draw()
+}
+
+/// [`ConcreteSumcheck::draw_challenges`] for the batch member `member`; called
+/// by the generated `draw_challenges` in member declaration order.
+pub fn draw_member_challenges<F, I, T>(
+    batch: &'static str,
+    member: &'static str,
+    instance: &I,
+    transcript: &mut T,
+) -> Result<ConcreteSumcheckChallenges<F, I>, VerifierError>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    T: Transcript<Challenge = F>,
+{
+    with_draw_role(DrawRole::MemberChallenges { batch, member }, || {
+        instance.draw_challenges(transcript)
+    })
+}
+
+/// The batching coefficient of the batch member `member`; drawn by the
+/// generated batch heads once per present member, in declaration order.
+pub fn draw_batching_coefficient<F, T>(
+    batch: &'static str,
+    member: &'static str,
+    transcript: &mut T,
+) -> F
+where
+    F: JoltField,
+    T: Transcript<Challenge = F>,
+{
+    with_draw_role(DrawRole::BatchingCoefficient { batch, member }, || {
+        transcript.challenge_scalar()
+    })
+}
+
+/// Runs the sumcheck rounds of `batch`; both fronts' batch drivers prove or
+/// verify their rounds through it.
+pub fn draw_batch_rounds<R>(batch: &'static str, rounds: impl FnOnce() -> R) -> R {
+    with_draw_role(DrawRole::Rounds { batch }, rounds)
+}
+
+/// Reports one present batch member as the generated batch head instantiates
+/// it, for the `fs-audit` relation catalog.
+#[cfg(feature = "fs-audit")]
+pub fn observe_batch_member<F: JoltField, I: ConcreteSumcheck<F>>(
+    batch: &'static str,
+    member: &'static str,
+    instance: &I,
+    point_offset: usize,
+) {
+    crate::fs_audit::record_batch_member(batch, member, instance, point_offset);
+}
+
+#[cfg(not(feature = "fs-audit"))]
+pub fn observe_batch_member<F: JoltField, I: ConcreteSumcheck<F>>(
+    _: &'static str,
+    _: &'static str,
+    _: &I,
+    _: usize,
+) {
+}
+
 /// One member's absorbed opening scalars: its claims' `canonical_order`-aligned
 /// values minus the member's [aliased
 /// openings](ConcreteSumcheck::aliased_output_openings) (absorbed once via

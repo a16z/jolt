@@ -384,6 +384,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         )
     });
 
+    // The member name each draw is tagged with (`relations::DrawRole`).
+    let member_name =
+        |plan: &InstanceField| syn::LitStr::new(&plan.ident.to_string(), plan.ident.span());
+
     // Per-instance driver plumbing on the source `StageNSumchecks` struct itself:
     // draw each member's challenges into the stage's challenge aggregate, delegating
     // to each member's `ConcreteSumcheck::draw_challenges` in declaration order;
@@ -392,16 +396,21 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // aggregate has exactly the member fields.
     let draw_fields = plans.iter().map(|plan| {
         let id = &plan.ident;
+        let member = member_name(plan);
         if plan.is_option {
             quote! {
                 #id: self
                     .#id
                     .as_ref()
-                    .map(|__member| __member.draw_challenges(transcript))
+                    .map(|__member| {
+                        #relations::draw_member_challenges(#base_lit, #member, __member, transcript)
+                    })
                     .transpose()?
             }
         } else {
-            quote!(#id: self.#id.draw_challenges(transcript)?)
+            quote! {
+                #id: #relations::draw_member_challenges(#base_lit, #member, &self.#id, transcript)?
+            }
         }
     });
     // Fold each member's `(rounds, degree)` into the batch's `(max_num_vars,
@@ -500,12 +509,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 .iter()
                 .zip(sum_idents.iter().zip(&coeff_idents))
                 .map(|(plan, (sum, coeff))| {
+                    let member = member_name(plan);
+                    let draw = quote! {
+                        #relations::draw_batching_coefficient(#base_lit, #member, transcript)
+                    };
                     if plan.is_option {
-                        quote! {
-                            let #coeff = #sum.as_ref().map(|_| transcript.challenge_scalar());
-                        }
+                        quote!(let #coeff = #sum.as_ref().map(|_| #draw);)
                     } else {
-                        quote!(let #coeff = transcript.challenge_scalar();)
+                        quote!(let #coeff = #draw;)
                     }
                 });
 
@@ -525,7 +536,23 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 .zip(sum_idents.iter().zip(&coeff_idents))
                 .map(|(plan, (sum, coeff))| {
                     let id = &plan.ident;
+                    let member = member_name(plan);
+                    let push = |input_claim, coefficient| {
+                        quote! {
+                            let __offset = __member.instance_point_offset(__max_num_vars)?;
+                            #relations::observe_batch_member::<#f, _>(
+                                #base_lit, #member, __member, __offset,
+                            );
+                            __members.push(::jolt_sumcheck::BatchMember {
+                                input_claim: #input_claim,
+                                coefficient: #coefficient,
+                                rounds: __member.rounds(),
+                                offset: __offset,
+                            });
+                        }
+                    };
                     if plan.is_option {
+                        let push = push(quote!(__sum), quote!(__coeff));
                         quote! {
                             if let (
                                 ::core::option::Option::Some(__coeff),
@@ -533,22 +560,16 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                                 ::core::option::Option::Some(__member),
                             ) = (#coeff, #sum, self.#id.as_ref())
                             {
-                                __members.push(::jolt_sumcheck::BatchMember {
-                                    input_claim: __sum,
-                                    coefficient: __coeff,
-                                    rounds: __member.rounds(),
-                                    offset: __member.instance_point_offset(__max_num_vars)?,
-                                });
+                                #push
                             }
                         }
                     } else {
+                        let push = push(quote!(#sum), quote!(#coeff));
                         quote! {
-                            __members.push(::jolt_sumcheck::BatchMember {
-                                input_claim: #sum,
-                                coefficient: #coeff,
-                                rounds: self.#id.rounds(),
-                                offset: self.#id.instance_point_offset(__max_num_vars)?,
-                            });
+                            {
+                                let __member = &self.#id;
+                                #push
+                            }
                         }
                     }
                 });
@@ -643,13 +664,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             let (__batch, __coefficients) =
                 self.begin_batch(inputs, challenges, &mut __recorder, transcript)?;
 
-            let __reduction = proof
-                .verify_compressed_boolean(
+            let __reduction = #relations::draw_batch_rounds(#base_lit, || {
+                proof.verify_compressed_boolean(
                     __batch.max_num_vars,
                     __batch.max_degree,
                     __batch.claimed_sum,
                     transcript,
                 )
+            })
                 .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
                     stage: #base_lit.to_string(),
                     reason: error.to_string(),
@@ -691,14 +713,20 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         // are absorbed, so only the coefficients are recorded, in declaration order.
         let coeff_draws_zk = plans.iter().map(|plan| {
             let id = &plan.ident;
+            let member = member_name(plan);
+            let push = quote! {
+                __batching_coefficients.push(
+                    #relations::draw_batching_coefficient(#base_lit, #member, transcript),
+                );
+            };
             if plan.is_option {
                 quote! {
                     if self.#id.is_some() {
-                        __batching_coefficients.push(transcript.challenge_scalar());
+                        #push
                     }
                 }
             } else {
-                quote!(__batching_coefficients.push(transcript.challenge_scalar());)
+                push
             }
         });
 
@@ -724,8 +752,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let mut __batching_coefficients = ::std::vec::Vec::new();
                 #(#coeff_draws_zk)*
 
-                let __consistency = proof
-                    .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
+                let __consistency = #relations::draw_batch_rounds(#base_lit, || {
+                    proof.verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
+                })
                     .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
                         stage: #base_lit.to_string(),
                         reason: error.to_string(),

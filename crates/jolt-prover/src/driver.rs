@@ -555,13 +555,15 @@ macro_rules! impl_stage_prover {
                         .into_iter()
                         .flatten()
                         .collect();
-                let __proved = ::jolt_sumcheck::prove_batch(
-                    &__batch,
-                    &mut __rounds,
-                    scheduler,
-                    &mut recorder,
-                    transcript,
-                )?;
+                let __proved = ::jolt_verifier::stages::relations::draw_batch_rounds($label, || {
+                    ::jolt_sumcheck::prove_batch(
+                        &__batch,
+                        &mut __rounds,
+                        scheduler,
+                        &mut recorder,
+                        transcript,
+                    )
+                })?;
 
                 let __output_points =
                     self.derive_opening_points(&__proved.challenges, input_points)?;

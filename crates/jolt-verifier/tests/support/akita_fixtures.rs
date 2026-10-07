@@ -14,6 +14,7 @@ use jolt_program::execution::OwnedTrace;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
 use jolt_prover::akita::{self, JoltAkitaBackend};
 use jolt_prover::ProverConfig;
+use jolt_transcript::Transcript;
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -72,7 +73,7 @@ fn generate_muldiv() -> AkitaFixtureCase {
     let config = derive_config(&run);
     let preprocessing = preprocessing::preprocess_full(run.program_preprocessing.clone(), &config)
         .expect("Akita preprocessing");
-    prove_prepared(run, config, preprocessing, &[])
+    prove_prepared::<AkitaTranscript>(run, config, preprocessing, &[])
 }
 
 fn generate_advice() -> AkitaFixtureCase {
@@ -93,7 +94,7 @@ fn generate_advice() -> AkitaFixtureCase {
         true,
     )
     .expect("Akita advice preprocessing");
-    prove_prepared(run, config, preprocessing, &trusted_advice)
+    prove_prepared::<AkitaTranscript>(run, config, preprocessing, &trusted_advice)
 }
 
 fn generate_committed_muldiv() -> AkitaFixtureCase {
@@ -103,10 +104,10 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     let preprocessing =
         preprocessing::preprocess_committed(run.program_preprocessing.clone(), &config, 2)
             .expect("committed Akita preprocessing");
-    prove_prepared(run, config, preprocessing, &[])
+    prove_prepared::<AkitaTranscript>(run, config, preprocessing, &[])
 }
 
-fn derive_config(run: &PreparedGuest) -> ProverConfig {
+pub fn derive_config(run: &PreparedGuest) -> ProverConfig {
     ProverConfig::derive_compact::<AkitaField>(
         run.trace.trace.as_slice(),
         &run.program_preprocessing.memory_layout,
@@ -117,7 +118,7 @@ fn derive_config(run: &PreparedGuest) -> ProverConfig {
     .expect("derive Akita prover config")
 }
 
-fn prove_prepared(
+pub fn prove_prepared<T: Transcript<Challenge = AkitaField>>(
     run: PreparedGuest,
     config: ProverConfig,
     preprocessing: AkitaProverPreprocessing,
@@ -142,7 +143,7 @@ fn prove_prepared(
         preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, T, _>(
         &JoltAkitaBackend::optimized(),
         &preprocessing,
         &config,
