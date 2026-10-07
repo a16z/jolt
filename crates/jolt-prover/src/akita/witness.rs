@@ -41,7 +41,6 @@ struct OneHotTraceSourceRow {
     fused_inc: FusedInc,
 }
 
-/// Cycles per block of the byte-trace assembly.
 #[cfg(feature = "akita-byte-link")]
 const BYTE_BLOCK_ROWS: usize = 1 << 12;
 /// A slot's run in a block's staging buffer: one cache line longer than the

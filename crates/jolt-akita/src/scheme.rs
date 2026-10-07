@@ -1,5 +1,7 @@
 #[cfg(all(feature = "metal", target_os = "macos"))]
-use akita_metal::{MetalBackend, MetalExecutionPolicy, MetalOpeningMetrics, MetalPreparedSetup};
+use akita_metal::{
+    MetalBackend, MetalExecutionPolicy, MetalOpeningMetrics, MetalPreparedSetup, SignedByteSource,
+};
 use akita_pcs::{AkitaError, ComputeBackendSetup, CpuBackend};
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use akita_prover::UniformProverStack;
@@ -22,7 +24,10 @@ use metal::Buffer;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[cfg(all(feature = "metal", target_os = "macos"))]
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Mutex,
+};
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::adapters::AkitaBackendProverSetup;
@@ -153,6 +158,17 @@ impl TraceCommitmentBackend {
     pub fn last_metal_opening_metrics(&self) -> Result<Option<MetalOpeningMetrics>, OpeningsError> {
         self.required_metal().map_or(Ok(None), |metal| {
             metal.backend.last_opening_metrics().map_err(invalid_setup)
+        })
+    }
+
+    /// Signed-byte sources this backend committed on the device, counted by
+    /// shape; empty for the CPU backend.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub fn metal_signed_byte_commits(
+        &self,
+    ) -> Result<BTreeMap<SignedByteSource, usize>, OpeningsError> {
+        self.required_metal().map_or(Ok(BTreeMap::new()), |metal| {
+            metal.backend.signed_byte_commits().map_err(invalid_setup)
         })
     }
 }

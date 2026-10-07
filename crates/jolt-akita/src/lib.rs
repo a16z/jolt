@@ -43,6 +43,8 @@ pub use adapters::{
     AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupParams,
     AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub use akita_metal::SignedByteSource;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };

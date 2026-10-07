@@ -655,12 +655,15 @@ mod akita_tests {
         }
 
         /// At 2^16 cycles `Q`, the link and both `W` groups run on the device,
-        /// and the proof is the CPU prover's byte for byte. The trace opening
-        /// runs on the backend that committed `Q`, and required Metal commits
-        /// on the device or fails, so a device opening covers both.
+        /// and the proof is the CPU prover's byte for byte. The device's
+        /// signed-byte metrics name `Q` by its shape: one digit per
+        /// coefficient, where a `W` group's balanced digits have sixteen.
         #[cfg(feature = "akita-byte-link")]
         #[test]
         fn byte_link_metal_proof_is_the_cpu_proof_at_2_16() {
+            use jolt_akita::schedules::emit::SIGNED_BYTE_PACKING_VARIABLES;
+            use jolt_akita::SignedByteSource;
+
             let inputs = postcard::to_stdvec(&4000u32).expect("serialize inputs");
             let prove = |backend: &JoltAkitaBackend<AkitaField, AkitaScheme>| {
                 let run = guest_run("fibonacci-guest", &inputs, &[], &[]);
@@ -675,13 +678,30 @@ mod akita_tests {
             let backend = metal_backend(1 << 16);
             let metal = prove(&backend);
             verify(&metal).expect("the Metal byte-link proof must verify");
+            let q = SignedByteSource {
+                bytes: 1 << (16 + SIGNED_BYTE_PACKING_VARIABLES),
+                digits: 1,
+            };
+            let trace = backend.trace_commitment();
+            assert_eq!(
+                trace
+                    .metal_signed_byte_commits()
+                    .expect("read the Metal signed-byte commits")
+                    .get(&q),
+                Some(&1),
+                "Q must commit on the device"
+            );
+            let opening = trace
+                .last_metal_opening_metrics()
+                .expect("read the Metal opening metrics")
+                .expect("Q must open on the device");
             assert!(
-                backend
-                    .trace_commitment()
-                    .last_metal_opening_metrics()
-                    .expect("read the Metal opening metrics")
-                    .is_some(),
-                "Q must open on the device"
+                opening.signed_byte_folds.contains(&q),
+                "Q must fold on the device"
+            );
+            assert!(
+                opening.signed_byte_packings.contains(&q),
+                "Q must be coefficient-packed on the device"
             );
             let cpu = prove(&JoltAkitaBackend::optimized());
             assert!(
