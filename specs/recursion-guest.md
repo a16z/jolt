@@ -115,7 +115,9 @@ With `--embed` the host also:
 
 - An O(1) size-class allocator for std guests.
 - No custom `mem*` routines. musl's `memcpy`, `memset`, and `memcmp` move
-  data partly in sub-word accesses, each a multi-row sequence.
+  data partly in sub-word accesses, each a multi-row sequence, so hot paths
+  avoid them:
+  - The Blake2b hasher packs input into message words.
 - `serde_bytes` on every proof and setup byte payload.
 - 8-byte-aligned guest record framing.
 - `write(2)` and `clock_gettime(2)` answered in the trap handler.

@@ -1,19 +1,30 @@
 //! High-level Blake2b hashing API for host and guest modes.
+//!
+//! Message bytes are packed into little-endian words as they arrive instead
+//! of being staged through byte buffers. On a guest, variable-length byte
+//! copies and fills lower to libc `memcpy`/`memset` calls that move data in
+//! sub-word accesses, each a multi-row sequence; the word paths below load
+//! and store whole aligned words.
 use crate::{
     BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, PERSONA_SIZE_IN_BYTES, SALT_SIZE_IN_BYTES,
     STATE_VECTOR_LEN,
 };
 const OUTPUT_SIZE: usize = 64;
+const WORD_BYTES: usize = 8;
 const INITIAL_STATE: [u64; STATE_VECTOR_LEN] = {
     let mut h = IV;
     h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
     h
 };
 
-#[derive(Clone)]
-#[repr(C, align(8))]
+/// One compression input: 16 message words, the byte counter, and the final
+/// flag, laid out as the 18 consecutive words the inline reads.
+#[repr(C)]
 struct CompressionBlock {
-    data: [u8; BLOCK_INPUT_SIZE_IN_BYTES],
+    /// Little-endian message words. Every byte at or past the buffered
+    /// length is zero, so absorbing ORs bytes into place and finalizing
+    /// needs no padding pass.
+    words: [u64; MSG_BLOCK_LEN],
     counter: u64,
     final_flag: u64,
 }
@@ -22,7 +33,7 @@ impl CompressionBlock {
     #[inline(always)]
     fn new() -> Self {
         Self {
-            data: [0; BLOCK_INPUT_SIZE_IN_BYTES],
+            words: [0; MSG_BLOCK_LEN],
             counter: 0,
             final_flag: 0,
         }
@@ -31,26 +42,106 @@ impl CompressionBlock {
     #[inline(always)]
     fn compress(&mut self, state: &mut [u64; STATE_VECTOR_LEN], is_final: bool) {
         self.final_flag = u64::from(is_final);
-        #[cfg(target_endian = "little")]
-        {
-            // SAFETY: repr(C) and explicit alignment lay out 128 initialized
-            // bytes followed by the counter and flag, exactly 18 aligned words.
-            unsafe {
-                blake2b_compress(state.as_mut_ptr(), core::ptr::from_ref(self).cast::<u64>());
-            }
+        // SAFETY: repr(C) lays out the 16 message words, the counter, and the
+        // flag as exactly the 18 aligned words the inline reads.
+        unsafe {
+            blake2b_compress(state.as_mut_ptr(), core::ptr::from_ref(self).cast::<u64>());
         }
-        #[cfg(target_endian = "big")]
-        compress(state, &self.data, self.counter, is_final);
     }
 }
 
 const _: () = assert!(core::mem::size_of::<CompressionBlock>() == (MSG_BLOCK_LEN + 2) * 8);
 
-#[derive(Clone)]
+/// Reads one little-endian message word from an 8-byte chunk.
+///
+/// The volatile reads keep LLVM from recognizing the callers' word loops as
+/// copies and lowering them back into `memcpy` calls.
+#[inline(always)]
+fn load_word(chunk: &[u8], aligned: bool) -> u64 {
+    debug_assert_eq!(chunk.len(), WORD_BYTES);
+    let p = chunk.as_ptr();
+    if aligned {
+        // SAFETY: the caller checked that `chunk` starts on an 8-byte
+        // boundary, and it holds 8 readable bytes.
+        u64::from_le(unsafe { p.cast::<u64>().read_volatile() })
+    } else {
+        let mut word = 0;
+        for i in 0..WORD_BYTES {
+            // SAFETY: `i < 8 == chunk.len()`.
+            word |= u64::from(unsafe { p.add(i).read_volatile() }) << (8 * i);
+        }
+        word
+    }
+}
+
+/// ORs `src` into `words` starting at byte `pos`. Bytes `pos..pos + src.len()`
+/// must be zero and lie within the block.
+#[inline(always)]
+fn absorb(words: &mut [u64; MSG_BLOCK_LEN], mut pos: usize, mut src: &[u8]) {
+    while !pos.is_multiple_of(WORD_BYTES) {
+        let Some((&byte, rest)) = src.split_first() else {
+            return;
+        };
+        words[pos / WORD_BYTES] |= u64::from(byte) << (8 * (pos % WORD_BYTES));
+        pos += 1;
+        src = rest;
+    }
+    let aligned = (src.as_ptr() as usize).is_multiple_of(WORD_BYTES);
+    let mut chunks = src.chunks_exact(WORD_BYTES);
+    for chunk in &mut chunks {
+        words[pos / WORD_BYTES] = load_word(chunk, aligned);
+        pos += WORD_BYTES;
+    }
+    for (i, &byte) in chunks.remainder().iter().enumerate() {
+        words[pos / WORD_BYTES] |= u64::from(byte) << (8 * i);
+    }
+}
+
+/// Fills all 16 words from a full 128-byte block.
+#[inline(always)]
+fn load_block(words: &mut [u64; MSG_BLOCK_LEN], block: &[u8]) {
+    debug_assert_eq!(block.len(), BLOCK_INPUT_SIZE_IN_BYTES);
+    let aligned = (block.as_ptr() as usize).is_multiple_of(WORD_BYTES);
+    for (word, chunk) in words.iter_mut().zip(block.chunks_exact(WORD_BYTES)) {
+        *word = load_word(chunk, aligned);
+    }
+}
+
+/// Zeroes `words`. Volatile stores keep LLVM from emitting a `memset` call.
+#[inline(always)]
+fn clear_words(words: &mut [u64]) {
+    for word in words {
+        // SAFETY: `word` is a valid, aligned `&mut u64`.
+        unsafe { core::ptr::from_mut(word).write_volatile(0) };
+    }
+}
+
 pub struct Blake2b {
     h: [u64; STATE_VECTOR_LEN],
     buffer: CompressionBlock,
     buffer_len: usize,
+}
+
+/// Copies only the buffered words; the rest of a block is zero by invariant.
+/// A derived clone copies the whole 216-byte hasher, which a guest lowers to a
+/// sub-word `memcpy` call, and sponges clone prepared hashers per phase.
+impl Clone for Blake2b {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        let mut buffer = CompressionBlock::new();
+        buffer.counter = self.buffer.counter;
+        let live = self.buffer_len.div_ceil(WORD_BYTES);
+        for (word, source) in buffer.words.iter_mut().zip(&self.buffer.words[..live]) {
+            // SAFETY: `source` is a valid, aligned `&u64`; the volatile read
+            // keeps this loop from lowering to a `memcpy` call.
+            *word = unsafe { core::ptr::from_ref(source).read_volatile() };
+        }
+        Self {
+            h: self.h,
+            buffer,
+            buffer_len: self.buffer_len,
+        }
+    }
 }
 
 impl Blake2b {
@@ -84,10 +175,19 @@ impl Blake2b {
     /// Finalize into `out`, which holds the digest length this hasher was
     /// created with (the leading bytes of the state).
     #[inline(always)]
-    pub fn finalize_into(self, out: &mut [u8]) {
-        let full = self.finalize();
+    pub fn finalize_into(mut self, out: &mut [u8]) {
+        self.compress_final();
         let len = out.len();
-        out.copy_from_slice(&full[..len]);
+        if len.is_multiple_of(WORD_BYTES) && (out.as_mut_ptr() as usize).is_multiple_of(WORD_BYTES)
+        {
+            for (chunk, word) in out.chunks_exact_mut(WORD_BYTES).zip(&self.h) {
+                // SAFETY: `out` starts on an 8-byte boundary and its length is
+                // a multiple of 8, so every chunk is an aligned 8-byte word.
+                unsafe { chunk.as_mut_ptr().cast::<u64>().write(word.to_le()) };
+            }
+        } else {
+            out.copy_from_slice(&to_bytes(self.h)[..len]);
+        }
     }
 
     /// Absorb `block` as the next 128 input bytes and compress it now.
@@ -103,7 +203,9 @@ impl Blake2b {
     pub fn update_block_eager(&mut self, block: &[u8; BLOCK_INPUT_SIZE_IN_BYTES]) {
         assert_eq!(self.buffer_len, 0, "eager block after buffered input");
         self.buffer.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
-        compress(&mut self.h, block, self.buffer.counter, false);
+        load_block(&mut self.buffer.words, block);
+        self.buffer.compress(&mut self.h, false);
+        clear_words(&mut self.buffer.words);
     }
 
     /// Creates a new hasher with the given salt and personalization,
@@ -123,100 +225,58 @@ impl Blake2b {
     }
 
     #[inline(always)]
-    pub fn update(&mut self, input: &[u8]) {
-        let input_len = input.len();
-        if input_len == 0 {
+    pub fn update(&mut self, mut input: &[u8]) {
+        if input.is_empty() {
             return;
         }
 
-        let mut offset = 0;
-
+        // Fill a partial buffer first. The block is compressed only once more
+        // input follows, so the final block always reaches `finalize`.
         if self.buffer_len != 0 {
-            let needed = BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len;
-            let to_copy = needed.min(input_len);
-
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    input.as_ptr(),
-                    self.buffer.data.as_mut_ptr().add(self.buffer_len),
-                    to_copy,
-                );
+            let take = (BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len).min(input.len());
+            let (head, rest) = input.split_at(take);
+            absorb(&mut self.buffer.words, self.buffer_len, head);
+            self.buffer_len += take;
+            input = rest;
+            if input.is_empty() {
+                return;
             }
-
-            self.buffer_len += to_copy;
-            offset = to_copy;
-
-            // Only process if we have a complete block AND there's more data
-            // (to ensure we don't process what might be the final block)
-            if self.buffer_len == BLOCK_INPUT_SIZE_IN_BYTES && offset < input_len {
-                self.buffer.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
-                self.buffer.compress(&mut self.h, false);
-                self.buffer_len = 0;
-            }
-        }
-
-        // Process complete blocks directly from input
-        // We need to keep at least one byte to ensure we don't process what might be the final block
-        // This guarantees the final block is always processed in finalize() with is_final=true
-        while offset + BLOCK_INPUT_SIZE_IN_BYTES < input_len {
             self.buffer.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
-            compress(
-                &mut self.h,
-                &input[offset..offset + BLOCK_INPUT_SIZE_IN_BYTES],
-                self.buffer.counter,
-                false,
-            );
-            offset += BLOCK_INPUT_SIZE_IN_BYTES;
+            self.buffer.compress(&mut self.h, false);
+            clear_words(&mut self.buffer.words);
+            self.buffer_len = 0;
         }
 
-        let final_bytes = input_len - offset;
-        if final_bytes > 0 {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    input.as_ptr().add(offset),
-                    self.buffer.data.as_mut_ptr().add(self.buffer_len),
-                    final_bytes,
-                );
-            }
-            self.buffer_len += final_bytes;
+        // Compress complete blocks, keeping at least one byte for the final
+        // block.
+        while input.len() > BLOCK_INPUT_SIZE_IN_BYTES {
+            let (block, rest) = input.split_at(BLOCK_INPUT_SIZE_IN_BYTES);
+            self.buffer.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
+            load_block(&mut self.buffer.words, block);
+            self.buffer.compress(&mut self.h, false);
+            clear_words(&mut self.buffer.words);
+            input = rest;
         }
+
+        absorb(&mut self.buffer.words, 0, input);
+        self.buffer_len = input.len();
+    }
+
+    /// Compresses the buffered bytes as the final block. Bytes past the
+    /// buffered length are already zero.
+    #[inline(always)]
+    fn compress_final(&mut self) {
+        self.buffer.counter += self.buffer_len as u64;
+        self.buffer.compress(&mut self.h, true);
     }
 
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
-        self.buffer.counter += self.buffer_len as u64;
-
-        if self.buffer_len < BLOCK_INPUT_SIZE_IN_BYTES {
-            unsafe {
-                core::ptr::write_bytes(
-                    self.buffer.data.as_mut_ptr().add(self.buffer_len),
-                    0,
-                    BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len,
-                );
-            }
-        }
-
-        self.buffer.compress(&mut self.h, true);
-
-        #[cfg(target_endian = "little")]
-        {
-            // Safety: [u64; 8] and [u8; 64] have identical size (64 bytes)
-            unsafe { core::mem::transmute::<[u64; STATE_VECTOR_LEN], [u8; OUTPUT_SIZE]>(self.h) }
-        }
-
-        #[cfg(target_endian = "big")]
-        {
-            let mut hash = [0u8; OUTPUT_SIZE];
-            for i in 0..STATE_VECTOR_LEN {
-                let bytes = self.h[i].to_le_bytes();
-                hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-            }
-            hash
-        }
+        self.compress_final();
+        to_bytes(self.h)
     }
 
     /// Computes BLAKE2b hash in one call.
-    /// Optimized for virtual cycles by avoiding intermediate buffers for small inputs.
     #[inline(always)]
     pub fn digest(input: &[u8]) -> [u8; OUTPUT_SIZE] {
         Self::digest_from_state(INITIAL_STATE, input)
@@ -249,48 +309,14 @@ impl Blake2b {
     }
 
     #[inline(always)]
-    fn digest_from_state(mut h: [u64; STATE_VECTOR_LEN], input: &[u8]) -> [u8; OUTPUT_SIZE] {
-        let len = input.len();
-
-        if len == 0 {
-            compress_direct(&mut h, &[], 0, true);
-            return to_bytes(h);
-        }
-
-        if len <= BLOCK_INPUT_SIZE_IN_BYTES {
-            compress_direct(&mut h, input, len as u64, true);
-            return to_bytes(h);
-        }
-
-        let full_blocks = len / BLOCK_INPUT_SIZE_IN_BYTES;
-        let tail_len = len % BLOCK_INPUT_SIZE_IN_BYTES;
-        let non_final_blocks = if tail_len == 0 {
-            full_blocks - 1
-        } else {
-            full_blocks
+    fn digest_from_state(h: [u64; STATE_VECTOR_LEN], input: &[u8]) -> [u8; OUTPUT_SIZE] {
+        let mut hasher = Self {
+            h,
+            buffer: CompressionBlock::new(),
+            buffer_len: 0,
         };
-
-        for i in 0..non_final_blocks {
-            let offset = i * BLOCK_INPUT_SIZE_IN_BYTES;
-            let block = &input[offset..offset + BLOCK_INPUT_SIZE_IN_BYTES];
-            compress(
-                &mut h,
-                block,
-                ((i + 1) * BLOCK_INPUT_SIZE_IN_BYTES) as u64,
-                false,
-            );
-        }
-
-        if tail_len == 0 {
-            let offset = (full_blocks - 1) * BLOCK_INPUT_SIZE_IN_BYTES;
-            let block = &input[offset..offset + BLOCK_INPUT_SIZE_IN_BYTES];
-            compress(&mut h, block, len as u64, true);
-        } else {
-            let tail_offset = full_blocks * BLOCK_INPUT_SIZE_IN_BYTES;
-            compress_direct(&mut h, &input[tail_offset..], len as u64, true);
-        }
-
-        to_bytes(h)
+        hasher.update(input);
+        hasher.finalize()
     }
 }
 
@@ -335,111 +361,6 @@ fn to_bytes(h: [u64; STATE_VECTOR_LEN]) -> [u8; OUTPUT_SIZE] {
             hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
         }
         hash
-    }
-}
-
-#[inline(always)]
-fn compress(hash_state: &mut [u64; STATE_VECTOR_LEN], block: &[u8], counter: u64, is_final: bool) {
-    let mut message = [0u64; MSG_BLOCK_LEN + 2];
-
-    #[cfg(target_endian = "little")]
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            block.as_ptr(),
-            message.as_mut_ptr() as *mut u8,
-            BLOCK_INPUT_SIZE_IN_BYTES,
-        );
-    }
-
-    #[cfg(target_endian = "big")]
-    {
-        for i in 0..MSG_BLOCK_LEN {
-            let offset = i * 8;
-            message[i] = u64::from_le_bytes([
-                block[offset],
-                block[offset + 1],
-                block[offset + 2],
-                block[offset + 3],
-                block[offset + 4],
-                block[offset + 5],
-                block[offset + 6],
-                block[offset + 7],
-            ]);
-        }
-    }
-
-    message[MSG_BLOCK_LEN] = counter;
-    message[MSG_BLOCK_LEN + 1] = is_final as u64;
-
-    unsafe {
-        blake2b_compress(hash_state.as_mut_ptr(), message.as_ptr());
-    }
-}
-
-/// Compress with direct copy to message array (no intermediate buffer).
-/// Optimized for virtual cycles by avoiding double-copy for small inputs.
-#[inline(always)]
-fn compress_direct(
-    hash_state: &mut [u64; STATE_VECTOR_LEN],
-    input: &[u8],
-    counter: u64,
-    is_final: bool,
-) {
-    // Use MaybeUninit to avoid zeroing the full array
-    let mut message: core::mem::MaybeUninit<[u64; MSG_BLOCK_LEN + 2]> =
-        core::mem::MaybeUninit::uninit();
-    let len = input.len();
-    let message_ptr = message.as_mut_ptr() as *mut u8;
-
-    #[cfg(target_endian = "little")]
-    unsafe {
-        if len > 0 {
-            core::ptr::copy_nonoverlapping(input.as_ptr(), message_ptr, len);
-        }
-        if len < BLOCK_INPUT_SIZE_IN_BYTES {
-            core::ptr::write_bytes(message_ptr.add(len), 0, BLOCK_INPUT_SIZE_IN_BYTES - len);
-        }
-    }
-
-    #[cfg(target_endian = "big")]
-    {
-        let message_ref = unsafe { &mut *message.as_mut_ptr() };
-        for i in 0..MSG_BLOCK_LEN {
-            message_ref[i] = 0;
-        }
-
-        let full_words = len / 8;
-        let remaining = len % 8;
-
-        for i in 0..full_words {
-            let offset = i * 8;
-            message_ref[i] = u64::from_le_bytes([
-                input[offset],
-                input[offset + 1],
-                input[offset + 2],
-                input[offset + 3],
-                input[offset + 4],
-                input[offset + 5],
-                input[offset + 6],
-                input[offset + 7],
-            ]);
-        }
-
-        if remaining > 0 {
-            let mut bytes = [0u8; 8];
-            let offset = full_words * 8;
-            for j in 0..remaining {
-                bytes[j] = input[offset + j];
-            }
-            message_ref[full_words] = u64::from_le_bytes(bytes);
-        }
-    }
-
-    unsafe {
-        let message_ref = &mut *message.as_mut_ptr();
-        message_ref[MSG_BLOCK_LEN] = counter;
-        message_ref[MSG_BLOCK_LEN + 1] = is_final as u64;
-        blake2b_compress(hash_state.as_mut_ptr(), message_ref.as_ptr());
     }
 }
 
@@ -568,6 +489,37 @@ mod digest_tests {
             let mut got = h;
             Blake2b::compress(&mut got, &m, 3, last);
             assert_eq!(got, want, "last = {last}");
+        }
+    }
+
+    /// Streaming updates match the `blake2` crate for every source alignment
+    /// and split point, covering the aligned-word, unaligned-word, and
+    /// partial-word absorb paths and the block-boundary compressions.
+    #[test]
+    fn streaming_matches_reference_at_every_alignment() {
+        use blake2::{Blake2b512, Digest as RefDigest};
+        let backing: Vec<u64> = (0..64u64)
+            .map(|i| i.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .collect();
+        // SAFETY: a u64 buffer viewed as its bytes; the base is 8-aligned.
+        let bytes = unsafe { core::slice::from_raw_parts(backing.as_ptr().cast::<u8>(), 512) };
+        for offset in 0..8 {
+            for len in [0, 1, 7, 8, 9, 64, 127, 128, 129, 255, 256, 300] {
+                let input = &bytes[offset..offset + len];
+                let expected: [u8; 64] = Blake2b512::digest(input).into();
+                for split in [0, 1, 3, 8, 13, len / 2, len.saturating_sub(1), len] {
+                    let split = split.min(len);
+                    let mut hasher = Blake2b::new();
+                    hasher.update(&input[..split]);
+                    hasher.clone().update(&[0xff]);
+                    hasher.update(&input[split..]);
+                    assert_eq!(
+                        hasher.finalize(),
+                        expected,
+                        "offset {offset} len {len} split {split}"
+                    );
+                }
+            }
         }
     }
 
