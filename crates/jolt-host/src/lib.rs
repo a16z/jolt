@@ -27,8 +27,15 @@ pub struct Program {
     max_output_size: u64,
     std: bool,
     backtrace: Option<String>,
-    pub elf: Option<PathBuf>,
-    pub elf_compute_advice: Option<PathBuf>,
+    pub elf: Option<GuestElf>,
+    pub elf_compute_advice: Option<GuestElf>,
+}
+
+/// A built guest ELF and the bytes read from it while its build lock was held.
+#[derive(Clone)]
+pub struct GuestElf {
+    pub path: PathBuf,
+    pub contents: Vec<u8>,
 }
 
 /// An ELF-backed source accepted by SDK-generated preprocessing and proving APIs.

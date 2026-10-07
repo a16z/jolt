@@ -171,7 +171,7 @@ impl Workload {
     pub fn prepare_guest(self) -> PathBuf {
         let mut program = self.program();
         program.build(DEFAULT_TARGET_DIR);
-        program.elf.expect("prepared guest ELF")
+        program.elf.expect("prepared guest ELF").path
     }
 
     /// The guest input targeting `target` trace cycles.

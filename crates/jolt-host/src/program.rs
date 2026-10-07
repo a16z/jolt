@@ -1,5 +1,5 @@
 use crate::analyze::ProgramSummary;
-use crate::{Program, DEFAULT_TARGET_DIR};
+use crate::{GuestElf, Program, DEFAULT_TARGET_DIR};
 use common::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
@@ -11,7 +11,7 @@ use jolt_program::{JoltProgram, ProgramError};
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -216,6 +216,15 @@ impl Program {
             );
             info!("\n{cmd_line}");
 
+            // Every build re-uplifts the ELF, and on macOS cargo uplifts by
+            // remove-then-copy, so a concurrent build of the same guest can hide or
+            // truncate it mid-read. Building and reading under one lock per guest
+            // target dir makes the read see a complete ELF.
+            fs::create_dir_all(target_dir).expect("create the guest target dir");
+            let build_lock = File::create(format!("{guest_target_dir}.lock"))
+                .expect("create the guest build lock");
+            build_lock.lock().expect("lock the guest build");
+
             let mut cmd = Command::new(&jolt_cmd);
             let _ = cmd.args(&args);
 
@@ -255,12 +264,16 @@ impl Program {
                 .join(out_profile)
                 .join(&self.guest);
 
-            // Verify the ELF exists
             assert!(
                 elf_path.exists(),
                 "Built ELF not found at expected location: {}",
                 elf_path.display()
             );
+            let contents = fs::read(&elf_path).expect("read the built ELF");
+            let elf = GuestElf {
+                path: elf_path,
+                contents,
+            };
 
             // If extra_features contains "compute_advice", store in elf_compute_advice
             // Otherwise store in elf
@@ -268,23 +281,23 @@ impl Program {
                 .iter()
                 .any(|feature| feature == "compute_advice")
             {
-                self.elf_compute_advice = Some(elf_path.clone());
-                info!("Built compute_advice guest binary: {}", elf_path.display());
+                info!("Built compute_advice guest binary: {}", elf.path.display());
+                self.elf_compute_advice = Some(elf);
             } else {
-                self.elf = Some(elf_path.clone());
-                info!("Built guest binary with jolt: {}", elf_path.display());
+                info!("Built guest binary with jolt: {}", elf.path.display());
+                self.elf = Some(elf);
             }
         }
     }
 
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
-        self.elf.as_ref().and_then(|elf| fs::read(elf).ok())
+        self.elf.as_ref().map(|elf| elf.contents.clone())
     }
 
     pub fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
         self.elf_compute_advice
             .as_ref()
-            .and_then(|elf| fs::read(elf).ok())
+            .map(|elf| elf.contents.clone())
     }
 
     #[expect(
@@ -472,11 +485,10 @@ impl Program {
     )]
     fn built_elf(&mut self) -> (PathBuf, Vec<u8>) {
         self.build(DEFAULT_TARGET_DIR);
-        let path = self
+        let GuestElf { path, contents } = self
             .elf
             .clone()
             .expect("guest build did not produce an ELF");
-        let contents = fs::read(&path).expect("guest ELF is not readable");
         (path, contents)
     }
 }
