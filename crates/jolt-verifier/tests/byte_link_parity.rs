@@ -1,6 +1,7 @@
 //! Retained-statement parity of the byte link (spec §4): a flag-off and a
-//! flag-on build must both reproduce the frozen record. Regenerate the record
-//! on a flag-off build only:
+//! flag-on build must both reproduce the frozen record. Over the same tape the
+//! flag-on build also checks that the final opening binds the histogram
+//! commitments. Regenerate the record on a flag-off build only:
 //!
 //! ```text
 //! JOLT_PARITY_BLESS=1 cargo nextest run -p jolt-verifier \
@@ -19,7 +20,13 @@ mod support;
 
 use std::{env, fs, path::PathBuf};
 
+#[cfg(feature = "akita-byte-link")]
+use jolt_akita::AkitaCommitment;
+#[cfg(feature = "akita-byte-link")]
+use jolt_verifier::VerifierError;
 use support::parity::parity_record;
+#[cfg(feature = "akita-byte-link")]
+use support::parity::{tape_case, verify_over_tape};
 
 const RECORD: &str = "tests/byte_link_parity.record";
 
@@ -52,4 +59,34 @@ fn retained_s1_to_s7_statements_match_the_frozen_record() {
     for (actual, expected) in actual.iter().zip(expected) {
         assert_eq!(actual, expected, "retained parity broken");
     }
+}
+
+/// Over the tape no challenge depends on an absorbed byte, so a histogram
+/// commitment that no longer matches the link's `W` evaluations can only fail
+/// at the final opening.
+#[cfg(feature = "akita-byte-link")]
+#[test]
+fn the_final_opening_binds_the_histogram_commitments() {
+    let case = tape_case();
+    verify_over_tape(&case, &case.proof).expect("the tape proof verifies");
+    for group in 0..2 {
+        let mut proof = case.proof.clone();
+        let commitment = &mut proof.byte_link.histogram_commitments[group];
+        *commitment = with_first_coefficient_bit_flipped(commitment);
+        assert!(
+            matches!(
+                verify_over_tape(&case, &proof),
+                Err(VerifierError::FinalOpeningVerificationFailed { .. })
+            ),
+            "histogram group {group}"
+        );
+    }
+}
+
+#[cfg(feature = "akita-byte-link")]
+fn with_first_coefficient_bit_flipped(commitment: &AkitaCommitment) -> AkitaCommitment {
+    let mut value = serde_json::to_value(commitment).expect("serialize the commitment");
+    let byte = &mut value["serialized_backend_bytes"][0];
+    *byte = (byte.as_u64().expect("a backend commitment byte") ^ 1).into();
+    serde_json::from_value(value).expect("decode the perturbed commitment")
 }

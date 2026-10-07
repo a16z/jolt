@@ -32,7 +32,7 @@ use jolt_verifier::stages::{
 use jolt_verifier::{validate_and_seed_transcript, verify, VerifierError};
 use serde::Serialize;
 
-use super::akita_fixtures::{derive_config, prove_prepared, AkitaFixtureCase};
+use super::akita_fixtures::{derive_config, prove_prepared, AkitaFixtureCase, AkitaJoltProof};
 use super::guest_fixtures::prepare_guest;
 
 type Tape = ParityTranscript<AkitaTranscript>;
@@ -292,10 +292,9 @@ impl ParityRecord {
 }
 
 /// Proves the parity fixture — the committed-program muldiv guest at forced
-/// K=2^8, the byte trace's 16/2/2 geometry — over the tape, checks that the
-/// verifier accepts it drawing the prover's exact tape, and digests its
-/// retained S1–S7 statements.
-pub fn parity_record() -> ParityRecord {
+/// K=2^8, the byte trace's 16/2/2 geometry — over a fresh tape. Returns the
+/// digest of its execution, the case, and the prover's draws.
+fn prove_over_tape() -> ([u8; 32], AkitaFixtureCase, Vec<TapeDraw>) {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
     let mut config = derive_config(&run);
@@ -314,17 +313,44 @@ pub fn parity_record() -> ParityRecord {
     let preprocessing =
         preprocessing::preprocess_committed(run.program_preprocessing.clone(), &config, 2)
             .expect("committed Akita preprocessing");
-    let (case, prover_draws) =
-        with_tape(|| prove_prepared::<Tape>(run, config, preprocessing, &[]));
+    let (case, draws) = with_tape(|| prove_prepared::<Tape>(run, config, preprocessing, &[]));
+    (fixture, case, draws)
+}
 
-    let (accepted, verifier_draws) = with_tape(|| {
+fn verify_on_tape(
+    case: &AkitaFixtureCase,
+    proof: &AkitaJoltProof,
+) -> (Result<(), VerifierError>, Vec<TapeDraw>) {
+    with_tape(|| {
         verify::<AkitaField, AkitaScheme, AkitaVc, Tape>(
             &case.preprocessing,
             &case.public_io,
-            &case.proof,
+            proof,
             case.trusted_advice_commitment.as_ref(),
         )
-    });
+    })
+}
+
+/// The parity fixture proved over the tape.
+pub fn tape_case() -> AkitaFixtureCase {
+    prove_over_tape().1
+}
+
+/// Verifies `proof` of `case` over a fresh tape, where no challenge depends
+/// on an absorbed byte.
+pub fn verify_over_tape(
+    case: &AkitaFixtureCase,
+    proof: &AkitaJoltProof,
+) -> Result<(), VerifierError> {
+    verify_on_tape(case, proof).0
+}
+
+/// Proves the parity fixture over the tape, checks that the verifier accepts
+/// it drawing the prover's exact tape, and digests its retained S1–S7
+/// statements.
+pub fn parity_record() -> ParityRecord {
+    let (fixture, case, prover_draws) = prove_over_tape();
+    let (accepted, verifier_draws) = verify_on_tape(&case, &case.proof);
     accepted.expect("the verifier must accept the parity proof over the tape");
     assert_eq!(
         prover_draws, verifier_draws,
