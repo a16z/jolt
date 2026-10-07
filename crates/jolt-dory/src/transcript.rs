@@ -24,7 +24,7 @@ use dory::primitives::transcript::Transcript as DoryTranscript;
 use dory::primitives::{DoryDeserialize, DorySerialize};
 use jolt_field::Fr;
 use jolt_openings::OpeningsError;
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 
 use crate::scheme::{jolt_fr_to_ark, ArkFr, ArkG1, ArkGT};
 
@@ -295,9 +295,11 @@ fn read<T>(unread: &mut &[u8]) -> Result<T, OpeningsError>
 where
     T: DoryDeserialize + CompressedWidth,
 {
+    // A proof that ends early is truncated, as the live transcript would
+    // report on the same bytes; only a malformed element fails verification.
     let (bytes, rest) = unread
         .split_at_checked(T::BYTES)
-        .ok_or(OpeningsError::VerificationFailed)?;
+        .ok_or(OpeningsError::Transcript(TranscriptError::Truncated))?;
     let value = T::deserialize_compressed(bytes).map_err(|_| OpeningsError::VerificationFailed)?;
     *unread = rest;
     Ok(value)
