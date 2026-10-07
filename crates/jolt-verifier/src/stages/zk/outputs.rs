@@ -17,7 +17,11 @@ pub struct CommittedOutputClaimShape {
 impl CommittedOutputClaimShape {
     /// `layout` packed `row_len` cells to a row
     /// ([`CheckedInputs::committed_row_len`]).
+    /// `row_len` must be nonzero; every caller passes the validated
+    /// [`CheckedInputs::committed_row_len`], which is at least the BlindFold
+    /// generator count.
     pub fn new(row_len: usize, layout: CommittedClaimLayout) -> Self {
+        debug_assert_ne!(row_len, 0, "committed output rows need a nonzero length");
         Self { layout, row_len }
     }
 

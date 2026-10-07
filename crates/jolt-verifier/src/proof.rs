@@ -63,7 +63,9 @@ impl ProofHeader {
     pub fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
         transcript.send(&num::u64_from_usize(self.trace_length).to_le_bytes());
         transcript.send(&num::u64_from_usize(self.ram_K).to_le_bytes());
-        transcript.send_all(&[
+        // One `[u8; 6]` message, matching `receive`: a length-binding sponge
+        // such as Poseidon absorbs six 1-byte messages differently.
+        transcript.send(&[
             self.rw_config.ram_rw_phase1_num_rounds,
             self.rw_config.ram_rw_phase2_num_rounds,
             self.rw_config.registers_rw_phase1_num_rounds,
