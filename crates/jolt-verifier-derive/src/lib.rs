@@ -384,7 +384,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         )
     });
 
-    // The member name each draw is tagged with (`relations::DrawRole`).
     let member_name =
         |plan: &InstanceField| syn::LitStr::new(&plan.ident.to_string(), plan.ident.span());
 

@@ -116,12 +116,10 @@ jobs:
           --test fs_attacks
           --features ${{ matrix.features }}
           --cargo-quiet
-      - name: Byte-link retained-statement parity
+      - name: Byte-link retained-statement parity (flag off and on)
         if: matrix.instance == 'akita-clear'
-        run: >
-          cargo nextest run
-          --cargo-profile ci
-          -p jolt-verifier
-          --test byte_link_parity
-          --features ${{ matrix.features }}
-          --cargo-quiet
+        run: |
+          for mode in akita akita-byte-link; do
+            cargo nextest run --cargo-profile ci -p jolt-verifier --test byte_link_parity \
+              --features "$mode,fs-audit,prover-fixtures" --cargo-quiet
+          done

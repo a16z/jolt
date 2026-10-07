@@ -1,5 +1,5 @@
 # Byte-link parity record (spec §4); regenerate with JOLT_PARITY_BLESS=1 on a flag-off build (tests/byte_link_parity.rs).
-fixture 86e24e37970b7fb15ed6477ca0acfc1fefbb5ed881f8a8dd1615406a44392406
+fixture a7fe4cddcba2779aa3820200e66b7ce545e28f35bc7d772928a50f304e79a7e3
 stage1 statements e2f37a9fc20f0102dd11831bf999557f8546b1b47a2b274d1059f8b16d2e479a
 stage1 draws 59232eca04fb23ce52e3d0333b07a805709452719b2e280f855265ebb44c4e31
 stage1 catalog 324221693ce7b6c9bf450a1ccfb2dd7a3c202db118459c91c22a83f0d476e536

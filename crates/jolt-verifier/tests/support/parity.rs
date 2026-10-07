@@ -59,18 +59,25 @@ struct TapeDraw {
 }
 
 impl TapeDraw {
-    /// Whether a build without the removed members makes this draw;
-    /// `bound` is the number of rounds the stage's retained members bind.
-    fn is_retained(&self, bound: u64) -> bool {
+    /// Whether a build without the removed members makes this draw.
+    fn is_retained(&self, rounds: &BTreeMap<&str, BatchRounds>) -> bool {
         match self.role {
             None => true,
             Some(
                 DrawRole::MemberChallenges { batch, member }
                 | DrawRole::BatchingCoefficient { batch, member },
             ) => !is_removed(batch, member),
-            Some(DrawRole::Rounds { .. }) => self.ordinal < bound,
+            Some(DrawRole::Rounds { batch }) => self.ordinal < rounds[batch].retained,
         }
     }
+}
+
+/// Round challenges of one batch: every member's schedule, and the prefix
+/// some retained member binds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BatchRounds {
+    scheduled: u64,
+    retained: u64,
 }
 
 #[derive(Default)]
@@ -202,23 +209,40 @@ struct StageRun {
 
 impl StageRun {
     fn digest(&self, draws: &[TapeDraw]) -> StageDigest {
-        let retained = self
+        let draws = &draws[self.draws.clone()];
+        let mut rounds = BTreeMap::<&str, BatchRounds>::new();
+        for member in &self.members {
+            let end = (member.point_offset + member.rounds) as u64;
+            let batch = rounds.entry(member.batch).or_default();
+            batch.scheduled = batch.scheduled.max(end);
+            if !is_removed(member.batch, member.member) {
+                batch.retained = batch.retained.max(end);
+            }
+        }
+        let mut drawn = BTreeMap::<&str, u64>::new();
+        for draw in draws {
+            if let Some(DrawRole::Rounds { batch }) = draw.role {
+                *drawn.entry(batch).or_default() += 1;
+            }
+        }
+        let scheduled = rounds
+            .iter()
+            .map(|(batch, rounds)| (*batch, rounds.scheduled))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            drawn, scheduled,
+            "{}: round draws per batch must match the instantiated batch schedule",
+            self.name
+        );
+        let draw_keys = draws
+            .iter()
+            .filter(|draw| draw.is_retained(&rounds))
+            .map(|draw| format!("{draw:?}"))
+            .collect::<Vec<_>>();
+        let catalog = self
             .members
             .iter()
             .filter(|member| !is_removed(member.batch, member.member))
-            .collect::<Vec<_>>();
-        let bound = retained
-            .iter()
-            .map(|member| (member.point_offset + member.rounds) as u64)
-            .max()
-            .unwrap_or(0);
-        let draw_keys = draws[self.draws.clone()]
-            .iter()
-            .filter(|draw| draw.is_retained(bound))
-            .map(|draw| format!("{draw:?}"))
-            .collect::<Vec<_>>();
-        let catalog = retained
-            .iter()
             .flat_map(|member| {
                 encode(&(
                     member.batch,
@@ -242,8 +266,8 @@ impl StageRun {
 
 /// The frozen-record view of one parity proof.
 pub struct ParityRecord {
-    /// Digest of the program and its public I/O: equal records are about the
-    /// same execution.
+    /// Digest of the program, its executed trace rows, and its public I/O:
+    /// equal records are about the same execution.
     fixture: [u8; 32],
     stages: Vec<(&'static str, StageDigest)>,
 }
@@ -282,6 +306,8 @@ pub fn parity_record() -> ParityRecord {
     let fixture = digest(&encode(&(
         &run.program_preprocessing,
         &run.trace.device,
+        // The derived `Debug` of `JoltTraceRow` spells every row field.
+        digest(format!("{:?}", run.trace.trace).as_bytes()),
         config.trace_length as u64,
         config.ram_K as u64,
     )));

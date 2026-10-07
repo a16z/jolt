@@ -86,8 +86,9 @@ pub fn enter_role(role: DrawRole) -> DrawRoleGuard {
     DrawRoleGuard { previous }
 }
 
-/// The role of a draw made now; `None` for draws ordered by transcript
-/// position alone (stage taus, uni-skip and sumcheck rounds, opening draws).
+/// The role of a draw made now; `None` outside every member, coefficient,
+/// and batch-round scope (stage taus, uni-skip, opening draws), where draws
+/// are ordered by transcript position alone.
 pub fn current_role() -> Option<DrawRole> {
     CURRENT_ROLE.get()
 }
