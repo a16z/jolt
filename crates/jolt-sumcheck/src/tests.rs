@@ -1334,9 +1334,6 @@ fn prove_batch_rejects_zero_max_degree() {
     ));
 }
 
-/// A batch with no members sends no messages: proving and verifying it leave
-/// the transcript untouched and reduce to the empty point. Degree 0 with
-/// rounds to verify is rejected rather than accepted or panicking.
 #[test]
 fn empty_batch_proves_and_verifies_without_messages() {
     use crate::batch::BatchPrelude;

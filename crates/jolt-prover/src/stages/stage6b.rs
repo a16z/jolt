@@ -1,5 +1,6 @@
-//! Stage 6b: the cycle-phase batch — bytecode read+RAF and booleanity cycle
-//! phases, RAM Hamming booleanity, both RA virtualizations, the increment
+//! Stage 6b: the cycle-phase batch — bytecode read+RAF cycle phase, the
+//! booleanity cycle phase and RAM Hamming booleanity outside the byte link,
+//! both RA virtualizations, the increment
 //! claim reduction, and the present precommitted claim-reduction cycle
 //! phases (advice, committed bytecode, program image — head-aligned
 //! members). A precommitted member whose schedule has active address-phase
@@ -18,7 +19,8 @@
 //! the verifier's promoted `stage6b_opening_values` — the curated order with
 //! the runtime dedup of booleanity's `BytecodeRa` claims against the
 //! bytecode read-RAF points (which fires when the bytecode address width is
-//! a multiple of the committed chunk width).
+//! a multiple of the committed chunk width). The byte link has no booleanity
+//! member, so its batch absorbs in the generated order without curation.
 
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
