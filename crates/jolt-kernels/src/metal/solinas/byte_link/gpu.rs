@@ -314,14 +314,6 @@ impl Gpu {
             })
     }
 
-    pub fn take_arena(&mut self) -> Option<Heap> {
-        let heap = self.arena.take()?;
-        if let Some(set) = &self.residency {
-            set.remove(heap.as_ptr().cast());
-        }
-        Some(heap)
-    }
-
     /// A shared buffer for `W`, outside the arena and resident for every link command until the
     /// next proof's `W` replaces it.
     pub fn histogram_buffer(&mut self, bytes: usize) -> Buffer {

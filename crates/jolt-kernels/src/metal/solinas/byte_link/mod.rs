@@ -23,7 +23,7 @@ use jolt_claims::protocols::jolt::lattice::byte_link::{
 use jolt_field::Prime128OffsetA7F7 as F;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpenings};
-use metal::{Buffer, Heap, MTLResourceOptions};
+use metal::{Buffer, MTLResourceOptions};
 
 use super::{Fp128, MetalError, SolinasMetal};
 use crate::byte_link::reference::{ByteTrace, Denominators, ReferenceByteLink};
@@ -248,15 +248,6 @@ impl ByteLinkProver {
             ram,
             source,
         })
-    }
-
-    /// The link's device arena (`None` before [`Self::histograms`]), for stage 8 to allocate from
-    /// with `StorageModeShared | HazardTrackingModeTracked`, the heap's modes: the link has touched
-    /// its pages, while a released heap leaves the process footprint only 130–300 ms later, so
-    /// freeing it and allocating anew would count both
-    /// (`/private/tmp/pika-scratch/akita-p0/link-mem/notes.md` §7).
-    pub fn into_arena(mut self) -> Option<Heap> {
-        self.gpu.take_arena()
     }
 
     /// Heap bytes of the largest phase.
