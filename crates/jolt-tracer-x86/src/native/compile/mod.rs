@@ -316,6 +316,7 @@ impl CompiledBody {
 
         // Execution falling off the end of the program is a bad jump.
         emitter.emit_jump_to_bad_jump();
+        emitter.emit_unbound_targets();
         let stubs = emitter.emit_stubs();
 
         let group_offsets = core::mem::take(&mut emitter.group_offsets);
