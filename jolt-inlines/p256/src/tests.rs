@@ -736,6 +736,77 @@ mod p256_tests {
         );
     }
 
+    /// Regression test: non-canonical fake-GLV advice point limbs (R1) are
+    /// rejected.
+    ///
+    /// The fake-GLV advice words for R1/R2 are prover-supplied VIRTUAL_ADVICE
+    /// (range-checked to 64 bits per word only). Non-canonical limbs pass
+    /// `is_on_curve` (mul/square inlines are residue-correct) but corrupt the
+    /// raw-limb branch selection and add/sub semantics in `AffinePoint::add`:
+    /// an x-limb shifted by p (fits [u64; 4] when the residue is < 2^256 - p)
+    /// makes the final `r1.add(&r2)` slope division degenerate to 0/0, so the
+    /// prover controls `r_sum.x` and can forge the ECDSA result. x-limb = p
+    /// here stands in for that shifted representation (residue 0).
+    #[test]
+    #[should_panic(expected = "proof spoiled")]
+    fn test_non_canonical_r1_advice_rejected() {
+        use crate::sdk::{verify_ecdsa_inner, P256Fq, P256Fr, P256Point};
+
+        let g = P256Point::generator();
+        let one = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let r_fr = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+
+        let dirty_r1 =
+            P256Point::new_unchecked(P256Fq::from_u64_arr_unchecked(&P256_MODULUS), g.y());
+        let _ = verify_ecdsa_inner(
+            &one,
+            &one,
+            &r_fr,
+            &g,
+            dirty_r1,
+            1,
+            false,
+            1,
+            false,
+            g.clone(),
+            1,
+            false,
+            1,
+            false,
+        );
+    }
+
+    /// Same guard for R2 (y-limb variant), the actual attack surface: the
+    /// final `r1.add(&r2)` consumes R2's limbs directly.
+    #[test]
+    #[should_panic(expected = "proof spoiled")]
+    fn test_non_canonical_r2_advice_rejected() {
+        use crate::sdk::{verify_ecdsa_inner, P256Fq, P256Fr, P256Point};
+
+        let g = P256Point::generator();
+        let one = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let r_fr = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+
+        let dirty_r2 =
+            P256Point::new_unchecked(g.x(), P256Fq::from_u64_arr_unchecked(&P256_MODULUS));
+        let _ = verify_ecdsa_inner(
+            &one,
+            &one,
+            &r_fr,
+            &g,
+            g.clone(),
+            1,
+            false,
+            1,
+            false,
+            dirty_r2,
+            1,
+            false,
+            1,
+            false,
+        );
+    }
+
     /// Verify that a zero GLV decomposition (a=0, b=0) is rejected.
     ///
     /// A malicious prover could supply a=0, b=0 as the Fake GLV decomposition,
