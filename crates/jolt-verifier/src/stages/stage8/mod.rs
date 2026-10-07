@@ -1,15 +1,15 @@
 //! Stage 8: the final PCS opening. [`verify`] is the per-build entry point;
 //! the feature-specific statement assembly lives beside it.
 
+/// Akita statement assembly: native trace columns, auxiliary object layouts,
+/// leaf-claim resolution, and the joint opening call. Public because the prover's
+/// stage-8 recipe assembles its native opening and auxiliary
+/// statements through the same leaf resolution.
+#[cfg(feature = "akita")]
+pub mod akita;
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 pub mod field_inline;
 pub mod outputs;
-/// Packed-build statement assembly: per-object packings, leaf-claim
-/// resolution, and the joint opening call. Public because the prover's
-/// packed stage-8 recipe assembles its native opening and auxiliary
-/// statements through the same leaf resolution.
-#[cfg(feature = "akita")]
-pub mod packed;
 pub mod precommitted;
 mod verify;
 
@@ -23,7 +23,7 @@ pub use verify::{batch_entries, Stage8BatchEntry};
 
 /// The commitment/setup metadata Stage 8 enforces before dispatching a
 /// OneHotTrace opening — the generic [`jolt_openings`] traits, applied here to
-/// the single packed commitment object (impls live beside the concrete PCS
+/// the native trace commitment group (impls live beside the concrete PCS
 /// types).
 #[cfg(feature = "akita")]
 pub use jolt_openings::{

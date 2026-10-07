@@ -7,8 +7,8 @@
 use akita_config::proof_optimized::fp128::{Dense, DenseBounded, OneHot};
 use akita_config::recursive_commitment::RecursiveScheduleConfig;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_types::sis::CommittedSourceClass;
-use akita_types::{ChunkedWitnessCfg, MultiChunkProfileId};
+use akita_params::sis::CommittedSourceClass;
+use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId};
 
 use crate::AKITA_ONE_HOT_K16;
 
@@ -36,7 +36,7 @@ macro_rules! delegate_preset {
                 $family_name
             }
 
-            fn decomposition() -> akita_types::DecompositionParams {
+            fn decomposition() -> akita_params::DecompositionParams {
                 <$base>::decomposition()
             }
 
@@ -50,7 +50,7 @@ macro_rules! delegate_preset {
                 <$base>::selection_policy()
             }
 
-            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            fn sis_modulus_profile() -> akita_params::SisModulusProfileId {
                 <$base>::sis_modulus_profile()
             }
 
@@ -62,11 +62,11 @@ macro_rules! delegate_preset {
                 <$base>::inner_basis_range()
             }
 
-            fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
                 $committed_source_class
             }
 
-            fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
+            fn chunked_witness_cfg() -> akita_params::ChunkedWitnessCfg {
                 $chunked_witness_cfg
             }
 

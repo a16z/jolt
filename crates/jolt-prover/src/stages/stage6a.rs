@@ -125,7 +125,7 @@ where
         &stage4.output_values,
         &stage5.output_values,
     );
-    // The packed build folds the four reduced `Inc` claims into the bytecode
+    // The Akita build folds the four reduced `Inc` claims into the bytecode
     // address-phase input at the fused-inc consumer stage slots — the same
     // wrapper the verifier's `stage6a::verify` applies.
     #[cfg(feature = "akita")]

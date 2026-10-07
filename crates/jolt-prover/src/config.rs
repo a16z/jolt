@@ -27,7 +27,7 @@ const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
 /// (legacy's `PCS::MIN_PADDED_TRACE_LENGTH`). Dory needs `T >= K^(1/D)`
 /// (256); Akita's folded-only protocol cannot schedule the K=16
 /// `OneHotTrace` group below 16 variables, and column arity is
-/// `log_k_chunk + log_T`, so the packed pipeline pads every trace to at
+/// `log_k_chunk + log_T`, so the Akita pipeline pads every trace to at
 /// least 2^12 cycles.
 #[cfg(not(feature = "akita"))]
 const MIN_PADDED_TRACE_LENGTH: usize = 256;

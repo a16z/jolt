@@ -593,26 +593,6 @@ impl CheckpointingTracer {
         }
     }
 
-    pub fn new_for_test() -> Self {
-        let minimal_elf = vec![
-            0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x02, 0x00, 0xf3, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00,
-            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
-
-        use crate::MemoryConfig;
-        let memory_config = MemoryConfig {
-            program_size: Some(1024),
-            ..Default::default()
-        };
-
-        let emulator_state = setup_emulator(&minimal_elf, b"[]", &[], &[], &memory_config);
-
-        Self::new(emulator_state)
-    }
-
     /// Start recording memory accesses so that checkpoints can be saved using
     /// [`CheckpointingTracer::save_checkpoint`].
     pub fn start_saving_checkpoints(&mut self) {
@@ -769,36 +749,6 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         image.program_end,
         image.entry_address,
     )
-}
-
-pub struct IterChunks<I: Iterator> {
-    chunk_size: usize,
-    iter: I,
-}
-
-pub trait ChunksIterator: Iterator + Sized {
-    fn iter_chunks(self, size: usize) -> IterChunks<Self> {
-        assert!(size != 0, "chunk size must be non-zero");
-        IterChunks {
-            chunk_size: size,
-            iter: self,
-        }
-    }
-}
-
-impl<I: Iterator + Sized> ChunksIterator for I {}
-
-impl<I: Iterator<Item: Clone>> Iterator for IterChunks<I> {
-    type Item = Vec<I::Item>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut chunk = Vec::with_capacity(self.chunk_size);
-        chunk.extend(self.iter.by_ref().take(self.chunk_size));
-        if chunk.is_empty() {
-            return None;
-        }
-        Some(chunk)
-    }
 }
 
 #[cfg(test)]

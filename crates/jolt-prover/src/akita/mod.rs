@@ -1,5 +1,5 @@
 //! The Akita prove path. Stage 8 opens dense advice, direct committed-program
-//! objects, and the packed one-hot trace in one heterogeneous batch.
+//! objects, and the native one-hot trace group in one heterogeneous batch.
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
@@ -10,8 +10,8 @@ use jolt_field::{CanonicalBytes, JoltField};
 #[cfg(feature = "field-inline")]
 use jolt_kernels::FieldInlineWitnessCommitment;
 use jolt_kernels::{
-    CommitmentGrid, JoltBackend, KernelError, KernelSlots, ProofSession, ReferenceBackend,
-    WitnessCommitment,
+    CommitWitness, CommitmentGrid, JoltBackend, KernelError, KernelSlots, ProofSession,
+    ReferenceBackend, WitnessCommitment,
 };
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
@@ -33,11 +33,11 @@ mod stage8;
 pub mod witness;
 use witness::AdviceObject;
 
-/// The packed slot registry: the akita analog of a bare [`JoltBackend`].
+/// The Akita slot registry: the akita analog of a bare [`JoltBackend`].
 ///
-/// The packed PIOP shares its stage 1–7 members with the base protocol, so
+/// The Akita PIOP shares its stage 1–7 members with the base protocol, so
 /// they resolve through the embedded [`JoltBackend`] registry (whose commit
-/// slot is an unreachable stub: the packed path commits one native
+/// slot is an unreachable stub: the Akita path commits one native
 /// `OneHotTrace` group in its own stage 0, never through the streaming
 /// commit seam).
 #[derive(KernelSlots)]
@@ -49,12 +49,12 @@ where
     pub base: JoltBackend<F, PCS>,
 }
 
-/// The packed path's stand-in for the streaming witness-commit slot: stage 0
+/// The Akita path's stand-in for the streaming witness-commit slot: stage 0
 /// commits the native `OneHotTrace` group directly, so this slot is never
 /// reached.
-struct PackedCommitStub;
+struct AkitaCommitStub;
 
-impl<F, PCS> jolt_kernels::CommitWitness<F, PCS> for PackedCommitStub
+impl<F, PCS> CommitWitness<F, PCS> for AkitaCommitStub
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -68,7 +68,7 @@ where
         _setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
         Err(KernelError::Unsupported {
-            reason: "the packed (Akita) path commits one native OneHotTrace group in stage 0; \
+            reason: "the Akita path commits one native OneHotTrace group in stage 0; \
                      the streaming witness-commit slot is unreachable",
         })
     }
@@ -82,7 +82,7 @@ where
         _setup: &PCS::ProverSetup,
     ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
         Err(KernelError::Unsupported {
-            reason: "the packed (Akita) path commits advice objects outside this seam; \
+            reason: "the Akita path commits advice objects outside this seam; \
                      the streaming advice-commit slot is unreachable",
         })
     }
@@ -97,8 +97,7 @@ where
         _setup: &PCS::ProverSetup,
     ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
         Err(KernelError::Unsupported {
-            reason:
-                "the packed (Akita) path commits the field increment polynomial in its own stage 0; \
+            reason: "the Akita path commits the field increment polynomial in its own stage 0; \
                      the streaming field-inline commit slot is unreachable",
         })
     }
@@ -109,14 +108,14 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    /// The always-present packed reference registry: every shared stage 1–7
-    /// slot naive-served (the reference kernels adapt to the packed
-    /// jolt-claims shape at runtime), the commit slot stubbed out (the packed
+    /// The always-present Akita reference registry: every shared stage 1–7
+    /// slot naive-served (the reference kernels adapt to the Akita
+    /// jolt-claims shape at runtime), the commit slot stubbed out (the Akita
     /// commit lives in stage 0).
     pub fn reference() -> Self {
         Self {
             base: JoltBackend {
-                commit: Box::new(PackedCommitStub),
+                commit: Box::new(AkitaCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),
                 spartan_outer_uniskip: Box::new(ReferenceBackend),
                 spartan_outer_remainder: Box::new(jolt_kernels::reference::spartan_outer::ReferenceOuterRemainder),
@@ -181,7 +180,7 @@ where
         }
     }
 
-    /// The packed backend with optimized stage 1–7 arithmetic and native
+    /// The Akita backend with optimized stage 1–7 arithmetic and native
     /// Akita commitment/opening boundaries.
     pub fn optimized() -> Self {
         let mut backend = Self::reference();
@@ -196,7 +195,7 @@ where
     }
 }
 
-/// Prove one execution using the packed Akita commitment path.
+/// Prove one execution using the native Akita commitment path.
 ///
 /// Trusted advice is precommitted; untrusted advice is committed from public input.
 pub fn prove<F, PCS, VC, T, W>(

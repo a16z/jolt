@@ -184,8 +184,6 @@ pub enum Prefixes {
     XorRotL1Wrap,
 }
 
-pub const NUM_PREFIXES: usize = <Prefixes as strum::EnumCount>::COUNT;
-
 /// All prefix variants in discriminant order.
 pub const ALL_PREFIXES: &[Prefixes] = <Prefixes as strum::VariantArray>::VARIANTS;
 

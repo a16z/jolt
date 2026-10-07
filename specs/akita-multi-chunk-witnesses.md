@@ -84,9 +84,11 @@ Fiat-Shamir inventory and setup round-trip tests.
 - [x] A traversal-count test proves that chunked decomposition reads each trace row exactly
   once.
 - [x] Grouped schedule provisioning inherits the selected trace profile. Dense producer rows
-  come from conservative checked-in catalogs; grouped search preserves their exact profiles and
-  may retry without the scalar guide for at most two bounded producers within the opening
-  assignment budget. Dense-only setup rejects a one-hot profile selection.
+  come from conservative checked-in catalogs. Akita first attempts guided adaptation and
+  automatically falls back to full planning on `UnsupportedSchedule`, preserving exact producer
+  profiles and auditing the result. Jolt's admission gates apply before search, as documented in
+  the [schedule README](../crates/jolt-akita/schedules/README.md). Dense-only setup rejects a
+  one-hot profile selection.
 - [x] Prover and verifier bind a labeled chunk count for nondefault one-hot profiles and use
   the same profile-specific catalog digest. The label rename leaves `Single` and `Dense`
   absorption unchanged; regenerating the dense catalogs changes their catalog binding.
@@ -172,19 +174,31 @@ the maximum supported response envelope. Program-specific grouped rows are deriv
 from the selected base family, then the exact extended catalog is serialized into the verifier
 setup.
 
+Grouped provisioning uses the pinned Akita planner's guided-then-full search. Full planning
+may change the scalar row's fold geometry, opening parameters, relation modes, and
+direct/offloaded topology; the selected trace chunk profile and frozen dense producer profiles
+remain fixed. Jolt rejects multiple full-width producers and a full-width producer with more
+than two auxiliary producers before search. It also rejects bounded-only `Single` requests
+whose scalar guide has no recursive child fold. Other bounded-only requests may use full
+planning, including `Single` requests and batches with more than two producers. Akita owns
+the search limits and opening-assignment enumeration. The exact audited result is frozen
+during preprocessing and consumed by proving and verification.
+
 At the kernel boundary, Akita supplies a `DecomposeFoldBatchPlan::SparseChunked` with a
-claim-major challenge carrier and canonical chunk ranges. Jolt validates the singleton
-streamed batch, checks the ranges, prepares rotations once, and accumulates into a
-position-by-chunk buffer. It expands digits independently for each chunk and returns
-`CpuFoldResponses::chunked`, which includes Akita's aggregated global response. The scalar
-fold path calls the same streamed implementation with one chunk.
+claim-major challenge carrier and canonical chunk ranges. With native trace batching,
+Jolt validates the ordered column views over one shared trace owner, checks the ranges,
+prepares rotations once, and accumulates into a position-by-chunk buffer across all
+columns. It expands digits independently for each chunk and returns
+`CpuFoldResponses::chunked`, which includes Akita's aggregated global response. The
+single-chunk batch uses the same streamed implementation with one chunk. Native batching
+establishes first-fold cycle locality; recursive ownership alignment remains the
+follow-up described in [the native batching spec](akita-native-trace-batching.md).
 
 Internal enums dispatch the eight concrete Akita scheme and verifier types through commitment,
 opening, and verification. Akita owns proof-byte parsing. This keeps the profile and trusted
 catalog type-aligned without duplicating those protocol paths.
 
-The workspace keeps #1948's Akita and Spongefish pins. The six companion catalogs are generated
-under that pinned planner, as are the regenerated conservative dense catalogs.
+Schedule catalogs are generated with the Akita planner revision pinned in the workspace.
 
 ### Alternatives Considered
 
@@ -257,7 +271,7 @@ normative statement-level Akita contract.
 - Serialize the profile in verifier setup, transcript-bind nondefault one-hot profiles, update the
   Fiat-Shamir inventory, and cover all profiles with differential, traversal-count, catalog, and
   end-to-end tests.
-- Retain #1948's Akita pin and regenerate the six companion catalogs under its planner.
+- Generate schedule catalogs with the workspace's pinned Akita planner.
 
 ## References
 

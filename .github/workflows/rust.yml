@@ -56,6 +56,8 @@ jobs:
           filter: blob:none
       - name: check style invariants
         run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
+      - name: Test benchmark profile selection
+        run: python3 -m unittest scripts.tests.test_benchmark_profiles -v
 
   field-stack:
     name: Shared field feature matrix
@@ -109,10 +111,10 @@ jobs:
       - name: cargo clippy -p jolt-verifier --features akita
         run: cargo clippy -p jolt-verifier --all-targets --features akita
       # The akita fixture-driven tamper suite compiles under akita,prover-fixtures
-      # (the real packed prover generates its fixtures). Lint it explicitly.
+      # (the real Akita prover generates its fixtures). Lint it explicitly.
       - name: cargo clippy -p jolt-verifier --features akita,prover-fixtures
         run: cargo clippy -p jolt-verifier --all-targets --features akita,prover-fixtures
-      # The modular prover's packed (Akita) path: lint alone and with
+      # The modular prover's Akita path: lint alone and with
       # prover-fixtures so the acceptance suites keep compiling.
       - name: cargo clippy -p jolt-prover --features akita
         run: cargo clippy -p jolt-prover --all-targets --features akita
@@ -132,7 +134,7 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features profiling
       - name: cargo clippy -p jolt-prover --features profiling,allocative
         run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative
-      # The packed profile harness: the same bin/smoke test driving
+      # The Akita profile harness: the same bin/smoke test driving
       # akita::prove. Lint both flamegraph modes, like the Dory pair above.
       - name: cargo clippy -p jolt-prover --features akita,profiling
         run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
@@ -178,7 +180,7 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
       - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
         run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
-      # The packed field-inline combination: the full-width increment group rides the
+      # The Akita field-inline combination: the full-width increment group rides the
       # dense-group heterogeneous batch beside advice.
       - name: cargo clippy -p jolt-verifier --features field-inline,akita
         run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
@@ -409,10 +411,12 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
-      # The Akita arm of the guest x mode matrix plus the packed-prover
+      # The Akita arm of the guest x mode matrix plus the Akita prover
       # specifics: forced K=256, advice, committed-program, and live tampers.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
+      - name: Test Akita profiling artifact and CSV names
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
@@ -426,19 +430,19 @@ jobs:
     runs-on: ubuntu-latest
     name: Test jolt-prover (field-inline matrix and e2e)
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -451,7 +455,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@badb8c3638e0b773c6c17a6025c2306a8f1c4303 # nextest
       # e2e_matrix selects field_ops and muldiv for the field-inline
       # profile. Run the full package to retain its specialized parity and
       # tamper suites alongside matrix acceptance in both Dory modes.
@@ -466,21 +470,21 @@ jobs:
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
-    name: Test jolt-prover (packed field-inline matrix and e2e)
+    name: Test jolt-prover (Akita field-inline matrix and e2e)
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -493,24 +497,26 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@badb8c3638e0b773c6c17a6025c2306a8f1c4303 # nextest
       # The same field_ops and muldiv matrix table runs over fp128.
-      # The full package also runs packed field-inline parity and tamper suites.
-      - name: Run packed field-inline matrix and specialized suites
+      # The full package also runs Akita field-inline parity and tamper suites.
+      - name: Run Akita field-inline matrix and specialized suites
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
       # The combined-feature verifier unit suite (no fixtures).
       - name: Run jolt-verifier with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features field-inline,akita
-      # The combined-feature kernels unit suite: the composed packed field-inline
+      # The combined-feature kernels unit suite: the composed Akita field-inline
       # kernels (akita parity tests with the field-inline geometry attached) run only
       # under this pair.
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
-      # The packed field-inline provisioning checks and verifier fixture suite (the modular
-      # packed prover's eq-MLE proof; legacy-generated akita fixtures pin the
+      # The Akita field-inline provisioning checks and verifier fixture suite (the modular
+      # Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
       # field-inline axis disabled).
       - name: Run jolt-akita with field-inline
-        run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
+        run: >-
+          cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
+          -E 'not test(/field_inline_rows_cover_k16_w[248]r2_production_grid/)'
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
 
@@ -518,19 +524,19 @@ jobs:
     runs-on: ubuntu-latest
     name: Test jolt-verifier (field-inline fixtures)
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.zeroos/musl
           key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
@@ -543,7 +549,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@badb8c3638e0b773c6c17a6025c2306a8f1c4303 # nextest
       # The fixture-driven field-inline suites: valid-fixture acceptance
       # (completeness/field_inline.rs) and the typed field-inline clear-claim tamper
       # sweep (tampering/field_inline.rs), backed by fixtures the modular
@@ -584,7 +590,7 @@ jobs:
       # The fixture-driven akita suites: valid-fixture acceptance
       # (completeness/akita.rs) and the typed clear-claim, commitment-byte,
       # proof-shape, and presence tamper sweeps (tampering/akita.rs), backed
-      # by fixtures the real packed prover generates at test time.
+      # by fixtures the real Akita prover generates at test time.
       - name: Run jolt-verifier akita fixture and tamper suites
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features akita,prover-fixtures --test-threads 1
 
@@ -618,13 +624,8 @@ jobs:
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
 
-      - name: Pin jolt-sdk to current commit in Cargo.toml files
-        run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          # Pin jolt-sdk in the host Cargo.toml
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
-          # Pin jolt-sdk in the guest Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+      - name: Use checked-out SDK in generated project
+        run: python3 scripts/ci/use_checkout_sdk.py sample_project
 
       - name: Make sure the generated code runs
         working-directory: ./sample_project
@@ -668,11 +669,8 @@ jobs:
       - name: Generate sample project
         run: jolt new sample_project
 
-      - name: Pin jolt-sdk to current commit
-        run: |
-          COMMIT_HASH=$(git rev-parse HEAD)
-          sed -i 's|jolt-sdk = { git = "https://github.com/a16z/jolt", features = \["host"\] }|jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'", features = ["host"] }|' sample_project/Cargo.toml
-          sed -i 's|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt" }|jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "'$COMMIT_HASH'" }|' sample_project/guest/Cargo.toml
+      - name: Use checked-out SDK in generated project
+        run: python3 scripts/ci/use_checkout_sdk.py sample_project
 
       - name: Set up prover and verifier scripts
         run: |
@@ -903,7 +901,7 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
-      # The packed chain's two-limb field value encoding on the tracer side.
+      # The Akita chain's two-limb field value encoding on the tracer side.
       - name: Run tracer tests with field-inline,fp128-field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
 

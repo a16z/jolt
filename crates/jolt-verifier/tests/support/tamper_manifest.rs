@@ -1112,7 +1112,7 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
 /// The Akita-path claim cells: the read-raf fused-inc opening, lattice
 /// Booleanity, and the fused Stage-7 Hamming reduction. All active: the fixture-driven sweep in
 /// `soundness/tampering/akita.rs` (`every_clear_claim_wire_rejects_offset`)
-/// offsets every clear-claim scalar of the real packed-prover fixtures and
+/// offsets every clear-claim scalar of the real Akita-prover fixtures and
 /// asserts each offset rejects.
 #[cfg(feature = "akita")]
 pub const AKITA_TARGETS: &[TamperTarget] = &[
@@ -1163,7 +1163,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage8Openings,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "the packed field-inline e2e flips the field increment commitment's layout-digest byte, mutates the batch \
+        "the Akita field-inline e2e flips the field increment commitment's layout-digest byte, mutates the batch \
          proof, and strips the group; each rejects",
     ),
 ];
