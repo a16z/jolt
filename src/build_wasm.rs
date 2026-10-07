@@ -183,7 +183,7 @@ pub fn verify_{func_name}(
         jolt_sdk::VerifierField,
         jolt_sdk::VerifierPCS,
         jolt_sdk::VerifierVC,
-        jolt_sdk::VerifierTranscript,
+        jolt_sdk::ProtocolSponge,
     >(&preprocessing, &program_io, &proof, trusted_advice_commitment.as_ref()).is_ok()
 }}
 "#

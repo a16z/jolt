@@ -34,7 +34,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 spongefish = { workspace = true, features = ["sha3"] }
-bincode = { workspace = true }
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["bn254", "solinas"] }
 jolt-transcript = { workspace = true, features = [

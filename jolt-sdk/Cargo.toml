@@ -38,7 +38,6 @@ host = [
   "dep:jolt-openings",
   "dep:jolt-program",
   "dep:jolt-prover",
-  "dep:jolt-transcript",
   "dep:jolt-verifier",
   "dep:jolt-witness",
   "dep:tracer",
@@ -64,14 +63,13 @@ guest-verifier = [
   "dep:jolt-crypto",
   "dep:jolt-dory",
   "dep:jolt-field",
-  "dep:jolt-transcript",
   "dep:jolt-verifier",
 ]
 
 malloc-shim = ["jolt-platform/malloc-shim"]
-transcript-poseidon = ["jolt-transcript/transcript-poseidon", "jolt-verifier?/transcript-poseidon"]
-transcript-keccak = ["jolt-transcript/transcript-keccak", "jolt-verifier?/transcript-keccak"]
-transcript-blake2b = ["jolt-transcript/transcript-blake2b", "jolt-verifier?/transcript-blake2b"]
+transcript-poseidon = ["jolt-verifier?/transcript-poseidon"]
+transcript-keccak = ["jolt-verifier?/transcript-keccak"]
+transcript-blake2b = ["jolt-verifier?/transcript-blake2b"]
 
 # Jolt-SDK native features (optional capabilities)
 #
@@ -115,7 +113,6 @@ jolt-host = { workspace = true, optional = true }
 jolt-openings = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }
 jolt-prover = { workspace = true, optional = true }
-jolt-transcript = { workspace = true, optional = true }
 jolt-verifier = { workspace = true, optional = true }
 jolt-witness = { workspace = true, optional = true }
 tracer = { workspace = true, default-features = false, features = [

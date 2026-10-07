@@ -19,7 +19,6 @@ jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
-serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]

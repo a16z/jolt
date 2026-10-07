@@ -48,7 +48,6 @@ transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-ark-serialize.workspace = true
 bincode.workspace = true
 blake2.workspace = true
 common.workspace = true

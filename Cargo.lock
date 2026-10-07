@@ -3184,7 +3184,6 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
- "serde",
  "thiserror 2.0.20",
 ]
 
@@ -3756,7 +3755,6 @@ dependencies = [
  "jolt-program",
  "jolt-prover",
  "jolt-sdk-macros",
- "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
  "postcard",
@@ -3810,7 +3808,6 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "bincode 2.0.1",
  "jolt-crypto",
  "jolt-field",
  "jolt-poly",
@@ -3871,7 +3868,6 @@ name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "ark-serialize 0.5.0",
  "bincode 2.0.1",
  "blake2 0.11.0",
  "common",

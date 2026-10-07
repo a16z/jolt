@@ -68,7 +68,7 @@ use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDe
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
 use jolt_claims::protocols::jolt::relations;
 #[cfg(feature = "fuzzing")]
-use jolt_claims::protocols::jolt::JoltExpr;
+use jolt_claims::protocols::jolt::{JoltExpr, JoltOpeningId};
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
     opening,
