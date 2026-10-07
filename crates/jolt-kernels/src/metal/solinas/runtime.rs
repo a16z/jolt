@@ -1,5 +1,4 @@
 use std::{
-    any::Any,
     collections::HashMap,
     ffi::c_void,
     mem::{size_of, MaybeUninit},
@@ -10,6 +9,7 @@ use std::{
 
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
 use crate::ProofSession;
+use block::ConcreteBlock;
 use libc::{rusage_info_t, rusage_info_v4, RUSAGE_INFO_V4};
 use metal::{
     objc::{runtime::Sel, Message},
@@ -23,10 +23,9 @@ type PipelineCache = Arc<Mutex<HashMap<(&'static str, Option<u32>), ComputePipel
 
 type PrivateBufferPoolHandle = Arc<Mutex<PrivateBufferPool>>;
 
-/// The proof's no-copy views of host tables. Each entry holds its view's
-/// host owner, so a cached address cannot be freed and reused by another
-/// table while the entry exists; `buffer` precedes `_owner`, so dropping the
-/// session releases each view before the memory it maps.
+/// The proof's no-copy views of host tables. Each view owns its host table
+/// ([`SolinasMetal::owned_no_copy_buffer`]), so a cached address cannot be
+/// freed and reused by another table while its entry exists.
 #[derive(Default)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct NoCopyBufferCache(Vec<NoCopyBufferEntry>);
@@ -37,8 +36,6 @@ struct NoCopyBufferEntry {
     bytes: u64,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     buffer: Buffer,
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    _owner: Arc<dyn Any + Send + Sync>,
 }
 
 #[derive(Default)]
@@ -246,7 +243,7 @@ impl SolinasMetal {
         bytes: u64,
     ) -> Result<(Buffer, bool), MetalError>
     where
-        T: Any + Send + Sync,
+        T: Send + Sync + 'static,
     {
         self.validate_buffer_length(bytes)?;
         let address = pointer as usize;
@@ -257,19 +254,38 @@ impl SolinasMetal {
         {
             return Ok((entry.buffer.clone(), true));
         }
-        let buffer = self.device.new_buffer_with_bytes_no_copy(
-            pointer,
-            bytes,
-            MTLResourceOptions::StorageModeShared,
-            None,
-        );
+        let buffer = self.owned_no_copy_buffer(owner, pointer, bytes);
         cache.push(NoCopyBufferEntry {
             pointer: address,
             bytes,
             buffer: buffer.clone(),
-            _owner: owner,
         });
         Ok((buffer, false))
+    }
+
+    /// A shared-storage view of the `bytes` at `pointer`, which `owner` keeps
+    /// valid. The view's deallocator holds `owner`, and Metal deallocates a
+    /// view only once no handle and no uncompleted command buffer references
+    /// it, so the memory outlives every use of the view in any drop order.
+    pub(super) fn owned_no_copy_buffer<T>(
+        &self,
+        owner: Arc<T>,
+        pointer: *mut c_void,
+        bytes: u64,
+    ) -> Buffer
+    where
+        T: Send + Sync + 'static,
+    {
+        let deallocator = ConcreteBlock::new(move |_: *const c_void, _: u64| {
+            let _owner = &owner;
+        })
+        .copy();
+        self.device.new_buffer_with_bytes_no_copy(
+            pointer,
+            bytes,
+            MTLResourceOptions::StorageModeShared,
+            Some(&deallocator),
+        )
     }
 
     pub(super) fn begin_private_buffer_pool_epoch(
@@ -558,7 +574,7 @@ mod tests {
     use super::{ProofSession, SolinasMetal};
 
     #[test]
-    fn session_drop_releases_no_copy_view_owners() {
+    fn host_owner_lives_while_the_session_or_a_view_does() {
         let Ok(metal) = SolinasMetal::for_akita() else {
             return;
         };
@@ -570,13 +586,15 @@ mod tests {
             .shared_no_copy_buffer(&mut session, Arc::clone(&owner), pointer, 4 << 20)
             .unwrap();
         assert!(!reused);
-        let (_, reused) = metal
-            .shared_no_copy_buffer(&mut session, Arc::clone(&owner), pointer, 4 << 20)
+        let (cached, reused) = metal
+            .shared_no_copy_buffer(&mut session, owner, pointer, 4 << 20)
             .unwrap();
         assert!(reused);
-        drop((view, owner));
+        drop(view);
         assert!(weak.upgrade().is_some());
         drop(session);
+        assert!(weak.upgrade().is_some());
+        drop(cached);
         assert!(weak.upgrade().is_none());
     }
 }

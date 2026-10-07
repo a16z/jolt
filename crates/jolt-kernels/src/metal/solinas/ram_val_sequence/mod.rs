@@ -103,8 +103,6 @@ impl Drop for PendingFirstMessage {
 
 pub(crate) struct RamValSequence {
     context: SolinasMetal,
-    _columns: Arc<RamAccessColumns>,
-    _increments: Arc<RamIncrementActivity>,
     pipelines: Pipelines,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
@@ -356,25 +354,23 @@ impl SolinasMetal {
             columns.addresses.as_ptr().cast_mut().cast::<c_void>(),
             address_bytes,
         )?;
-        let increment_cycles = self.device.new_buffer_with_bytes_no_copy(
+        let increment_cycles = self.owned_no_copy_buffer(
+            Arc::clone(&increments),
             increments
                 .cycle_slice()
                 .as_ptr()
                 .cast_mut()
                 .cast::<c_void>(),
             increment_cycle_bytes,
-            MTLResourceOptions::StorageModeShared,
-            None,
         );
-        let increment_buffer = self.device.new_buffer_with_bytes_no_copy(
+        let increment_buffer = self.owned_no_copy_buffer(
+            Arc::clone(&increments),
             increments
                 .increment_slice()
                 .as_ptr()
                 .cast_mut()
                 .cast::<c_void>(),
             increment_bytes,
-            MTLResourceOptions::StorageModeShared,
-            None,
         );
         let buffers = Buffers {
             addresses,
@@ -403,8 +399,6 @@ impl SolinasMetal {
 
         let mut sequence = RamValSequence {
             context: self.clone(),
-            _columns: columns,
-            _increments: increments,
             pipelines,
             reduction_limits,
             buffers,

@@ -3552,6 +3552,7 @@ name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "block",
  "common",
  "jolt-claims",
  "jolt-dory",

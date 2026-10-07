@@ -78,7 +78,6 @@ struct Buffers {
 
 pub(crate) struct RamRaSequence {
     context: SolinasMetal,
-    _columns: Arc<RamAccessColumns>,
     pipelines: Pipelines,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
@@ -283,7 +282,6 @@ impl SolinasMetal {
 
         Ok(RamRaSequence {
             context: self.clone(),
-            _columns: columns,
             pipelines,
             reduction_limits,
             buffers,

@@ -89,7 +89,6 @@ impl RamHammingTerminal {
 
 pub(crate) struct RamHammingSequence {
     context: SolinasMetal,
-    _columns: Arc<RamAccessColumns>,
     pipelines: Pipelines,
     reduction_limits: PipelineLimits,
     buffers: Buffers,
@@ -282,7 +281,6 @@ impl SolinasMetal {
         };
         Ok(RamHammingSequence {
             context: self.clone(),
-            _columns: columns,
             pipelines,
             reduction_limits,
             buffers,

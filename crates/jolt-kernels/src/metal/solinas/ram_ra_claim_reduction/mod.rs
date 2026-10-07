@@ -65,7 +65,6 @@ struct Buffers {
 
 pub(crate) struct RamRaClaimReductionSequence {
     context: SolinasMetal,
-    _columns: Arc<RamAccessColumns>,
     build_q_pipeline: ComputePipelineState,
     reduce_q_pipeline: ComputePipelineState,
     gather_h_pipeline: ComputePipelineState,
@@ -96,22 +95,17 @@ pub(crate) struct RamRaClaimHObservation {
 }
 
 impl SolinasMetal {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the claim geometry, its equality tables, and the session owning the source views"
-    )]
     pub(crate) fn prepare_ram_ra_claim_reduction(
         &self,
         session: &mut ProofSession,
         columns: Arc<RamAccessColumns>,
-        address_count: usize,
         prefix_bits: usize,
         eq_address: &[AkitaField],
         eq_hi: &[Vec<AkitaField>; TERMS],
         q_slices: usize,
     ) -> Result<RamRaClaimReductionSequence, MetalError> {
         let rows = columns.addresses.len();
-        if rows < 16 || !rows.is_power_of_two() || address_count == 0 {
+        if rows < 16 || !rows.is_power_of_two() || eq_address.is_empty() {
             return Err(MetalError::InvalidRamRaState(
                 "RAM RA claim-reduction source has invalid geometry",
             ));
@@ -140,9 +134,7 @@ impl SolinasMetal {
         let active_q_slices = active_high_elements
             .div_ceil(high_per_slice)
             .clamp(1, q_slices);
-        if eq_address.len() != address_count
-            || eq_hi.iter().any(|table| table.len() != suffix_elements)
-        {
+        if eq_hi.iter().any(|table| table.len() != suffix_elements) {
             return Err(MetalError::InvalidRamRaState(
                 "RAM RA claim-reduction equality tables have the wrong shape",
             ));
@@ -299,7 +291,6 @@ impl SolinasMetal {
         };
         Ok(RamRaClaimReductionSequence {
             context: self.clone(),
-            _columns: columns,
             build_q_pipeline,
             reduce_q_pipeline,
             gather_h_pipeline,
