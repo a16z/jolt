@@ -11,6 +11,8 @@ mod akita_tests {
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
+    #[cfg(feature = "akita-byte-link")]
+    use jolt_claims::protocols::jolt::lattice::LatticeGeometryError;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
     use jolt_host::{JoltProgramSource, Program};
@@ -256,6 +258,19 @@ mod akita_tests {
         }
     }
 
+    #[cfg(feature = "akita-byte-link")]
+    #[test]
+    fn byte_link_setup_rejects_a_k16_geometry_before_stage_8() {
+        let (run, config) = muldiv_run();
+        assert_eq!(config.one_hot_config.committed_chunk_bits(), 4);
+        assert!(matches!(
+            preprocessing::preprocess_full(run.preprocessing, &config),
+            Err(jolt_prover::PreprocessingError::ByteTraceGeometry(
+                LatticeGeometryError::UnsupportedByteTraceShape { chunk_width: 4, .. }
+            ))
+        ));
+    }
+
     #[test]
     fn muldiv_e2e_akita_forced_k256() {
         let (run, mut config) = muldiv_run();
@@ -279,6 +294,11 @@ mod akita_tests {
         ));
 
         let (run, mut config) = muldiv_run();
+        // K=2^8 is the one chunk width the byte link admits at setup.
+        config.one_hot_config = JoltOneHotConfig {
+            log_k_chunk: 8,
+            lookups_ra_virtual_log_k_chunk: 32,
+        };
         let preprocessing = preprocessing::preprocess_full(run.preprocessing, &config)
             .expect("cycle-major preprocessing");
         config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;

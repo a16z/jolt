@@ -22,20 +22,7 @@ pub fn one_hot_trace_setup_shape(
     config: &ProverConfig,
     bytecode_len: usize,
 ) -> Result<(OneHotTraceSetupShape, [u8; 32], usize), VerifierError> {
-    let log_t = config.trace_length.ilog2() as usize;
-    let log_k_chunk = config.one_hot_config.committed_chunk_bits();
-    let formula_dimensions = formula_dimensions_from_parts(
-        config.one_hot_config,
-        log_t,
-        bytecode_len,
-        config.ram_K,
-        JoltRelationId::HammingWeightClaimReduction,
-    )?;
-    let shape = OneHotTraceShape {
-        ra_layout: formula_dimensions.ra_layout,
-        log_t,
-        log_k_chunk,
-    };
+    let shape = one_hot_trace_shape(config, bytecode_len)?;
     let batch_failed =
         |error: jolt_openings::OpeningsError| VerifierError::FinalOpeningBatchFailed {
             reason: error.to_string(),
@@ -46,5 +33,24 @@ pub fn one_hot_trace_setup_shape(
     let digest = ONE_HOT_TRACE_LAYOUT
         .layout_digest(&shape)
         .map_err(batch_failed)?;
-    Ok((setup_shape, digest, 1usize << log_k_chunk))
+    Ok((setup_shape, digest, 1usize << shape.log_k_chunk))
+}
+
+pub(super) fn one_hot_trace_shape(
+    config: &ProverConfig,
+    bytecode_len: usize,
+) -> Result<OneHotTraceShape, VerifierError> {
+    let log_t = config.trace_length.ilog2() as usize;
+    let formula_dimensions = formula_dimensions_from_parts(
+        config.one_hot_config,
+        log_t,
+        bytecode_len,
+        config.ram_K,
+        JoltRelationId::HammingWeightClaimReduction,
+    )?;
+    Ok(OneHotTraceShape {
+        ra_layout: formula_dimensions.ra_layout,
+        log_t,
+        log_k_chunk: config.one_hot_config.committed_chunk_bits(),
+    })
 }

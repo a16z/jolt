@@ -1,3 +1,5 @@
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::LatticeGeometryError;
 use jolt_field::JoltField;
 use jolt_kernels::{KernelError, SumcheckKernelError};
 use jolt_openings::OpeningsError;
@@ -28,6 +30,10 @@ pub enum PreprocessingError {
 
     #[error("failed to encode preprocessing: {reason}")]
     Encoding { reason: String },
+
+    #[cfg(feature = "akita-byte-link")]
+    #[error(transparent)]
+    ByteTraceGeometry(LatticeGeometryError),
 }
 
 /// Errors surfaced while proving. The engine-level failures come through

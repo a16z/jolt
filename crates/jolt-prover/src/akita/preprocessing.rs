@@ -6,13 +6,15 @@ use jolt_akita::{
     AkitaVerifierSetup, PrecommittedScheduleParams,
 };
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::ByteTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_transcript::LegacyBlake2bTranscript;
 use jolt_verifier::{
-    CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
+    CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing, VerifierError,
 };
 
 use crate::preprocessing::{
@@ -24,6 +26,8 @@ use crate::{
 };
 
 use super::one_hot_trace_setup_shape;
+#[cfg(feature = "akita-byte-link")]
+use super::setup::one_hot_trace_shape;
 use super::witness::{commit_advice, commit_direct_program, AdviceObject};
 
 pub type AkitaVc = NoVectorCommitment<AkitaField>;
@@ -72,12 +76,17 @@ fn grouped_setup(
     trusted_advice: bool,
     direct_program_physical_vars: &[usize],
 ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), PreprocessingError> {
+    let invalid_configuration = |error: VerifierError| PreprocessingError::InvalidConfiguration {
+        reason: error.to_string(),
+    };
+    #[cfg(feature = "akita-byte-link")]
+    let _ = ByteTraceLayoutPlan::new(
+        &one_hot_trace_shape(config, program.bytecode.code_size).map_err(invalid_configuration)?,
+    )
+    .map_err(PreprocessingError::ByteTraceGeometry)?;
     let (shape, layout_digest, one_hot_k) =
-        one_hot_trace_setup_shape(config, program.bytecode.code_size).map_err(|error| {
-            PreprocessingError::InvalidConfiguration {
-                reason: error.to_string(),
-            }
-        })?;
+        one_hot_trace_setup_shape(config, program.bytecode.code_size)
+            .map_err(invalid_configuration)?;
     let untrusted_physical_vars = untrusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Untrusted))
         .transpose()?;
