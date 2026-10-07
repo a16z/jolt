@@ -15,8 +15,10 @@
 //!   target equals its own source address executes once, then execution
 //!   stops.
 
+use std::collections::BTreeSet;
+
 use common::constants::STACK_CANARY_SIZE;
-use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynasmApi, DynasmLabelApi};
+use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
 use jolt_program::execution::TraceError;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 
@@ -192,6 +194,36 @@ impl Emitter {
     /// Falling off the end of the compiled program is a bad jump.
     pub(super) fn emit_jump_to_bad_jump(&mut self) {
         dynasm!(self.ops ; .arch x64 ; jmp ->bad_jump);
+    }
+
+    /// Define every branch-target label that no group start defined.
+    ///
+    /// A static branch or `Jal` can name any address, including one that is
+    /// not the start of a compiled group (inside an instruction, in a gap, or
+    /// outside the text span). Such a label would otherwise stay undefined
+    /// and make `finalize` panic. Taking the branch is a bad jump, exactly as
+    /// for an indirect jump through the jump-table filler, so each of these
+    /// labels gets a stub that reports the target and exits.
+    pub(super) fn emit_unbound_targets(&mut self) {
+        let bound: BTreeSet<u64> = self
+            .group_offsets
+            .iter()
+            .map(|&(address, _)| address)
+            .collect();
+        let unbound: Vec<(u64, DynamicLabel)> = self
+            .labels
+            .iter()
+            .filter(|(address, _)| !bound.contains(address))
+            .map(|(&address, &label)| (address, label))
+            .collect();
+        for (address, label) in unbound {
+            dynasm!(self.ops
+                ; .arch x64
+                ; =>label
+                ; mov rax, QWORD address as i64
+                ; jmp ->bad_jump
+            );
+        }
     }
 
     pub(super) fn emit_stubs(&mut self) -> Stubs {
