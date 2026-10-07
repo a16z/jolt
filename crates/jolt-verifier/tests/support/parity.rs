@@ -39,7 +39,7 @@ type Tape = ParityTranscript<AkitaTranscript>;
 
 /// The batch members the byte link removes (spec §3). No retained digest
 /// covers them, nor the rounds that only they bind.
-pub const REMOVED_MEMBERS: [(&str, &str); 4] = [
+const REMOVED_MEMBERS: [(&str, &str); 4] = [
     ("Stage6a", "booleanity"),
     ("Stage6b", "booleanity"),
     ("Stage6b", "ram_hamming_booleanity"),
@@ -53,9 +53,9 @@ fn is_removed(batch: &str, member: &str) -> bool {
 /// One tape draw: its role (`None` for draws ordered by transcript position
 /// alone) and its ordinal among the draws of that role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TapeDraw {
-    pub role: Option<DrawRole>,
-    pub ordinal: u64,
+struct TapeDraw {
+    role: Option<DrawRole>,
+    ordinal: u64,
 }
 
 impl TapeDraw {
@@ -85,7 +85,7 @@ thread_local! {
 
 /// Runs `f` with every [`ParityTranscript`] challenge read off a fresh tape;
 /// returns the draws in consumption order.
-pub fn with_tape<R>(f: impl FnOnce() -> R) -> (R, Vec<TapeDraw>) {
+fn with_tape<R>(f: impl FnOnce() -> R) -> (R, Vec<TapeDraw>) {
     TAPE.with_borrow_mut(|tape| {
         assert!(tape.is_none(), "nested parity tapes are unsupported");
         *tape = Some(TapeSession::default());
@@ -121,7 +121,7 @@ fn next_draw() -> TapeDraw {
 /// A transcript whose challenges are a pseudorandom function of the
 /// [`TapeDraw`] key, independent of the absorbed bytes.
 #[derive(Default)]
-pub struct ParityTranscript<T> {
+struct ParityTranscript<T> {
     inner: T,
 }
 
@@ -187,11 +187,10 @@ impl Statements {
 }
 
 /// One S1–S7 boundary's retained digests.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StageDigest {
-    pub statements: [u8; 32],
-    pub draws: [u8; 32],
-    pub catalog: [u8; 32],
+struct StageDigest {
+    statements: [u8; 32],
+    draws: [u8; 32],
+    catalog: [u8; 32],
 }
 
 struct StageRun {
@@ -245,8 +244,8 @@ impl StageRun {
 pub struct ParityRecord {
     /// Digest of the program and its public I/O: equal records are about the
     /// same execution.
-    pub fixture: [u8; 32],
-    pub stages: Vec<(&'static str, StageDigest)>,
+    fixture: [u8; 32],
+    stages: Vec<(&'static str, StageDigest)>,
 }
 
 impl ParityRecord {
@@ -337,9 +336,31 @@ fn stage<O>(
     Ok(output)
 }
 
+/// Pushes the statements of each named member of a stage's clear output.
+macro_rules! members {
+    ($statements:ident, $output:ident; $($member:ident),+) => {
+        $($statements.member(
+            stringify!($member),
+            &$output.output_values.$member,
+            &$output.output_points.$member,
+        );)+
+    };
+}
+
+/// [`members!`] for members present only with their precommitted layout.
+macro_rules! optional_members {
+    ($statements:ident, $output:ident; $($member:ident),+) => {
+        $($statements.optional_member(
+            stringify!($member),
+            $output.output_values.$member.as_ref(),
+            $output.output_points.$member.as_ref(),
+        );)+
+    };
+}
+
 /// Replays the verifier's S1–S7 over the active tape, collecting each stage's
 /// retained statements, batch members, and draws. Mirrors `verify`'s stage
-/// order through stage 7.
+/// order through stage 7; lists every member except [`REMOVED_MEMBERS`].
 fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
     let proof = &case.proof;
     let preprocessing = &case.preprocessing;
@@ -377,12 +398,7 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         |output, statements| {
             let output = output.clear()?;
             statements.push(&claims.stage1.uniskip_output_claim);
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.member(
-                "outer_remainder",
-                &values.outer_remainder,
-                &points.outer_remainder,
-            );
+            members!(statements, output; outer_remainder);
             Ok(())
         },
     )?;
@@ -393,32 +409,8 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         |output, statements| {
             let output = output.clear()?;
             statements.push(&claims.stage2.product_uniskip_output_claim);
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.member(
-                "ram_read_write",
-                &values.ram_read_write,
-                &points.ram_read_write,
-            );
-            statements.member(
-                "product_remainder",
-                &values.product_remainder,
-                &points.product_remainder,
-            );
-            statements.member(
-                "instruction_claim_reduction",
-                &values.instruction_claim_reduction,
-                &points.instruction_claim_reduction,
-            );
-            statements.member(
-                "ram_raf_evaluation",
-                &values.ram_raf_evaluation,
-                &points.ram_raf_evaluation,
-            );
-            statements.member(
-                "ram_output_check",
-                &values.ram_output_check,
-                &points.ram_output_check,
-            );
+            members!(statements, output; ram_read_write, product_remainder,
+                instruction_claim_reduction, ram_raf_evaluation, ram_output_check);
             Ok(())
         },
     )?;
@@ -428,18 +420,7 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         || stage3::verify(&checked, proof, &mut transcript, &s1, &s2),
         |output, statements| {
             let output = output.clear()?;
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.member("shift", &values.shift, &points.shift);
-            statements.member(
-                "instruction_input",
-                &values.instruction_input,
-                &points.instruction_input,
-            );
-            statements.member(
-                "registers_claim_reduction",
-                &values.registers_claim_reduction,
-                &points.registers_claim_reduction,
-            );
+            members!(statements, output; shift, instruction_input, registers_claim_reduction);
             Ok(())
         },
     )?;
@@ -449,28 +430,14 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         || stage4::verify(&checked, preprocessing, proof, &mut transcript, &s2, &s3),
         |output, statements| {
             let output = output.clear()?;
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.member(
-                "registers_read_write",
-                &values.registers_read_write,
-                &points.registers_read_write,
-            );
-            statements.member(
-                "ram_val_check",
-                &values.ram_val_check,
-                &points.ram_val_check,
-            );
+            members!(statements, output; registers_read_write, ram_val_check);
             let init = &output.ram_val_check_init;
             let advice = init
                 .advice_contributions
                 .iter()
                 .map(|advice| {
-                    (
-                        advice.kind,
-                        advice.selector,
-                        &advice.opening_point,
-                        advice.opening_value,
-                    )
+                    let point = &advice.opening_point;
+                    (advice.kind, advice.selector, point, advice.opening_value)
                 })
                 .collect::<Vec<_>>();
             statements.push(&(init.public_eval, &init.program_image_contribution, advice));
@@ -483,22 +450,8 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         || stage5::verify(&checked, proof, &dimensions, &mut transcript, &s2, &s4),
         |output, statements| {
             let output = output.clear()?;
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.member(
-                "instruction_read_raf",
-                &values.instruction_read_raf,
-                &points.instruction_read_raf,
-            );
-            statements.member(
-                "ram_ra_claim_reduction",
-                &values.ram_ra_claim_reduction,
-                &points.ram_ra_claim_reduction,
-            );
-            statements.member(
-                "registers_val_evaluation",
-                &values.registers_val_evaluation,
-                &points.registers_val_evaluation,
-            );
+            members!(statements, output; instruction_read_raf, ram_ra_claim_reduction,
+                registers_val_evaluation);
             Ok(())
         },
     )?;
@@ -521,12 +474,7 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         },
         |output, statements| {
             let output = output.clear()?;
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.member(
-                "bytecode_read_raf",
-                &values.bytecode_read_raf,
-                &points.bytecode_read_raf,
-            );
+            members!(statements, output; bytecode_read_raf);
             Ok(())
         },
     )?;
@@ -550,32 +498,9 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         },
         |output, statements| {
             let output = output.clear()?;
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.member(
-                "bytecode_read_raf",
-                &values.bytecode_read_raf,
-                &points.bytecode_read_raf,
-            );
-            statements.member(
-                "ram_ra_virtualization",
-                &values.ram_ra_virtualization,
-                &points.ram_ra_virtualization,
-            );
-            statements.member(
-                "instruction_ra_virtualization",
-                &values.instruction_ra_virtualization,
-                &points.instruction_ra_virtualization,
-            );
-            statements.optional_member(
-                "bytecode_reduction",
-                values.bytecode_reduction.as_ref(),
-                points.bytecode_reduction.as_ref(),
-            );
-            statements.optional_member(
-                "program_image_reduction",
-                values.program_image_reduction.as_ref(),
-                points.program_image_reduction.as_ref(),
-            );
+            members!(statements, output; bytecode_read_raf, ram_ra_virtualization,
+                instruction_ra_virtualization);
+            optional_members!(statements, output; bytecode_reduction, program_image_reduction);
             Ok(())
         },
     )?;
@@ -585,17 +510,8 @@ fn stage_runs(case: &AkitaFixtureCase) -> Result<Vec<StageRun>, VerifierError> {
         || stage7::verify(&checked, proof, &dimensions, &mut transcript, &s4, &s6b),
         |output, statements| {
             let output = output.clear()?;
-            let (values, points) = (&output.output_values, &output.output_points);
-            statements.optional_member(
-                "bytecode_address_phase",
-                values.bytecode_address_phase.as_ref(),
-                points.bytecode_address_phase.as_ref(),
-            );
-            statements.optional_member(
-                "program_image_address_phase",
-                values.program_image_address_phase.as_ref(),
-                points.program_image_address_phase.as_ref(),
-            );
+            optional_members!(statements, output; bytecode_address_phase,
+                program_image_address_phase);
             Ok(())
         },
     )?;
