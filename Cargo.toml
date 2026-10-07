@@ -296,17 +296,17 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-algebra = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-config = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-error = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-metal = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-pcs = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-prover = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-planner = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-schedules = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-challenges = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-transcript = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
-akita-types = { git = "https://github.com/0xAndoroid/akita", rev = "b1c0b14d4860587131db0286b0cdf2e0fe75fd1e", default-features = false }
+akita-algebra = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-config = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-error = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-metal = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-pcs = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-prover = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-planner = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-schedules = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-challenges = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-transcript = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
+akita-types = { git = "https://github.com/0xAndoroid/akita", rev = "269c86d6ae8bed650d239a23c0bf9db63964451b", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
