@@ -1,6 +1,6 @@
 //! The oracle of the Metal link: a verifier that replays the prover's transcript and checks
 //! every protocol relation, plus every opened value recomputed from the source bytes. The GPU
-//! tests run at 2^16; the benches are ignored and documented in the module docs.
+//! tests run at 2^16 and 2^20; the bench is ignored and documented in the module docs.
 #![expect(clippy::unwrap_used, reason = "test oracle")]
 
 use std::{
@@ -21,7 +21,7 @@ use rayon::prelude::*;
 
 use super::{
     gkr::LeafClaims,
-    gpu::{field, view, Phase},
+    gpu::{field, limbs, view, Phase},
     sort::W_CELLS,
     ByteLinkBatch, ByteLinkCompression, ByteLinkDraw, ByteLinkHistograms, ByteLinkMessage,
     ByteLinkOpening, ByteLinkOpenings, ByteLinkProver, ByteLinkQueryGroup, ByteLinkSource,
@@ -226,7 +226,6 @@ impl Statement {
 
     fn view(&self) -> ByteLinkStatement<'_> {
         ByteLinkStatement {
-            cycle_point: &self.cycle_point,
             address_points: &self.address_points,
             one_hot_claims: &self.one_hot_claims,
             fused_increment: self.fused_increment,
@@ -774,16 +773,19 @@ fn prove(prover: &mut ByteLinkProver, view: &ByteLinkSource<'_>, statement: &Sta
     }
 }
 
-/// The Metal link at 2^16, with and without the zero tail, on uniform bytes with the edge rows
-/// and on 256 hot tuples per pack: the verifier accepts, every opening and every `W` cell equals
-/// the source's, a second proof repeats the transcript, and altered messages are rejected.
+/// The Metal link at 2^16 and 2^20 with the zero tail on uniform bytes with the edge rows, and at
+/// 2^16 without it on 256 hot tuples per pack: the verifier accepts, every opening and every `W`
+/// cell equals the source's, and a second proof repeats the transcript.
 #[test]
 fn metal_link_is_accepted_and_opens_the_source() {
     let Ok(metal) = SolinasMetal::for_akita() else {
         return;
     };
-    let log_n = 16;
-    for (active, hot) in [(scaled_active(log_n), false), (1 << log_n, true)] {
+    for (log_n, active, hot) in [
+        (16, scaled_active(16), false),
+        (16, 1 << 16, true),
+        (20, scaled_active(20), false),
+    ] {
         let source = Source::synthetic(log_n, active, 5, hot).with_edge_rows();
         let statement = Statement::honest(&source, 11);
         let bytes = device_source(&metal, &source);
@@ -798,36 +800,112 @@ fn metal_link_is_accepted_and_opens_the_source() {
         assert_eq!(
             verify(log, &statement, &proof.digest).unwrap(),
             proof.openings,
-            "hot={hot}"
+            "2^{log_n} hot={hot}"
         );
         let cpu = histograms(&source, &statement.cycle_point);
         check_openings(&source, &cpu, proof.histograms.buffer(), &proof.openings).unwrap();
         assert!(
             prove(&mut prover, &view, &statement).log == *log,
-            "hot={hot}: the second proof differs"
+            "2^{log_n} hot={hot}: the second proof differs"
         );
-        if hot {
-            continue;
-        }
-        let round = log
-            .iter()
-            .position(|(k, _)| *k == Kind::LayerRound(ByteLinkBatch::Trace, 14, 3))
-            .unwrap();
-        let finals = log
-            .iter()
-            .position(|(k, _)| *k == Kind::QueryFinals(ByteLinkQueryGroup::Triples))
-            .unwrap();
-        for (entry, error) in [
-            (0, "roots differ"),
-            (round, "round sum"),
-            (finals, "query reduction"),
-        ] {
-            let mut altered = log.clone();
-            altered[entry].1[0] += F::one();
-            let rejected = verify(&altered, &statement, &proof.digest).unwrap_err();
-            assert!(rejected.contains(error), "{rejected}");
-        }
     }
+}
+
+/// Proofs over bytes that disagree with the statement are rejected — a changed pack byte or
+/// increment byte (each with its own consistent `W`) and a non-Boolean activity byte on an
+/// active RAM row — and so are a changed `W` cell under its recomputed digest and altered
+/// messages of an honest proof.
+#[test]
+fn metal_link_rejects_what_disagrees_with_the_statement() {
+    let Ok(metal) = SolinasMetal::for_akita() else {
+        return;
+    };
+    let log_n = 16;
+    let source = Source::synthetic(log_n, scaled_active(log_n), 5, false).with_edge_rows();
+    let statement = Statement::honest(&source, 11);
+    let mut prover = ByteLinkProver::new(&metal).unwrap();
+    // Row 1 is an active RAM access (`with_edge_rows`).
+    assert_eq!(source.at(29, 1), 1);
+    for (slot, byte, error) in [
+        (
+            5,
+            source.at(5, 1).wrapping_add(1),
+            "Triples: query reduction",
+        ),
+        (
+            20,
+            source.at(20, 1).wrapping_add(1),
+            "source point reduction",
+        ),
+        (29, 2, "pack 6: trace and table roots differ"),
+    ] {
+        let mut tampered = Source {
+            log_n,
+            active: source.active,
+            q: source.q.clone(),
+        };
+        tampered.q[slot * source.n() + 1] = byte;
+        let bytes = device_source(&metal, &tampered);
+        let view = ByteLinkSource {
+            bytes: &bytes,
+            log_rows: log_n,
+            active_rows: source.active,
+        };
+        let proof = prove(&mut prover, &view, &statement);
+        let rejected = verify(&proof.log, &statement, &proof.digest).unwrap_err();
+        assert!(rejected.contains(error), "slot {slot}: {rejected}");
+    }
+
+    let bytes = device_source(&metal, &source);
+    let view = ByteLinkSource {
+        bytes: &bytes,
+        log_rows: log_n,
+        active_rows: source.active,
+    };
+    let proof = prove(&mut prover, &view, &statement);
+    let log = &proof.log;
+    let round = log
+        .iter()
+        .position(|(k, _)| *k == Kind::LayerRound(ByteLinkBatch::Trace, 14, 3))
+        .unwrap();
+    let finals = log
+        .iter()
+        .position(|(k, _)| *k == Kind::QueryFinals(ByteLinkQueryGroup::Triples))
+        .unwrap();
+    for (entry, error) in [
+        (0, "roots differ"),
+        (round, "round sum"),
+        (finals, "query reduction"),
+    ] {
+        let mut altered = log.clone();
+        altered[entry].1[0] += F::one();
+        let rejected = verify(&altered, &statement, &proof.digest).unwrap_err();
+        assert!(rejected.contains(error), "{rejected}");
+    }
+
+    let histograms = prover.histograms(&view, &statement.cycle_point).unwrap();
+    let cell = (1 << TRIPLE_BITS) + 5;
+    // SAFETY: shared storage of W_CELLS values, cell < W_CELLS; no command is in flight.
+    unsafe {
+        let w = histograms.buffer().contents().cast::<Fp128>().add(cell);
+        *w = limbs(field(*w) + F::one());
+    }
+    let digest = histogram_digest(histograms.buffer());
+    let (mut recorder, compression) = Recorder::new(&statement, &digest);
+    let _ = prover
+        .prove(
+            &view,
+            &histograms,
+            &statement.view(),
+            &compression,
+            &mut recorder,
+        )
+        .unwrap();
+    let rejected = verify(&recorder.log, &statement, &digest).unwrap_err();
+    assert!(
+        rejected.contains("pack 1: trace and table roots differ"),
+        "{rejected}"
+    );
 }
 
 /// Active rows of the 2^29 target trace scaled to `2^log_n` rows.
@@ -855,11 +933,11 @@ fn footprint() -> (u64, u64) {
     }
 }
 
-/// The Metal link at `2^LINK_LOG` rows (default 26): `LINK_REPS` proofs (default 3) on U-scaled
-/// uniform bytes, or `LINK_FULL=1` without the zero tail, `LINK_HOT=1` with 256 tuples per pack.
+/// The Metal link at `2^LINK_LOG` rows (default 26): `LINK_REPS` proofs (default 3), each after
+/// `LINK_COOL_SECONDS` idle (default 0.2), on U-scaled uniform bytes, or `LINK_FULL=1` without the zero tail, `LINK_HOT=1` with 256 tuples per pack.
 /// Prints a `phase` row per phase and proof (wall, GPU seconds, command buffers), a `total` row
-/// (wall and GPU seconds of the phases after the histograms, transcript digest, footprint at the
-/// proof start and its peak during the proof, arena bytes) and verifies the first proof; with
+/// (wall and GPU seconds of every phase, the key sort included, transcript digest, footprint at
+/// the proof start and its peak during the proof, arena bytes) and verifies the first proof; with
 /// `LINK_CHECK=1` also every opening against the source.
 #[test]
 #[ignore = "GPU bench; run through gpu-window.sh"]
@@ -872,6 +950,7 @@ fn bench_link() {
         scaled_active(log_n)
     };
     let reps: usize = env_or("LINK_REPS", 3);
+    let cool: f64 = env_or("LINK_COOL_SECONDS", 0.2);
     let check = env_or("LINK_CHECK", 0) == 1;
     let build = Instant::now();
     let source = Source::synthetic(log_n, active, 0x6c69_6e6b, env_or("LINK_HOT", 0) == 1);
@@ -890,7 +969,7 @@ fn bench_link() {
     };
     let mut prover = ByteLinkProver::new(&metal).unwrap();
     for rep in 0..reps {
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_secs_f64(cool));
         let start = footprint().0;
         // SAFETY: takes only a pid and writes no caller memory.
         let _ = unsafe { proc_reset_footprint_interval(libc::getpid()) };
@@ -906,10 +985,8 @@ fn bench_link() {
         } in &phases
         {
             println!("phase\t{rep}\t{name}\t{w:.6}\t{g:.6}\t{commands}");
-            if *name != "histograms" {
-                wall += w;
-                gpu += g;
-            }
+            wall += w;
+            gpu += g;
         }
         let mut transcript = T::new(b"byte-link-bench-digest");
         for (kind, values) in &proof.log {

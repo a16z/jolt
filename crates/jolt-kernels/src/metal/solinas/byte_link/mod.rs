@@ -14,9 +14,9 @@
 //! Benches (ignored tests, through the shared-box GPU gate):
 //! `gpu-window.sh cargo nextest run -p jolt-kernels --features metal,akita-byte-link --lib
 //! --run-ignored ignored-only --no-capture -E 'test(/byte_link::tests::bench/)'` with
-//! `LINK_LOG` (default 26), `LINK_REPS`, `LINK_FULL=1` (no zero tail), `LINK_HOT=1` (256 tuples
-//! per pack) and `LINK_CHECK=1`; it prints per-phase wall and GPU seconds, the process
-//! footprint and the arena size.
+//! `LINK_LOG` (default 26), `LINK_REPS`, `LINK_COOL_SECONDS`, `LINK_FULL=1` (no zero tail),
+//! `LINK_HOT=1` (256 tuples per pack) and `LINK_CHECK=1`; it prints per-phase wall and GPU
+//! seconds, the process footprint and the arena size.
 
 mod gkr;
 mod gpu;
@@ -80,11 +80,10 @@ pub struct ByteLinkSource<'a> {
     pub active_rows: usize,
 }
 
-/// What stage 6b fixed: the cycle point `r`, each one-hot column's address point `k_c` and claim
-/// `v_c` in pack order (`Q` slots 0–15, 25–28), and the fused increment claim `F(r)`. Points are
-/// canonical MSB-first.
+/// What stage 6b fixed besides the cycle point `r` the histograms were built at: each one-hot
+/// column's address point `k_c` (canonical MSB-first) and claim `v_c` in pack order (`Q` slots
+/// 0–15, 25–28), and the fused increment claim `F(r)`.
 pub struct ByteLinkStatement<'a> {
-    pub cycle_point: &'a [F],
     pub address_points: &'a [[F; 8]; 20],
     pub one_hot_claims: &'a [F; 20],
     pub fused_increment: F,
@@ -218,9 +217,12 @@ pub trait ByteLinkTranscript {
 
 /// The eq-weighted tuple histograms on the device, canonical `Fp128` cells: `W` of pack `p` at
 /// cell `p << 24` onwards, `2^24` cells per triple, `2^17` for the RAM pack. The `W` commitments
-/// and stage 8 read them here.
+/// and stage 8 read them here; [`ByteLinkProver::prove`] proves at the cycle point they were
+/// built at.
 pub struct ByteLinkHistograms {
     w: Buffer,
+    /// The cycle point, LSB-first.
+    r_t: Vec<F>,
 }
 
 impl ByteLinkHistograms {
@@ -274,6 +276,17 @@ impl Shape {
         })
     }
 
+    fn check_point(self, len: usize) -> Result<(), MetalError> {
+        if len == self.log_n as usize {
+            Ok(())
+        } else {
+            Err(MetalError::ByteLinkPoint {
+                log_rows: self.log_n,
+                len,
+            })
+        }
+    }
+
     const fn n(self) -> usize {
         1 << self.log_n
     }
@@ -292,20 +305,21 @@ impl ByteLinkProver {
         })
     }
 
-    /// The challenge-free key sort of every pack and `W` at the stage-6b cycle point.
+    /// The challenge-free key sort of every pack and `W` at the stage-6b cycle point (canonical
+    /// MSB-first).
     pub fn histograms(
         &mut self,
         source: &ByteLinkSource<'_>,
         cycle_point: &[F],
     ) -> Result<ByteLinkHistograms, MetalError> {
         let shape = Shape::new(source)?;
-        assert_eq!(cycle_point.len(), shape.log_n as usize);
+        shape.check_point(cycle_point.len())?;
         self.gpu.reserve_arena(self.arena_bytes(shape))?;
         let r_t = cycle_point.iter().rev().copied().collect::<Vec<_>>();
         self.gpu.phase("histograms");
         let w = self.histogram_tables(source, shape, &r_t)?;
         self.gpu.end_phase();
-        Ok(ByteLinkHistograms { w })
+        Ok(ByteLinkHistograms { w, r_t })
     }
 
     /// Everything after the `W` commitments and the compression challenges: both fraction trees
@@ -320,13 +334,8 @@ impl ByteLinkProver {
         transcript: &mut impl ByteLinkTranscript,
     ) -> Result<ByteLinkOpenings, MetalError> {
         let shape = Shape::new(source)?;
-        assert_eq!(statement.cycle_point.len(), shape.log_n as usize);
-        let r_t = statement
-            .cycle_point
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<_>>();
+        let r_t = &histograms.r_t;
+        shape.check_point(r_t.len())?;
         let tables = self.gpu.fields(&gkr::compression_tables(compression));
         let w = &histograms.w;
 
@@ -337,8 +346,8 @@ impl ByteLinkProver {
             .flat_map(Trees::roots)
             .collect::<Vec<_>>();
         self.gpu.phase("trace trees");
-        let tail = TailForm::new(&r_t, compression.beta);
-        let trace = self.trace_trees(source, shape, &r_t, &tables, &tail)?;
+        let tail = TailForm::new(r_t, compression.beta);
+        let trace = self.trace_trees(source, shape, r_t, &tables, &tail)?;
         let roots = trace
             .roots()
             .into_iter()
@@ -351,7 +360,7 @@ impl ByteLinkProver {
             source,
             shape,
             tables: &tables,
-            r_t: &r_t,
+            r_t,
         };
         let (z, trace_leaf) = self.gkr(
             transcript,
@@ -377,6 +386,7 @@ impl ByteLinkProver {
             shape,
             statement,
             compression,
+            r_t,
             &z,
             &trace_leaf,
         )?;
@@ -388,9 +398,10 @@ impl ByteLinkProver {
         })
     }
 
-    /// The link's device arena (`None` before [`Self::histograms`]), for stage 8 to allocate from:
-    /// the link has touched its pages, while a released heap leaves the process footprint only
-    /// 130–300 ms later, so freeing it and allocating anew would count both
+    /// The link's device arena (`None` before [`Self::histograms`]), for stage 8 to allocate from
+    /// with `StorageModeShared | HazardTrackingModeTracked`, the heap's modes: the link has touched
+    /// its pages, while a released heap leaves the process footprint only 130–300 ms later, so
+    /// freeing it and allocating anew would count both
     /// (`/private/tmp/pika-scratch/akita-p0/link-mem/notes.md` §7).
     pub fn into_arena(mut self) -> Option<Heap> {
         self.gpu.take_arena()

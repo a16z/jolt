@@ -759,6 +759,8 @@ pub enum MetalError {
     ByteLinkShape { log_rows: u32, active_rows: usize },
     #[error("byte link could not allocate {bytes} bytes from its arena")]
     ByteLinkArena { bytes: u64 },
+    #[error("byte link cycle point has {len} coordinates for 2^{log_rows} rows")]
+    ByteLinkPoint { log_rows: u32, len: usize },
 }
 
 impl MetalError {

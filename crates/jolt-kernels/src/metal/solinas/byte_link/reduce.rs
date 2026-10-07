@@ -436,6 +436,7 @@ impl ByteLinkProver {
         shape: Shape,
         statement: &ByteLinkStatement<'_>,
         compression: &ByteLinkCompression,
+        r_t: &[F],
         leaf_point: &[F],
         leaves: &[(F, F)],
     ) -> Result<ByteLinkOpening, MetalError> {
@@ -473,12 +474,6 @@ impl ByteLinkProver {
             .flat_map(sigma)
             .collect::<Vec<_>>();
         let (g_tables, f_tables) = (self.gpu.fields(&g_tables), self.gpu.fields(&f_tables));
-        let r_t = statement
-            .cycle_point
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<_>>();
         let lo_bits = shape.log_n as usize / 2;
         let eq_tables = [
             &z[..lo_bits],
