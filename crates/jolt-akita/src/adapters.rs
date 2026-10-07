@@ -29,7 +29,9 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
-use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::configs::{
+    JoltDenseBounded, JoltFieldDigits, JoltOneHotK16, JoltOneHotK256, JoltSignedBytes,
+};
 use crate::schedule_registry::PrecommittedScheduleParams;
 use crate::trace_onehot::{ReleasedTracePackedOneHot, TracePackedOneHot};
 
@@ -49,7 +51,7 @@ const _: () = assert!(
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
 
-/// Runtime bytes for Jolt's three base schedule families.
+/// Runtime bytes for Jolt's base schedule families.
 ///
 /// These bytes are ordinary input data. They are intentionally neither
 /// generated Rust nor embedded with `include_bytes!`.
@@ -59,16 +61,26 @@ pub struct AkitaScheduleArtifacts {
     dense: Vec<u8>,
     one_hot_k16: Vec<u8>,
     one_hot_k256: Vec<u8>,
+    signed_bytes: Vec<u8>,
+    field_digits: Vec<u8>,
 }
 
 impl AkitaScheduleArtifacts {
     const DIRECTORY_ENV: &'static str = "JOLT_AKITA_SCHEDULE_DIR";
 
-    pub fn new(dense: Vec<u8>, one_hot_k16: Vec<u8>, one_hot_k256: Vec<u8>) -> Self {
+    pub fn new(
+        dense: Vec<u8>,
+        one_hot_k16: Vec<u8>,
+        one_hot_k256: Vec<u8>,
+        signed_bytes: Vec<u8>,
+        field_digits: Vec<u8>,
+    ) -> Self {
         Self {
             dense,
             one_hot_k16,
             one_hot_k256,
+            signed_bytes,
+            field_digits,
         }
     }
 
@@ -88,6 +100,8 @@ impl AkitaScheduleArtifacts {
             read(JoltDenseBounded::schedule_family_name())?,
             read(JoltOneHotK16::schedule_family_name())?,
             read(JoltOneHotK256::schedule_family_name())?,
+            read(JoltSignedBytes::schedule_family_name())?,
+            read(JoltFieldDigits::schedule_family_name())?,
         ))
     }
 
@@ -115,7 +129,7 @@ impl AkitaScheduleArtifacts {
     /// [`Self::packaged_directory`].
     ///
     /// The handle is what is shared, not the bytes: every call re-reads the
-    /// three `.aks` files, so hosts still load once at preprocessing and pass
+    /// `.aks` files, so hosts still load once at preprocessing and pass
     /// the bundle to each setup. Callers that must compare setup provenance
     /// keep their own handle rather than calling this twice — the packed
     /// prover's advice guards test bundle identity with `Arc::ptr_eq`.
@@ -159,6 +173,16 @@ impl AkitaScheduleArtifacts {
                 "unsupported Akita one-hot K={other}"
             ))),
         }
+    }
+
+    pub fn signed_byte_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
+        TrustedScheduleCatalog::<JoltSignedBytes>::from_artifact_bytes(&self.signed_bytes)
+            .map(|catalog| catalog.catalog().clone())
+    }
+
+    pub fn field_digit_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
+        TrustedScheduleCatalog::<JoltFieldDigits>::from_artifact_bytes(&self.field_digits)
+            .map(|catalog| catalog.catalog().clone())
     }
 }
 

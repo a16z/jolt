@@ -10,15 +10,16 @@ use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    FoldSchedule, PolynomialGroupLayout,
+    FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{
     dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
 };
 use jolt_akita::schedules::emit::{
-    family_specs, keys, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS, K256_PACKING_VARIABLES,
-    ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
+    family_specs, keys, FIELD_DIGIT_GROUPS, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS,
+    K256_PACKING_VARIABLES, ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
+    SIGNED_BYTE_NUM_VARS, SIGNED_BYTE_PINNED_ROOT,
 };
 use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -308,6 +309,66 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
     )
     .expect_err("a declared reachable arity outside the family must fail setup");
     assert!(error.to_string().contains("outside the supported range"));
+}
+
+/// `(positions per block, A dimension, A log basis, A digits, A rank)`.
+fn root_geometry(profile: &GroupCommitPhaseParams) -> (usize, usize, u32, usize, usize) {
+    (
+        profile.blocks.positions_per_block,
+        profile.inner.matrix.ring_dimension(),
+        profile.inner.digits.log_basis,
+        profile.inner.digits.num_digits,
+        profile.inner.matrix.output_rank(),
+    )
+}
+
+fn scalar_profile(
+    catalog: &ValidatedScheduleCatalog,
+    group: PolynomialGroupLayout,
+) -> GroupCommitPhaseParams {
+    catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .expect("scalar row must resolve")
+        .profiles()
+        .final_group
+}
+
+#[test]
+fn signed_byte_rows_commit_one_byte_plane_and_pin_the_t29_root() {
+    let catalog = artifacts()
+        .signed_byte_catalog()
+        .expect("signed-byte catalog");
+    let grid = keys(&[1], SIGNED_BYTE_NUM_VARS);
+    assert_eq!(catalog.len(), grid.len());
+    let (pinned_num_vars, root) = SIGNED_BYTE_PINNED_ROOT;
+    for key in grid {
+        let (positions, ring_dimension, log_basis, digits, rank) =
+            root_geometry(&scalar_profile(&catalog, key));
+        assert_eq!((log_basis, digits), (8, 1), "{key:?}");
+        if key.num_vars() == pinned_num_vars {
+            assert_eq!(
+                (positions, ring_dimension, rank),
+                (root.positions_per_block, root.ring_dimension, 5)
+            );
+        }
+    }
+}
+
+#[test]
+fn field_digit_rows_commit_sixteen_byte_planes() {
+    let catalog = artifacts()
+        .field_digit_catalog()
+        .expect("field-digit catalog");
+    assert_eq!(catalog.len(), FIELD_DIGIT_GROUPS.len());
+    let [triples, ram] = FIELD_DIGIT_GROUPS;
+    assert_eq!(
+        root_geometry(&scalar_profile(&catalog, triples)),
+        (1024, 128, 8, 16, 4)
+    );
+    assert_eq!(
+        root_geometry(&scalar_profile(&catalog, ram)),
+        (32, 128, 8, 16, 3)
+    );
 }
 
 /// Re-run every planner solve and byte-compare canonical artifacts.

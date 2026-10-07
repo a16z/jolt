@@ -4,11 +4,13 @@
 //! as external `.aks` artifacts and are bound to an `AkitaCommitmentScheme`
 //! instance.
 
-use akita_config::proof_optimized::fp128::{DenseBounded, OneHot};
+use akita_config::proof_optimized::fp128::{Dense, DenseBounded, OneHot};
 use akita_config::recursive_commitment::RecursiveScheduleConfig;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_prover::backend::SIGNED_BYTE_LOG_BASIS;
 use akita_schedules::{RingDimensionScheduleMode, ADAPTIVE_SEARCH_LEVELS};
 use akita_types::sis::CommittedSourceClass;
+use akita_types::DecompositionParams;
 
 use crate::AKITA_ONE_HOT_K16;
 
@@ -130,6 +132,101 @@ delegate_preset!(
     "jolt-fp128-dense-bounded",
     <DenseBounded as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE
 );
+
+/// A balanced signed base-2^8 source committed as its own digit planes, so
+/// the root reads the stored bytes: the A basis is pinned to one byte, and
+/// the A domain keeps D64 because the adaptive policy requires its suffix
+/// dimension there.
+macro_rules! byte_digit_preset {
+    (
+        $(#[$doc:meta])*
+        $name:ident,
+        $family_name:literal,
+        $log_commit_bound:expr
+    ) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, Debug, Default)]
+        pub struct $name;
+
+        impl CommitmentConfig for $name {
+            type Field = <Dense as CommitmentConfig>::Field;
+            type ExtField = <Dense as CommitmentConfig>::ExtField;
+            const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
+                RingDimensionScheduleMode::AdaptiveDimension {
+                    num_search_levels: ADAPTIVE_SEARCH_LEVELS,
+                    suffix_dimensions: &[64],
+                    potential_a_dimensions: &[64, 128],
+                    potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
+                    potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
+                };
+
+            fn schedule_family_name() -> &'static str {
+                $family_name
+            }
+
+            fn decomposition() -> DecompositionParams {
+                DecompositionParams {
+                    log_basis: Dense::decomposition().log_basis,
+                    log_commit_bound: $log_commit_bound,
+                    log_open_bound: Some(128),
+                }
+            }
+
+            fn ring_challenge_config(
+                d: usize,
+            ) -> Result<akita_challenges::SparseChallengeConfig, akita_pcs::AkitaError> {
+                Dense::ring_challenge_config(d)
+            }
+
+            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+                Dense::sis_modulus_profile()
+            }
+
+            fn opening_basis_range() -> (u32, u32) {
+                Dense::opening_basis_range()
+            }
+
+            fn inner_basis_range() -> (u32, u32) {
+                (SIGNED_BYTE_LOG_BASIS, SIGNED_BYTE_LOG_BASIS)
+            }
+
+            fn committed_source_class() -> CommittedSourceClass {
+                CommittedSourceClass::BalancedSignedDigit
+            }
+        }
+    };
+}
+
+byte_digit_preset!(
+    /// Direct-planning policy of the signed-byte trace `Q`: one digit per
+    /// coefficient.
+    JoltSignedBytesDirect,
+    "jolt-fp128-signed-bytes-direct-planner",
+    SIGNED_BYTE_LOG_BASIS
+);
+
+byte_digit_preset!(
+    /// Direct-planning policy of full field values committed as sixteen
+    /// signed-byte digit planes.
+    JoltFieldDigitsDirect,
+    "jolt-fp128-field-digits-direct-planner",
+    128
+);
+
+impl RecursiveScheduleConfig for JoltSignedBytesDirect {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-signed-bytes";
+}
+
+impl RecursiveScheduleConfig for JoltFieldDigitsDirect {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-field-digits";
+}
+
+/// Runtime signed-byte trace policy; like the one-hot families, its catalog
+/// holds direct rows below the trace cutover and setup-offloaded rows above.
+pub type JoltSignedBytes = RecursiveCommitmentConfig<JoltSignedBytesDirect>;
+
+/// Runtime policy of the field-digit groups opened beside `Q`.
+pub type JoltFieldDigits = RecursiveCommitmentConfig<JoltFieldDigitsDirect>;
 
 #[cfg(test)]
 mod tests {

@@ -4,7 +4,7 @@ This directory contains Jolt's base Akita schedule catalogs as canonical
 `.aks` files. They are runtime data, not generated Rust modules and not
 embedded into the executable.
 
-Application preprocessing loads the three files once, wraps the resulting
+Application preprocessing loads the five files once, wraps the resulting
 `AkitaScheduleArtifacts` in `Arc`, and passes that immutable bundle explicitly
 to every `AkitaSetupParams` constructor. Production deployments should call
 `AkitaScheduleArtifacts::from_directory` with a versioned, deployment-owned
@@ -41,6 +41,14 @@ Apple M4 Max host:
 `2^20` therefore misses the 2x verifier gate. `2^21` is the first measured
 shape to clear it while keeping total prover time within the 10% budget.
 
+The signed-byte trace family (`akita-byte-link`) commits each coefficient of
+`Q` as one balanced base-2^8 digit and follows the same direct/offloaded
+cutover. Its T29 row pins the root to 2^16 positions at D128; unpinned, the
+setup-first objective picks 2^15 positions and a 27% larger root witness.
+The field-digit family holds the byte link's two histogram groups (six
+24-variable tables, one 17-variable table) as sixteen byte digits each; their
+profiles are fixed at setup and the groups are committed after stage 6b.
+
 Program-specific grouped rows keep the selected trace row's fold geometry,
 opening parameters, relation modes, and direct/offloaded topology. Only the
 advice and committed-program profiles and the sizes they induce are adapted.
@@ -53,4 +61,5 @@ Regenerate all base catalogs from the planner with:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Pass `k16`, `k256`, or `dense` as a final argument to regenerate one family.
+Pass `k16`, `k256`, `dense`, `signed-bytes`, or `field-digits` as a final
+argument to regenerate one family.

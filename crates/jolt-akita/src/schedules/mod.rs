@@ -14,13 +14,14 @@ pub mod emit {
     use akita_config::{policy_of, CommitmentConfig};
     use akita_pcs::AkitaError;
     use akita_planner::emit::GroupedGenerationRequest;
-    use akita_planner::EmitSpec;
+    use akita_planner::{EmitSpec, RootShape};
     use akita_types::{
         AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     };
 
     use crate::configs::{
-        JoltDenseBounded, JoltOneHotK16, JoltOneHotK16Direct, JoltOneHotK256, JoltOneHotK256Direct,
+        JoltDenseBounded, JoltFieldDigits, JoltOneHotK16, JoltOneHotK16Direct, JoltOneHotK256,
+        JoltOneHotK256Direct, JoltSignedBytes, JoltSignedBytesDirect,
     };
     use crate::planning::plan_schedule;
 
@@ -47,12 +48,37 @@ pub mod emit {
     pub const K16_PACKING_VARIABLES: usize = 10;
     /// Physical one-hot arity added to the logical trace exponent for K=256.
     pub const K256_PACKING_VARIABLES: usize = 13;
+    /// Slot variables the signed-byte trace `Q` adds to the logical trace
+    /// exponent.
+    pub const SIGNED_BYTE_PACKING_VARIABLES: usize = 5;
+    /// `Q` arities from the shortest padded Akita trace (`2^12`) through the
+    /// longest K=256 trace (`2^30`).
+    pub const SIGNED_BYTE_NUM_VARS: (usize, usize) = (
+        12 + SIGNED_BYTE_PACKING_VARIABLES,
+        30 + SIGNED_BYTE_PACKING_VARIABLES,
+    );
+    /// The T29 `Q` root: one D128 byte plane over `2^16` positions. Unpinned,
+    /// the setup-first objective picks `2^15` positions, whose root witness is
+    /// 27% larger; smaller traces cannot fill `2^16` positions.
+    pub const SIGNED_BYTE_PINNED_ROOT: (usize, RootShape) = (
+        29 + SIGNED_BYTE_PACKING_VARIABLES,
+        RootShape {
+            positions_per_block: 1 << 16,
+            ring_dimension: 128,
+        },
+    );
+    /// The byte link's histogram groups: six 24-variable triple tables and
+    /// one 17-variable RAM table.
+    pub const FIELD_DIGIT_GROUPS: [PolynomialGroupLayout; 2] = [
+        PolynomialGroupLayout::new(24, 6),
+        PolynomialGroupLayout::new(17, 1),
+    ];
 
     /// Pure DP regeneration for `Cfg`; never consults an artifact.
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
+        plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key), &[], None)
     }
 
     fn regen_one_hot_k16(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
@@ -68,6 +94,21 @@ pub mod emit {
             regen::<JoltOneHotK256>(key)
         } else {
             regen::<JoltOneHotK256Direct>(key)
+        }
+    }
+
+    fn regen_signed_bytes(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+        let (pinned_num_vars, pinned_root) = SIGNED_BYTE_PINNED_ROOT;
+        if key.num_vars() == pinned_num_vars {
+            plan_schedule::<JoltSignedBytes>(
+                &AkitaScheduleLookupKey::single(key),
+                &[],
+                Some(pinned_root),
+            )
+        } else if key.num_vars() >= RECURSIVE_TRACE_LOG_T_CUTOVER + SIGNED_BYTE_PACKING_VARIABLES {
+            regen::<JoltSignedBytes>(key)
+        } else {
+            regen::<JoltSignedBytesDirect>(key)
         }
     }
 
@@ -97,17 +138,15 @@ pub mod emit {
     }
 
     fn spec<Cfg: CommitmentConfig>(
-        family_name: &'static str,
-        num_polys: &[usize],
-        num_vars: (usize, usize),
+        keys: Vec<PolynomialGroupLayout>,
         regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
         output_dir: PathBuf,
     ) -> Result<EmitSpec, AkitaError> {
         Ok(EmitSpec {
-            family_name,
+            family_name: Cfg::schedule_family_name(),
             policy: policy_of::<Cfg>(),
             source_contract: Cfg::committed_source_contract()?,
-            keys: keys(num_polys, num_vars),
+            keys,
             grouped_requests: Vec::new(),
             preplanned_scalar: Vec::new(),
             output_dir,
@@ -121,27 +160,31 @@ pub mod emit {
     ///
     /// Instance-specific grouped advice/program rows are planned during setup
     /// and folded into the exact catalog serialized with that verifier setup.
-    pub fn family_specs(output_dir: PathBuf) -> Result<[EmitSpec; 3], AkitaError> {
+    pub fn family_specs(output_dir: PathBuf) -> Result<[EmitSpec; 5], AkitaError> {
         Ok([
             spec::<JoltOneHotK16>(
-                JoltOneHotK16::schedule_family_name(),
-                ONE_HOT_TRACE_NUM_POLYS,
-                K16_NUM_VARS,
+                keys(ONE_HOT_TRACE_NUM_POLYS, K16_NUM_VARS),
                 regen_one_hot_k16,
                 output_dir.clone(),
             )?,
             spec::<JoltOneHotK256>(
-                JoltOneHotK256::schedule_family_name(),
-                ONE_HOT_TRACE_NUM_POLYS,
-                K256_NUM_VARS,
+                keys(ONE_HOT_TRACE_NUM_POLYS, K256_NUM_VARS),
                 regen_one_hot_k256,
                 output_dir.clone(),
             )?,
             spec::<JoltDenseBounded>(
-                JoltDenseBounded::schedule_family_name(),
-                ONE_HOT_TRACE_NUM_POLYS,
-                DENSE_NUM_VARS,
+                keys(ONE_HOT_TRACE_NUM_POLYS, DENSE_NUM_VARS),
                 regen::<JoltDenseBounded>,
+                output_dir.clone(),
+            )?,
+            spec::<JoltSignedBytes>(
+                keys(&[1], SIGNED_BYTE_NUM_VARS),
+                regen_signed_bytes,
+                output_dir.clone(),
+            )?,
+            spec::<JoltFieldDigits>(
+                FIELD_DIGIT_GROUPS.to_vec(),
+                regen::<JoltFieldDigits>,
                 output_dir,
             )?,
         ])

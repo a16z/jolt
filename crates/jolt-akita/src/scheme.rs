@@ -1598,6 +1598,16 @@ mod tests {
                 .unwrap()
                 .to_artifact_bytes()
                 .unwrap(),
+            artifacts
+                .signed_byte_catalog()
+                .unwrap()
+                .to_artifact_bytes()
+                .unwrap(),
+            artifacts
+                .field_digit_catalog()
+                .unwrap()
+                .to_artifact_bytes()
+                .unwrap(),
         ));
         let (_, alternate_verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
             14,
