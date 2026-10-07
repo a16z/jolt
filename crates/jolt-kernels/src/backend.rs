@@ -244,8 +244,6 @@ fn visit_carry<T: Any + Allocative>(value: &(dyn Any + Send), visitor: &mut Visi
     }
 }
 
-/// Bytes a `Vec` reserved, by `capacity()`, for the Metal kernels' hand-sized
-/// visits.
 #[cfg(all(feature = "allocative", feature = "metal"))]
 pub(crate) fn vec_heap_bytes<T>(values: &Vec<T>) -> usize {
     values.capacity() * size_of::<T>()
@@ -264,7 +262,9 @@ pub(crate) fn gruen_heap_bytes<F: JoltField>(gruen: &GruenSplitEqPolynomial<F>) 
 /// Visits a raw allocation of `bytes` that its owner frees by hand.
 #[cfg(all(feature = "allocative", feature = "metal"))]
 pub(crate) fn visit_raw_allocation(bytes: &usize, visitor: &mut Visitor<'_>) {
-    visitor.visit_simple(Key::new("allocation"), *bytes);
+    let mut allocation = visitor.enter_unique(Key::new("allocation"), 0);
+    allocation.visit_simple(Key::new("bytes"), *bytes);
+    allocation.exit();
 }
 
 /// Bytes an element table reserved, for element types that own no heap but
