@@ -6,7 +6,7 @@ use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use crate::prove::{INNER_SUMCHECK_DEGREE, OUTER_SUMCHECK_DEGREE};
-use crate::wire::{receive_opening, FoldingCommitments};
+use crate::wire::{receive_opening, FoldedEvaluations, FoldingCommitments, OuterClaims};
 use crate::{
     BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError, WitnessCoordinate,
 };
@@ -99,12 +99,10 @@ where
         let outer = SumcheckVerifier::verify_compressed(&claim, transcript)
             .map_err(|source| VerificationError::OuterSumcheck { source })?;
 
-        let [az_rx, bz_rx, cz_rx]: [F; 3] = [
-            transcript.receive()?,
-            transcript.receive()?,
-            transcript.receive()?,
-        ];
-        let error_opening = receive_opening(error_row_len, transcript)?;
+        let OuterClaims {
+            abc: [az_rx, bz_rx, cz_rx],
+            error_opening,
+        } = OuterClaims::receive(error_row_len, transcript)?;
 
         let (row_point, entry_point) = outer.point.split_at(row_vars);
         let e_rx = VC::verify_committed_rows(
@@ -143,8 +141,10 @@ where
         H: Sponge,
     {
         let eval_count = folded.eval_commitments.len();
-        let folded_eval_outputs: Vec<F> = transcript.receive_n(eval_count)?;
-        let folded_eval_blindings: Vec<F> = transcript.receive_n(eval_count)?;
+        let FoldedEvaluations {
+            outputs: folded_eval_outputs,
+            blindings: folded_eval_blindings,
+        } = FoldedEvaluations::receive(eval_count, transcript)?;
         for (index, ((commitment, &output), &blinding)) in folded
             .eval_commitments
             .iter()
@@ -571,11 +571,9 @@ mod tests {
     /// compressed coefficients (every coefficient but the linear one).
     struct Messages {
         folding: FoldingCommitments<Fr, Bn254G1>,
-        folded_eval_outputs: Vec<Fr>,
-        folded_eval_blindings: Vec<Fr>,
+        folded: FoldedEvaluations<Fr>,
         outer_rounds: Vec<Vec<Fr>>,
-        abc: [Fr; 3],
-        error_opening: VectorCommitmentOpening<Fr>,
+        outer: OuterClaims<Fr>,
         inner_rounds: Vec<Vec<Fr>>,
         witness_opening: VectorCommitmentOpening<Fr>,
     }
@@ -595,11 +593,15 @@ mod tests {
                     random_evals: vec![commit_value(setup, f(11), f(110)); eval_count],
                     cross_term_error_rows: vec![identity(); dimensions.error.row_count],
                 },
-                folded_eval_outputs: vec![f(0); eval_count],
-                folded_eval_blindings: vec![f(0); eval_count],
+                folded: FoldedEvaluations {
+                    outputs: vec![f(0); eval_count],
+                    blindings: vec![f(0); eval_count],
+                },
                 outer_rounds: vec![vec![f(0); OUTER_SUMCHECK_DEGREE]; num_vars(dimensions.error)],
-                abc: [f(0); 3],
-                error_opening: opening(dimensions.error.row_len),
+                outer: OuterClaims {
+                    abc: [f(0); 3],
+                    error_opening: opening(dimensions.error.row_len),
+                },
                 inner_rounds: vec![vec![f(0); INNER_SUMCHECK_DEGREE]; num_vars(dimensions.witness)],
                 witness_opening: opening(dimensions.witness.row_len),
             }
@@ -617,21 +619,19 @@ mod tests {
 
         fn with_valid_eval_opening(mut self) -> Self {
             let folding_challenge = self.folding_challenge();
-            self.folded_eval_outputs = vec![f(7) + folding_challenge * f(11)];
-            self.folded_eval_blindings = vec![f(70) + folding_challenge * f(110)];
+            self.folded.outputs = vec![f(7) + folding_challenge * f(11)];
+            self.folded.blindings = vec![f(70) + folding_challenge * f(110)];
             self
         }
 
         fn narg(&self) -> Vec<u8> {
             let mut transcript = Self::transcript();
             self.folding.send(&mut transcript);
-            transcript.send_all(&self.folded_eval_outputs);
-            transcript.send_all(&self.folded_eval_blindings);
+            self.folded.send(&mut transcript);
             for round in &self.outer_rounds {
                 transcript.send_all(round);
             }
-            transcript.send_all(&self.abc);
-            send_opening(&self.error_opening, &mut transcript);
+            self.outer.send(&mut transcript);
             for round in &self.inner_rounds {
                 transcript.send_all(round);
             }
@@ -714,7 +714,7 @@ mod tests {
         let setup = setup();
         let protocol = protocol_with_eval(&setup);
         let mut messages = Messages::zero(&setup, &protocol).with_valid_eval_opening();
-        messages.folded_eval_outputs[0] += f(1);
+        messages.folded.outputs[0] += f(1);
 
         let error = verify(&protocol, &setup, &messages.narg())
             .expect_err("folded eval commitment opening is wrong");
@@ -730,7 +730,7 @@ mod tests {
         let setup = setup();
         let protocol = outer_round_protocol();
         let mut messages = Messages::zero(&setup, &protocol);
-        messages.error_opening.combined_blinding = f(1);
+        messages.outer.error_opening.combined_blinding = f(1);
 
         let error = verify(&protocol, &setup, &messages.narg())
             .expect_err("error opening is not binding to folded rows");
@@ -746,7 +746,7 @@ mod tests {
         let setup = setup();
         let protocol = outer_round_protocol();
         let mut messages = Messages::zero(&setup, &protocol);
-        messages.abc = [f(1), f(1), f(0)];
+        messages.outer.abc = [f(1), f(1), f(0)];
 
         let error = verify(&protocol, &setup, &messages.narg())
             .expect_err("outer final claim does not match opened error row");

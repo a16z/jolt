@@ -1,4 +1,6 @@
-//! BlindFold's prover messages and their order in the transcript.
+//! BlindFold's prover messages and their order in the transcript. The prover,
+//! the verifier, and the tests all send and read them through these types;
+//! only the sumcheck rounds between them belong to `jolt-sumcheck`.
 //!
 //! Every count below is fixed by [`BlindFoldDimensions`] and the protocol's
 //! final-opening layout, so no length travels with a message. The committed
@@ -73,4 +75,56 @@ pub(crate) fn receive_opening<F: JoltField, H: Sponge>(
         combined_vector: transcript.receive_n(row_len)?,
         combined_blinding: transcript.receive()?,
     })
+}
+
+/// The folded evaluation outputs and their blindings, sent after the folding
+/// challenge: one of each per final-opening evaluation commitment.
+pub(crate) struct FoldedEvaluations<F> {
+    pub(crate) outputs: Vec<F>,
+    pub(crate) blindings: Vec<F>,
+}
+
+impl<F: JoltField> FoldedEvaluations<F> {
+    pub(crate) fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
+        transcript.send_all(&self.outputs);
+        transcript.send_all(&self.blindings);
+    }
+
+    pub(crate) fn receive<H: Sponge>(
+        eval_count: usize,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Self, TranscriptError> {
+        Ok(Self {
+            outputs: transcript.receive_n(eval_count)?,
+            blindings: transcript.receive_n(eval_count)?,
+        })
+    }
+}
+
+/// The outer folded-R1CS sumcheck's terminal claims: `Az`, `Bz`, and `Cz` at
+/// the outer point, then the opening of the folded error rows there.
+pub(crate) struct OuterClaims<F> {
+    pub(crate) abc: [F; 3],
+    pub(crate) error_opening: VectorCommitmentOpening<F>,
+}
+
+impl<F: JoltField> OuterClaims<F> {
+    pub(crate) fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
+        transcript.send_all(&self.abc);
+        send_opening(&self.error_opening, transcript);
+    }
+
+    pub(crate) fn receive<H: Sponge>(
+        error_row_len: usize,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Self, TranscriptError> {
+        Ok(Self {
+            abc: [
+                transcript.receive()?,
+                transcript.receive()?,
+                transcript.receive()?,
+            ],
+            error_opening: receive_opening(error_row_len, transcript)?,
+        })
+    }
 }

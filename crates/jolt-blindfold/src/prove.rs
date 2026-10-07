@@ -7,7 +7,7 @@ use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
-use crate::wire::{send_opening, FoldingCommitments};
+use crate::wire::{send_opening, FoldedEvaluations, FoldingCommitments, OuterClaims};
 use crate::{BlindFoldProtocol, ProverError, WitnessCoordinate};
 
 pub(crate) const OUTER_SUMCHECK_DEGREE: usize = 3;
@@ -456,11 +456,19 @@ where
         "folded eval blindings",
     )?;
 
-    transcript.send_all(&folded_eval_outputs);
-    transcript.send_all(&folded_eval_blindings);
+    let folded_evaluations = FoldedEvaluations {
+        outputs: folded_eval_outputs,
+        blindings: folded_eval_blindings,
+    };
+    folded_evaluations.send(transcript);
     for (index, (coordinates, (&folded_output, &folded_blinding))) in final_coordinates
         .iter()
-        .zip(folded_eval_outputs.iter().zip(&folded_eval_blindings))
+        .zip(
+            folded_evaluations
+                .outputs
+                .iter()
+                .zip(&folded_evaluations.blindings),
+        )
         .enumerate()
     {
         if let Some(coordinate) = coordinates.evaluation {
@@ -539,8 +547,11 @@ where
         "folded error row opening",
     )?;
 
-    transcript.send_all(&[az_rx, bz_rx, cz_rx]);
-    send_opening(&error_opening, transcript);
+    OuterClaims {
+        abc: [az_rx, bz_rx, cz_rx],
+        error_opening,
+    }
+    .send(transcript);
 
     let ra: F = transcript.challenge_small();
     let rb: F = transcript.challenge_small();

@@ -5,9 +5,9 @@ jolt-blindfold::prove.rs::prove_inner_sumcheck::challenge_small#1
 jolt-blindfold::prove.rs::prove_outer_sumcheck::challenge_small#1
 jolt-blindfold::prove.rs::prove_with_row_committer::challenge_small#1
 jolt-blindfold::prove.rs::prove_with_row_committer::challenge_small#10
-jolt-blindfold::prove.rs::prove_with_row_committer::challenge_small#11
-jolt-blindfold::prove.rs::prove_with_row_committer::challenge_small#12
-jolt-blindfold::prove.rs::prove_with_row_committer::challenges_small#6
+jolt-blindfold::prove.rs::prove_with_row_committer::challenge_small#8
+jolt-blindfold::prove.rs::prove_with_row_committer::challenge_small#9
+jolt-blindfold::prove.rs::prove_with_row_committer::challenges_small#5
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::folded_instance::challenge_small#1
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge_small#0
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge_small#1
