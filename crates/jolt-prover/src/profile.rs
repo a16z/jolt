@@ -665,7 +665,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         sizing_trace.len().next_power_of_two() <= max_trace_length,
         "Trace is longer than expected"
     );
-    drop(sizing_trace);
+    jolt_kernels::mem::drop_in_background_thread(sizing_trace);
     let memory_layout = io_device.memory_layout.clone();
     let jolt_program = Arc::new(program.build_jolt_program().expect("build Jolt program"));
     let program_preprocessing = JoltProgramPreprocessing::new(

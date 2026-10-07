@@ -407,7 +407,7 @@ impl<F: JoltField> CycleState<F> {
                     r1,
                     r,
                 );
-                drop(entries);
+                crate::mem::drop_in_background_thread(entries);
                 ra_lut.bind(r);
                 wa_lut.bind(r);
                 (

@@ -29,9 +29,9 @@
 //!   eq table.
 //! - **Shared witness rows**: re-emulating sources keep a strong
 //!   `SharedInstructionRows` carry in the [`ProofSession`]; slice-backed
-//!   sources keep only `SharedInstructionRowsWeak`, sharing inside one stage
-//!   and rebuilding index-parallel later so `40 B × T` rows do not survive
-//!   through the prover's peak window.
+//!   sources keep only `SharedInstructionRowsWeak` and rebuild index-parallel
+//!   once the last owner drops. Queued destruction can extend sharing across
+//!   stages.
 
 #[cfg(feature = "parallel")]
 use std::mem::MaybeUninit;
@@ -261,10 +261,8 @@ impl InstructionCycleRow {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
 
-/// The slice-backed counterpart of [`SharedInstructionRows`]: a weak handle,
-/// so same-stage co-consumers share one collection but the 40 B × T rows
-/// never outlive their stage — later stages re-derive them index-parallel
-/// instead of carrying them across the prover's peak window.
+/// Weak cache for slice-backed rows; it does not keep a collection alive.
+/// A queued kernel drop can retain the last strong reference across stages.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
 
@@ -284,9 +282,6 @@ impl InstructionCycleRow {
             _ => None,
         };
         if witness.random_access().is_some() {
-            // Slice-backed: consumers share within a stage through a weak
-            // handle; once the stage's kernels drop, the rows free, and later
-            // stages re-derive them index-parallel.
             let upgraded = || {
                 session
                     .state::<SharedInstructionRowsWeak>()

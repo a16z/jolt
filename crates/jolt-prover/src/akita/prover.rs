@@ -191,6 +191,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage8", log_t, &session, &());
+    jolt_kernels::mem::drop_in_background_thread(session);
 
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
