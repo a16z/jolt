@@ -23,7 +23,7 @@ use metal::{
         runtime::{Class, Object, Sel},
         Message,
     },
-    Buffer,
+    Buffer, DeviceRef,
 };
 
 /// Pending residency requests for one producer's allocations. Dropping it waits
@@ -63,29 +63,34 @@ fn prefetch_after(
     ResidencyPrefetch(helper)
 }
 
-fn request_residency(buffer: &Buffer) {
-    let Some(descriptor_class) = Class::get("MTLResidencySetDescriptor") else {
-        return;
-    };
-    // SAFETY: MTLResidencySet(Descriptor)/MTLDevice selectors with the declared
-    // argument and return types; `new` and `newResidencySetWithDescriptor:error:`
-    // return +1 objects released below. The set never leaves this thread.
+/// A +1 MTLResidencySet of `device`, or `None` before macOS 15.
+pub(super) fn new_residency_set(device: &DeviceRef) -> Option<*mut Object> {
+    let descriptor_class = Class::get("MTLResidencySetDescriptor")?;
+    // SAFETY: MTLResidencySetDescriptor `new` and MTLDevice
+    // `newResidencySetWithDescriptor:error:` with their declared argument and
+    // return types; the +1 descriptor is released here, the +1 set by the caller.
     unsafe {
-        let Ok(descriptor) =
-            descriptor_class.send_message::<_, *mut Object>(Sel::register("new"), ())
-        else {
-            return;
-        };
+        let descriptor = descriptor_class
+            .send_message::<_, *mut Object>(Sel::register("new"), ())
+            .ok()?;
         let mut error: *mut Object = ptr::null_mut();
-        let set = buffer.device().send_message::<_, *mut Object>(
+        let set = device.send_message::<_, *mut Object>(
             Sel::register("newResidencySetWithDescriptor:error:"),
             (descriptor, &raw mut error),
         );
         let _ = (*descriptor).send_message::<_, ()>(Sel::register("release"), ());
-        let Ok(set) = set else { return };
-        if set.is_null() {
-            return;
-        }
+        set.ok().filter(|set| !set.is_null())
+    }
+}
+
+fn request_residency(buffer: &Buffer) {
+    let Some(set) = new_residency_set(buffer.device()) else {
+        return;
+    };
+    // SAFETY: MTLResidencySet selectors with the declared argument and return
+    // types on the +1 set from new_residency_set, released below. The set never
+    // leaves this thread.
+    unsafe {
         let allocation = buffer.as_ptr().cast::<Object>();
         let _ = (*set).send_message::<_, ()>(Sel::register("addAllocation:"), (allocation,));
         let _ = (*set).send_message::<_, ()>(Sel::register("commit"), ());

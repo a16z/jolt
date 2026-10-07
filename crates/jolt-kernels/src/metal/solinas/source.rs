@@ -1,6 +1,10 @@
+#[cfg(feature = "akita-byte-link")]
+use super::byte_link::SOURCE as BYTE_LINK_SOURCE;
+use super::AKITA_OFFSET_FFFFA7F7;
+
 const FIELD_SOURCE: &str = include_str!("fp128.metal");
 const SIMD_REDUCE_SOURCE: &str = include_str!("simd_reduce.metal");
-const BYTECODE_READ_RAF_OFFSET: u32 = super::AKITA_OFFSET_FFFFA7F7;
+const BYTECODE_READ_RAF_OFFSET: u32 = AKITA_OFFSET_FFFFA7F7;
 const BYTECODE_READ_RAF_ADDRESS_SOURCE: &str = super::bytecode_read_raf_address::SOURCE;
 const REGISTERS_CLAIM_REDUCTION_SOURCE: &str = super::registers_claim_reduction::SOURCE;
 const DEFERRED_SUM_SOURCE: &str = include_str!("deferred_sum.metal");
@@ -116,6 +120,8 @@ const LIBRARY_SOURCE_FRAGMENTS: &[SourceFragment] = &[
     SourceFragment::new("spartan_shift", SPARTAN_SHIFT_SOURCE),
     SourceFragment::new("instruction_input", INSTRUCTION_INPUT_SOURCE),
     SourceFragment::new("address_cycle", ADDRESS_CYCLE_SOURCE),
+    #[cfg(feature = "akita-byte-link")]
+    SourceFragment::for_offset("byte_link", BYTE_LINK_SOURCE, AKITA_OFFSET_FFFFA7F7),
     SourceFragment::new("outer_remainder", OUTER_REMAINDER_SOURCE),
 ];
 
@@ -140,7 +146,6 @@ fn assemble_library_source(offset: u32, source_fragments: &[SourceFragment]) -> 
 #[expect(clippy::unwrap_used, reason = "production manifest test fixture")]
 mod tests {
     use super::*;
-    use crate::metal::solinas::AKITA_OFFSET_FFFFA7F7;
 
     fn manifest_fragment_ids(field: &str) -> Vec<String> {
         let manifest: serde_json::Value =
@@ -208,7 +213,11 @@ mod tests {
             .map(|fragment| fragment.id.to_owned())
             .collect::<Vec<_>>();
 
-        assert_eq!(manifest_fragment_ids("metal_source_fragments"), fragments);
+        let mut expected = manifest_fragment_ids("metal_source_fragments");
+        if cfg!(feature = "akita-byte-link") {
+            expected.insert(expected.len() - 1, "byte_link".to_owned());
+        }
+        assert_eq!(expected, fragments);
         assert_eq!(
             manifest_fragment_ids("cpu_delegated_slots"),
             ["ram_output_check"]
