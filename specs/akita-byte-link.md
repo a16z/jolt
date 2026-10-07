@@ -33,7 +33,7 @@ is a binary fraction tree with root `(P, B)`; per pack: `B_T ≠ 0`, `B_H ≠ 0`
    Per layer: absorb `(batch, layer, point, claims)`, draw independent `[λ_P, λ_B]` per tree,
    degree-3 sumcheck over the layer's index bits (round polynomials absorbed before each
    challenge, linear coefficient recovered), absorb `[P₀,B₀,P₁,B₁]` per tree, check the gate
-   `eq · Σ λ_P(P₀B₁+P₁B₀) + λ_B B₀B₁`, draw `µ`, interpolate. Zero-round top layers still check
+   `eq · Σ_j [λ_{P,j}(P₀B₁+P₁B₀) + λ_{B,j}B₀B₁]`, draw `µ`, interpolate. Zero-round top layers still check
    the gate. Points cross the module boundary MSB-first: child point `(reverse(s), µ)`.
 6. Leaves: trace numerator must equal `eq(r, z)`; table denominator is recomputed from the
    signed-byte affine MLE at `y`.
@@ -59,8 +59,8 @@ is a binary fraction tree with root `(P, B)`; per pack: `B_T ≠ 0`, `B_H ≠ 0`
 | `W` finals (6 + 1) and `Q` finals (32) | 39 |
 | **Total**: 4,117 × 16 B | **65,872 B** |
 
-Plus two 128 B commitment payloads (166 B serialized each, T-independent): **66,128 B**, before
-`Vec` framing and the S8 PCS delta of the two `W` groups. Measured at T = 2¹²: 41,839 B = 2,587
+Plus two 128 B commitment payloads (166 B each under bincode standard, T-independent): **66,128 B**, before
+`Vec` framing and the S8 PCS delta of the two `W` groups. Measured at T = 2¹² (bincode): 41,839 B = 2,587
 elements + two commitments + 115 B framing, matching the same count.
 
 ## Soundness
