@@ -12,13 +12,12 @@
 //! per-call records. Exact challenges rejection-sample a data-dependent number
 //! of bytes, so only the byte stream is invariant under replay.
 //!
-//! Each sponge value carries its own stream position, so a clone continues the
-//! stream from where it was forked, exactly as a clone of a real sponge would.
-//! While recording, a fork that squeezes over an already recorded position
-//! must reproduce the recorded bytes, so verifier scouts that run ahead on a
-//! transcript clone stay consistent with the live transcript. A fork that
-//! squeezes different bytes (one that absorbed different data, such as a
-//! proof-of-work preview) panics: its challenges have no single frozen value.
+//! Seeded forks ([`jolt_transcript::Fork`]) are not taped. A fork's output is
+//! a function of its seed, squeezed from the taped transcript, and its
+//! counter, a proof message, so freezing the transcript already freezes every
+//! fork. A sponge is a fork when its first absorb is the fork domain tag; it
+//! then runs plain Blake2b on any thread, inside a session or not (Akita
+//! searches fold responses on worker threads).
 
 #![expect(
     clippy::expect_used,
@@ -53,26 +52,29 @@ thread_local! {
     static ACTIVE: RefCell<Option<Arc<Mutex<Tape>>>> = const { RefCell::new(None) };
 }
 
+/// The first absorb of every [`jolt_transcript::Fork`].
+const FORK_TAG: &[u8] = b"jolt-transcript/fork/v1";
+
 /// [`Blake2b512`] with a recorded or replayed squeeze stream.
 ///
 /// [`Default`] binds the new sponge to the session active on the calling
-/// thread and panics outside one; clones share that session.
+/// thread, if any. A transcript sponge must have one; a fork drops it on its
+/// first absorb.
 #[derive(Clone)]
 pub struct AuditSponge {
     inner: Blake2b512,
     position: usize,
-    tape: Arc<Mutex<Tape>>,
+    tape: Option<Arc<Mutex<Tape>>>,
+    absorbed: bool,
 }
 
 impl Default for AuditSponge {
     fn default() -> Self {
-        let tape = ACTIVE
-            .with(|active| active.borrow().clone())
-            .expect("AuditSponge constructed outside a record or replay session");
         Self {
             inner: Blake2b512::default(),
             position: 0,
-            tape,
+            tape: ACTIVE.with(|active| active.borrow().clone()),
+            absorbed: false,
         }
     }
 }
@@ -81,30 +83,38 @@ impl DuplexSpongeInterface for AuditSponge {
     type U = u8;
 
     fn absorb(&mut self, input: &[u8]) -> &mut Self {
+        if !self.absorbed {
+            self.absorbed = true;
+            if input == FORK_TAG {
+                self.tape = None;
+            } else {
+                assert!(
+                    self.tape.is_some(),
+                    "AuditSponge transcript constructed outside a record or replay session"
+                );
+            }
+        }
         let _ = self.inner.absorb(input);
         self
     }
 
     fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
+        let Some(tape) = &self.tape else {
+            let _ = self.inner.squeeze(output);
+            return self;
+        };
         let start = self.position;
         let end = start + output.len();
-        let mut tape = self.tape.lock().expect("audit tape lock poisoned");
+        let mut tape = tape.lock().expect("audit tape lock poisoned");
         match tape.mode {
             Mode::Record => {
                 let _ = self.inner.squeeze(output);
-                assert!(
-                    start <= tape.bytes.len(),
-                    "audit sponge skipped tape bytes {}..{start}",
-                    tape.bytes.len()
-                );
-                let recorded_end = end.min(tape.bytes.len());
-                let (overlap, fresh) = output.split_at(recorded_end - start);
                 assert_eq!(
-                    &tape.bytes[start..recorded_end],
-                    overlap,
-                    "forked audit sponges squeezed different bytes at tape offset {start}"
+                    start,
+                    tape.bytes.len(),
+                    "a second transcript sponge squeezed into one session's tape"
                 );
-                tape.bytes.extend_from_slice(fresh);
+                tape.bytes.extend_from_slice(output);
             }
             Mode::Replay => {
                 let recorded = tape.bytes.get(start..end).unwrap_or_else(|| {

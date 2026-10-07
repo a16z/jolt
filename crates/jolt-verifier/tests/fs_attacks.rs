@@ -58,8 +58,8 @@ fn assert_binding_load_bearing(
 }
 
 mod audit_sponge {
-    use jolt_transcript::Blake2b512;
     use jolt_transcript::DuplexSpongeInterface;
+    use jolt_transcript::{Blake2b512, Fork, FORK_SEED_LEN};
 
     use super::fs_transcript::{record, replay, AuditSponge};
 
@@ -86,48 +86,30 @@ mod audit_sponge {
         assert_eq!(tape.bytes, expected);
     }
 
-    /// A clone continues the stream from its fork point in both modes, so a
-    /// scout that squeezes ahead on a transcript clone neither duplicates nor
-    /// shifts the live transcript's tape, and replay answers both from the
-    /// same offsets regardless of chunking or absorbed data.
+    /// Forks are untaped: their squeezes match plain Blake2b forks in and out
+    /// of a session, on any thread, and leave the session's tape untouched.
     #[test]
-    fn clones_share_one_stream() {
-        let (scouted, tape) = record(|| {
-            let mut live = AuditSponge::default();
-            let _ = live.absorb(b"statement");
-            let mut scout = live.clone();
-            let scouted: [u8; 32] = squeeze(&mut scout);
-            let first: [u8; 16] = squeeze(&mut live);
-            let second: [u8; 16] = squeeze(&mut live);
-            assert_eq!([first, second].concat(), scouted);
-            scouted
+    #[expect(clippy::expect_used, reason = "a panicking fork thread fails the test")]
+    fn forks_pass_through_untaped() {
+        let seed = [7u8; FORK_SEED_LEN];
+        let expected: [u8; 32] = Fork::<Blake2b512>::new(&seed, 3).squeeze();
+        let (squeezed, tape) = record(|| {
+            let on_session_thread: [u8; 32] = Fork::<AuditSponge>::new(&seed, 3).squeeze();
+            let on_worker_thread: [u8; 32] =
+                std::thread::spawn(move || Fork::<AuditSponge>::new(&seed, 3).squeeze())
+                    .join()
+                    .expect("fork thread");
+            assert_eq!(on_worker_thread, on_session_thread);
+            on_session_thread
         });
-        assert_eq!(tape.bytes, scouted);
-
-        let replayed = replay(&tape, || {
-            let mut live = AuditSponge::default();
-            let _ = live.absorb(b"different statement");
-            let mut scout = live.clone();
-            let head: [u8; 8] = squeeze(&mut live);
-            let scouted: [u8; 32] = squeeze(&mut scout);
-            let tail: [u8; 24] = squeeze(&mut live);
-            assert_eq!([head.as_slice(), tail.as_slice()].concat(), scouted);
-            scouted
-        });
-        assert_eq!(replayed.output, scouted);
-        assert_eq!(replayed.consumed, replayed.recorded);
+        assert_eq!(squeezed, expected);
+        assert!(tape.bytes.is_empty());
     }
 
     #[test]
-    #[should_panic(expected = "forked audit sponges squeezed different bytes")]
-    fn diverging_fork_panics_while_recording() {
-        let _ = record(|| {
-            let mut live = AuditSponge::default();
-            let mut preview = live.clone();
-            let _ = preview.absorb(b"candidate nonce");
-            let _: [u8; 16] = squeeze(&mut preview);
-            let _: [u8; 16] = squeeze(&mut live);
-        });
+    #[should_panic(expected = "outside a record or replay session")]
+    fn transcript_sponge_needs_a_session() {
+        let _ = AuditSponge::default().absorb(b"statement");
     }
 
     #[test]
