@@ -1,6 +1,7 @@
 use akita_pcs::{AkitaError, ComputeBackendSetup, CpuBackend};
-use akita_prover::{GroupContext, RootPolyMeta};
-use akita_types::PrecommittedGroupProfiles;
+use akita_prover::{GroupContext, RootPolyMeta, SignedBytePoly};
+use akita_schedules::ValidatedScheduleCatalog;
+use akita_types::{PolynomialGroupLayout, PrecommittedGroupProfiles};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
@@ -17,15 +18,17 @@ use std::{collections::HashMap, sync::Mutex};
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
-    invalid_batch, invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
+    domain_size, invalid_batch, invalid_setup, one_hot_polynomial, one_hot_trace_family,
+    owned_one_hot_polynomial, serialize_akita, trace_setup_prover, trace_setup_verifier,
     transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackendCommitment,
     AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
     AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor,
     AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
+    FieldDigitBackend, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+use crate::schedule_registry::{PrecommittedScheduleParams, TraceFamily};
 use crate::schedules::emit::K256_PACKING_VARIABLES;
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
@@ -36,6 +39,16 @@ fn split_commit_output(
     output: akita_prover::CommitOutput<AkitaField>,
 ) -> (AkitaBackendCommitment, AkitaBackendHint) {
     (output.committed_group, output.hint)
+}
+
+fn power_of_two_num_vars(len: usize) -> Result<usize, OpeningsError> {
+    let num_vars = len.trailing_zeros() as usize;
+    if domain_size(num_vars) != Some(len) {
+        return Err(invalid_batch(format!(
+            "Akita polynomial has {len} evaluations, not a power of two"
+        )));
+    }
+    Ok(num_vars)
 }
 
 #[derive(Clone, Default)]
@@ -430,12 +443,105 @@ impl AkitaScheme {
         Ok((commitment, hint))
     }
 
+    /// Commits the signed-byte trace `Q`: `bytes` in Jolt index order (it
+    /// opens at the reversed point), against the profiles of every group its
+    /// opening batches: the advice hints' groups, then the setup's field-digit
+    /// groups.
+    pub fn commit_signed_byte_trace(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        bytes: Vec<i8>,
+        precommitted_hints: &[&AkitaProverHint],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let num_vars = power_of_two_num_vars(bytes.len())?;
+        Self::validate_commit_shape(setup, num_vars, 1)?;
+        let profiles = Self::precommitted_profiles(setup, precommitted_hints)?;
+        let source = SignedBytePoly::new(num_vars, bytes).map_err(commit_failed)?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.trace_backend()?;
+        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+            setup
+                .verifier
+                .signed_byte_scheme()
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
+                .commit(
+                    backend_prover_setup,
+                    std::slice::from_ref(&source),
+                    &stack,
+                    GroupContext::scheduler_with_precommitted_groups(&profiles),
+                )
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::SignedBytes(vec![source].into()),
+        )
+    }
+
+    /// Commits one field-digit group the setup provisioned: `tables` are its
+    /// polynomials' values in Jolt index order (they open at the reversed
+    /// point), decomposed into the profile's byte digits.
+    pub fn commit_field_digit_group(
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        tables: &[Vec<AkitaField>],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let first = tables
+            .first()
+            .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
+        let num_vars = power_of_two_num_vars(first.len())?;
+        let FieldDigitBackend {
+            scheme,
+            prover_setup,
+            prepared,
+            profiles,
+        } = setup.field_digit_backend()?;
+        let group = PolynomialGroupLayout::new(num_vars, tables.len());
+        let profile = profiles
+            .iter()
+            .find(|profile| profile.group == group)
+            .ok_or_else(|| {
+                invalid_batch(format!(
+                    "Akita setup provisions no field-digit group of {} {num_vars}-variable polynomials",
+                    tables.len()
+                ))
+            })?;
+        let ring_dimension = profile.inner.matrix.ring_dimension();
+        let sources = tables
+            .iter()
+            .map(|table| SignedBytePoly::balanced_digits(num_vars, table, ring_dimension))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(commit_failed)?;
+        let stack = backend_stack(prover_setup, prepared)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+            scheme.commit(
+                prover_setup,
+                &sources,
+                &stack,
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::FieldDigits(sources.into()),
+        )
+    }
+
     fn commit_trace_one_hot_cpu(
         setup: &AkitaProverSetup,
         source: &TracePackedOneHot,
         profiles: Option<&PrecommittedGroupProfiles>,
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.trace_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         with_backend_pool(|| match (setup.one_hot_k(), profiles) {
             (AKITA_ONE_HOT_K16, None) => setup
@@ -491,9 +597,9 @@ impl AkitaScheme {
         profiles: Option<&PrecommittedGroupProfiles>,
         metal: &RequiredMetalTraceCommitment,
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
-        let (backend_prover_setup, _) = setup.one_hot_backend()?;
+        let (backend_prover_setup, _) = setup.trace_backend()?;
         let setup_owner = setup
-            .one_hot_backend_prover_setup
+            .trace_backend_prover_setup
             .as_ref()
             .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
         let prepared = metal.prepared_setup(setup_owner)?;
@@ -554,7 +660,7 @@ impl AkitaScheme {
         setup: &AkitaProverSetup,
         polynomials: &[AkitaBackendOneHotPoly],
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.trace_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         with_backend_pool(|| match setup.one_hot_k() {
             AKITA_ONE_HOT_K16 => setup
@@ -588,7 +694,7 @@ impl AkitaScheme {
         polynomials: &[AkitaBackendOneHotPoly],
         profiles: &PrecommittedGroupProfiles,
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+        let (backend_prover_setup, prepared_backend_setup) = setup.trace_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
         with_backend_pool(|| match setup.one_hot_k() {
             AKITA_ONE_HOT_K16 => setup
@@ -618,29 +724,13 @@ impl AkitaScheme {
     }
 
     /// Freezes the ordered precommitted profiles the final trace group commits
-    /// against. Order is the caller's canonical role order; the backend keys the
-    /// grouped row on this exact sequence.
+    /// against: the hints' groups in the caller's canonical role order, then
+    /// the setup's field-digit groups, whose commitments come later. The
+    /// backend keys the grouped row on this exact sequence.
     fn precommitted_profiles(
         setup: &AkitaProverSetup,
         precommitted_hints: &[&AkitaProverHint],
     ) -> Result<PrecommittedGroupProfiles, OpeningsError> {
-        if precommitted_hints.is_empty() {
-            return Err(invalid_batch(
-                "Akita grouped trace opening requires at least one precommitted group",
-            ));
-        }
-        // Every precommitted group plus the final trace group must fit the
-        // setup's total batch capacity.
-        let required = precommitted_hints
-            .len()
-            .checked_add(1)
-            .ok_or_else(|| invalid_batch("Akita precommitted group count overflows"))?;
-        if setup.max_total_batch_polys() < required {
-            return Err(invalid_batch(format!(
-                "Akita grouped trace opening requires total polynomial capacity {required}, setup has {}",
-                setup.max_total_batch_polys()
-            )));
-        }
         let mut profiles = Vec::with_capacity(precommitted_hints.len());
         for hint in precommitted_hints {
             if hint.commitment.backend_flavor != AkitaBackendFlavor::Dense
@@ -656,6 +746,26 @@ impl AkitaScheme {
             })?;
             profiles.push(precommitted_group.profile);
         }
+        if let Some(field_digits) = &setup.field_digits {
+            profiles.extend_from_slice(&field_digits.profiles);
+        }
+        if profiles.is_empty() {
+            return Err(invalid_batch(
+                "Akita grouped trace opening requires at least one precommitted group",
+            ));
+        }
+        let required = profiles
+            .iter()
+            .try_fold(1usize, |total, profile| {
+                total.checked_add(profile.group.num_polynomials())
+            })
+            .ok_or_else(|| invalid_batch("Akita precommitted polynomial count overflows"))?;
+        if setup.max_total_batch_polys() < required {
+            return Err(invalid_batch(format!(
+                "Akita grouped trace opening requires total polynomial capacity {required}, setup has {}",
+                setup.max_total_batch_polys()
+            )));
+        }
         PrecommittedGroupProfiles::from_profiles(profiles).map_err(akita_error)
     }
 
@@ -665,10 +775,10 @@ impl AkitaScheme {
         num_vars: usize,
         poly_count: usize,
     ) -> Result<(), OpeningsError> {
-        if num_vars != setup.max_num_vars() {
+        if num_vars != setup.final_num_vars() {
             return Err(invalid_batch(format!(
                 "Akita commitment dimension {num_vars} does not match exact setup dimension {}",
-                setup.max_num_vars()
+                setup.final_num_vars()
             )));
         }
         if poly_count > setup.max_num_polys_per_commitment_group() {
@@ -692,7 +802,9 @@ impl AkitaScheme {
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let backend_flavor = polynomials.backend_flavor();
         let one_hot_k = match backend_flavor {
-            AkitaBackendFlavor::Dense => 0,
+            AkitaBackendFlavor::Dense
+            | AkitaBackendFlavor::SignedBytes
+            | AkitaBackendFlavor::FieldDigits => 0,
             AkitaBackendFlavor::OneHot => polynomials
                 .one_hot_k()
                 .ok_or_else(|| invalid_batch("Akita one-hot commitment group must not be empty"))?,
@@ -820,7 +932,7 @@ impl TraceOneHotCommitment for AkitaScheme {
                 return Ok(());
             }
             let setup_owner = setup
-                .one_hot_backend_prover_setup
+                .trace_backend_prover_setup
                 .as_ref()
                 .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
             let prepared = metal.prepared_setup(setup_owner)?;
@@ -865,33 +977,45 @@ impl CommitmentScheme for AkitaScheme {
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
-        if params
-            .precommitted_schedule
-            .as_ref()
-            .is_some_and(|request| request.final_num_vars() != params.max_num_vars)
-        {
+        let final_num_vars = params.precommitted_schedule.as_ref().map_or(
+            params.max_num_vars,
+            PrecommittedScheduleParams::final_num_vars,
+        );
+        if params.flavor != AkitaSetupFlavor::SignedBytes && final_num_vars != params.max_num_vars {
             return Err(OpeningsError::InvalidSetup(
                 "the grouped schedule request final arity must equal setup max_num_vars".to_owned(),
             ));
         }
+        let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
+            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
         let artifacts = &params.schedule_artifacts;
+        let field_digits = params
+            .precommitted_schedule
+            .as_ref()
+            .filter(|request| !request.field_digit_groups().is_empty())
+            .map(|request| FieldDigitBackend::new(artifacts, request.field_digit_groups()))
+            .transpose()?;
+        let field_digit_profiles = field_digits
+            .as_ref()
+            .map_or(&[][..], |backend| backend.profiles.as_slice());
         let dense_catalog = artifacts.dense_catalog().map_err(invalid_setup)?;
         let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
-        let one_hot_schedule_artifact = || {
-            let base = artifacts
-                .one_hot_catalog(params.one_hot_k)
-                .map_err(invalid_setup)?;
-            let catalog = params
-                .precommitted_schedule
-                .as_ref()
-                .map_or_else(
-                    || Ok(base.clone()),
-                    |precommitted| {
-                        precommitted.extend_catalog(&dense_catalog, &base, params.one_hot_k)
-                    },
-                )
-                .map_err(invalid_setup)?;
+        let trace_schedule_artifact = |trace: TraceFamily, base: ValidatedScheduleCatalog| {
+            let catalog = match &params.precommitted_schedule {
+                None => base,
+                Some(request) => request
+                    .extend_catalog(&dense_catalog, field_digit_profiles, &base, trace)
+                    .map_err(invalid_setup)?,
+            };
             catalog.to_artifact_bytes().map_err(invalid_setup)
+        };
+        let one_hot_schedule_artifact = || {
+            trace_schedule_artifact(
+                one_hot_trace_family(params.one_hot_k)?,
+                artifacts
+                    .one_hot_catalog(params.one_hot_k)
+                    .map_err(invalid_setup)?,
+            )
         };
         let schedule_artifacts = match params.flavor {
             AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
@@ -904,11 +1028,16 @@ impl CommitmentScheme for AkitaScheme {
             AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
                 dense: dense_schedule_artifact()?,
             },
+            AkitaSetupFlavor::SignedBytes => AkitaVerifierScheduleArtifacts::SignedBytes {
+                signed_bytes: trace_schedule_artifact(
+                    TraceFamily::SignedBytes,
+                    artifacts.signed_byte_catalog().map_err(invalid_setup)?,
+                )?,
+            },
         };
-        let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
-            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
         let verifier = AkitaVerifierSetup {
             max_num_vars: params.max_num_vars,
+            final_num_vars,
             max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
             max_total_batch_polys: params.max_total_batch_polys,
             default_layout_digest: params.default_layout_digest,
@@ -916,43 +1045,21 @@ impl CommitmentScheme for AkitaScheme {
             schedule_artifacts,
             backend_cache: BackendVerifierCache::default(),
         };
-        let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) =
-            if params.flavor == AkitaSetupFlavor::OneHot {
-                (None, None, None)
-            } else {
-                let scheme = verifier.dense_scheme()?;
-                let backend_prover_setup = with_backend_pool(|| {
-                    scheme.setup_prover(params.max_num_vars, params.max_total_batch_polys)
-                })
-                .map_err(invalid_setup)?;
-                let prepared_backend_setup =
-                    with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
-                        .map_err(invalid_setup)?;
-                let backend_verifier_setup =
-                    with_backend_pool(|| scheme.setup_verifier(&backend_prover_setup))
-                        .map_err(invalid_setup)?;
-                (
-                    Some(Arc::new(backend_prover_setup)),
-                    Some(Arc::new(prepared_backend_setup)),
-                    Some(backend_verifier_setup),
-                )
-            };
-        let (
-            one_hot_backend_prover_setup,
-            prepared_one_hot_backend_setup,
-            one_hot_backend_verifier_setup,
-        ) = if params.max_num_vars >= one_hot_log_k && params.flavor != AkitaSetupFlavor::Dense {
-            let backend_prover_setup = crate::adapters::one_hot_setup_prover(
-                &verifier,
-                params.max_num_vars,
-                params.max_total_batch_polys,
-            )
+        let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) = if matches!(
+            params.flavor,
+            AkitaSetupFlavor::Both | AkitaSetupFlavor::Dense
+        ) {
+            let scheme = verifier.dense_scheme()?;
+            let backend_prover_setup = with_backend_pool(|| {
+                scheme.setup_prover(params.max_num_vars, params.max_total_batch_polys)
+            })
             .map_err(invalid_setup)?;
             let prepared_backend_setup =
                 with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
                     .map_err(invalid_setup)?;
             let backend_verifier_setup =
-                crate::adapters::one_hot_setup_verifier(&verifier, &backend_prover_setup)?;
+                with_backend_pool(|| scheme.setup_verifier(&backend_prover_setup))
+                    .map_err(invalid_setup)?;
             (
                 Some(Arc::new(backend_prover_setup)),
                 Some(Arc::new(prepared_backend_setup)),
@@ -961,12 +1068,40 @@ impl CommitmentScheme for AkitaScheme {
         } else {
             (None, None, None)
         };
-        verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
+        let builds_trace_backend = match params.flavor {
+            AkitaSetupFlavor::SignedBytes => true,
+            AkitaSetupFlavor::Both | AkitaSetupFlavor::OneHot => {
+                params.max_num_vars >= one_hot_log_k
+            }
+            AkitaSetupFlavor::Dense => false,
+        };
+        let (
+            trace_backend_prover_setup,
+            prepared_trace_backend_setup,
+            trace_backend_verifier_setup,
+        ) = if builds_trace_backend {
+            let backend_prover_setup =
+                trace_setup_prover(&verifier, params.max_num_vars, params.max_total_batch_polys)
+                    .map_err(invalid_setup)?;
+            let prepared_backend_setup =
+                with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
+                    .map_err(invalid_setup)?;
+            let backend_verifier_setup = trace_setup_verifier(&verifier, &backend_prover_setup)?;
+            (
+                Some(Arc::new(backend_prover_setup)),
+                Some(Arc::new(prepared_backend_setup)),
+                Some(backend_verifier_setup),
+            )
+        } else {
+            (None, None, None)
+        };
+        verifier.prime_backend_cache(backend_verifier_setup, trace_backend_verifier_setup);
         let prover = AkitaProverSetup {
             backend_prover_setup,
             prepared_backend_setup,
-            one_hot_backend_prover_setup,
-            prepared_one_hot_backend_setup,
+            trace_backend_prover_setup,
+            prepared_trace_backend_setup,
+            field_digits: field_digits.map(Arc::new),
             schedule_artifacts: params.schedule_artifacts,
             verifier: verifier.clone(),
         };
@@ -1277,6 +1412,7 @@ mod tests {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let setup = AkitaVerifierSetup {
             max_num_vars: 4,
+            final_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
             max_total_batch_polys: 1,
             default_layout_digest: [7; 32],

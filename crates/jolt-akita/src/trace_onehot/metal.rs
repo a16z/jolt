@@ -2,7 +2,9 @@
 //! 2026-09-01 port line; compiles only against the fork's Metal-enabled Akita).
 
 use akita_error::AkitaError;
-use akita_prover::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
+use akita_prover::backend::{
+    DenseBatchView, DenseView, OneHotBatchView, OneHotView, SignedByteBatchView, SignedByteView,
+};
 use akita_prover::compute::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel,
@@ -11,11 +13,11 @@ use akita_prover::compute::{
 };
 use akita_prover::{
     BatchDecomposeFoldOutcome, CommitInnerWitness, CpuBackend, DecomposeFoldWitness, DensePoly,
-    OneHotPoly, RootOpeningSource,
+    OneHotPoly, RootOpeningSource, SignedBytePoly,
 };
 
 use super::commit::commit_packed;
-use super::grouped::{grouped_singleton, GroupedRootBatchView, GroupedRootSource, GroupedRootView};
+use super::grouped::{mixed_group, GroupedRootBatchView, GroupedRootSource, GroupedRootView};
 use super::source::{TracePackedOneHot, TracePackedOneHotBatchView, TracePackedOneHotView};
 use crate::AkitaField;
 
@@ -208,29 +210,36 @@ impl<const D: usize> OpeningFoldKernel<GroupedRootView<'_, D>, AkitaField, D>
         plan: OpeningFoldPlan<'_, AkitaField>,
     ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
         match source.source {
-            GroupedRootSource::Dense(polys) => {
+            GroupedRootSource::Dense(member) => {
                 OpeningFoldKernel::<DenseView<'_, AkitaField, D>, AkitaField, D>::evaluate_and_fold(
                     self,
                     prepared,
-                    grouped_singleton(polys).opening_view()?,
+                    member.poly().opening_view()?,
                     plan,
                 )
             }
-            GroupedRootSource::OneHot(polys) => OpeningFoldKernel::<
+            GroupedRootSource::OneHot(member) => OpeningFoldKernel::<
                 OneHotView<'_, AkitaField, D, u8>,
                 AkitaField,
                 D,
             >::evaluate_and_fold(
                 self,
                 prepared,
-                grouped_singleton(polys).opening_view()?,
+                member.poly().opening_view()?,
                 plan,
             ),
-            GroupedRootSource::Trace(polys) => {
-                OpeningFoldKernel::<TracePackedOneHotView<'_, D>, AkitaField, D>::evaluate_and_fold(
+            GroupedRootSource::Trace(poly) => OpeningFoldKernel::<
+                TracePackedOneHotView<'_, D>,
+                AkitaField,
+                D,
+            >::evaluate_and_fold(
+                self, prepared, poly.opening_view()?, plan
+            ),
+            GroupedRootSource::SignedBytes(member) => {
+                OpeningFoldKernel::<SignedByteView<'_, D>, AkitaField, D>::evaluate_and_fold(
                     self,
                     prepared,
-                    grouped_singleton(polys).opening_view()?,
+                    RootOpeningSource::<AkitaField, D>::opening_view(member.poly())?,
                     plan,
                 )
             }
@@ -244,29 +253,36 @@ impl<const D: usize> OpeningFoldKernel<GroupedRootView<'_, D>, AkitaField, D>
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
         match source.source {
-            GroupedRootSource::Dense(polys) => {
+            GroupedRootSource::Dense(member) => {
                 OpeningFoldKernel::<DenseView<'_, AkitaField, D>, AkitaField, D>::decompose_fold(
                     self,
                     prepared,
-                    grouped_singleton(polys).opening_view()?,
+                    member.poly().opening_view()?,
                     plan,
                 )
             }
-            GroupedRootSource::OneHot(polys) => OpeningFoldKernel::<
+            GroupedRootSource::OneHot(member) => OpeningFoldKernel::<
                 OneHotView<'_, AkitaField, D, u8>,
                 AkitaField,
                 D,
             >::decompose_fold(
                 self,
                 prepared,
-                grouped_singleton(polys).opening_view()?,
+                member.poly().opening_view()?,
                 plan,
             ),
-            GroupedRootSource::Trace(polys) => {
-                OpeningFoldKernel::<TracePackedOneHotView<'_, D>, AkitaField, D>::decompose_fold(
+            GroupedRootSource::Trace(poly) => OpeningFoldKernel::<
+                TracePackedOneHotView<'_, D>,
+                AkitaField,
+                D,
+            >::decompose_fold(
+                self, prepared, poly.opening_view()?, plan
+            ),
+            GroupedRootSource::SignedBytes(member) => {
+                OpeningFoldKernel::<SignedByteView<'_, D>, AkitaField, D>::decompose_fold(
                     self,
                     prepared,
-                    grouped_singleton(polys).opening_view()?,
+                    RootOpeningSource::<AkitaField, D>::opening_view(member.poly())?,
                     plan,
                 )
             }
@@ -293,13 +309,10 @@ impl<const D: usize> OpeningBatchKernel<GroupedRootBatchView<'_, D>, AkitaField,
                     .sources
                     .iter()
                     .map(|source| match source {
-                        GroupedRootSource::Dense(polys) => Ok(grouped_singleton(polys)),
-                        GroupedRootSource::OneHot(_) | GroupedRootSource::Trace(_) => {
-                            Err(AkitaError::InvalidInput(
-                                "grouped root opening groups must be representation-homogeneous"
-                                    .into(),
-                            ))
-                        }
+                        GroupedRootSource::Dense(member) => Ok(member.poly()),
+                        GroupedRootSource::OneHot(_)
+                        | GroupedRootSource::Trace(_)
+                        | GroupedRootSource::SignedBytes(_) => Err(mixed_group("opening")),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let view =
@@ -315,13 +328,10 @@ impl<const D: usize> OpeningBatchKernel<GroupedRootBatchView<'_, D>, AkitaField,
                     .sources
                     .iter()
                     .map(|source| match source {
-                        GroupedRootSource::OneHot(polys) => Ok(grouped_singleton(polys)),
-                        GroupedRootSource::Dense(_) | GroupedRootSource::Trace(_) => {
-                            Err(AkitaError::InvalidInput(
-                                "grouped root opening groups must be representation-homogeneous"
-                                    .into(),
-                            ))
-                        }
+                        GroupedRootSource::OneHot(member) => Ok(member.poly()),
+                        GroupedRootSource::Dense(_)
+                        | GroupedRootSource::Trace(_)
+                        | GroupedRootSource::SignedBytes(_) => Err(mixed_group("opening")),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let view = <OneHotPoly<AkitaField, u8> as RootOpeningSource<
@@ -339,18 +349,32 @@ impl<const D: usize> OpeningBatchKernel<GroupedRootBatchView<'_, D>, AkitaField,
                     .sources
                     .iter()
                     .map(|source| match source {
-                        GroupedRootSource::Trace(polys) => Ok(grouped_singleton(polys)),
-                        GroupedRootSource::Dense(_) | GroupedRootSource::OneHot(_) => {
-                            Err(AkitaError::InvalidInput(
-                                "grouped root opening groups must be representation-homogeneous"
-                                    .into(),
-                            ))
-                        }
+                        GroupedRootSource::Trace(poly) => Ok(poly),
+                        GroupedRootSource::Dense(_)
+                        | GroupedRootSource::OneHot(_)
+                        | GroupedRootSource::SignedBytes(_) => Err(mixed_group("opening")),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let view =
                     <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&trace)?;
                 OpeningBatchKernel::<TracePackedOneHotBatchView<'_, D>, AkitaField, D>::decompose_fold_batch(
+                    self, prepared, view, plan,
+                )
+            }
+            GroupedRootSource::SignedBytes(_) => {
+                let bytes = source
+                    .sources
+                    .iter()
+                    .map(|source| match source {
+                        GroupedRootSource::SignedBytes(member) => Ok(member.poly()),
+                        GroupedRootSource::Dense(_)
+                        | GroupedRootSource::OneHot(_)
+                        | GroupedRootSource::Trace(_) => Err(mixed_group("opening")),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let view =
+                    <SignedBytePoly as RootOpeningSource<AkitaField, D>>::opening_batch(&bytes)?;
+                OpeningBatchKernel::<SignedByteBatchView<'_, D>, AkitaField, D>::decompose_fold_batch(
                     self, prepared, view, plan,
                 )
             }
@@ -374,13 +398,10 @@ impl<const D: usize>
                 .sources
                 .iter()
                 .map(|source| match source {
-                    GroupedRootSource::Trace(polys) => Ok(grouped_singleton(polys)),
-                    GroupedRootSource::Dense(_) | GroupedRootSource::OneHot(_) => {
-                        Err(AkitaError::InvalidInput(
-                            "grouped root coefficient-packing groups must be representation-homogeneous"
-                                .to_string(),
-                        ))
-                    }
+                    GroupedRootSource::Trace(poly) => Ok(poly),
+                    GroupedRootSource::Dense(_)
+                    | GroupedRootSource::OneHot(_)
+                    | GroupedRootSource::SignedBytes(_) => Err(mixed_group("coefficient-packing")),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let view =

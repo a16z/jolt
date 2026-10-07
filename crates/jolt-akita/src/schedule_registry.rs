@@ -1,10 +1,10 @@
 //! Setup-owned grouped schedule catalog construction.
 //!
 //! Base scalar rows come from checked-in external artifacts. Program-specific
-//! advice and committed-program shapes are guided from the approved scalar row
-//! during preprocessing and merged into a new immutable catalog owned by that
-//! setup. No process-global schedule state participates in proving or
-//! verification.
+//! advice and committed-program shapes, and the field-digit groups committed
+//! after the trace, are guided from the approved scalar row during
+//! preprocessing and merged into a new immutable catalog owned by that setup.
+//! No process-global schedule state participates in proving or verification.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -20,9 +20,10 @@ use akita_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
-use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
-use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+use crate::configs::{
+    JoltDenseBounded, JoltFieldDigits, JoltOneHotK16, JoltOneHotK256, JoltSignedBytes,
+};
+use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS, SIGNED_BYTE_NUM_VARS};
 
 /// Upper bound on rows planned by one preprocessing request.
 const MAX_PROVISIONED_ROWS: usize = 128;
@@ -35,6 +36,8 @@ pub struct PrecommittedScheduleParams {
     trusted_physical_arity: Option<usize>,
     #[serde(default)]
     direct_program_physical_arities: Vec<usize>,
+    #[serde(default)]
+    field_digit_groups: Vec<PolynomialGroupLayout>,
     final_arity: usize,
 }
 
@@ -48,6 +51,7 @@ impl PrecommittedScheduleParams {
             untrusted_physical_arity: untrusted_physical_num_vars,
             trusted_physical_arity: trusted_physical_num_vars,
             direct_program_physical_arities: Vec::new(),
+            field_digit_groups: Vec::new(),
             final_arity: final_num_vars,
         }
     }
@@ -60,33 +64,129 @@ impl PrecommittedScheduleParams {
         self
     }
 
+    /// `(num_vars, num_polys)` of each field-digit group, in role order after
+    /// every program object.
+    pub fn with_field_digit_groups(
+        mut self,
+        groups: impl IntoIterator<Item = (usize, usize)>,
+    ) -> Self {
+        self.field_digit_groups = groups
+            .into_iter()
+            .map(|(num_vars, num_polys)| PolynomialGroupLayout::new(num_vars, num_polys))
+            .collect();
+        self
+    }
+
     pub(crate) fn final_num_vars(&self) -> usize {
         self.final_arity
     }
 
-    pub(crate) fn extend_catalog(
+    pub(crate) fn field_digit_groups(&self) -> &[PolynomialGroupLayout] {
+        &self.field_digit_groups
+    }
+
+    pub(crate) fn capacity(&self) -> (usize, usize, usize) {
+        let single = |num_vars| PolynomialGroupLayout::new(num_vars, 1);
+        std::iter::once(single(self.final_arity))
+            .chain(
+                self.untrusted_physical_arity
+                    .into_iter()
+                    .chain(self.trusted_physical_arity)
+                    .chain(self.direct_program_physical_arities.iter().copied())
+                    .map(single),
+            )
+            .chain(self.field_digit_groups.iter().copied())
+            .fold((0, 0, 0), |(num_vars, polys, total), group| {
+                (
+                    num_vars.max(group.num_vars()),
+                    polys.max(group.num_polynomials()),
+                    total + group.num_polynomials(),
+                )
+            })
+    }
+
+    /// Adapt grouped rows for optional advice followed by committed-program
+    /// objects and then the field-digit groups, all present in every row, and
+    /// freeze them with `base` into one setup-owned catalog.
+    pub fn extend_catalog(
         &self,
         dense_catalog: &ValidatedScheduleCatalog,
-        one_hot_catalog: &ValidatedScheduleCatalog,
-        one_hot_k: usize,
+        field_digit_profiles: &[GroupCommitPhaseParams],
+        base: &ValidatedScheduleCatalog,
+        trace: TraceFamily,
     ) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        let rows = provision_precommitted_for_k(
-            dense_catalog,
-            one_hot_catalog,
-            self.untrusted_physical_arity,
-            self.trusted_physical_arity,
-            &self.direct_program_physical_arities,
-            one_hot_k,
-            self.final_arity,
+        akita_config::validate_config_policy::<JoltDenseBounded>()?;
+        dense_catalog.validate_binding(
+            JoltDenseBounded::schedule_family_name(),
+            &policy_of::<JoltDenseBounded>(),
+            JoltDenseBounded::ring_challenge_config,
         )?;
-        match one_hot_k {
-            AKITA_ONE_HOT_K16 => extend_catalog::<JoltOneHotK16>(one_hot_catalog, &rows),
-            AKITA_ONE_HOT_K256 => extend_catalog::<JoltOneHotK256>(one_hot_catalog, &rows),
-            other => Err(AkitaError::InvalidSetup(format!(
-                "unsupported one-hot K {other} for grouped schedule catalog"
-            ))),
+        let mandatory = self
+            .direct_program_physical_arities
+            .iter()
+            .map(|num_vars| {
+                precommitted_producer::<JoltDenseBounded>(dense_precommit_profile(
+                    dense_catalog,
+                    PolynomialGroupLayout::new(*num_vars, 1),
+                )?)
+            })
+            .chain(
+                field_digit_profiles
+                    .iter()
+                    .map(|profile| precommitted_producer::<JoltFieldDigits>(*profile)),
+            )
+            .collect::<Result<Vec<_>, _>>()?;
+        let layouts = AdvicePrecommitLayouts {
+            untrusted: self
+                .untrusted_physical_arity
+                .map(|num_vars| PolynomialGroupLayout::new(num_vars, 1)),
+            trusted: self
+                .trusted_physical_arity
+                .map(|num_vars| PolynomialGroupLayout::new(num_vars, 1)),
+        };
+        let mut combinations = layouts.precommit_combinations(dense_catalog)?;
+        if !mandatory.is_empty() {
+            for combination in &mut combinations {
+                combination.extend(mandatory.iter().copied());
+            }
+            if !combinations.contains(&mandatory) {
+                combinations.push(mandatory);
+            }
+        }
+        let final_num_vars = self.final_arity;
+        let (min, max) = match trace {
+            TraceFamily::OneHotK16 => K16_NUM_VARS,
+            TraceFamily::OneHotK256 => K256_NUM_VARS,
+            TraceFamily::SignedBytes => SIGNED_BYTE_NUM_VARS,
+        };
+        if !combinations.is_empty() && !(min..=max).contains(&final_num_vars) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{trace:?} final arity {final_num_vars} is outside the supported range {min}..={max}"
+            )));
+        }
+        match trace {
+            TraceFamily::OneHotK16 => extend_catalog::<JoltOneHotK16>(
+                base,
+                &provision::<JoltOneHotK16>(base, &combinations, [final_num_vars])?,
+            ),
+            TraceFamily::OneHotK256 => extend_catalog::<JoltOneHotK256>(
+                base,
+                &provision::<JoltOneHotK256>(base, &combinations, [final_num_vars])?,
+            ),
+            TraceFamily::SignedBytes => extend_catalog::<JoltSignedBytes>(
+                base,
+                &provision::<JoltSignedBytes>(base, &combinations, [final_num_vars])?,
+            ),
         }
     }
+}
+
+/// Schedule family of a setup's final trace group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceFamily {
+    OneHotK16,
+    OneHotK256,
+    SignedBytes,
 }
 
 /// Rows adapted for one concrete setup before they are frozen into a catalog.
@@ -137,25 +237,15 @@ pub fn extend_catalog<Cfg: CommitmentConfig>(
     )
 }
 
-fn plan_row<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
+fn plan_row<Cfg: CommitmentConfig>(
     base: &ValidatedScheduleCatalog,
-    key: &AkitaScheduleLookupKey,
+    request: &GroupedGenerationRequest,
 ) -> Result<ResolvedScheduleRow, AkitaError> {
+    let key = request.key();
     let main_row = base.resolve_key(&AkitaScheduleLookupKey::single(key.final_group))?;
-    let producer_contract = ProducerCfg::committed_source_contract()?;
-    let producer_fold_policy = honest_fold_policy_of::<ProducerCfg>();
-    let producers = key
-        .precommitteds
-        .iter()
-        .copied()
-        .map(|profile| {
-            PrecommittedProducer::try_new(profile, producer_contract, producer_fold_policy)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let request = GroupedGenerationRequest::new(key.final_group, producers);
     let planned = find_adapted_schedule(
         main_row,
-        &request,
+        request,
         honest_fold_policy_of::<Cfg>(),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -166,15 +256,27 @@ fn plan_row<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
             key.final_group,
             &schedule.root.params,
         )?,
-        precommitteds: key.precommitteds.clone(),
+        precommitteds: key.precommitteds,
     };
     ResolvedScheduleRow::try_new(profiles, schedule, &policy_of::<Cfg>())
 }
 
+/// Binds a frozen precommitted profile to the contract of the family that
+/// commits it.
+pub fn precommitted_producer<Cfg: CommitmentConfig>(
+    profile: GroupCommitPhaseParams,
+) -> Result<PrecommittedProducer, AkitaError> {
+    PrecommittedProducer::try_new(
+        profile,
+        Cfg::committed_source_contract()?,
+        honest_fold_policy_of::<Cfg>(),
+    )
+}
+
 /// Adapt missing grouped rows from the base catalog's approved scalar rows.
-pub fn provision<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
+pub fn provision<Cfg: CommitmentConfig>(
     base: &ValidatedScheduleCatalog,
-    precommitted_combinations: &[Vec<GroupCommitPhaseParams>],
+    precommitted_combinations: &[Vec<PrecommittedProducer>],
     final_num_vars: impl IntoIterator<Item = usize>,
 ) -> Result<RegisteredRows, AkitaError> {
     akita_config::validate_config_policy::<Cfg>()?;
@@ -189,28 +291,30 @@ pub fn provision<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
         ));
     }
     let final_arities = final_num_vars.into_iter().collect::<Vec<_>>();
-    let keys = precommitted_combinations
+    let requests = precommitted_combinations
         .iter()
-        .flat_map(|precommitteds| {
-            final_arities.iter().map(|num_vars| AkitaScheduleLookupKey {
-                final_group: PolynomialGroupLayout::new(*num_vars, 1),
-                precommitteds: precommitteds.clone(),
+        .flat_map(|producers| {
+            final_arities.iter().map(|num_vars| {
+                GroupedGenerationRequest::new(
+                    PolynomialGroupLayout::new(*num_vars, 1),
+                    producers.clone(),
+                )
             })
         })
         .collect::<Vec<_>>();
-    if keys.len() > MAX_PROVISIONED_ROWS {
+    if requests.len() > MAX_PROVISIONED_ROWS {
         return Err(AkitaError::InvalidSetup(format!(
             "provisioning {} rows exceeds the {MAX_PROVISIONED_ROWS}-row cap",
-            keys.len()
+            requests.len()
         )));
     }
 
-    let workers = akita_planner::emit::offline_planning_worker_count(keys.len());
-    let planned = akita_planner::emit::bounded_parallel_filter_map(&keys, workers, |key| {
-        if base.resolve_key(key).is_ok() {
+    let workers = akita_planner::emit::offline_planning_worker_count(requests.len());
+    let planned = akita_planner::emit::bounded_parallel_filter_map(&requests, workers, |request| {
+        if base.resolve_key(&request.key()).is_ok() {
             return Ok(None);
         }
-        plan_row::<Cfg, ProducerCfg>(base, key)
+        plan_row::<Cfg>(base, request)
             .map(Some)
             .map_err(|error| error.to_string())
     })
@@ -244,17 +348,17 @@ impl AdvicePrecommitLayouts {
     fn precommit_combinations(
         self,
         dense_catalog: &ValidatedScheduleCatalog,
-    ) -> Result<Vec<Vec<GroupCommitPhaseParams>>, AkitaError> {
-        let untrusted = self
-            .untrusted
-            .map(|layout| dense_precommit_profile(dense_catalog, layout))
-            .transpose()?;
-        let trusted = self
-            .trusted
-            .map(|layout| dense_precommit_profile(dense_catalog, layout))
-            .transpose()?;
+    ) -> Result<Vec<Vec<PrecommittedProducer>>, AkitaError> {
+        let dense_producer = |layout| {
+            precommitted_producer::<JoltDenseBounded>(dense_precommit_profile(
+                dense_catalog,
+                layout,
+            )?)
+        };
+        let untrusted = self.untrusted.map(dense_producer).transpose()?;
+        let trusted = self.trusted.map(dense_producer).transpose()?;
         let mut combinations = Vec::with_capacity(3);
-        let mut push_unique = |combination: Vec<GroupCommitPhaseParams>| {
+        let mut push_unique = |combination: Vec<PrecommittedProducer>| {
             if !combinations.contains(&combination) {
                 combinations.push(combination);
             }
@@ -274,69 +378,3 @@ impl AdvicePrecommitLayouts {
 
 pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(14, 1);
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
-
-/// Adapt grouped rows for optional advice followed by committed-program objects.
-pub fn provision_precommitted_for_k(
-    dense_catalog: &ValidatedScheduleCatalog,
-    one_hot_catalog: &ValidatedScheduleCatalog,
-    untrusted_physical_vars: Option<usize>,
-    trusted_physical_vars: Option<usize>,
-    direct_program_physical_vars: &[usize],
-    one_hot_k: usize,
-    final_num_vars: usize,
-) -> Result<RegisteredRows, AkitaError> {
-    akita_config::validate_config_policy::<JoltDenseBounded>()?;
-    dense_catalog.validate_binding(
-        JoltDenseBounded::schedule_family_name(),
-        &policy_of::<JoltDenseBounded>(),
-        JoltDenseBounded::ring_challenge_config,
-    )?;
-    let layouts = AdvicePrecommitLayouts {
-        untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
-        trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
-    };
-    let mandatory = direct_program_physical_vars
-        .iter()
-        .map(|vars| dense_precommit_profile(dense_catalog, PolynomialGroupLayout::new(*vars, 1)))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut combinations = layouts.precommit_combinations(dense_catalog)?;
-    if mandatory.is_empty() {
-        if combinations.is_empty() {
-            return Ok(RegisteredRows::default());
-        }
-    } else {
-        for combination in &mut combinations {
-            combination.extend(mandatory.iter().copied());
-        }
-        if !combinations.contains(&mandatory) {
-            combinations.push(mandatory);
-        }
-    }
-    let (min, max) = match one_hot_k {
-        AKITA_ONE_HOT_K256 => K256_NUM_VARS,
-        AKITA_ONE_HOT_K16 => K16_NUM_VARS,
-        other => {
-            return Err(AkitaError::InvalidSetup(format!(
-                "unsupported one-hot K {other} for grouped schedule provisioning"
-            )))
-        }
-    };
-    if !(min..=max).contains(&final_num_vars) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "one-hot K={one_hot_k} final arity {final_num_vars} is outside the supported range {min}..={max}"
-        )));
-    }
-    match one_hot_k {
-        AKITA_ONE_HOT_K256 => provision::<JoltOneHotK256, JoltDenseBounded>(
-            one_hot_catalog,
-            &combinations,
-            [final_num_vars],
-        ),
-        AKITA_ONE_HOT_K16 => provision::<JoltOneHotK16, JoltDenseBounded>(
-            one_hot_catalog,
-            &combinations,
-            [final_num_vars],
-        ),
-        _ => unreachable!("one-hot K was validated above"),
-    }
-}

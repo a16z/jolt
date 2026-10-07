@@ -6,20 +6,26 @@
 //! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
 
 use akita_config::{SetupRequirements, TrustedScheduleCatalog};
-use akita_planner::emit::MaterializationDiagnostics;
+use akita_planner::emit::{
+    GroupedGenerationRequest, MaterializationDiagnostics, PrecommittedProducer,
+};
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
     FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
-use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use jolt_akita::configs::{
+    JoltDenseBounded, JoltFieldDigits, JoltOneHotK16, JoltOneHotK256, JoltSignedBytes,
+};
 use jolt_akita::schedule_registry::{
-    dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+    dense_precommit_profile, extend_catalog, precommitted_producer, provision,
+    PrecommittedScheduleParams, TraceFamily, FIXTURE_K16_FINAL_NUM_VARS,
+    FIXTURE_TRUSTED_ADVICE_GROUP,
 };
 use jolt_akita::schedules::emit::{
     family_specs, keys, FIELD_DIGIT_GROUPS, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS,
     K256_PACKING_VARIABLES, ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
-    SIGNED_BYTE_NUM_VARS, SIGNED_BYTE_PINNED_ROOT,
+    SIGNED_BYTE_NUM_VARS, SIGNED_BYTE_PACKING_VARIABLES, SIGNED_BYTE_PINNED_ROOT,
 };
 use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -54,6 +60,13 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
         }
         assert_eq!(catalog.len(), grid.len());
     }
+}
+
+fn dense_producers(profiles: &[GroupCommitPhaseParams]) -> Vec<PrecommittedProducer> {
+    profiles
+        .iter()
+        .map(|profile| precommitted_producer::<JoltDenseBounded>(*profile).expect("dense producer"))
+        .collect()
 }
 
 fn scalar_schedule(catalog: &ValidatedScheduleCatalog, num_vars: usize) -> FoldSchedule {
@@ -182,17 +195,16 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let key = trusted_advice_grouped_key(&dense);
     assert!(base.resolve_key(&key).is_err());
 
-    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256, JoltDenseBounded>(
+    let rows = provision::<JoltOneHotK256>(
         &base,
-        std::slice::from_ref(&key.precommitteds),
+        &[dense_producers(&key.precommitteds)],
         [key.final_group.num_vars()],
     )
     .expect("preprocessing must adapt the production grouped row");
     assert_eq!(rows.rows().len(), 1);
 
     let setup_catalog =
-        jolt_akita::schedule_registry::extend_catalog::<JoltOneHotK256>(&base, &rows)
-            .expect("freeze setup-owned catalog");
+        extend_catalog::<JoltOneHotK256>(&base, &rows).expect("freeze setup-owned catalog");
     let resolved = setup_catalog
         .resolve_key(&key)
         .expect("setup-owned row must resolve by key");
@@ -217,15 +229,11 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
         RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES - 1,
         RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES,
     ] {
-        let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK16, JoltDenseBounded>(
-            &base,
-            &[vec![precommit]],
-            [final_num_vars],
-        )
-        .expect("adapt the grouped K=16 row");
+        let rows =
+            provision::<JoltOneHotK16>(&base, &[dense_producers(&[precommit])], [final_num_vars])
+                .expect("adapt the grouped K=16 row");
         let setup_catalog =
-            jolt_akita::schedule_registry::extend_catalog::<JoltOneHotK16>(&base, &rows)
-                .expect("freeze adapted K=16 catalog");
+            extend_catalog::<JoltOneHotK16>(&base, &rows).expect("freeze adapted K=16 catalog");
         let final_group = PolynomialGroupLayout::new(final_num_vars, 1);
         let resolved = setup_catalog
             .resolve_key(&AkitaScheduleLookupKey {
@@ -242,15 +250,14 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
     let dense = dense_catalog();
     let base = one_hot_catalog(AKITA_ONE_HOT_K256);
     let key = trusted_advice_grouped_key(&dense);
-    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256, JoltDenseBounded>(
+    let rows = provision::<JoltOneHotK256>(
         &base,
-        std::slice::from_ref(&key.precommitteds),
+        &[dense_producers(&key.precommitteds)],
         [key.final_group.num_vars()],
     )
     .expect("adapt grouped row");
     let setup_catalog =
-        jolt_akita::schedule_registry::extend_catalog::<JoltOneHotK256>(&base, &rows)
-            .expect("freeze setup catalog");
+        extend_catalog::<JoltOneHotK256>(&base, &rows).expect("freeze setup catalog");
     let resolved = setup_catalog.resolve_key(&key).expect("grouped row");
     let full_capacity =
         setup_matrix_capacity_for_schedule(resolved.schedule()).expect("grouped schedule capacity");
@@ -298,28 +305,33 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
 fn grouped_provisioning_rejects_out_of_family_final_arity() {
     let dense = dense_catalog();
     let base = one_hot_catalog(AKITA_ONE_HOT_K16);
-    let error = jolt_akita::schedule_registry::provision_precommitted_for_k(
-        &dense,
-        &base,
+    let error = PrecommittedScheduleParams::new(
         None,
         Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
-        &[],
-        AKITA_ONE_HOT_K16,
         K16_NUM_VARS.0 - 1,
     )
+    .extend_catalog(&dense, &[], &base, TraceFamily::OneHotK16)
     .expect_err("a declared reachable arity outside the family must fail setup");
     assert!(error.to_string().contains("outside the supported range"));
 }
 
-/// `(positions per block, A dimension, A log basis, A digits, A rank)`.
-fn root_geometry(profile: &GroupCommitPhaseParams) -> (usize, usize, u32, usize, usize) {
-    (
-        profile.blocks.positions_per_block,
-        profile.inner.matrix.ring_dimension(),
-        profile.inner.digits.log_basis,
-        profile.inner.digits.num_digits,
-        profile.inner.matrix.output_rank(),
-    )
+#[derive(Debug, PartialEq, Eq)]
+struct RootGeometry {
+    positions_per_block: usize,
+    ring_dimension: usize,
+    log_basis: u32,
+    digits: usize,
+    rank: usize,
+}
+
+fn root_geometry(profile: &GroupCommitPhaseParams) -> RootGeometry {
+    RootGeometry {
+        positions_per_block: profile.blocks.positions_per_block,
+        ring_dimension: profile.inner.matrix.ring_dimension(),
+        log_basis: profile.inner.digits.log_basis,
+        digits: profile.inner.digits.num_digits,
+        rank: profile.inner.matrix.output_rank(),
+    }
 }
 
 fn scalar_profile(
@@ -342,12 +354,15 @@ fn signed_byte_rows_commit_one_byte_plane_and_pin_the_t29_root() {
     assert_eq!(catalog.len(), grid.len());
     let (pinned_num_vars, root) = SIGNED_BYTE_PINNED_ROOT;
     for key in grid {
-        let (positions, ring_dimension, log_basis, digits, rank) =
-            root_geometry(&scalar_profile(&catalog, key));
-        assert_eq!((log_basis, digits), (8, 1), "{key:?}");
+        let geometry = root_geometry(&scalar_profile(&catalog, key));
+        assert_eq!((geometry.log_basis, geometry.digits), (8, 1), "{key:?}");
         if key.num_vars() == pinned_num_vars {
             assert_eq!(
-                (positions, ring_dimension, rank),
+                (
+                    geometry.positions_per_block,
+                    geometry.ring_dimension,
+                    geometry.rank
+                ),
                 (root.positions_per_block, root.ring_dimension, 5)
             );
         }
@@ -363,12 +378,61 @@ fn field_digit_rows_commit_sixteen_byte_planes() {
     let [triples, ram] = FIELD_DIGIT_GROUPS;
     assert_eq!(
         root_geometry(&scalar_profile(&catalog, triples)),
-        (1024, 128, 8, 16, 4)
+        RootGeometry {
+            positions_per_block: 1024,
+            ring_dimension: 128,
+            log_basis: 8,
+            digits: 16,
+            rank: 4,
+        }
     );
     assert_eq!(
         root_geometry(&scalar_profile(&catalog, ram)),
-        (32, 128, 8, 16, 3)
+        RootGeometry {
+            positions_per_block: 32,
+            ring_dimension: 128,
+            log_basis: 8,
+            digits: 16,
+            rank: 3,
+        }
     );
+}
+
+#[test]
+fn signed_byte_grouped_rows_keep_each_trace_root_beside_advice_and_field_digits() {
+    let artifacts = artifacts();
+    let dense = dense_catalog();
+    let base = artifacts
+        .signed_byte_catalog()
+        .expect("signed-byte catalog");
+    let field_digits = artifacts
+        .field_digit_catalog()
+        .expect("field-digit catalog");
+    let mut producers =
+        dense_producers(&[
+            dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
+                .expect("trusted advice profile"),
+        ]);
+    producers.extend(FIELD_DIGIT_GROUPS.map(|group| {
+        precommitted_producer::<JoltFieldDigits>(scalar_profile(&field_digits, group))
+            .expect("field-digit producer")
+    }));
+    let (pinned_num_vars, _) = SIGNED_BYTE_PINNED_ROOT;
+    for final_num_vars in [
+        16 + SIGNED_BYTE_PACKING_VARIABLES,
+        20 + SIGNED_BYTE_PACKING_VARIABLES,
+        pinned_num_vars,
+    ] {
+        let final_group = PolynomialGroupLayout::new(final_num_vars, 1);
+        let rows = provision::<JoltSignedBytes>(&base, &[producers.clone()], [final_num_vars])
+            .expect("adapt the grouped signed-byte row");
+        let catalog =
+            extend_catalog::<JoltSignedBytes>(&base, &rows).expect("freeze the setup catalog");
+        let resolved = catalog
+            .resolve_key(&GroupedGenerationRequest::new(final_group, producers.clone()).key())
+            .expect("grouped signed-byte row");
+        assert_adaptation_preserves_main_skeleton(&base, resolved, final_group);
+    }
 }
 
 /// Re-run every planner solve and byte-compare canonical artifacts.

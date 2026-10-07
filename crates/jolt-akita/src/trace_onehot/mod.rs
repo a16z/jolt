@@ -33,7 +33,7 @@ mod traversal;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use grouped::GroupedRootSource;
+pub(crate) use grouped::{GroupMember, GroupedRootSource};
 pub(crate) use source::ReleasedTracePackedOneHot;
 pub use source::{no_selected_row, TraceOneHotRows, TracePackedOneHot, TracePackedSelectors};
 

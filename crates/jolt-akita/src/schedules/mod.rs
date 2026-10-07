@@ -67,8 +67,9 @@ pub mod emit {
             ring_dimension: 128,
         },
     );
-    /// The byte link's histogram groups: six 24-variable triple tables and
-    /// one 17-variable RAM table.
+    /// The byte link's histogram groups (jolt-claims `HistogramGroup::ALL`):
+    /// six 24-variable triple tables and one 17-variable RAM table. A setup
+    /// requesting any other field-digit group fails to resolve its profile.
     pub const FIELD_DIGIT_GROUPS: [PolynomialGroupLayout; 2] = [
         PolynomialGroupLayout::new(24, 6),
         PolynomialGroupLayout::new(17, 1),

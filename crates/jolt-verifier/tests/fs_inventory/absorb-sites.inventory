@@ -40,7 +40,7 @@ jolt-akita::native_batching.rs::bind_grouped_statement_transcripts::append_bytes
 jolt-akita::native_batching.rs::bind_grouped_statement_transcripts::append_bytes#7::transcript.append_bytes(b"main_trace")
 jolt-akita::native_batching.rs::bind_grouped_statement_transcripts::append_to_transcript#11::evaluation.append_to_transcript(transcript)
 jolt-akita::native_batching.rs::bind_grouped_statement_transcripts::append_to_transcript#9::claim.commitment.append_to_transcript(transcript)
-jolt-akita::native_batching.rs::bind_grouped_statement_transcripts::append_verifier_setup#0::append_verifier_setup(transcript,setup,AkitaBackendFlavor::OneHot)
+jolt-akita::native_batching.rs::bind_grouped_statement_transcripts::append_verifier_setup#0::append_verifier_setup(transcript,setup,setup.trace_family()?.flavor())
 jolt-akita::native_batching.rs::bind_statement_transcripts::append_batch_statement#1::append_batch_statement(transcript,statement,commitment,point)
 jolt-akita::native_batching.rs::bind_statement_transcripts::append_verifier_setup#0::append_verifier_setup(transcript,verifier_setup,commitment.backend_flavor)
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::folded_instance_from_proof::append_to_transcript#0::committed.append_to_transcript(transcript,b"bf_committed_u",b"bf_committed_w",b"bf_committed_e",b"bf_committed_eval",)

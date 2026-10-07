@@ -1,5 +1,5 @@
 use std::{
-    fmt,
+    fmt::{Debug, Formatter, Result as FmtResult},
     io::Cursor,
     path::{Path, PathBuf},
     sync::Arc,
@@ -12,14 +12,16 @@ use std::{cell::Cell, num::NonZeroUsize};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaTranscript,
+    ComputeBackendSetup,
 };
-use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
+use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly, SignedBytePoly};
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
-    AkitaCommitmentHint as AkitaBackendCommitmentHint,
+    AkitaCommitmentHint as AkitaBackendCommitmentHint, AkitaScheduleLookupKey,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
-    CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
+    CommittedGroup as AkitaBackendCommittedGroup, GroupCommitPhaseParams, OpeningScheduleSelection,
+    PolynomialGroupLayout, ScheduleRowDigest,
 };
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
@@ -32,7 +34,7 @@ use tracing::info_span;
 use crate::configs::{
     JoltDenseBounded, JoltFieldDigits, JoltOneHotK16, JoltOneHotK256, JoltSignedBytes,
 };
-use crate::schedule_registry::PrecommittedScheduleParams;
+use crate::schedule_registry::{PrecommittedScheduleParams, TraceFamily};
 use crate::trace_onehot::{ReleasedTracePackedOneHot, TracePackedOneHot};
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
@@ -191,6 +193,8 @@ pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtFie
 pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
 pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK16Config>;
 pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
+pub(crate) type AkitaSignedBytesBackendScheme = AkitaCommitmentScheme<JoltSignedBytes>;
+pub(crate) type AkitaFieldDigitsBackendScheme = AkitaCommitmentScheme<JoltFieldDigits>;
 pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
 pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
@@ -349,6 +353,7 @@ pub(crate) enum AkitaSetupFlavor {
     Both,
     OneHot,
     Dense,
+    SignedBytes,
 }
 
 impl AkitaSetupParams {
@@ -435,6 +440,28 @@ impl AkitaSetupParams {
         }
     }
 
+    /// Grouped setup of the signed-byte trace `Q`, whose arity is
+    /// `precommitted_schedule`'s final arity; capacities cover every group of
+    /// the request at once. The byte trace exists only for K=256 chunks.
+    pub fn signed_bytes_grouped(
+        precommitted_schedule: PrecommittedScheduleParams,
+        default_layout_digest: AkitaLayoutDigest,
+        schedule_artifacts: Arc<AkitaScheduleArtifacts>,
+    ) -> Self {
+        let (max_num_vars, max_num_polys_per_commitment_group, max_total_batch_polys) =
+            precommitted_schedule.capacity();
+        Self {
+            max_num_vars,
+            max_num_polys_per_commitment_group,
+            max_total_batch_polys,
+            default_layout_digest,
+            one_hot_k: AKITA_ONE_HOT_K256,
+            flavor: AkitaSetupFlavor::SignedBytes,
+            precommitted_schedule: Some(precommitted_schedule),
+            schedule_artifacts,
+        }
+    }
+
     pub fn one_hot_k(&self) -> usize {
         self.one_hot_k
     }
@@ -448,15 +475,72 @@ impl AkitaSetupParams {
 pub struct AkitaProverSetup {
     pub(crate) backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
     pub(crate) prepared_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
-    pub(crate) one_hot_backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
-    pub(crate) prepared_one_hot_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
+    pub(crate) trace_backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
+    pub(crate) prepared_trace_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
+    pub(crate) field_digits: Option<Arc<FieldDigitBackend>>,
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
     pub(crate) verifier: AkitaVerifierSetup,
+}
+
+pub(crate) struct FieldDigitBackend {
+    pub(crate) scheme: AkitaFieldDigitsBackendScheme,
+    pub(crate) prover_setup: AkitaBackendProverSetup,
+    pub(crate) prepared: AkitaBackendPreparedSetup,
+    pub(crate) profiles: Vec<GroupCommitPhaseParams>,
+}
+
+impl FieldDigitBackend {
+    pub(crate) fn new(
+        artifacts: &AkitaScheduleArtifacts,
+        groups: &[PolynomialGroupLayout],
+    ) -> Result<Self, OpeningsError> {
+        let catalog = artifacts.field_digit_catalog().map_err(invalid_setup)?;
+        let profiles = groups
+            .iter()
+            .map(|group| {
+                catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(*group))
+                    .map(|row| row.profiles().final_group)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(invalid_setup)?;
+        let scheme = AkitaFieldDigitsBackendScheme::new(
+            TrustedScheduleCatalog::new(catalog).map_err(invalid_setup)?,
+        );
+        let (max_num_vars, max_num_polys) = groups.iter().fold((0, 0), |(vars, polys), group| {
+            (
+                vars.max(group.num_vars()),
+                polys.max(group.num_polynomials()),
+            )
+        });
+        let prover_setup = with_backend_pool(|| scheme.setup_prover(max_num_vars, max_num_polys))
+            .map_err(invalid_setup)?;
+        let prepared = with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&prover_setup))
+            .map_err(invalid_setup)?;
+        Ok(Self {
+            scheme,
+            prover_setup,
+            prepared,
+            profiles,
+        })
+    }
+}
+
+impl Debug for FieldDigitBackend {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("FieldDigitBackend")
+            .field("profiles", &self.profiles)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AkitaProverSetup {
     pub fn max_num_vars(&self) -> usize {
         self.verifier.max_num_vars
+    }
+
+    pub fn final_num_vars(&self) -> usize {
+        self.verifier.final_num_vars
     }
 
     pub fn max_num_polys_per_commitment_group(&self) -> usize {
@@ -480,7 +564,7 @@ impl AkitaProverSetup {
     pub fn release_post_commit_ntt_residency(&self) -> Result<(), OpeningsError> {
         for prepared in [
             self.prepared_backend_setup.as_deref(),
-            self.prepared_one_hot_backend_setup.as_deref(),
+            self.prepared_trace_backend_setup.as_deref(),
         ]
         .into_iter()
         .flatten()
@@ -505,18 +589,24 @@ impl AkitaProverSetup {
             })
     }
 
-    pub(crate) fn one_hot_backend(
+    pub(crate) fn trace_backend(
         &self,
     ) -> Result<(&AkitaBackendProverSetup, &AkitaBackendPreparedSetup), OpeningsError> {
         let backend = self
-            .one_hot_backend_prover_setup
+            .trace_backend_prover_setup
             .as_deref()
-            .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
+            .ok_or_else(|| invalid_batch("Akita setup has no trace backend"))?;
         let prepared = self
-            .prepared_one_hot_backend_setup
+            .prepared_trace_backend_setup
             .as_deref()
-            .ok_or_else(|| invalid_batch("Akita setup has no prepared one-hot backend"))?;
+            .ok_or_else(|| invalid_batch("Akita setup has no prepared trace backend"))?;
         Ok((backend, prepared))
+    }
+
+    pub(crate) fn field_digit_backend(&self) -> Result<&FieldDigitBackend, OpeningsError> {
+        self.field_digits
+            .as_deref()
+            .ok_or_else(|| invalid_batch("Akita setup provisions no field-digit groups"))
     }
 }
 
@@ -528,6 +618,7 @@ impl AkitaProverSetup {
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
     pub(crate) max_num_vars: usize,
+    pub(crate) final_num_vars: usize,
     pub(crate) max_num_polys_per_commitment_group: usize,
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
@@ -544,20 +635,28 @@ pub(crate) enum AkitaVerifierScheduleArtifacts {
     Dense { dense: Vec<u8> },
     OneHot { one_hot: Vec<u8> },
     Both { dense: Vec<u8>, one_hot: Vec<u8> },
+    SignedBytes { signed_bytes: Vec<u8> },
 }
 
 impl AkitaVerifierScheduleArtifacts {
     fn dense(&self) -> Option<&[u8]> {
         match self {
             Self::Dense { dense } | Self::Both { dense, .. } => Some(dense),
-            Self::OneHot { .. } => None,
+            Self::OneHot { .. } | Self::SignedBytes { .. } => None,
         }
     }
 
     fn one_hot(&self) -> Option<&[u8]> {
         match self {
             Self::OneHot { one_hot } | Self::Both { one_hot, .. } => Some(one_hot),
-            Self::Dense { .. } => None,
+            Self::Dense { .. } | Self::SignedBytes { .. } => None,
+        }
+    }
+
+    fn signed_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::SignedBytes { signed_bytes } => Some(signed_bytes),
+            Self::Dense { .. } | Self::OneHot { .. } | Self::Both { .. } => None,
         }
     }
 }
@@ -565,6 +664,19 @@ impl AkitaVerifierScheduleArtifacts {
 impl AkitaVerifierSetup {
     pub fn max_num_vars(&self) -> usize {
         self.max_num_vars
+    }
+
+    pub fn final_num_vars(&self) -> usize {
+        self.final_num_vars
+    }
+
+    pub(crate) fn trace_family(&self) -> Result<TraceFamily, OpeningsError> {
+        match self.schedule_artifacts {
+            AkitaVerifierScheduleArtifacts::SignedBytes { .. } => Ok(TraceFamily::SignedBytes),
+            AkitaVerifierScheduleArtifacts::Dense { .. }
+            | AkitaVerifierScheduleArtifacts::OneHot { .. }
+            | AkitaVerifierScheduleArtifacts::Both { .. } => one_hot_trace_family(self.one_hot_k),
+        }
     }
 
     pub fn max_num_polys_per_commitment_group(&self) -> usize {
@@ -588,13 +700,13 @@ impl AkitaVerifierSetup {
     pub(crate) fn prime_backend_cache(
         &self,
         dense: Option<AkitaBackendVerifier>,
-        one_hot: Option<AkitaBackendVerifier>,
+        trace: Option<AkitaBackendVerifier>,
     ) {
         if let Some(dense) = dense {
             let _ = self.backend_cache.dense.get_or_init(|| dense);
         }
-        if let Some(one_hot) = one_hot {
-            let _ = self.backend_cache.one_hot.get_or_init(|| one_hot);
+        if let Some(trace) = trace {
+            let _ = self.backend_cache.trace.get_or_init(|| trace);
         }
     }
 
@@ -645,6 +757,25 @@ impl AkitaVerifierSetup {
             .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
     }
 
+    pub(crate) fn signed_byte_scheme(
+        &self,
+    ) -> Result<&AkitaSignedBytesBackendScheme, OpeningsError> {
+        let result = self.backend_cache.signed_bytes_scheme.get_or_init(|| {
+            self.schedule_artifacts
+                .signed_bytes()
+                .ok_or_else(|| {
+                    "Akita verifier setup has no signed-byte schedule artifact".to_string()
+                })
+                .and_then(|bytes| {
+                    AkitaSignedBytesBackendScheme::from_schedule_artifact(bytes)
+                        .map_err(|error| error.to_string())
+                })
+        });
+        result
+            .as_ref()
+            .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
+    }
+
     /// Backend verifier key for `flavor`, cached after the first use.
     /// [`AkitaScheme::setup`](crate::AkitaScheme) primes the cache with the
     /// freshly built keys; a serde-transported setup re-derives them from the
@@ -655,7 +786,14 @@ impl AkitaVerifierSetup {
     ) -> Result<&AkitaBackendVerifier, OpeningsError> {
         let cache = match flavor {
             AkitaBackendFlavor::Dense => &self.backend_cache.dense,
-            AkitaBackendFlavor::OneHot => &self.backend_cache.one_hot,
+            AkitaBackendFlavor::OneHot | AkitaBackendFlavor::SignedBytes => {
+                &self.backend_cache.trace
+            }
+            AkitaBackendFlavor::FieldDigits => {
+                return Err(invalid_batch(
+                    "Akita field-digit groups open only beside a signed-byte trace",
+                ))
+            }
         };
         if let Some(verifier) = cache.get() {
             return Ok(verifier);
@@ -683,10 +821,19 @@ impl AkitaVerifierSetup {
                     return Err(invalid_batch("Akita verifier setup has no one-hot backend"));
                 }
                 let prover_setup =
-                    one_hot_setup_prover(self, self.max_num_vars, self.max_total_batch_polys)
+                    trace_setup_prover(self, self.max_num_vars, self.max_total_batch_polys)
                         .map_err(invalid_setup)?;
-                one_hot_setup_verifier(self, &prover_setup)
+                trace_setup_verifier(self, &prover_setup)
             }
+            AkitaBackendFlavor::SignedBytes => {
+                let prover_setup =
+                    trace_setup_prover(self, self.max_num_vars, self.max_total_batch_polys)
+                        .map_err(invalid_setup)?;
+                trace_setup_verifier(self, &prover_setup)
+            }
+            AkitaBackendFlavor::FieldDigits => Err(invalid_batch(
+                "Akita field-digit groups open only beside a signed-byte trace",
+            )),
         }
     }
 }
@@ -696,14 +843,15 @@ impl AkitaVerifierSetup {
 #[derive(Clone, Default)]
 pub(crate) struct BackendVerifierCache {
     dense: Arc<OnceLock<AkitaBackendVerifier>>,
-    one_hot: Arc<OnceLock<AkitaBackendVerifier>>,
+    trace: Arc<OnceLock<AkitaBackendVerifier>>,
     dense_scheme: Arc<OnceLock<Result<AkitaBackendScheme, String>>>,
     one_hot_k16_scheme: Arc<OnceLock<Result<AkitaOneHotK16BackendScheme, String>>>,
     one_hot_k256_scheme: Arc<OnceLock<Result<AkitaOneHotK256BackendScheme, String>>>,
+    signed_bytes_scheme: Arc<OnceLock<Result<AkitaSignedBytesBackendScheme, String>>>,
 }
 
-impl fmt::Debug for BackendVerifierCache {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Debug for BackendVerifierCache {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.write_str("BackendVerifierCache")
     }
 }
@@ -744,6 +892,12 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
                 )))
             }
         },
+        AkitaBackendFlavor::SignedBytes => setup.signed_byte_scheme()?.schedules().catalog_digest(),
+        AkitaBackendFlavor::FieldDigits => {
+            return Err(invalid_batch(
+                "Akita field-digit groups open only beside a signed-byte trace",
+            ))
+        }
     };
     transcript.append_bytes(&catalog_digest);
     Ok(())
@@ -773,6 +927,19 @@ pub enum AkitaBackendFlavor {
     #[default]
     Dense,
     OneHot,
+    /// The signed-byte trace `Q`, one byte digit per coefficient.
+    SignedBytes,
+    /// Full field values committed as sixteen signed-byte digits.
+    FieldDigits,
+}
+
+impl TraceFamily {
+    pub(crate) const fn flavor(self) -> AkitaBackendFlavor {
+        match self {
+            Self::OneHotK16 | Self::OneHotK256 => AkitaBackendFlavor::OneHot,
+            Self::SignedBytes => AkitaBackendFlavor::SignedBytes,
+        }
+    }
 }
 
 impl AkitaBackendFlavor {
@@ -780,6 +947,18 @@ impl AkitaBackendFlavor {
         match self {
             Self::Dense => b"dense",
             Self::OneHot => b"one_hot",
+            Self::SignedBytes => b"signed_bytes",
+            Self::FieldDigits => b"field_digits",
+        }
+    }
+
+    /// Dense sources are stored bit-reversed and open at the Jolt point;
+    /// every other source keeps Jolt's index order, so Akita reads the
+    /// reversed point.
+    pub(crate) fn backend_point(self, point: &[AkitaField]) -> Vec<AkitaField> {
+        match self {
+            Self::Dense => point.to_vec(),
+            Self::OneHot | Self::SignedBytes | Self::FieldDigits => reverse_point(point),
         }
     }
 }
@@ -981,6 +1160,8 @@ pub(crate) enum AkitaHintPolynomials {
     TraceOneHot(TracePackedOneHot),
     /// Trace rows dropped between the commit and the opening.
     ReleasedTraceOneHot(ReleasedTracePackedOneHot),
+    SignedBytes(Arc<[SignedBytePoly]>),
+    FieldDigits(Arc<[SignedBytePoly]>),
 }
 
 impl Default for AkitaHintPolynomials {
@@ -996,6 +1177,8 @@ impl AkitaHintPolynomials {
             Self::OneHot(_) | Self::TraceOneHot(_) | Self::ReleasedTraceOneHot(_) => {
                 AkitaBackendFlavor::OneHot
             }
+            Self::SignedBytes(_) => AkitaBackendFlavor::SignedBytes,
+            Self::FieldDigits(_) => AkitaBackendFlavor::FieldDigits,
         }
     }
 
@@ -1005,6 +1188,8 @@ impl AkitaHintPolynomials {
             Self::OneHot(_) => "one_hot",
             Self::TraceOneHot(_) => "trace_one_hot",
             Self::ReleasedTraceOneHot(_) => "released_trace_one_hot",
+            Self::SignedBytes(_) => "signed_bytes",
+            Self::FieldDigits(_) => "field_digits",
         }
     }
 
@@ -1013,6 +1198,7 @@ impl AkitaHintPolynomials {
             Self::Dense(polys) => polys.len(),
             Self::OneHot(polys) => polys.len(),
             Self::TraceOneHot(_) | Self::ReleasedTraceOneHot(_) => 1,
+            Self::SignedBytes(polys) | Self::FieldDigits(polys) => polys.len(),
         }
     }
 
@@ -1025,7 +1211,7 @@ impl AkitaHintPolynomials {
                 akita_prover::RootPolyMeta::onehot_chunk_size(polynomial)
             }
             Self::ReleasedTraceOneHot(released) => Some(released.one_hot_k()),
-            Self::Dense(_) => None,
+            Self::Dense(_) | Self::SignedBytes(_) | Self::FieldDigits(_) => None,
         }
     }
 }
@@ -1091,6 +1277,16 @@ pub(crate) fn owned_one_hot_polynomial(
     AkitaBackendOneHotPoly::new(one_hot_k, polynomial.into_indices()).map_err(akita_error)
 }
 
+pub(crate) fn one_hot_trace_family(one_hot_k: usize) -> Result<TraceFamily, OpeningsError> {
+    match one_hot_k {
+        AKITA_ONE_HOT_K16 => Ok(TraceFamily::OneHotK16),
+        AKITA_ONE_HOT_K256 => Ok(TraceFamily::OneHotK256),
+        other => Err(invalid_batch(format!(
+            "unsupported Akita one-hot K={other}"
+        ))),
+    }
+}
+
 pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsError> {
     match one_hot_k {
         AKITA_ONE_HOT_K16 => Ok(4),
@@ -1101,46 +1297,49 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
     }
 }
 
-pub(crate) fn one_hot_setup_prover(
+pub(crate) fn trace_setup_prover(
     setup: &AkitaVerifierSetup,
     max_num_vars: usize,
     max_num_polys: usize,
 ) -> Result<AkitaBackendProverSetup, AkitaError> {
-    with_backend_pool(|| match setup.one_hot_k {
-        AKITA_ONE_HOT_K16 => setup
+    let family = setup
+        .trace_family()
+        .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+    with_backend_pool(|| match family {
+        TraceFamily::OneHotK16 => setup
             .one_hot_k16_scheme()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
             .setup_prover(max_num_vars, max_num_polys),
-        AKITA_ONE_HOT_K256 => setup
+        TraceFamily::OneHotK256 => setup
             .one_hot_k256_scheme()
             .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
             .setup_prover(max_num_vars, max_num_polys),
-        _ => unreachable!("one-hot K is validated before backend setup"),
+        TraceFamily::SignedBytes => setup
+            .signed_byte_scheme()
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
+            .setup_prover(max_num_vars, max_num_polys),
     })
 }
 
-pub(crate) fn one_hot_setup_verifier(
+pub(crate) fn trace_setup_verifier(
     setup: &AkitaVerifierSetup,
     prover_setup: &AkitaBackendProverSetup,
 ) -> Result<AkitaBackendVerifier, OpeningsError> {
-    match setup.one_hot_k {
-        AKITA_ONE_HOT_K16 => with_backend_pool(|| {
-            setup
-                .one_hot_k16_scheme()?
-                .setup_verifier(prover_setup)
-                .map_err(invalid_setup)
-        }),
-        AKITA_ONE_HOT_K256 => with_backend_pool(|| {
-            setup
-                .one_hot_k256_scheme()?
-                .setup_verifier(prover_setup)
-                .map_err(invalid_setup)
-        }),
-        _ => Err(invalid_batch(format!(
-            "unsupported Akita one-hot K={}",
-            setup.one_hot_k
-        ))),
-    }
+    let family = setup.trace_family()?;
+    with_backend_pool(|| match family {
+        TraceFamily::OneHotK16 => setup
+            .one_hot_k16_scheme()?
+            .setup_verifier(prover_setup)
+            .map_err(invalid_setup),
+        TraceFamily::OneHotK256 => setup
+            .one_hot_k256_scheme()?
+            .setup_verifier(prover_setup)
+            .map_err(invalid_setup),
+        TraceFamily::SignedBytes => setup
+            .signed_byte_scheme()?
+            .setup_verifier(prover_setup)
+            .map_err(invalid_setup),
+    })
 }
 
 #[doc(hidden)]
