@@ -119,6 +119,9 @@ With `--embed` the host also:
   avoid them:
   - The Blake2b hasher packs input into message words.
   - The size-class allocator's `realloc` moves whole words.
+  - The jolt CLI raises LLVM's inline-store limits (`-max-store-memcpy=32`,
+    `-max-store-memset=32`), so constant-size copies and fills compile to
+    word stores.
 - `serde_bytes` on every proof and setup byte payload.
 - 8-byte-aligned guest record framing.
 - `write(2)` and `clock_gettime(2)` answered in the trap handler.
