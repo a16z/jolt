@@ -57,14 +57,6 @@ fn fused_kernels_read_each_trace_row_once() {
         .collect::<Vec<_>>();
     let sources = columns.iter().collect::<Vec<_>>();
     let backend = test_backend();
-    let live_weights = vec![AkitaField::one(); num_blocks];
-    let position_weights = vec![AkitaField::one(); NUM_POSITIONS];
-    let _ = <TestBackend as OpeningBatchKernel<TraceOneHotColumnBatchView<'_, D>, AkitaField, D>>::evaluate_and_fold_batch(
-        &backend, None,
-        <TraceOneHotColumn as RootOpeningSource<AkitaField, D>>::opening_batch(&sources).unwrap(),
-        OpeningFoldPlan::Base { live_block_weights: &live_weights, position_weights: &position_weights, num_positions_per_block: NUM_POSITIONS },
-    ).unwrap();
-    assert_eq!(fills.swap(0, Ordering::Relaxed), ROWS);
     let setup = AkitaProverSetup::<AkitaField>::generate_with_capacity(
         1,
         1,

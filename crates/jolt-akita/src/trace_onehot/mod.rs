@@ -20,7 +20,6 @@ mod commit;
 mod decomposition;
 mod digit_windows;
 mod kernels;
-mod opening;
 mod source;
 mod traversal;
 

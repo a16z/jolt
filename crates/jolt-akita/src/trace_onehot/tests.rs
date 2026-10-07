@@ -12,13 +12,13 @@ use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::{BasisMode, SetupMatrixCapacity, SubringCoefficientPackingGeometry};
 use akita_pcs::custom_source::{
     CommitInnerPlan, CpuFoldResponses, DecomposeFoldBatchPlan, OneHotBatchView, OpeningBatchKernel,
-    OpeningFoldPlan, RootOpeningSource, RootPolyShape, SourceCoefficients,
-    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPlan,
+    RootOpeningSource, RootPolyShape, SourceCoefficients, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPlan,
 };
 use akita_pcs::AkitaError;
 use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
-use akita_types::{prepare_opening_point, PreparedSubringCoefficientPackingPoint};
-use jolt_field::{ExtField, Fp128x8i32, FpExt4, One, Ring, Zero};
+use akita_types::PreparedSubringCoefficientPackingPoint;
+use jolt_field::{Fp128x8i32, One, Ring};
 
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
@@ -320,7 +320,7 @@ fn deferred_fp128_shift_accumulator_matches_canonical_at_batch_bound() {
     assert_deferred_fp128_shift_accumulator::<256>();
 }
 
-fn assert_opening_kernels_match_materialized<const D: usize>(
+fn assert_production_kernels_match_materialized<const D: usize>(
     k: usize,
     rows: usize,
     num_positions: usize,
@@ -354,82 +354,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     let trace_sources = columns.iter().collect::<Vec<_>>();
     let materialized_sources = materialized_columns.iter().collect::<Vec<_>>();
     let num_blocks = RootPolyShape::<AkitaField, D>::num_ring_elems(source).div_ceil(num_positions);
-    let live_weights = (0..num_blocks)
-        .map(|i| AkitaField::from_u64(i as u64 + 2))
-        .collect::<Vec<_>>();
-    let position_weights = (0..num_positions)
-        .map(|i| AkitaField::from_u64(3 * i as u64 + 1))
-        .collect::<Vec<_>>();
-    let outer_bits = num_positions.ilog2() as usize + num_blocks.ilog2() as usize;
-    let alpha_bits = D.ilog2() as usize;
-    let extension_point = std::iter::repeat_n(FpExt4::<AkitaField>::zero(), alpha_bits)
-        .chain((0..outer_bits).map(|index| {
-            FpExt4::<AkitaField>::from_base_slice(
-                &(0..4)
-                    .map(|coordinate| AkitaField::from_u64((index * 4 + coordinate + 2) as u64))
-                    .collect::<Vec<_>>(),
-            )
-        }))
-        .collect::<Vec<_>>();
-    let prepared = prepare_opening_point::<AkitaField, FpExt4<AkitaField>, D>(
-        &extension_point,
-        BasisMode::Lagrange,
-        num_positions,
-        num_blocks,
-        alpha_bits,
-    )
-    .unwrap();
-    let multipliers = prepared.ring_multiplier_point.as_subfield().unwrap();
-    if outer_bits != 0 {
-        assert!(multipliers
-            .materialize_position_rings::<D>()
-            .unwrap()
-            .iter()
-            .chain(multipliers.materialize_fold_rings::<D>().unwrap().iter())
-            .any(|ring| ring.coefficients()[1..]
-                .iter()
-                .any(|coefficient| !coefficient.is_zero())));
-    }
     let backend = test_backend();
-    for plan in [
-        OpeningFoldPlan::Base {
-            live_block_weights: &live_weights,
-            position_weights: &position_weights,
-            num_positions_per_block: num_positions,
-        },
-        OpeningFoldPlan::Subfield {
-            multipliers,
-            num_positions_per_block: num_positions,
-        },
-    ] {
-        let streamed = <TestBackend as OpeningBatchKernel<
-            TraceOneHotColumnBatchView<'_, D>,
-            AkitaField,
-            D,
-        >>::evaluate_and_fold_batch(
-            &backend,
-            None,
-            <TraceOneHotColumn as RootOpeningSource<AkitaField, D>>::opening_batch(&trace_sources)
-                .unwrap(),
-            plan,
-        )
-        .unwrap();
-        let materialized = <TestBackend as OpeningBatchKernel<
-            OneHotBatchView<'_, AkitaField, D, u8>,
-            AkitaField,
-            D,
-        >>::evaluate_and_fold_batch(
-            &backend,
-            None,
-            <OneHotPoly<AkitaField, u8> as RootOpeningSource<AkitaField, D>>::opening_batch(
-                &materialized_sources,
-            )
-            .unwrap(),
-            plan,
-        )
-        .unwrap();
-        assert_eq!(streamed, materialized);
-    }
     let challenges = (0..num_blocks * COLUMNS)
         .map(|block| SparseChallenge {
             positions: vec![0, (block % (D - 1) + 1) as u32].into(),
@@ -549,27 +474,27 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
 }
 
 #[test]
-fn blockwise_opening_kernels_match_materialized_onehot() {
-    assert_opening_kernels_match_materialized::<64>(256, 32, 16, None, 2);
-    assert_opening_kernels_match_materialized::<64>(256, 32, 1, None, 2);
-    assert_opening_kernels_match_materialized::<128>(256, 32, 16, None, 2);
-    assert_opening_kernels_match_materialized::<256>(256, 32, 16, None, 2);
-    assert_opening_kernels_match_materialized::<512>(256, 32, 8, None, 2);
-    assert_opening_kernels_match_materialized::<64>(16, 32, 4, None, 2);
-    assert_opening_kernels_match_materialized::<128>(16, 32, 2, None, 2);
-    assert_opening_kernels_match_materialized::<256>(16, 32, 2, None, 2);
-    assert_opening_kernels_match_materialized::<512>(16, 32, 1, None, 2);
-    assert_opening_kernels_match_materialized::<64>(16, 32, 16, None, 2);
-    assert_opening_kernels_match_materialized::<64>(16, 32, 32, Some(1), 2);
-    assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(0), 2);
-    assert_opening_kernels_match_materialized::<128>(16, 32, 8, None, 2);
-    assert_opening_kernels_match_materialized::<256>(16, 32, 4, None, 2);
-    assert_opening_kernels_match_materialized::<512>(16, 32, 2, None, 2);
-    assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2);
-    assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2);
-    assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1), 1);
-    assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1), 1);
-    assert_opening_kernels_match_materialized::<256>(256, 32, 16, Some(1), 1);
+fn blockwise_production_kernels_match_materialized_onehot() {
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, None, 2);
+    assert_production_kernels_match_materialized::<64>(256, 32, 1, None, 2);
+    assert_production_kernels_match_materialized::<128>(256, 32, 16, None, 2);
+    assert_production_kernels_match_materialized::<256>(256, 32, 16, None, 2);
+    assert_production_kernels_match_materialized::<512>(256, 32, 8, None, 2);
+    assert_production_kernels_match_materialized::<64>(16, 32, 4, None, 2);
+    assert_production_kernels_match_materialized::<128>(16, 32, 2, None, 2);
+    assert_production_kernels_match_materialized::<256>(16, 32, 2, None, 2);
+    assert_production_kernels_match_materialized::<512>(16, 32, 1, None, 2);
+    assert_production_kernels_match_materialized::<64>(16, 32, 16, None, 2);
+    assert_production_kernels_match_materialized::<64>(16, 32, 32, Some(1), 2);
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(0), 2);
+    assert_production_kernels_match_materialized::<128>(16, 32, 8, None, 2);
+    assert_production_kernels_match_materialized::<256>(16, 32, 4, None, 2);
+    assert_production_kernels_match_materialized::<512>(16, 32, 2, None, 2);
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2);
+    assert_production_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2);
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(1), 1);
+    assert_production_kernels_match_materialized::<64>(16, 32, 4, Some(1), 1);
+    assert_production_kernels_match_materialized::<256>(256, 32, 16, Some(1), 1);
 }
 
 fn batch_decompose_test_source<const D: usize>() -> Vec<TraceOneHotColumn> {

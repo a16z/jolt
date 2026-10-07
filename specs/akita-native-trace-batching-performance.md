@@ -156,8 +156,7 @@ rows with `--protocol akita --akita-chunk-profile w8r2`; Single is its default.
 The harness reports proving, setup, both verifier timings, proof size, and
 process memory; use `--format chrome` for per-span telemetry. Repeat fresh-process runs in
 alternating base/head order and record the source revisions and catalog hashes
-with each comparison. Historical revisions need their historical
-instrumentation; the new flag is available only from this review follow-up.
+with each comparison.
 
 The guest ELF hashes are:
 

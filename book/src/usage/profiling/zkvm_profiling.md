@@ -106,9 +106,6 @@ in the run directories). Akita Single rows append `_akita` to the workload
 name; chunked rows also append `_w2r2`, `_w4r2`, or `_w8r2`, for example
 `fibonacci_akita_w4r2`. The summary table defaults to Single; select a
 chunked profile with `--protocol akita --akita-chunk-profile w4r2`.
-The plots group these CSV names separately. Rows produced by the earlier
-chunk-profile flag without a profile suffix cannot be distinguished from
-Single rows; rerun those measurements to identify their profile.
 `--resume` checks the selected protocol and kernel implementation's
 artifact path. In addition to prover throughput and proof size, the
 CSV records `setup_time_s`, `verifier_parallel_time_s`,

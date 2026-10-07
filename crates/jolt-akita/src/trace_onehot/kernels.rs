@@ -21,7 +21,6 @@ use jolt_field::ExtField;
 
 use super::commit::commit_columns;
 use super::decomposition::{decompose_fold_columns_with_mode, DecomposeRotationMode};
-use super::opening::opening_fold_columns;
 use super::source::{validate_batch, TraceOneHotColumn, TraceOneHotColumnBatchView};
 use super::traversal::coefficient_packing_partials_columns;
 use crate::AkitaField;
@@ -73,10 +72,12 @@ impl<E, const D: usize> OpeningBatchKernel<TraceOneHotColumnBatchView<'_, D>, Ak
     fn evaluate_and_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
-        source: TraceOneHotColumnBatchView<'_, D>,
-        plan: OpeningFoldPlan<'_, AkitaField>,
+        _source: TraceOneHotColumnBatchView<'_, D>,
+        _plan: OpeningFoldPlan<'_, AkitaField>,
     ) -> Result<Vec<OpeningFoldOutput<AkitaField, D>>, AkitaError> {
-        opening_fold_columns(source.source(), plan)
+        Err(AkitaError::UnsupportedSchedule(
+            "trace one-hot sources require subring coefficient packing".into(),
+        ))
     }
 
     fn decompose_fold_batch(
