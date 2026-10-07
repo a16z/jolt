@@ -198,3 +198,44 @@ fn in_range_unmapped_jump_reports_bad_target() {
     );
     assert_eq!(outcome.fault_addr, TEST_ADDR + 2);
 }
+
+/// A static branch or `Jal` to an address that is not a compiled group start
+/// must compile, and taking it must report the bad target like an indirect
+/// jump does. `x0 == x0` makes the `Beq` always taken.
+#[test]
+fn static_transfer_to_unmapped_target_reports_bad_target() {
+    let outside_text = 1 << 20;
+    for kind in [JoltInstructionKind::BEQ, JoltInstructionKind::JAL] {
+        for imm in [2, 6, outside_text] {
+            let program = single_row_program(row(kind, None, None, imm));
+            let pre = [0u64; REGS];
+
+            let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+            assert_eq!(
+                outcome.exit, 3,
+                "{kind:?} +{imm}: expected the bad-jump exit reason, got {} ({:?})",
+                outcome.exit, outcome.helper_error
+            );
+            assert_eq!(
+                outcome.fault_addr,
+                TEST_ADDR + imm as u64,
+                "{kind:?} +{imm}"
+            );
+        }
+    }
+}
+
+/// The same unmapped target is harmless when the branch is not taken:
+/// `x0 != x0` never holds, so execution falls through to the next row.
+#[test]
+fn untaken_branch_to_unmapped_target_falls_through() {
+    let program = single_row_program(row(JoltInstructionKind::BNE, None, None, 2));
+    let pre = [0u64; REGS];
+
+    let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+    assert_eq!(
+        outcome.exit, 1,
+        "expected a clean termination, got {} ({:?})",
+        outcome.exit, outcome.helper_error
+    );
+}
