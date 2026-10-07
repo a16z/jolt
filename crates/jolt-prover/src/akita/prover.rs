@@ -11,6 +11,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 #[cfg(feature = "akita-byte-link")]
 use jolt_kernels::byte_link::reference::ByteTrace;
+use jolt_kernels::ProofSession;
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
@@ -171,6 +172,20 @@ where
         witness,
         &mut transcript,
     )?;
+    let mut run_stage7 = |session: &mut ProofSession| {
+        prove_stage7::<F, PCS, VC, T>(
+            &backend.base,
+            session,
+            &mode,
+            &checked,
+            config,
+            preprocessing,
+            &stage4.clear_output,
+            &stage6b.clear_output,
+            witness,
+            &mut transcript,
+        )
+    };
     #[cfg(not(feature = "akita-byte-link"))]
     let (stage7, joint_opening_proof) = {
         let plan = &stage0.one_hot_trace_plan;
@@ -198,18 +213,7 @@ where
                     })
                 })
             });
-            let stage7 = prove_stage7::<F, PCS, VC, T>(
-                &backend.base,
-                &mut session,
-                &mode,
-                &checked,
-                config,
-                preprocessing,
-                &stage4.clear_output,
-                &stage6b.clear_output,
-                witness,
-                &mut transcript,
-            );
+            let stage7 = run_stage7(&mut session);
             let rows = rows.map(|rows| {
                 let completed_before_join = rows.is_finished();
                 let _span =
@@ -249,18 +253,7 @@ where
     };
     #[cfg(feature = "akita-byte-link")]
     let (stage7, byte_link, joint_opening_proof) = {
-        let stage7 = prove_stage7::<F, PCS, VC, T>(
-            &backend.base,
-            &mut session,
-            &mode,
-            &checked,
-            config,
-            preprocessing,
-            &stage4.clear_output,
-            &stage6b.clear_output,
-            witness,
-            &mut transcript,
-        )?;
+        let stage7 = run_stage7(&mut session)?;
         backend.end_trace_stages(session, log_t);
         let bytes =
             PCS::signed_byte_trace(&stage0.hint).ok_or(ProverError::InvariantViolation {
