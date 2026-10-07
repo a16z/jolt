@@ -45,6 +45,25 @@ samples are in [the CSV](benchmarks/pr51/samples.csv).
 | fibonacci 2^20 / w8r2 | 4.505–4.712 | 4.505–4.638 | 23.73 → 106.16 |
 | fibonacci 2^24 / w8r2 | 64.900–67.167 | 70.676–73.446 | 203.07 → 2249.67 |
 
+## Single-profile verification and setup regressions
+
+The default Single profile also regresses outside the W8R2/2^24 case.
+Single-threaded verification increases by 10% for Fibonacci 2^20
+(22.31 → 24.52 ms), 21% for SHA2 2^20 (21.77 → 26.27 ms), and 26%
+for SHA2 2^22 (19.49 → 24.51 ms). The three-sample ranges do not overlap
+for these cases. Parallel verification of SHA2 2^22 also increases by 13%.
+Single-profile PCS setup is 2.5–4.2× slower; across all eight cases it is
+2.5–11.1× slower. Setup is excluded from the prove timer, so similar proving
+times do not imply similar preprocessing or verification costs.
+
+Native batching changes the setup from one selector-packed polynomial to a
+multi-column group and changes recursive schedules. These are possible causes,
+not an established attribution. Isolating setup matrix generation and each
+verifier fold against valid alternative schedules remains necessary. The
+measured benefit is workload-dependent: Fibonacci 2^18 Single improves proving
+by 31%, while larger Single workloads have roughly unchanged proving time and
+higher verification/setup costs. This PR does not establish a general speedup.
+
 ## W8R2 at log_T=24
 
 The measured Fibonacci case has 12,583,871 raw rows, padded to 16,777,216.

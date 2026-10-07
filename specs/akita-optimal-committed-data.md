@@ -283,8 +283,10 @@ The measurements and proposals above describe historical formats. The current
 protocol is specified in [Akita Native Trace Batching](akita-native-trace-batching.md).
 `OneHotTrace` is one native commitment group containing the actual trace columns,
 with each polynomial in `(cycle || address)` order. There are no selector slots
-or selector challenge for the trace. Logical address row zero is public and
-omitted from the witness; Stage 7 recenters each semantic claim around that row.
+or selector challenge for the trace. Instruction, bytecode, digit, and carry
+columns omit the public digit-zero row; Stage 7 recenters their semantic claims
+around that row. RAM columns retain digit zero on cycles with a remappable RAM
+access.
 Stage 8 binds the common point and ordered evaluations, then passes those claims
 to Akita's native batch opening.
 
