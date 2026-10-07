@@ -736,71 +736,46 @@ mod p256_tests {
         );
     }
 
-    /// Regression test: non-canonical fake-GLV advice point limbs (R1) are
-    /// rejected.
-    ///
-    /// The fake-GLV advice words for R1/R2 are prover-supplied VIRTUAL_ADVICE
-    /// (range-checked to 64 bits per word only). Non-canonical limbs pass
-    /// `is_on_curve` (mul/square inlines are residue-correct) but corrupt the
-    /// raw-limb branch selection and add/sub semantics in `AffinePoint::add`:
-    /// an x-limb shifted by p (fits [u64; 4] when the residue is < 2^256 - p)
-    /// makes the final `r1.add(&r2)` slope division degenerate to 0/0, so the
-    /// prover controls `r_sum.x` and can forge the ECDSA result. x-limb = p
-    /// here stands in for that shifted representation (residue 0).
+    /// R2 = (p, √B) is a non-canonical encoding of the on-curve point
+    /// P = (0, √B). With Q = P/2 and u2 = 2 it passes the on-curve, GLV and
+    /// Shamir checks, and the final `r1.add(&r2)` yields G + P, so only the
+    /// advice canonicality guard rejects it.
     #[test]
     #[should_panic(expected = "proof spoiled")]
-    fn test_non_canonical_r1_advice_rejected() {
+    fn test_non_canonical_advice_limbs_rejected() {
         use crate::sdk::{verify_ecdsa_inner, P256Fq, P256Fr, P256Point};
+        use ark_ec::{AffineRepr, CurveGroup};
+        use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField};
+        use ark_secp256r1::{Affine, Fq, Fr};
 
-        let g = P256Point::generator();
+        let to_fq = |f: Fq| P256Fq::from_u64_arr(&f.into_bigint().0).unwrap();
+        let to_point = |a: Affine| P256Point::new(to_fq(a.x), to_fq(a.y)).unwrap();
+
+        let sqrt_b = Fq::new(BigInt(P256_CURVE_B)).sqrt().unwrap();
+        let p = Affine::new(Fq::ZERO, sqrt_b);
+        let q = (p * Fr::from(2u64).inverse().unwrap()).into_affine();
+        let g_plus_p = (Affine::generator() + p).into_affine();
+
+        let n = limbs_to_biguint(&P256_ORDER);
+        let r_big = limbs_to_biguint(&g_plus_p.x.into_bigint().0) % n;
+        let r_fr = P256Fr::from_u64_arr(&biguint_to_limbs(&r_big)).unwrap();
         let one = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
-        let r_fr = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
-
-        let dirty_r1 =
-            P256Point::new_unchecked(P256Fq::from_u64_arr_unchecked(&P256_MODULUS), g.y());
-        let _ = verify_ecdsa_inner(
-            &one,
-            &one,
-            &r_fr,
-            &g,
-            dirty_r1,
-            1,
-            false,
-            1,
-            false,
-            g.clone(),
-            1,
-            false,
-            1,
-            false,
-        );
-    }
-
-    /// Same guard for R2 (y-limb variant), the actual attack surface: the
-    /// final `r1.add(&r2)` consumes R2's limbs directly.
-    #[test]
-    #[should_panic(expected = "proof spoiled")]
-    fn test_non_canonical_r2_advice_rejected() {
-        use crate::sdk::{verify_ecdsa_inner, P256Fq, P256Fr, P256Point};
-
-        let g = P256Point::generator();
-        let one = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
-        let r_fr = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let two = P256Fr::from_u64_arr(&[2, 0, 0, 0]).unwrap();
 
         let dirty_r2 =
-            P256Point::new_unchecked(g.x(), P256Fq::from_u64_arr_unchecked(&P256_MODULUS));
+            P256Point::new_unchecked(P256Fq::from_u64_arr_unchecked(&P256_MODULUS), to_fq(sqrt_b));
         let _ = verify_ecdsa_inner(
             &one,
-            &one,
+            &two,
             &r_fr,
-            &g,
-            g.clone(),
+            &to_point(q),
+            P256Point::generator(),
             1,
             false,
             1,
             false,
             dirty_r2,
-            1,
+            2,
             false,
             1,
             false,
