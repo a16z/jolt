@@ -17,7 +17,7 @@ pub enum ExitReason {
     Terminated = 1,
     /// Guest RAM access outside the memory plane.
     FaultOutOfBounds = 2,
-    /// Indirect jump to an address that is not a compiled group start.
+    /// Jump or taken branch to an address that is not a compiled group start.
     FaultBadJumpTarget = 3,
     /// A host helper reported an error (e.g. device access violation).
     FaultHelper = 4,
