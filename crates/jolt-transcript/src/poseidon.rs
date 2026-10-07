@@ -8,8 +8,11 @@
 //!
 //! Byte traffic is mapped to `Fr` via 31-byte little-endian chunks
 //! (`Fr::from_le_bytes_mod_order` is injective on chunks ≤ 31 bytes since
-//! 248 bits < BN254 modulus). Squeezed bytes come from
-//! `into_bigint().to_bytes_le()` of the running state.
+//! 248 bits < BN254 modulus). Each permutation yields the low 16 bytes of
+//! `into_bigint().to_bytes_le()` of the running state: a uniform element of
+//! `[0, p)` reduced mod `2^128` is within `2^-125` of uniform, while its full
+//! 32 bytes are not (the top byte is at most `0x30`), so challenges drawn at
+//! any squeeze offset stay uniform.
 //!
 //! Round constants are built once per `PoseidonSponge` construction; the
 //! same `Poseidon<Fr>` is reused for every `permute` call in this sponge's
@@ -21,7 +24,7 @@ use ark_ff::{BigInteger, PrimeField, Zero};
 use light_poseidon::{Poseidon, PoseidonHasher};
 use spongefish::DuplexSpongeInterface;
 
-const SQUEEZE_BYTES: usize = 32;
+const SQUEEZE_BYTES: usize = 16;
 const ABSORB_CHUNK_BYTES: usize = 31;
 
 #[expect(

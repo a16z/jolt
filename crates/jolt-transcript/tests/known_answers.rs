@@ -56,7 +56,7 @@ fn assert_vectors(name: &str, (narg, challenges): (Vec<u8>, Vec<u8>), expected: 
     assert_eq!(hex(&challenges), expected.1, "{name} challenges");
 }
 
-/// The argument string differs across sponges only in its `u32` grinding nonce.
+/// The argument string differs across sponges only in its grinding nonce.
 const NARG_PREFIX: &str = "07000000000000000000000000000000000000000000000000000000000000000b0000000d000000080000007661726961626c65";
 
 #[test]
@@ -89,8 +89,8 @@ fn poseidon_known_answers() {
         "poseidon",
         run::<PoseidonSponge>(),
         (
-            &format!("{NARG_PREFIX}0d"),
-            "6186b569421edf0a7490f9020cf5124637e90bcd2ff7c905ec433482548d541557d1d4a63d6ea9a8847ad61506d5ebba81550033c00c4991a4a586a3db288810bfbea94f9af0dd473dff8a154a7cc1f5e6f1f6dad5bfdbcf1025b3510cd8ab2a",
+            &format!("{NARG_PREFIX}0f"),
+            "06667373737856e7bdd1796e22de9aa04c6ed6f0f25b3aeffc440008ac6acc2ea7cd1cc8aa62afa214666b1fc1f7547a8c0b471bfb8744ddcd96b061beeb872121dca3360f599c2057204f0f61ec2c603f42a92a9ec56dabf15c2a63bd7f7567",
         ),
     );
 }
