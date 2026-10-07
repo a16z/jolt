@@ -317,8 +317,11 @@ impl<H: Sponge> Channel for VerifierTranscript<'_, H> {
 
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
         let value = self.state.small_challenge();
-        self.log
-            .record(TranscriptOp::Challenge, crate::state::SMALL_CHALLENGE_BYTES, None);
+        self.log.record(
+            TranscriptOp::Challenge,
+            crate::state::SMALL_CHALLENGE_BYTES,
+            None,
+        );
         value
     }
 
