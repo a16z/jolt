@@ -298,6 +298,7 @@ impl RamHammingBooleanityCpuEvalFixture {
         let prepare_started = Instant::now();
         let mut sequence = context
             .prepare_ram_hamming_sequence(
+                &mut ProofSession::default(),
                 Arc::clone(&self.columns),
                 self.relation.stage1_cycle_binding(),
             )

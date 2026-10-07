@@ -19,6 +19,7 @@ use super::{
     validate_completed_command, Fp128, MetalError, PipelineLimits, SolinasMetal,
 };
 use crate::metal::ram_records::{RamAccessColumns, RamIncrementActivity};
+use crate::ProofSession;
 
 const FACTORS: usize = 3;
 const REDUCTION_COLUMNS: usize = 4;
@@ -188,6 +189,7 @@ impl SolinasMetal {
 
     pub(crate) fn prepare_ram_val_sequence(
         &self,
+        session: &mut ProofSession,
         columns: Arc<RamAccessColumns>,
         increments: Arc<RamIncrementActivity>,
         r_address: &[AkitaField],
@@ -349,6 +351,7 @@ impl SolinasMetal {
         )?;
 
         let (addresses, _) = self.shared_no_copy_buffer(
+            session,
             Arc::clone(&columns),
             columns.addresses.as_ptr().cast_mut().cast::<c_void>(),
             address_bytes,

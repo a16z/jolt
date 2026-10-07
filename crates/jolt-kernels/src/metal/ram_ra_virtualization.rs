@@ -370,6 +370,7 @@ impl PrepareKernel<AkitaField, RamRaVirtualization<AkitaField>> for MetalBackend
                 .entered();
                 self.context
                     .prepare_ram_ra_sequence(
+                        session,
                         parked_columns,
                         &chunk_tables,
                         chunks.len(),

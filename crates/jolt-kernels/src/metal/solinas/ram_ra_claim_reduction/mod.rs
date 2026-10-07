@@ -15,6 +15,7 @@ use super::{
     PipelineLimits, SolinasMetal,
 };
 use crate::metal::ram_records::{RamAccessColumns, RamRaCompactRecord, RamRaQRecord, NO_ACCESS};
+use crate::ProofSession;
 
 pub const SOURCE: &str = include_str!("shader.metal");
 
@@ -95,8 +96,13 @@ pub(crate) struct RamRaClaimHObservation {
 }
 
 impl SolinasMetal {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the claim geometry, its equality tables, and the session owning the source views"
+    )]
     pub(crate) fn prepare_ram_ra_claim_reduction(
         &self,
+        session: &mut ProofSession,
         columns: Arc<RamAccessColumns>,
         address_count: usize,
         prefix_bits: usize,
@@ -250,21 +256,25 @@ impl SolinasMetal {
             let h_offsets_bytes = byte_length::<u32>(layout.h_offsets().len())?;
             let h_records_bytes = byte_length::<RamRaCompactRecord>(layout.h_records().len())?;
             let (q_offsets, q_offsets_reused) = self.shared_no_copy_buffer(
+                session,
                 Arc::clone(&columns),
                 layout.q_offsets().as_ptr().cast_mut().cast::<c_void>(),
                 q_offsets_bytes,
             )?;
             let (q_records, q_records_reused) = self.shared_no_copy_buffer(
+                session,
                 Arc::clone(&columns),
                 layout.q_records().as_ptr().cast_mut().cast::<c_void>(),
                 q_records_bytes,
             )?;
             let (h_offsets, h_offsets_reused) = self.shared_no_copy_buffer(
+                session,
                 Arc::clone(&columns),
                 layout.h_offsets().as_ptr().cast_mut().cast::<c_void>(),
                 h_offsets_bytes,
             )?;
             let (h_records, h_records_reused) = self.shared_no_copy_buffer(
+                session,
                 Arc::clone(&columns),
                 layout.h_records().as_ptr().cast_mut().cast::<c_void>(),
                 h_records_bytes,
@@ -280,6 +290,7 @@ impl SolinasMetal {
             )
         } else {
             let (addresses, reused) = self.shared_no_copy_buffer(
+                session,
                 Arc::clone(&columns),
                 columns.addresses.as_ptr().cast_mut().cast::<c_void>(),
                 source_bytes,

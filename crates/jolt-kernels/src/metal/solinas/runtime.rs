@@ -9,6 +9,7 @@ use std::{
 };
 
 use super::{source::library_source, Fp128, MetalError, AKITA_OFFSET_FFFFA7F7, OFFSET_275};
+use crate::ProofSession;
 use libc::{rusage_info_t, rusage_info_v4, RUSAGE_INFO_V4};
 use metal::{
     objc::{runtime::Sel, Message},
@@ -22,12 +23,21 @@ type PipelineCache = Arc<Mutex<HashMap<(&'static str, Option<u32>), ComputePipel
 
 type PrivateBufferPoolHandle = Arc<Mutex<PrivateBufferPool>>;
 
-type NoCopyBufferCacheHandle = Arc<Mutex<Vec<NoCopyBufferEntry>>>;
+/// The proof's no-copy views of host tables. Each entry holds its view's
+/// host owner, so a cached address cannot be freed and reused by another
+/// table while the entry exists; `buffer` precedes `_owner`, so dropping the
+/// session releases each view before the memory it maps.
+#[derive(Default)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct NoCopyBufferCache(Vec<NoCopyBufferEntry>);
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct NoCopyBufferEntry {
     pointer: usize,
     bytes: u64,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     buffer: Buffer,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     _owner: Arc<dyn Any + Send + Sync>,
 }
 
@@ -175,7 +185,6 @@ pub struct SolinasMetal {
     pub(super) offset: u32,
     pub(super) pipeline_cache: PipelineCache,
     private_buffer_pool: PrivateBufferPoolHandle,
-    no_copy_buffer_cache: NoCopyBufferCacheHandle,
 }
 
 impl SolinasMetal {
@@ -226,12 +235,12 @@ impl SolinasMetal {
             offset,
             pipeline_cache: Arc::new(Mutex::new(HashMap::new())),
             private_buffer_pool: Arc::new(Mutex::new(PrivateBufferPool::default())),
-            no_copy_buffer_cache: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
     pub(super) fn shared_no_copy_buffer<T>(
         &self,
+        session: &mut ProofSession,
         owner: Arc<T>,
         pointer: *mut c_void,
         bytes: u64,
@@ -241,10 +250,7 @@ impl SolinasMetal {
     {
         self.validate_buffer_length(bytes)?;
         let address = pointer as usize;
-        let mut cache = self
-            .no_copy_buffer_cache
-            .lock()
-            .map_err(|_| MetalError::NoCopyBufferCachePoisoned)?;
+        let cache = &mut session.state_or_insert_with(NoCopyBufferCache::default).0;
         if let Some(entry) = cache
             .iter()
             .find(|entry| entry.pointer == address && entry.bytes == bytes)
@@ -264,17 +270,6 @@ impl SolinasMetal {
             _owner: owner,
         });
         Ok((buffer, false))
-    }
-
-    /// Forgets every cached no-copy view and the host owner it kept alive.
-    /// Every other holder of a view also holds that owner (`_columns`), so no
-    /// live view outlives its memory.
-    #[cfg(feature = "akita-byte-link")]
-    pub(crate) fn release_no_copy_buffers(&self) {
-        self.no_copy_buffer_cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
     }
 
     pub(super) fn begin_private_buffer_pool_epoch(
@@ -555,28 +550,33 @@ pub(super) fn validate_completed_command(
     Ok(())
 }
 
-#[cfg(all(test, feature = "akita-byte-link"))]
+#[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "no-copy view fixture")]
 mod tests {
     use std::{ffi::c_void, sync::Arc};
 
-    use super::SolinasMetal;
+    use super::{ProofSession, SolinasMetal};
 
     #[test]
-    fn released_no_copy_views_drop_their_host_owners() {
+    fn session_drop_releases_no_copy_view_owners() {
         let Ok(metal) = SolinasMetal::for_akita() else {
             return;
         };
         let owner = Arc::new(vec![0u32; 1 << 20]);
         let weak = Arc::downgrade(&owner);
         let pointer = owner.as_ptr().cast_mut().cast::<c_void>();
+        let mut session = ProofSession::default();
         let (view, reused) = metal
-            .shared_no_copy_buffer(Arc::clone(&owner), pointer, 4 << 20)
+            .shared_no_copy_buffer(&mut session, Arc::clone(&owner), pointer, 4 << 20)
             .unwrap();
         assert!(!reused);
+        let (_, reused) = metal
+            .shared_no_copy_buffer(&mut session, Arc::clone(&owner), pointer, 4 << 20)
+            .unwrap();
+        assert!(reused);
         drop((view, owner));
         assert!(weak.upgrade().is_some());
-        metal.release_no_copy_buffers();
+        drop(session);
         assert!(weak.upgrade().is_none());
     }
 }

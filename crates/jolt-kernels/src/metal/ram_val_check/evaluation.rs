@@ -360,6 +360,7 @@ impl RamValCheckCpuMetalEvalFixture {
         let prepare_started = Instant::now();
         let mut sequence = context
             .prepare_ram_val_sequence(
+                &mut ProofSession::default(),
                 Arc::clone(&self.columns),
                 Arc::clone(&self.increments),
                 r_address,

@@ -543,6 +543,7 @@ impl PrepareKernel<AkitaField, RamRaClaimReduction<AkitaField>> for MetalBackend
         let sequence = self
             .context
             .prepare_ram_ra_claim_reduction(
+                session,
                 Arc::clone(&columns),
                 address_count,
                 prefix_bits,

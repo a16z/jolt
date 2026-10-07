@@ -188,10 +188,6 @@ where
     #[cfg(feature = "akita-byte-link")]
     pub fn end_trace_stages(&self, session: ProofSession, log_t: usize) {
         drop(session);
-        #[cfg(all(feature = "metal", target_os = "macos"))]
-        if let Some(metal) = &self.piop_metal {
-            metal.release_trace_buffers();
-        }
         tracing::info_span!("release_retained_memory", stage = "stage7")
             .in_scope(|| jolt_kernels::mem::purge_retained_memory(log_t));
     }

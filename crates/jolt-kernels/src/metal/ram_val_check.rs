@@ -311,6 +311,7 @@ impl PrepareKernel<AkitaField, RamValCheck<AkitaField>> for MetalBackend {
                 let sequence = self
                     .context
                     .prepare_ram_val_sequence(
+                        session,
                         Arc::clone(&columns),
                         activity,
                         r_address,
@@ -550,7 +551,14 @@ mod tests {
                 .expect("RAM collection publishes sparse increments");
             let direct_sequence = metal
                 .context
-                .prepare_ram_val_sequence(columns, increments, r_address, r_cycle, challenges.gamma)
+                .prepare_ram_val_sequence(
+                    &mut direct_session,
+                    columns,
+                    increments,
+                    r_address,
+                    r_cycle,
+                    challenges.gamma,
+                )
                 .unwrap();
             let mut direct = MetalRamValCheckKernel {
                 sequence: direct_sequence,

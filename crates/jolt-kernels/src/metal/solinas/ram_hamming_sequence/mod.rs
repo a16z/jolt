@@ -13,6 +13,7 @@ use super::{
     PipelineLimits, SolinasMetal,
 };
 use crate::metal::ram_records::RamAccessColumns;
+use crate::ProofSession;
 
 const SIMD_WIDTH: usize = 32;
 const MESSAGE_THREADS: usize = 128;
@@ -169,6 +170,7 @@ impl SolinasMetal {
 
     pub(crate) fn prepare_ram_hamming_sequence(
         &self,
+        session: &mut ProofSession,
         columns: Arc<RamAccessColumns>,
         stage1_cycle_binding: &[AkitaField],
     ) -> Result<RamHammingSequence, MetalError> {
@@ -261,6 +263,7 @@ impl SolinasMetal {
         )?;
 
         let (addresses, _) = self.shared_no_copy_buffer(
+            session,
             Arc::clone(&columns),
             columns.addresses.as_ptr().cast_mut().cast::<c_void>(),
             address_bytes,

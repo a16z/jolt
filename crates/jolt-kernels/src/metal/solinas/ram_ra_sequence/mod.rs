@@ -12,6 +12,7 @@ use super::{
     PipelineLimits, SolinasMetal,
 };
 use crate::metal::ram_records::RamAccessColumns;
+use crate::ProofSession;
 
 const MAX_FACTORS: usize = 3;
 const BINS: usize = 256;
@@ -151,6 +152,7 @@ impl SolinasMetal {
 
     pub(crate) fn prepare_ram_ra_sequence(
         &self,
+        session: &mut ProofSession,
         columns: Arc<RamAccessColumns>,
         chunk_tables: &[AkitaField],
         factors: usize,
@@ -261,6 +263,7 @@ impl SolinasMetal {
         )?;
 
         let (addresses, _) = self.shared_no_copy_buffer(
+            session,
             Arc::clone(&columns),
             columns.addresses.as_ptr().cast_mut().cast::<c_void>(),
             source_bytes,

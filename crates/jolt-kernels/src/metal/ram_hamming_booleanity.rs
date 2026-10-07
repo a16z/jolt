@@ -484,7 +484,7 @@ fn prepare_metal_ram_hamming(
     let columns = RamAccessColumns::shared(session, witness, log_t)?;
     let sequence = backend
         .context
-        .prepare_ram_hamming_sequence(columns, stage1_cycle_binding)
+        .prepare_ram_hamming_sequence(session, columns, stage1_cycle_binding)
         .map_err(|error| KernelError::Sumcheck(metal_error(error.to_string())))?;
     record_route(
         cycles,

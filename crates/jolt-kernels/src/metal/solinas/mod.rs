@@ -282,8 +282,6 @@ pub enum MetalError {
     PipelineCachePoisoned,
     #[error("the Metal private-buffer pool is poisoned")]
     PrivateBufferPoolPoisoned,
-    #[error("the Metal no-copy buffer cache is poisoned")]
-    NoCopyBufferCachePoisoned,
     #[error("a non-noop dispatch requires at least one element")]
     EmptyInput,
     #[error("input length {0} exceeds the shader's 32-bit element count")]
