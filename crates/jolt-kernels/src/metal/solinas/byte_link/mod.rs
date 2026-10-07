@@ -304,6 +304,7 @@ impl ByteLinkProver {
         let r_t = cycle_point.iter().rev().copied().collect::<Vec<_>>();
         self.gpu.phase("histograms");
         let w = self.histogram_tables(source, shape, &r_t)?;
+        self.gpu.end_phase();
         Ok(ByteLinkHistograms { w })
     }
 
@@ -379,6 +380,7 @@ impl ByteLinkProver {
             &z,
             &trace_leaf,
         )?;
+        self.gpu.end_phase();
         Ok(ByteLinkOpenings {
             triples,
             ram,

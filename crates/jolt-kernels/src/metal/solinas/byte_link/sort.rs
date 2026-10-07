@@ -59,7 +59,7 @@ impl ByteLinkProver {
         let split = SplitEq::new(r_t);
         let eq_lo = self.gpu.fields(&split.lo);
         let eq_hi = self.gpu.fields(&split.hi);
-        let w = self.gpu.resident(W_CELLS * 16);
+        let w = self.gpu.histogram_buffer(W_CELLS * 16);
         let staging = self.gpu.arena(entries * 8)?;
         let pairs = self.gpu.arena(entries * 8)?;
         let offsets = self.gpu.arena(((1 << TRIPLE_BITS) + 1) * 4)?;

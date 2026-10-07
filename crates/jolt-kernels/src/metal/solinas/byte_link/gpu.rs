@@ -234,17 +234,17 @@ impl Drop for QueueResidency {
 }
 
 /// The Metal side of the byte link: its pipelines, its own queue with a residency set, the
-/// per-proof arena every phase allocates from, the shared buffers held resident beside it, and
-/// the phase clock. Field order is drop order: the set goes before what it holds.
+/// per-proof arena every phase allocates from, the latest `W` held resident beside it, and the
+/// phase clock. Field order is drop order: the set goes before what it holds.
 pub(super) struct Gpu {
     metal: SolinasMetal,
     pipelines: HashMap<&'static str, ComputePipelineState>,
     queue: CommandQueue,
     residency: Option<QueueResidency>,
     arena: Option<Heap>,
-    resident: Vec<Buffer>,
+    histograms: Option<Buffer>,
     phases: Vec<Phase>,
-    phase_start: Instant,
+    phase_start: Option<Instant>,
 }
 
 impl Gpu {
@@ -260,9 +260,9 @@ impl Gpu {
             residency: QueueResidency::attach(&queue),
             queue,
             arena: None,
-            resident: Vec::new(),
+            histograms: None,
             phases: Vec::new(),
-            phase_start: Instant::now(),
+            phase_start: None,
         })
     }
 
@@ -322,13 +322,16 @@ impl Gpu {
         Some(heap)
     }
 
-    /// A shared buffer outside the arena, resident for every link command while the prover
-    /// lives.
-    pub fn resident(&mut self, bytes: usize) -> Buffer {
+    /// A shared buffer for `W`, outside the arena and resident for every link command until the
+    /// next proof's `W` replaces it.
+    pub fn histogram_buffer(&mut self, bytes: usize) -> Buffer {
         let buffer = self.scratch(bytes);
         if let Some(set) = &self.residency {
+            if let Some(old) = self.histograms.take() {
+                set.remove(old.as_ptr().cast());
+            }
             set.add(buffer.as_ptr().cast());
-            self.resident.push(buffer.clone());
+            self.histograms = Some(buffer.clone());
         }
         buffer
     }
@@ -349,33 +352,33 @@ impl Gpu {
         self.buffer(&upload(values))
     }
 
-    /// Closes the running phase and opens `name`.
+    /// Ends the running phase and opens `name`.
     pub fn phase(&mut self, name: &'static str) {
-        self.close_phase();
+        self.end_phase();
         self.phases.push(Phase {
             name,
             ..Phase::default()
         });
+        self.phase_start = Some(Instant::now());
     }
 
-    fn close_phase(&mut self) {
-        let now = Instant::now();
-        if let Some(last) = self.phases.last_mut() {
-            last.wall += (now - self.phase_start).as_secs_f64();
-            tracing::debug!(
-                phase = last.name,
-                wall_s = last.wall,
-                gpu_s = last.gpu,
-                commands = last.commands,
-                "byte link phase"
-            );
-        }
-        self.phase_start = now;
+    pub fn end_phase(&mut self) {
+        let (Some(start), Some(last)) = (self.phase_start.take(), self.phases.last_mut()) else {
+            return;
+        };
+        last.wall = start.elapsed().as_secs_f64();
+        tracing::debug!(
+            phase = last.name,
+            wall_s = last.wall,
+            gpu_s = last.gpu,
+            commands = last.commands,
+            "byte link phase"
+        );
     }
 
     #[cfg(test)]
     pub fn take_phases(&mut self) -> Vec<Phase> {
-        self.close_phase();
+        self.end_phase();
         std::mem::take(&mut self.phases)
     }
 

@@ -872,11 +872,13 @@ fn bench_link() {
         scaled_active(log_n)
     };
     let reps: usize = env_or("LINK_REPS", 3);
+    let check = env_or("LINK_CHECK", 0) == 1;
     let build = Instant::now();
     let source = Source::synthetic(log_n, active, 0x6c69_6e6b, env_or("LINK_HOT", 0) == 1);
     let statement = Statement::honest(&source, 7);
     let metal = SolinasMetal::for_akita().unwrap();
     let bytes = device_source(&metal, &source);
+    let source = check.then_some(source);
     println!(
         "shape\tlog_n={log_n}\tactive={active}\tsetup_s={:.1}",
         build.elapsed().as_secs_f64()
@@ -925,9 +927,9 @@ fn bench_link() {
                 proof.openings
             );
             println!("verified");
-            if env_or("LINK_CHECK", 0) == 1 {
-                let cpu = histograms(&source, &statement.cycle_point);
-                check_openings(&source, &cpu, proof.histograms.buffer(), &proof.openings).unwrap();
+            if let Some(source) = &source {
+                let cpu = histograms(source, &statement.cycle_point);
+                check_openings(source, &cpu, proof.histograms.buffer(), &proof.openings).unwrap();
                 println!("checked");
             }
         }
