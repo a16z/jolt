@@ -148,18 +148,8 @@ impl TraceOneHotColumn {
     }
 }
 
-pub struct TraceOneHotColumnView<'a, const D: usize> {
-    pub(super) source: &'a TraceOneHotColumn,
-}
-
 pub struct TraceOneHotColumnBatchView<'a, const D: usize> {
     pub(super) sources: &'a [&'a TraceOneHotColumn],
-}
-
-impl<const D: usize> TraceOneHotColumnView<'_, D> {
-    pub(super) fn source(&self) -> &TraceOneHotColumn {
-        self.source
-    }
 }
 
 impl<const D: usize> TraceOneHotColumnBatchView<'_, D> {
@@ -273,7 +263,7 @@ impl CommitmentSource<AkitaField> for TraceOneHotColumn {
 
 impl<const D: usize> RootOpeningSource<AkitaField, D> for TraceOneHotColumn {
     type OpeningView<'a>
-        = TraceOneHotColumnView<'a, D>
+        = ()
     where
         Self: 'a;
     type OpeningBatchView<'a>
@@ -282,8 +272,7 @@ impl<const D: usize> RootOpeningSource<AkitaField, D> for TraceOneHotColumn {
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        validate_dimension::<D>(self.one_hot_k)?;
-        Ok(TraceOneHotColumnView { source: self })
+        Ok(())
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {

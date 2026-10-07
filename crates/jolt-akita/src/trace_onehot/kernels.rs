@@ -9,10 +9,9 @@ use akita_params::dispatch_for_field;
 use akita_params::{ProtocolDispatchSlot, RingRole};
 use akita_pcs::custom_source::{
     cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup, CommitInnerPlan,
-    CpuFoldResponses, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    DecomposeFoldWitness, ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
-    ExternalInnerCommitmentOperation, ExternalOperationIdentity, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootPolyShape,
+    CpuFoldResponses, CpuPreparedSetup, DecomposeFoldBatchPlan, ExternalInnerCommitmentCapability,
+    ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
+    OpeningBatchKernel, OpeningFoldOutput, OpeningFoldPlan, RootPolyShape,
     SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
     SubringCoefficientPackingPlan,
 };
@@ -22,10 +21,8 @@ use jolt_field::ExtField;
 
 use super::commit::commit_columns;
 use super::decomposition::{decompose_fold_columns_with_mode, DecomposeRotationMode};
-use super::opening::{opening_fold_column, opening_fold_columns};
-use super::source::{
-    validate_batch, TraceOneHotColumn, TraceOneHotColumnBatchView, TraceOneHotColumnView,
-};
+use super::opening::opening_fold_columns;
+use super::source::{validate_batch, TraceOneHotColumn, TraceOneHotColumnBatchView};
 use super::traversal::coefficient_packing_partials_columns;
 use crate::AkitaField;
 
@@ -67,30 +64,6 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TraceOneHotColumnCommitOpe
             plan.ring_dimension,
             |D| commit_columns::<D>(prepared.expanded(), sources[0], *plan)
         )
-    }
-}
-
-impl<E, const D: usize> OpeningFoldKernel<TraceOneHotColumnView<'_, D>, AkitaField, D>
-    for CpuBackend<AkitaField, E>
-{
-    fn evaluate_and_fold(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: TraceOneHotColumnView<'_, D>,
-        plan: OpeningFoldPlan<'_, AkitaField>,
-    ) -> Result<OpeningFoldOutput<AkitaField, D>, AkitaError> {
-        opening_fold_column(source.source(), plan)
-    }
-
-    fn decompose_fold(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        _source: TraceOneHotColumnView<'_, D>,
-        _plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness, AkitaError> {
-        Err(AkitaError::InvalidInput(
-            "trace decomposition requires its native batch".into(),
-        ))
     }
 }
 

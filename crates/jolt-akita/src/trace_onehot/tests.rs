@@ -12,7 +12,7 @@ use akita_challenges::{Challenges, SparseChallenge};
 use akita_params::{BasisMode, SetupMatrixCapacity, SubringCoefficientPackingGeometry};
 use akita_pcs::custom_source::{
     CommitInnerPlan, CpuFoldResponses, DecomposeFoldBatchPlan, OneHotBatchView, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape, SourceCoefficients,
+    OpeningFoldPlan, RootOpeningSource, RootPolyShape, SourceCoefficients,
     SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPlan,
 };
 use akita_pcs::AkitaError;
@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
-use super::source::{TraceOneHotColumnBatchView, TraceOneHotColumnView};
+use super::source::TraceOneHotColumnBatchView;
 use crate::{AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::OneHotPolynomial;
@@ -119,9 +119,7 @@ fn assert_ring_mapping<const D: usize>(
     let source = &columns[0];
     let segment_rings = source.segment_ring_elems::<D>().unwrap();
     let mut actual = Vec::new();
-    let view =
-        <TraceOneHotColumn as RootOpeningSource<AkitaField, D>>::opening_view(source).unwrap();
-    visit_segment_ring_range::<D>(view.source(), 0, segment_rings, |ring, contributions| {
+    visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
         actual.extend(
             contributions
                 .iter()
@@ -417,20 +415,6 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
             plan,
         )
         .unwrap();
-        for (column, expected) in streamed.iter().enumerate() {
-            let scalar = <TestBackend as OpeningFoldKernel<
-                TraceOneHotColumnView<'_, D>,
-                AkitaField,
-                D,
-            >>::evaluate_and_fold(
-                &backend,
-                None,
-                trace_sources[column].opening_view().unwrap(),
-                plan,
-            )
-            .unwrap();
-            assert_eq!(&scalar, expected);
-        }
         let materialized = <TestBackend as OpeningBatchKernel<
             OneHotBatchView<'_, AkitaField, D, u8>,
             AkitaField,
