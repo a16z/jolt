@@ -14,6 +14,8 @@ workspace = true
 [features]
 default = ["parallel"]
 akita = ["jolt-claims/akita", "jolt-field/solinas", "jolt-verifier/akita"]
+# The byte-to-one-hot link prover (spec revision 2); Metal kernels need `metal` too.
+akita-byte-link = ["akita"]
 # Shallow heap visitation of the proof session (profile harness flamegraphs).
 allocative = ["dep:allocative", "jolt-field/allocative", "jolt-poly/allocative"]
 metal = ["akita", "dep:metal"]
