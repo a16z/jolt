@@ -1,15 +1,5 @@
-//! The byte link on Metal: proves that the twenty one-hot claims stage 6b leaves on the
-//! byte trace `Q` are the eq-weighted tuple histograms `W` of seven byte packs (spec revision 2
-//! §2, W-only). For each pack, `Σ_t eq(r, t) / (β − γ·D(t)) = Σ_h W(h) / (β − γ·h)` is proved by
-//! a binary fraction-tree GKR on both sides; the histogram queries reduce `W`'s marginal and
-//! leaf claims to one point per group, and a degree-two reduction takes every claim on `Q` to
-//! one point.
-//!
-//! The stage code drives Fiat–Shamir through [`ByteLinkTranscript`]: the prover hands it every
-//! message in protocol order and takes every challenge from it, so labels, wire and verifier live
-//! with the stage. Points crossing this boundary are canonical MSB-first; inside, round `i` of a
-//! sumcheck binds bit `i` of the remaining index, so a layer's child point is
-//! `(reverse(s), µ)`.
+//! The byte link on Metal: the messages of [`crate::byte_link::reference`], computed on the GPU
+//! (protocol: [`crate::byte_link`]).
 //!
 //! Benches (ignored tests, through the shared-box GPU gate):
 //! `gpu-window.sh cargo nextest run -p jolt-kernels --features metal,akita-byte-link --lib
@@ -25,11 +15,13 @@ mod sort;
 #[cfg(test)]
 mod tests;
 
+use jolt_claims::protocols::jolt::lattice::byte_link::{ByteLinkBatch, ByteLinkInputs};
 use jolt_field::Prime128OffsetA7F7 as F;
-use jolt_poly::UnivariatePoly;
+use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpenings};
 use metal::{Buffer, Heap};
 
 use super::{MetalError, SolinasMetal};
+use crate::byte_link::{ByteLinkMessage, ByteLinkTranscript};
 use gkr::{TailForm, TraceLeaves, Trees};
 use gpu::Gpu;
 
@@ -80,172 +72,17 @@ pub struct ByteLinkSource<'a> {
     pub active_rows: usize,
 }
 
-/// What stage 6b fixed besides the cycle point `r` the histograms were built at: each one-hot
-/// column's address point `k_c` (canonical MSB-first) and claim `v_c` in pack order (`Q` slots
-/// 0–15, 25–28), and the fused increment claim `F(r)`.
-pub struct ByteLinkStatement<'a> {
-    pub address_points: &'a [[F; 8]; 20],
-    pub one_hot_claims: &'a [F; 20],
-    pub fused_increment: F,
-}
-
-/// The compression challenges drawn after the `W` commitments: `γ` per pack slot, then `β`.
-#[derive(Clone, Copy, Debug)]
-pub struct ByteLinkCompression {
-    pub gamma: [[F; 3]; PACKS],
-    pub beta: F,
-}
-
-/// A GKR batch, in proof order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ByteLinkBatch {
-    /// The seven trace trees.
-    Trace,
-    /// The six triple-table trees.
-    Triples,
-    /// The RAM-table tree.
-    Ram,
-}
-
-/// A histogram query group, in proof order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ByteLinkQueryGroup {
-    Triples,
-    Ram,
-}
-
-/// A prover message, in protocol order. `layer` counts the variables of the layer's parent
-/// index, so the top layer of a batch is 0; `round` indexes the rounds of its sumcheck. Messages
-/// marked derived carry values the verifier computes itself, so the stage absorbs them without
-/// putting them on the wire.
-#[derive(Clone, Copy, Debug)]
-pub enum ByteLinkMessage<'a> {
-    /// `(P, B)` roots of the seven trace trees, then of the seven table trees.
-    Roots(&'a [(F, F)]),
-    /// Derived: the `(P, B)` claims every tree of the batch brings into `layer`, at `point`.
-    LayerClaims {
-        batch: ByteLinkBatch,
-        layer: usize,
-        point: &'a [F],
-        claims: &'a [(F, F)],
-    },
-    /// A cubic round polynomial of a layer sumcheck.
-    LayerRound {
-        batch: ByteLinkBatch,
-        layer: usize,
-        round: usize,
-        poly: &'a UnivariatePoly<F>,
-    },
-    /// The bound children `[P_0, B_0, P_1, B_1]` of every tree after the layer's last round.
-    Children {
-        batch: ByteLinkBatch,
-        layer: usize,
-        children: &'a [[F; 4]],
-    },
-    /// Derived: the values a group's query reduction batches, per pack its marginal values
-    /// `v_c / 2^16` (RAM `v_c / 2^8`), then its table leaf `W(y)`.
-    QueryValues {
-        group: ByteLinkQueryGroup,
-        values: &'a [F],
-    },
-    /// A quadratic round polynomial of a query reduction.
-    QueryRound {
-        group: ByteLinkQueryGroup,
-        round: usize,
-        poly: &'a UnivariatePoly<F>,
-    },
-    /// `W` of every pack of the group at the reduction's final point.
-    QueryFinals {
-        group: ByteLinkQueryGroup,
-        values: &'a [F],
-    },
-    /// Derived: the trace leaf point `z` and the seven denominator leaf claims `B_j(z)`.
-    SourceClaims {
-        point: &'a [F],
-        denominators: &'a [F],
-    },
-    /// A quadratic round polynomial of the `Q` reduction.
-    SourceRound {
-        round: usize,
-        poly: &'a UnivariatePoly<F>,
-    },
-    /// `D_c(x)` of the [`SLOTS`] columns at the reduction's final point.
-    SourceFinals(&'a [F]),
-}
-
-/// A challenge draw.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ByteLinkDraw {
-    /// Independent `(λ_P, λ_B)` per tree of the batch, as `2 · trees` scalars.
-    LayerWeights {
-        batch: ByteLinkBatch,
-        layer: usize,
-    },
-    LayerChallenge {
-        batch: ByteLinkBatch,
-        layer: usize,
-        round: usize,
-    },
-    /// The child selector `µ` after a layer.
-    ChildSelector {
-        batch: ByteLinkBatch,
-        layer: usize,
-    },
-    /// One independent weight per query value.
-    QueryWeights {
-        group: ByteLinkQueryGroup,
-    },
-    QueryChallenge {
-        group: ByteLinkQueryGroup,
-        round: usize,
-    },
-    /// The point `θ` of the zero-slot claims `D_30(θ) = D_31(θ) = 0`, `log_rows` scalars
-    /// (canonical order); the prover never reads it, as both columns are zero.
-    ZeroSlotPoint,
-    /// Ten scalars: `α_j` of the seven denominators, `α_F`, then the zero slots' `α_30, α_31`.
-    SourceWeights,
-    SourceChallenge {
-        round: usize,
-    },
-}
-
-/// The Fiat–Shamir side of the link, implemented by the stage code.
-pub trait ByteLinkTranscript {
-    fn append(&mut self, message: ByteLinkMessage<'_>);
-    fn challenges(&mut self, draw: ByteLinkDraw, count: usize) -> Vec<F>;
-}
-
 /// The eq-weighted tuple histograms on the device, canonical `Fp128` cells: `W` of pack `p` at
 /// cell `p << 24` onwards, `2^24` cells per triple, `2^17` for the RAM pack. The `W` commitments
-/// and stage 8 read them here; [`ByteLinkProver::prove`] proves at the cycle point they were
-/// built at.
+/// and stage 8 read them here.
 pub struct ByteLinkHistograms {
     w: Buffer,
-    /// The cycle point, LSB-first.
-    r_t: Vec<F>,
 }
 
 impl ByteLinkHistograms {
     pub fn buffer(&self) -> &Buffer {
         &self.w
     }
-}
-
-/// One evaluation claim the link leaves for stage 8.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ByteLinkOpening {
-    /// Canonical MSB-first.
-    pub point: Vec<F>,
-    pub values: Vec<F>,
-}
-
-/// The link's openings: `W` of the six triples, `W` of the RAM pack, and all [`SLOTS`] columns
-/// of `Q`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ByteLinkOpenings {
-    pub triples: ByteLinkOpening,
-    pub ram: ByteLinkOpening,
-    pub source: ByteLinkOpening,
 }
 
 /// The prover's view of a source: the explicit prefix covers whole `2^(n − HOST_LOG)`-row blocks
@@ -276,13 +113,15 @@ impl Shape {
         })
     }
 
-    fn check_point(self, len: usize) -> Result<(), MetalError> {
-        if len == self.log_n as usize {
-            Ok(())
+    /// The stage-6b cycle point, LSB-first.
+    fn cycle_point(self, inputs: &ByteLinkInputs<F>) -> Result<Vec<F>, MetalError> {
+        let point = inputs.cycle_point();
+        if point.len() == self.log_n as usize {
+            Ok(point.iter().rev().copied().collect())
         } else {
             Err(MetalError::ByteLinkPoint {
                 log_rows: self.log_n,
-                len,
+                len: point.len(),
             })
         }
     }
@@ -305,21 +144,19 @@ impl ByteLinkProver {
         })
     }
 
-    /// The challenge-free key sort of every pack and `W` at the stage-6b cycle point (canonical
-    /// MSB-first).
+    /// The challenge-free key sort of every pack and `W` at the stage-6b cycle point.
     pub fn histograms(
         &mut self,
         source: &ByteLinkSource<'_>,
-        cycle_point: &[F],
+        inputs: &ByteLinkInputs<F>,
     ) -> Result<ByteLinkHistograms, MetalError> {
         let shape = Shape::new(source)?;
-        shape.check_point(cycle_point.len())?;
+        let r_t = shape.cycle_point(inputs)?;
         self.gpu.reserve_arena(self.arena_bytes(shape))?;
-        let r_t = cycle_point.iter().rev().copied().collect::<Vec<_>>();
         self.gpu.phase("histograms");
         let w = self.histogram_tables(source, shape, &r_t)?;
         self.gpu.end_phase();
-        Ok(ByteLinkHistograms { w, r_t })
+        Ok(ByteLinkHistograms { w })
     }
 
     /// Everything after the `W` commitments and the compression challenges: both fraction trees
@@ -329,13 +166,12 @@ impl ByteLinkProver {
         &mut self,
         source: &ByteLinkSource<'_>,
         histograms: &ByteLinkHistograms,
-        statement: &ByteLinkStatement<'_>,
-        compression: &ByteLinkCompression,
-        transcript: &mut impl ByteLinkTranscript,
-    ) -> Result<ByteLinkOpenings, MetalError> {
+        inputs: &ByteLinkInputs<F>,
+        compression: &ByteLinkCompression<F>,
+        transcript: &mut impl ByteLinkTranscript<F>,
+    ) -> Result<ByteLinkOpenings<F>, MetalError> {
         let shape = Shape::new(source)?;
-        let r_t = &histograms.r_t;
-        shape.check_point(r_t.len())?;
+        let r_t = &shape.cycle_point(inputs)?;
         let tables = self.gpu.fields(&gkr::compression_tables(compression));
         let w = &histograms.w;
 
@@ -377,14 +213,14 @@ impl ByteLinkProver {
         drop((triples, ram));
 
         self.gpu.phase("histogram queries");
-        let triples = self.triple_queries(transcript, w, statement, &y, &triple_leaf)?;
-        let ram = reduce::ram_query(transcript, w, statement, &y_ram, ram_leaf[0]);
+        let triples = self.triple_queries(transcript, w, inputs, &y, &triple_leaf)?;
+        let ram = reduce::ram_query(transcript, w, inputs, &y_ram, ram_leaf[0]);
         self.gpu.phase("source reduction");
         let source = self.source_reduction(
             transcript,
             source,
             shape,
-            statement,
+            inputs,
             compression,
             r_t,
             &z,

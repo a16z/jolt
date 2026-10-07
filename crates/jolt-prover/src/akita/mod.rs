@@ -19,6 +19,8 @@ use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
+#[cfg(feature = "akita-byte-link")]
+pub mod byte_link;
 pub mod preprocessing;
 mod prover;
 mod setup;

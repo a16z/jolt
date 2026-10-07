@@ -1,5 +1,7 @@
 //! Verifier error types.
 
+#[cfg(feature = "akita-byte-link")]
+use jolt_claims::protocols::jolt::lattice::byte_link::{ByteLinkBatch, HistogramGroup};
 use jolt_claims::protocols::jolt::{
     JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
@@ -116,4 +118,30 @@ pub enum VerifierError {
     #[cfg(feature = "akita-byte-link")]
     #[error("the byte link is not wired: stage 8 cannot open the byte trace")]
     ByteLinkNotWired,
+
+    #[cfg(feature = "akita-byte-link")]
+    #[error("byte link rejected: {0}")]
+    ByteLink(#[from] ByteLinkError),
+}
+
+/// A byte-link relation the proof fails.
+#[cfg(feature = "akita-byte-link")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ByteLinkError {
+    #[error("{what} have the wrong length")]
+    Shape { what: &'static str },
+    #[error("a root denominator of pack {pack} is zero")]
+    ZeroRoot { pack: usize },
+    #[error("pack {pack}'s trace and table roots are different fractions")]
+    Roots { pack: usize },
+    #[error("{batch:?} layer {layer}: the children's gate disagrees with the sumcheck")]
+    Gate { batch: ByteLinkBatch, layer: usize },
+    #[error("pack {pack}'s trace leaf numerator is not eq(r, z)")]
+    TraceLeaf { pack: usize },
+    #[error("pack {pack}'s table leaf denominator disagrees with its public table")]
+    TableLeaf { pack: usize },
+    #[error("{group:?} histogram query reduction does not hold at its final point")]
+    Query { group: HistogramGroup },
+    #[error("the Q reduction does not hold at its final point")]
+    Source,
 }

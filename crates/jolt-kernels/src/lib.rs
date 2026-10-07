@@ -35,6 +35,8 @@
 //! polynomials over the proof's shared embedding grid.
 
 mod backend;
+#[cfg(feature = "akita-byte-link")]
+pub mod byte_link;
 mod commitment;
 pub mod committed_program;
 mod error;

@@ -21,6 +21,8 @@ use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
+#[cfg(feature = "akita-byte-link")]
+pub mod byte_link;
 pub mod relations;
 pub mod stage1;
 pub mod stage2;

@@ -5,6 +5,9 @@ use jolt_field::{Field, One, Ring, Zero};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use metal::{Buffer, ComputeCommandEncoderRef};
 
+use jolt_claims::protocols::jolt::lattice::byte_link::{ByteLinkInputs, HistogramGroup};
+use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpening};
+
 use super::{
     gkr::{canonical, eq, eq_lsb, tiling, RoundParams},
     gpu::{
@@ -12,10 +15,10 @@ use super::{
         PRODUCT2_EVAL, PRODUCT4_BIND_EVAL, PRODUCT4_EVAL, QUERY_BIND, QUERY_EVAL, SOURCE_BIND,
         SOURCE_EVAL, SUMS, SUM_COLUMNS, SUM_PARTIALS, THREADS,
     },
-    ByteLinkCompression, ByteLinkDraw, ByteLinkMessage, ByteLinkOpening, ByteLinkProver,
-    ByteLinkQueryGroup, ByteLinkSource, ByteLinkStatement, ByteLinkTranscript, Shape, F, HOST_LOG,
-    INCREMENT_SLOTS, PACKS, PACK_SLOTS, RAM, RAM_BITS, SLOTS, TRIPLE_BITS,
+    ByteLinkProver, ByteLinkSource, Shape, F, HOST_LOG, INCREMENT_SLOTS, PACKS, PACK_SLOTS, RAM,
+    RAM_BITS, SLOTS, TRIPLE_BITS,
 };
+use crate::byte_link::{ByteLinkDraw, ByteLinkMessage, ByteLinkTranscript};
 use crate::metal::solinas::{Fp128, MetalError};
 
 /// Rows per threadgroup of the column evaluations: `LINK_THREADS` × 16.
@@ -66,7 +69,7 @@ pub(super) fn product_bytes(gpu: &Gpu, packs: usize, entries: usize, width: usiz
 
 #[derive(Clone, Copy)]
 enum Reduction {
-    Query(ByteLinkQueryGroup),
+    Query(HistogramGroup),
     Source,
 }
 
@@ -75,7 +78,7 @@ impl Reduction {
     /// the claim) and returns its challenge.
     fn round(
         self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         claim: &mut F,
         round: usize,
         s0: F,
@@ -105,7 +108,7 @@ impl Reduction {
     /// Host rounds until every array holds one value; returns their challenges.
     fn finish_on_host(
         self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         pairs: &mut [Factors],
         claim: &mut F,
         first_round: usize,
@@ -149,11 +152,11 @@ struct RawEntries<'a> {
 
 /// The query weights of triple pack `pack`: `U_s[code] = α_s 2^-16 eq(k_c, code)` for its three
 /// slots, then `Z_s[code] = eq(y_s, code)` of the leaf point's bytes, `Z_2` carrying `α_y`.
-fn query_tables(statement: &ByteLinkStatement<'_>, pack: usize, alpha: &[F], y: &[F]) -> Vec<F> {
+fn query_tables(inputs: &ByteLinkInputs<F>, pack: usize, alpha: &[F], y: &[F]) -> Vec<F> {
     let scale = F::from_u64(1 << 16).inv_or_zero();
     let u = (0..3).flat_map(|s| {
         let a = alpha[s] * scale;
-        EqPolynomial::<F>::evals(&statement.address_points[3 * pack + s], None)
+        EqPolynomial::<F>::evals(&inputs.one_hot_claims()[3 * pack + s].0, None)
             .into_iter()
             .map(move |e| a * e)
     });
@@ -190,7 +193,7 @@ impl ByteLinkProver {
     #[expect(clippy::too_many_arguments, reason = "one reduction geometry")]
     fn product_gpu(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         reduction: Reduction,
         claim: &mut F,
         packs: usize,
@@ -363,18 +366,18 @@ impl ByteLinkProver {
     /// its table leaf, against `W` of all six packs at once.
     pub(super) fn triple_queries(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         w: &Buffer,
-        statement: &ByteLinkStatement<'_>,
+        inputs: &ByteLinkInputs<F>,
         leaf_point: &[F],
         leaves: &[(F, F)],
-    ) -> Result<ByteLinkOpening, MetalError> {
-        let group = ByteLinkQueryGroup::Triples;
+    ) -> Result<ByteLinkOpening<F>, MetalError> {
+        let group = HistogramGroup::Triples;
         let scale = F::from_u64(1 << 16).inv_or_zero();
         let values = (0..RAM)
             .flat_map(|pack| {
                 (0..3)
-                    .map(move |s| statement.one_hot_claims[3 * pack + s] * scale)
+                    .map(move |s| inputs.one_hot_claims()[3 * pack + s].1 * scale)
                     .chain([leaves[pack].0])
             })
             .collect::<Vec<_>>();
@@ -386,7 +389,7 @@ impl ByteLinkProver {
         let mut claim = values.iter().zip(&alpha).map(|(&v, &a)| v * a).sum();
         let y = canonical(leaf_point);
         let tables = (0..RAM)
-            .flat_map(|pack| query_tables(statement, pack, &alpha[4 * pack..4 * pack + 4], &y))
+            .flat_map(|pack| query_tables(inputs, pack, &alpha[4 * pack..4 * pack + 4], &y))
             .collect::<Vec<_>>();
         let tables = self.gpu.fields(&tables);
         let bind_query = |e: &ComputeCommandEncoderRef| {
@@ -431,15 +434,15 @@ impl ByteLinkProver {
     #[expect(clippy::too_many_arguments, reason = "the reduction's fixed claims")]
     pub(super) fn source_reduction(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         source: &ByteLinkSource<'_>,
         shape: Shape,
-        statement: &ByteLinkStatement<'_>,
-        compression: &ByteLinkCompression,
+        inputs: &ByteLinkInputs<F>,
+        compression: &ByteLinkCompression<F>,
         r_t: &[F],
         leaf_point: &[F],
         leaves: &[(F, F)],
-    ) -> Result<ByteLinkOpening, MetalError> {
+    ) -> Result<ByteLinkOpening<F>, MetalError> {
         let z = leaf_point;
         let denominators = leaves.iter().map(|&(_, b)| b).collect::<Vec<_>>();
         transcript.append(ByteLinkMessage::SourceClaims {
@@ -454,7 +457,7 @@ impl ByteLinkProver {
             .zip(&alpha)
             .map(|(&b, &a)| a * (compression.beta - b))
             .sum::<F>()
-            + alpha_f * statement.fused_increment;
+            + alpha_f * inputs.fused_inc();
         let sigma = |coefficient: F| {
             (0..256u32).map(move |code| coefficient * F::from_i64(i64::from(code as u8 as i8)))
         };
@@ -586,19 +589,16 @@ impl ByteLinkProver {
 /// The RAM histogram's query reduction, on the host: `2^17` cells, its two marginal values and
 /// its table leaf.
 pub(super) fn ram_query(
-    transcript: &mut impl ByteLinkTranscript,
+    transcript: &mut impl ByteLinkTranscript<F>,
     w: &Buffer,
-    statement: &ByteLinkStatement<'_>,
+    inputs: &ByteLinkInputs<F>,
     leaf_point: &[F],
     leaf: (F, F),
-) -> ByteLinkOpening {
-    let group = ByteLinkQueryGroup::Ram;
+) -> ByteLinkOpening<F> {
+    let group = HistogramGroup::Ram;
     let scale = F::from_u64(1 << 8).inv_or_zero();
-    let values = [
-        statement.one_hot_claims[18] * scale,
-        statement.one_hot_claims[19] * scale,
-        leaf.0,
-    ];
+    let one_hot = inputs.one_hot_claims();
+    let values = [one_hot[18].1 * scale, one_hot[19].1 * scale, leaf.0];
     transcript.append(ByteLinkMessage::QueryValues {
         group,
         values: &values,
@@ -606,8 +606,8 @@ pub(super) fn ram_query(
     let alpha = transcript.challenges(ByteLinkDraw::QueryWeights { group }, values.len());
     let mut claim = values.iter().zip(&alpha).map(|(&v, &a)| v * a).sum();
     let y = canonical(leaf_point);
-    let k0 = EqPolynomial::<F>::evals(&statement.address_points[18], None);
-    let k1 = EqPolynomial::<F>::evals(&statement.address_points[19], None);
+    let k0 = EqPolynomial::<F>::evals(&one_hot[18].0, None);
+    let k1 = EqPolynomial::<F>::evals(&one_hot[19].0, None);
     let y0 = EqPolynomial::<F>::evals(&y[..8], None);
     let y1 = EqPolynomial::<F>::evals(&y[8..16], None);
     let y2 = [F::one() - y[16], y[16]];

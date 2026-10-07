@@ -37,6 +37,8 @@ pub enum FsScope {
     Stage8,
     /// BlindFold verification.
     BlindFold,
+    /// The byte link between stage 7 and the final opening.
+    ByteLink,
 }
 
 thread_local! {

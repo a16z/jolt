@@ -192,6 +192,7 @@ fn validate_fs_scope(scope: &Ident) -> syn::Result<()> {
             | "Reconstruction"
             | "Stage8"
             | "BlindFold"
+            | "ByteLink"
     );
     if !valid {
         return Err(syn::Error::new_spanned(

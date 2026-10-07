@@ -124,6 +124,7 @@ tracer = { workspace = true, optional = true }
 bincode.workspace = true
 clap.workspace = true
 jolt-dory.workspace = true
+jolt-kernels = { workspace = true, default-features = false, features = ["test-utils"] }
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 # Subscriber stack for tests; the profiling smoke test's summary usage

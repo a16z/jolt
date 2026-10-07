@@ -6,16 +6,19 @@ use jolt_field::{One, Ring, Zero};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use metal::Buffer;
 
+use jolt_claims::protocols::jolt::lattice::byte_link::ByteLinkBatch;
+use jolt_verifier::stages::byte_link::ByteLinkCompression;
+
 use super::{
     gpu::{
         bind, bytes, field, limbs, upload, view, write, Gpu, Grid, Recorder, BOTTOM_BIND_EVAL,
         BOTTOM_STREAM, ROUND_BIND_EVAL, ROUND_EVAL, ROUND_STREAM, SUMS, SUM_PARTIALS, THREADS,
         TREE_LEAVES, TREE_UPPER,
     },
-    ByteLinkBatch, ByteLinkCompression, ByteLinkDraw, ByteLinkMessage, ByteLinkProver,
-    ByteLinkSource, ByteLinkTranscript, Shape, F, HOST_LOG, PACKS, PACK_SLOTS, RAM, RAM_BITS,
+    ByteLinkProver, ByteLinkSource, Shape, F, HOST_LOG, PACKS, PACK_SLOTS, RAM, RAM_BITS,
     STORED_HEIGHT, TRIPLE_BITS,
 };
+use crate::byte_link::{ByteLinkDraw, ByteLinkMessage, ByteLinkTranscript};
 use crate::metal::solinas::{Fp128, MetalError};
 
 /// Levels a tree pass stores per threadgroup of 256 nodes.
@@ -145,7 +148,7 @@ pub(super) fn eq_factors(point: &[F]) -> Vec<[F; 2]> {
 }
 
 /// `[pack][slot][code]`: `β − γ_0 σ(code)` in slot 0, `γ_i σ(code)` in slots 1 and 2.
-pub(super) fn compression_tables(compression: &ByteLinkCompression) -> Vec<F> {
+pub(super) fn compression_tables(compression: &ByteLinkCompression<F>) -> Vec<F> {
     compression
         .gamma
         .iter()
@@ -347,7 +350,7 @@ impl Rounds {
     /// Sends round `s(X) = prefix · eq(ρ, X) · t(X)` from `t(0)` and `t`'s `X²` coefficient.
     fn send(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         (batch, layer): (ByteLinkBatch, usize),
         rho: F,
         t0: F,
@@ -385,7 +388,7 @@ impl Rounds {
     /// Host rounds until every tree holds one record.
     fn finish_on_host(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         context: (ByteLinkBatch, usize),
         layer: &mut Layer,
         rho: &[F],
@@ -430,7 +433,7 @@ impl Rounds {
 
 /// Sends the bound children, draws `µ` and returns the next layer's point and claims.
 fn close_layer(
-    transcript: &mut impl ByteLinkTranscript,
+    transcript: &mut impl ByteLinkTranscript<F>,
     (batch, layer): (ByteLinkBatch, usize),
     records: &Layer,
     rounds: &Rounds,
@@ -656,7 +659,7 @@ impl ByteLinkProver {
     /// The batched GKR over `trees`; returns the leaf point (internal order) and leaf claims.
     pub(super) fn gkr(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         batch: ByteLinkBatch,
         trees: &Trees,
         trace: Option<(&TraceLeaves<'_>, &TailForm)>,
@@ -756,7 +759,7 @@ impl ByteLinkProver {
     #[expect(clippy::too_many_arguments, reason = "one layer of one batch")]
     fn stored_layer(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         context: (ByteLinkBatch, usize),
         rounds: &mut Rounds,
         trees: &Trees,
@@ -879,7 +882,7 @@ impl ByteLinkProver {
     #[expect(clippy::too_many_arguments, reason = "one layer of one batch")]
     fn bottom_layer(
         &mut self,
-        transcript: &mut impl ByteLinkTranscript,
+        transcript: &mut impl ByteLinkTranscript<F>,
         context: (ByteLinkBatch, usize),
         rounds: &mut Rounds,
         trees: &Trees,

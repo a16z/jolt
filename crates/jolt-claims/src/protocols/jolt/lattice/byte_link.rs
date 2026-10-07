@@ -11,15 +11,17 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_field::Field;
+use jolt_field::{Field, JoltField};
 use jolt_openings::{EvaluationClaim, OpeningsError, PrecommittedRole};
 
 use super::super::geometry::claim_reductions::bytecode::MAX_COMMITTED_BYTECODE_CHUNK_COUNT;
 use super::super::JoltCommittedPolynomial as Poly;
-use super::geometry::LatticeGeometryError;
+use super::geometry::{balanced_inc_value, LatticeGeometryError};
 use super::strategy::{append_trace_column, append_usize};
 
-const BYTE_BITS: usize = 8;
+/// Bits of a byte-trace code: the width of every tuple byte and increment
+/// digit.
+pub const BYTE_BITS: usize = 8;
 
 /// The link packs in canonical order: five instruction triples, the last
 /// instruction column with both bytecode columns, then the RAM pair with the
@@ -106,6 +108,49 @@ impl HistogramGroup {
         }
     }
 
+    /// The table index of a pack tuple: its unsigned byte codes MSB-first,
+    /// the RAM pack's third code being its activity bit.
+    pub const fn table_index(self, [c0, c1, c2]: [u8; 3]) -> usize {
+        let (c0, c1, c2) = (c0 as usize, c1 as usize, c2 as usize);
+        match self {
+            Self::Triples => (c0 << 16) | (c1 << 8) | c2,
+            Self::Ram => (c0 << 9) | (c1 << 1) | (c2 & 1),
+        }
+    }
+
+    /// The tuple of a table index; inverts [`Self::table_index`].
+    pub const fn table_codes(self, index: usize) -> [u8; 3] {
+        match self {
+            Self::Triples => [(index >> 16) as u8, (index >> 8) as u8, index as u8],
+            Self::Ram => [(index >> 9) as u8, (index >> 1) as u8, (index & 1) as u8],
+        }
+    }
+
+    /// MLE at `point` (MSB-first) of a pack table's denominator
+    /// `β − Σ_i γ_i · x_i`: `x_i` is the signed value of each tuple byte, then
+    /// the RAM activity bit. `None` unless `point` has [`Self::num_vars`]
+    /// coordinates.
+    pub fn table_denominator<F: JoltField>(
+        self,
+        point: &[F],
+        gamma: &[F; 3],
+        beta: F,
+    ) -> Option<F> {
+        if point.len() != self.num_vars() {
+            return None;
+        }
+        let coordinates = point.chunks(BYTE_BITS).map(|chunk| match chunk {
+            [activity] => *activity,
+            byte => balanced_inc_value(byte),
+        });
+        Some(
+            gamma
+                .iter()
+                .zip(coordinates)
+                .fold(beta, |denominator, (gamma, x)| denominator - *gamma * x),
+        )
+    }
+
     /// The group's role in the joint opening, after every advice and
     /// committed-program role.
     pub const fn role(self) -> PrecommittedRole {
@@ -150,6 +195,28 @@ impl HistogramGroup {
             append_trace_column(hasher, polynomial)?;
         }
         Ok(())
+    }
+}
+
+/// A batched fraction-tree GKR of the link, in proof order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ByteLinkBatch {
+    /// The trace trees of all seven packs, one leaf per cycle.
+    Trace,
+    /// The six triple-table trees.
+    Triples,
+    /// The RAM-table tree.
+    Ram,
+}
+
+impl ByteLinkBatch {
+    /// Variables of a leaf index: the cycle, or a table cell.
+    pub const fn num_vars(self, log_t: usize) -> usize {
+        match self {
+            Self::Trace => log_t,
+            Self::Triples => HistogramGroup::Triples.num_vars(),
+            Self::Ram => HistogramGroup::Ram.num_vars(),
+        }
     }
 }
 
@@ -252,6 +319,12 @@ impl<F: Field> ByteLinkInputs<F> {
 
     pub fn fused_inc(&self) -> F {
         self.fused_inc
+    }
+
+    /// `(address chunk k_c, v_c)` of every one-hot column in `Q` slot order:
+    /// eight MSB-first coordinates and the inclusive S6b value.
+    pub fn one_hot_claims(&self) -> &[(Vec<F>, F)] {
+        &self.one_hot
     }
 
     /// Every one-hot claim's histogram query, in `Q` slot order.
