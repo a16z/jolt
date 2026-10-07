@@ -114,9 +114,8 @@ With `--embed` the host also:
 ### Guest runtime
 
 - An O(1) size-class allocator for std guests.
-- Word-wise `memcpy`, `memset`, and `memcmp`. `memcpy` reads only through
-  opaque inline-asm loads: it may copy padding and reads whole aligned words at
-  the range ends.
+- No custom `mem*` routines. musl's `memcpy`, `memset`, and `memcmp` move
+  data partly in sub-word accesses, each a multi-row sequence.
 - `serde_bytes` on every proof and setup byte payload.
 - 8-byte-aligned guest record framing.
 - `write(2)` and `clock_gettime(2)` answered in the trap handler.

@@ -17,7 +17,7 @@ akita = [
   "dep:jolt-crypto",
   "dep:jolt-transcript",
 ]
-fast-alloc = ["jolt_sdk/guest-size-class-alloc", "jolt_sdk/guest-fast-mem"]
+fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
 hash-inlines = [
   "jolt_sdk/blake2-inline",
   "jolt-transcript?/blake2-inline",

@@ -19,7 +19,6 @@ default = ["jolt-platform/random"]
 # std guests: route Rust allocations to jolt-platform's O(1) size-class
 # arena instead of musl's malloc over ZeroOS's first-fit heap.
 guest-size-class-alloc = []
-guest-fast-mem = ["jolt-platform/fast-mem"]
 blake2-inline = [
   "jolt-transcript?/blake2-inline",
   "jolt-verifier?/blake2-inline",
