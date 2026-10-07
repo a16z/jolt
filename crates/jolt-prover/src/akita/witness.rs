@@ -81,6 +81,33 @@ impl OneHotTraceRowLayout {
         row.ram_address.0.is_some()
     }
 
+    /// The first row of the trace's all-zero suffix: the witness's padding
+    /// rows when its padding row selects no row and makes no RAM access,
+    /// otherwise `num_rows`.
+    fn zero_suffix_start<F: JoltField>(
+        self,
+        witness: &dyn JoltWitnessPlane<F>,
+        num_rows: usize,
+        num_columns: usize,
+    ) -> Result<usize, ProverError<F>> {
+        let Some(access) = witness.random_access() else {
+            return Ok(num_rows);
+        };
+        let physical_rows = access.physical_rows().min(num_rows);
+        if physical_rows == num_rows {
+            return Ok(num_rows);
+        }
+        let padding = access.window::<OneHotTraceSourceRow>(physical_rows)?;
+        let mut selected = vec![0u8; num_columns];
+        Ok(
+            if self.fill_row(padding, &mut selected) || selected.iter().any(|&row| row != 0) {
+                num_rows
+            } else {
+                physical_rows
+            },
+        )
+    }
+
     /// A filled row's committed entries: its nonzero selected rows, plus every
     /// RAM chunk of an active access, which commits row zero.
     fn committed_entries(self, selected_rows: &[u8], ram_active: bool) -> usize {
@@ -209,23 +236,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         .fold(0u64, |mask, column| mask | (1u64 << column));
     let layout = OneHotTraceRowLayout::new(plan, log_k_chunk);
 
-    let random_access = witness.random_access();
-    let zero_suffix_start = if let Some(access) = random_access.as_ref() {
-        let physical_rows = access.physical_rows().min(num_rows);
-        if physical_rows < num_rows {
-            let padding = access.window::<OneHotTraceSourceRow>(physical_rows)?;
-            let mut selected = vec![0u8; num_columns];
-            if layout.fill_row(padding, &mut selected) || selected.iter().any(|&row| row != 0) {
-                num_rows
-            } else {
-                physical_rows
-            }
-        } else {
-            num_rows
-        }
-    } else {
-        num_rows
-    };
+    let zero_suffix_start = layout.zero_suffix_start(witness, num_rows, num_columns)?;
     let mut selected_rows = vec![0u8; num_rows * num_columns];
     let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
     #[cfg(feature = "profiling")]
@@ -310,7 +321,8 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
 /// The byte link's signed-byte trace `Q`, slot `c` of cycle `t` at
 /// `c · 2^log_t + t`: every cycle's `OneHotTrace` row as two's-complement
 /// bytes (a balanced digit's selected row is its two's-complement code), then
-/// the RAM activity bit, then zero slots.
+/// the RAM activity bit, then zero slots; with the first cycle of its all-zero
+/// suffix.
 #[cfg(feature = "akita-byte-link")]
 #[tracing::instrument(skip_all, name = "assemble_byte_trace")]
 pub fn assemble_byte_trace<F: JoltField>(
@@ -318,7 +330,7 @@ pub fn assemble_byte_trace<F: JoltField>(
     one_hot_trace: &OneHotTraceLayoutPlan,
     byte_trace: &ByteTraceLayoutPlan,
     log_t: usize,
-) -> Result<Vec<i8>, ProverError<F>> {
+) -> Result<(Vec<i8>, usize), ProverError<F>> {
     const BLOCK_ROWS: usize = 1 << 12;
     let row_columns = one_hot_trace.packing().ids();
     let slots = byte_trace.packing().ids();
@@ -339,6 +351,7 @@ pub fn assemble_byte_trace<F: JoltField>(
         columns[width][offset] = i8::from(ram_active);
     };
     let num_rows = 1usize << log_t;
+    let zero_suffix_start = layout.zero_suffix_start(witness, num_rows, width)?;
     let mut bytes = vec![0i8; slots.len() * num_rows];
     let mut blocks = (0..num_rows.div_ceil(BLOCK_ROWS))
         .map(|_| Vec::with_capacity(width + 1))
@@ -361,7 +374,7 @@ pub fn assemble_byte_trace<F: JoltField>(
                 }
                 Ok::<_, ProverError<F>>(())
             })?;
-        return Ok(bytes);
+        return Ok((bytes, zero_suffix_start));
     }
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
     let mut selected_rows = vec![0u8; width];
@@ -375,7 +388,7 @@ pub fn assemble_byte_trace<F: JoltField>(
             );
         }
     }
-    Ok(bytes)
+    Ok((bytes, zero_suffix_start))
 }
 
 /// One advice-word commitment object: one field coefficient per

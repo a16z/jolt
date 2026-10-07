@@ -15,14 +15,23 @@ mod sort;
 #[cfg(test)]
 mod tests;
 
-use jolt_claims::protocols::jolt::lattice::byte_link::{ByteLinkBatch, ByteLinkInputs};
-use jolt_field::Prime128OffsetA7F7 as F;
-use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpenings};
-use metal::{Buffer, Heap};
+use std::marker::PhantomData;
 
-use super::{MetalError, SolinasMetal};
-use crate::byte_link::reference::Denominators;
-use crate::byte_link::{ByteLinkMessage, ByteLinkTranscript};
+use jolt_claims::protocols::jolt::lattice::byte_link::{
+    ByteLinkBatch, ByteLinkInputs, HistogramGroup,
+};
+use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_sumcheck::SumcheckError;
+use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpenings};
+use metal::{Buffer, Heap, MTLResourceOptions};
+
+use super::{Fp128, MetalError, SolinasMetal};
+use crate::byte_link::reference::{ByteTrace, Denominators, ReferenceByteLink};
+use crate::byte_link::{
+    ByteLinkKernel, ByteLinkMessage, ByteLinkRun, ByteLinkTranscript, HistogramTables,
+};
+use crate::metal::MetalBackend;
+use crate::KernelError;
 use gkr::{TailForm, TraceLeaves, Trees};
 use gpu::Gpu;
 
@@ -83,6 +92,12 @@ pub struct ByteLinkHistograms {
 impl ByteLinkHistograms {
     pub fn buffer(&self) -> &Buffer {
         &self.w
+    }
+
+    /// Byte offset in [`Self::buffer`] of `group`'s first table; the group's tables follow back to
+    /// back.
+    pub fn group_offset(group: HistogramGroup) -> usize {
+        (group.packs().start << TRIPLE_BITS) * size_of::<Fp128>()
     }
 }
 
@@ -257,4 +272,104 @@ impl ByteLinkProver {
         .max()
         .unwrap_or_default()
     }
+}
+
+/// Traces below the GPU prover's smallest shape prove on the host.
+impl ByteLinkKernel<F> for MetalBackend {
+    fn histograms<'a>(
+        &self,
+        trace: ByteTrace<'a>,
+        inputs: &ByteLinkInputs<F>,
+    ) -> Result<Box<dyn ByteLinkRun<F> + 'a>, KernelError<F>> {
+        let log_rows = trace.plan.packing().logical_num_vars() as u32;
+        if log_rows < MIN_LOG_ROWS {
+            return ReferenceByteLink.histograms(trace, inputs);
+        }
+        let start = || {
+            let bytes = trace_view(&self.context, trace.bytes)?;
+            let mut prover = ByteLinkProver::new(&self.context)?;
+            let source = ByteLinkSource {
+                bytes: &bytes,
+                log_rows,
+                active_rows: trace.active_rows,
+            };
+            let histograms = prover.histograms(&source, inputs)?;
+            Ok(MetalRun {
+                prover,
+                histograms,
+                bytes,
+                log_rows,
+                active_rows: trace.active_rows,
+                trace: PhantomData,
+            })
+        };
+        Ok(Box::new(start().map_err(link_error)?))
+    }
+}
+
+/// A shared-storage view of `bytes` without a copy; Metal maps only whole pages.
+fn trace_view(metal: &SolinasMetal, bytes: &[i8]) -> Result<Buffer, MetalError> {
+    const PAGE: usize = 16 << 10;
+    if !bytes.as_ptr().addr().is_multiple_of(PAGE) || !bytes.len().is_multiple_of(PAGE) {
+        return Err(MetalError::ByteLinkSourcePages {
+            address: bytes.as_ptr().addr(),
+            bytes: bytes.len(),
+        });
+    }
+    metal.validate_buffer_length(bytes.len() as u64)?;
+    Ok(metal.device.new_buffer_with_bytes_no_copy(
+        bytes.as_ptr().cast_mut().cast(),
+        bytes.len() as u64,
+        MTLResourceOptions::StorageModeShared,
+        None,
+    ))
+}
+
+/// A GPU link proof once `W` exists. `bytes` views the borrowed trace without owning it: every
+/// command reading it completes before [`ByteLinkProver::histograms`] or
+/// [`ByteLinkProver::prove`] returns, and the run drops the view before the borrow ends.
+struct MetalRun<'a> {
+    prover: ByteLinkProver,
+    histograms: ByteLinkHistograms,
+    bytes: Buffer,
+    log_rows: u32,
+    active_rows: usize,
+    trace: PhantomData<&'a [i8]>,
+}
+
+impl ByteLinkRun<F> for MetalRun<'_> {
+    fn tables(&self) -> HistogramTables<'_, F> {
+        HistogramTables::Device(&self.histograms)
+    }
+
+    fn prove(
+        self: Box<Self>,
+        inputs: &ByteLinkInputs<F>,
+        compression: &ByteLinkCompression<F>,
+        mut transcript: &mut dyn ByteLinkTranscript<F>,
+    ) -> Result<ByteLinkOpenings<F>, KernelError<F>> {
+        let Self {
+            mut prover,
+            histograms,
+            bytes,
+            log_rows,
+            active_rows,
+            ..
+        } = *self;
+        let source = ByteLinkSource {
+            bytes: &bytes,
+            log_rows,
+            active_rows,
+        };
+        prover
+            .prove(&source, &histograms, inputs, compression, &mut transcript)
+            .map_err(link_error)
+    }
+}
+
+fn link_error(error: MetalError) -> KernelError<F> {
+    KernelError::Sumcheck(SumcheckError::ComputeBackend {
+        backend: "metal",
+        message: error.to_string(),
+    })
 }

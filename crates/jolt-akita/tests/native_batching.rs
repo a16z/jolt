@@ -14,7 +14,7 @@ use akita_types::{
 use jolt_akita::configs::{JoltDenseBounded, JoltFieldDigits, JoltSignedBytes};
 use jolt_akita::{
     AkitaField, AkitaNativeBatching, AkitaProverHint, AkitaScheduleArtifacts, AkitaScheme,
-    AkitaSetupParams, AkitaVerifierSetup, PrecommittedScheduleParams,
+    AkitaSetupParams, AkitaVerifierSetup, PrecommittedScheduleParams, TraceCommitmentBackend,
 };
 use jolt_field::Ring;
 use jolt_openings::{
@@ -323,9 +323,14 @@ fn signed_byte_trace_opens_beside_advice_and_late_field_digit_groups() {
         .map(|index| (index.wrapping_mul(37) % 251) as u8 as i8)
         .collect::<Vec<_>>();
     let trace = Polynomial::new(bytes.iter().copied().map(AkitaField::from_i8).collect());
-    let (trace_commitment, trace_hint) =
-        AkitaScheme::commit_signed_byte_trace(&prover_setup, layout(9), bytes, &[&advice_hint])
-            .expect("the trace commits before any field-digit group exists");
+    let (trace_commitment, trace_hint) = AkitaScheme::commit_signed_byte_trace(
+        &TraceCommitmentBackend::cpu(),
+        &prover_setup,
+        layout(9),
+        bytes,
+        &[&advice_hint],
+    )
+    .expect("the trace commits before any field-digit group exists");
 
     let advice_point = (0..ADVICE_NUM_VARS as u64)
         .map(|i| f(3 + 5 * i))

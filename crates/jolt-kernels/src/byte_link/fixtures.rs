@@ -34,11 +34,13 @@ fn row_hash(seed: u64, column: u64, t: usize) -> u64 {
     splitmix(&mut state)
 }
 
-/// A byte trace `Q` owned with its layout.
+/// A byte trace `Q` owned with its layout; every slot is zero from cycle
+/// `active` on.
 #[derive(Clone)]
 pub struct SyntheticTrace {
     pub plan: ByteTraceLayoutPlan,
     pub bytes: Vec<i8>,
+    pub active: usize,
 }
 
 impl SyntheticTrace {
@@ -107,7 +109,11 @@ impl SyntheticTrace {
                 };
             }
         }
-        let mut trace = Self { plan, bytes };
+        let mut trace = Self {
+            plan,
+            bytes,
+            active,
+        };
         trace.set_edge_cycles();
         trace
     }
@@ -160,6 +166,7 @@ impl SyntheticTrace {
         ByteTrace {
             plan: &self.plan,
             bytes: &self.bytes,
+            active_rows: self.active,
         }
     }
 

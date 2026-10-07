@@ -7,8 +7,12 @@ use jolt_claims::protocols::jolt::lattice::byte_link::{
     ByteLinkBatch, ByteLinkInputs, HistogramGroup,
 };
 use jolt_field::JoltField;
-use jolt_kernels::byte_link::reference::{self, ByteTrace, Histograms};
-use jolt_kernels::byte_link::{ByteLinkDraw, ByteLinkMessage, ByteLinkTranscript};
+use jolt_kernels::byte_link::reference::ByteTrace;
+use jolt_kernels::byte_link::{
+    ByteLinkDraw, ByteLinkMessage, ByteLinkRun, ByteLinkTranscript, HistogramTables,
+};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_kernels::metal::solinas::byte_link::ByteLinkHistograms;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -17,6 +21,7 @@ use jolt_verifier::stages::byte_link::{
 };
 use jolt_verifier::VerifierError;
 
+use super::JoltAkitaBackend;
 use crate::ProverError;
 
 /// The link stage's wire and openings, with the histogram groups' hints for
@@ -26,11 +31,14 @@ pub struct ByteLinkStage<PCS: CommitmentScheme> {
     pub histogram_hints: [PCS::OpeningHint; 2],
 }
 
-/// Commits both histogram groups of `trace` at the stage-6b cycle point, then
-/// proves the link over the stage-6b `inputs`.
+/// Computes `W` of `trace` at the stage-6b cycle point with `backend`'s link
+/// prover, commits both histogram groups, then proves the link over the
+/// stage-6b `inputs`.
+#[tracing::instrument(skip_all, name = "prove_stage_byte_link")]
 pub fn prove_byte_link_stage<F, PCS, T>(
+    backend: &JoltAkitaBackend<F, PCS>,
     setup: &PCS::ProverSetup,
-    trace: &ByteTrace<'_>,
+    trace: ByteTrace<'_>,
     inputs: &ByteLinkInputs<F>,
     transcript: &mut T,
 ) -> Result<ByteLinkStage<PCS>, ProverError<F>>
@@ -40,25 +48,32 @@ where
     PCS::Output: AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
-    let histograms = reference::histograms(trace, inputs)?;
+    let run = backend.byte_link.histograms(trace, inputs)?;
     let [triples, ram] = HistogramGroup::ALL.map(|group| {
+        let tables = run.tables();
         group
             .layout_digest()
-            .and_then(|digest| {
-                PCS::commit_field_digit_group(setup, digest, histograms.group(group))
+            .and_then(|digest| match tables {
+                HistogramTables::Host(histograms) => {
+                    PCS::commit_field_digit_group(setup, digest, histograms.group(group))
+                }
+                #[cfg(all(feature = "metal", target_os = "macos"))]
+                HistogramTables::Device(histograms) => PCS::commit_field_digit_group_on_device(
+                    &backend.trace_commitment,
+                    setup,
+                    digest,
+                    histograms.buffer(),
+                    ByteLinkHistograms::group_offset(group),
+                    group.num_vars(),
+                    group.packs().len(),
+                ),
             })
             .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                 reason: error.to_string(),
             })
     });
     let ((triple_commitment, triple_hint), (ram_commitment, ram_hint)) = (triples?, ram?);
-    let link = prove_byte_link(
-        trace,
-        &histograms,
-        inputs,
-        [triple_commitment, ram_commitment],
-        transcript,
-    )?;
+    let link = prove_byte_link(run, inputs, [triple_commitment, ram_commitment], transcript)?;
     Ok(ByteLinkStage {
         link,
         histogram_hints: [triple_hint, ram_hint],
@@ -71,11 +86,10 @@ pub struct ProvedByteLink<F: JoltField, C> {
     pub openings: ByteLinkOpenings<F>,
 }
 
-/// Proves the link over the stage-6b `inputs`: absorbs the committed
-/// histograms, draws the compression challenges and runs the reference prover.
+/// Proves the link over the stage-6b `inputs` from `run`'s `W`: absorbs the
+/// committed histograms, draws the compression challenges and proves the rest.
 pub fn prove_byte_link<F, C, T>(
-    trace: &ByteTrace<'_>,
-    histograms: &Histograms<F>,
+    run: Box<dyn ByteLinkRun<F> + '_>,
     inputs: &ByteLinkInputs<F>,
     histogram_commitments: [C; 2],
     transcript: &mut T,
@@ -88,7 +102,7 @@ where
     schedule::absorb_histogram_commitments(transcript, &histogram_commitments);
     let compression = schedule::draw_compression(transcript);
     let mut link = LinkTranscript::new(transcript);
-    let openings = reference::prove(trace, histograms, inputs, &compression, &mut link)?;
+    let openings = run.prove(inputs, &compression, &mut link)?;
     Ok(ProvedByteLink {
         proof: link.finish(histogram_commitments)?,
         openings,
@@ -304,6 +318,7 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltCommittedPolynomial as Poly;
     use jolt_field::{One, Ring};
     use jolt_kernels::byte_link::fixtures::{scaled_active, SyntheticTrace};
+    use jolt_kernels::byte_link::reference::{self, Histograms, Run};
     use jolt_poly::{eq_index_msb, EqPolynomial};
     use jolt_verifier::error::ByteLinkError;
     use jolt_verifier::stages::byte_link::verify;
@@ -325,14 +340,11 @@ mod tests {
     ) -> ProvedByteLink<F, F> {
         let mut transcript = AkitaTranscript::new(b"byte-link-test");
         let commitments = [F::from_u64(1), F::from_u64(2)];
-        prove_byte_link(
-            &trace.trace(),
-            histograms,
-            inputs,
-            commitments,
-            &mut transcript,
-        )
-        .unwrap()
+        let run = Box::new(Run {
+            trace: trace.trace(),
+            histograms: histograms.clone(),
+        });
+        prove_byte_link(run, inputs, commitments, &mut transcript).unwrap()
     }
 
     fn verify_link(

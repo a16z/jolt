@@ -5,6 +5,8 @@ use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
+#[cfg(feature = "akita-byte-link")]
+use jolt_kernels::byte_link::{reference::ReferenceByteLink, ByteLinkKernel};
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use jolt_kernels::metal::MetalBackend;
 use jolt_kernels::{JoltBackend, KernelSlots, ProofSession, ReferenceBackend};
@@ -51,6 +53,9 @@ where
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
     trace_commitment: jolt_akita::TraceCommitmentBackend,
+    /// The byte link's prover; [`Self::with_metal_compute`] installs the GPU's.
+    #[cfg(feature = "akita-byte-link")]
+    byte_link: Box<dyn ByteLinkKernel<F>>,
     /// The Metal backend [`Self::with_metal_compute`] installed in `base`;
     /// its Hamming-weight slot decides whether stage 7 runs on the device.
     #[cfg(all(feature = "metal", target_os = "macos"))]
@@ -108,6 +113,8 @@ where
     pub fn reference() -> Self {
         Self {
             trace_commitment: jolt_akita::TraceCommitmentBackend::cpu(),
+            #[cfg(feature = "akita-byte-link")]
+            byte_link: Box::new(ReferenceByteLink),
             #[cfg(all(feature = "metal", target_os = "macos"))]
             piop_metal: None,
             base: JoltBackend {
@@ -211,6 +218,10 @@ where
 {
     pub fn with_metal_compute(mut self, metal: &MetalBackend) -> Result<Self, OpeningsError> {
         self.base = self.base.with_metal_compute(metal);
+        #[cfg(feature = "akita-byte-link")]
+        {
+            self.byte_link = Box::new(metal.clone());
+        }
         self.piop_metal = Some(metal.clone());
         self.trace_commitment = jolt_akita::TraceCommitmentBackend::metal_required()?;
         Ok(self)

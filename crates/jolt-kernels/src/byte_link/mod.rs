@@ -9,15 +9,54 @@
 //! `(reverse(s), µ)`.
 //!
 //! [`reference`] proves on the host; `metal::solinas::byte_link` proves on the
-//! GPU with the same messages.
+//! GPU with the same messages. A backend's [`ByteLinkKernel`] picks one.
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod fixtures;
 pub mod reference;
 
-use jolt_claims::protocols::jolt::lattice::byte_link::{ByteLinkBatch, HistogramGroup};
+use jolt_claims::protocols::jolt::lattice::byte_link::{
+    ByteLinkBatch, ByteLinkInputs, HistogramGroup,
+};
 use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
+use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpenings};
+
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::solinas::byte_link::ByteLinkHistograms;
+use crate::KernelError;
+use reference::{ByteTrace, Histograms};
+
+/// Starts a link proof over a byte trace.
+pub trait ByteLinkKernel<F: JoltField>: Send + Sync {
+    /// `W` of every pack of `trace` at the stage-6b cycle point.
+    fn histograms<'a>(
+        &self,
+        trace: ByteTrace<'a>,
+        inputs: &ByteLinkInputs<F>,
+    ) -> Result<Box<dyn ByteLinkRun<F> + 'a>, KernelError<F>>;
+}
+
+/// One link proof once `W` exists.
+pub trait ByteLinkRun<F: JoltField> {
+    /// The tables the stage commits as the two histogram groups.
+    fn tables(&self) -> HistogramTables<'_, F>;
+
+    /// Everything after the `W` commitments and the compression challenges.
+    fn prove(
+        self: Box<Self>,
+        inputs: &ByteLinkInputs<F>,
+        compression: &ByteLinkCompression<F>,
+        transcript: &mut dyn ByteLinkTranscript<F>,
+    ) -> Result<ByteLinkOpenings<F>, KernelError<F>>;
+}
+
+/// Where a run holds `W`.
+pub enum HistogramTables<'a, F> {
+    Host(&'a Histograms<F>),
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Device(&'a ByteLinkHistograms),
+}
 
 /// A prover message, in protocol order. `layer` counts the variables of the
 /// layer's parent index, so the top layer of a batch is 0; `round` indexes the
@@ -121,4 +160,14 @@ pub enum ByteLinkDraw {
 pub trait ByteLinkTranscript<F: JoltField> {
     fn append(&mut self, message: ByteLinkMessage<'_, F>);
     fn challenges(&mut self, draw: ByteLinkDraw, count: usize) -> Vec<F>;
+}
+
+impl<F: JoltField, T: ByteLinkTranscript<F> + ?Sized> ByteLinkTranscript<F> for &mut T {
+    fn append(&mut self, message: ByteLinkMessage<'_, F>) {
+        (**self).append(message);
+    }
+
+    fn challenges(&mut self, draw: ByteLinkDraw, count: usize) -> Vec<F> {
+        (**self).challenges(draw, count)
+    }
 }

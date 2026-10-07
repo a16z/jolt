@@ -653,6 +653,31 @@ mod akita_tests {
             let proved = prove_guest_with(run, config, true, &[], &backend);
             verify(&proved).expect("Metal Akita advice proof must verify");
         }
+
+        /// At 2^16 cycles `Q`, the link and both `W` groups run on the device,
+        /// and the proof is the CPU prover's byte for byte.
+        #[cfg(feature = "akita-byte-link")]
+        #[test]
+        fn byte_link_metal_proof_is_the_cpu_proof_at_2_16() {
+            let inputs = postcard::to_stdvec(&4000u32).expect("serialize inputs");
+            let prove = |backend: &JoltAkitaBackend<AkitaField, AkitaScheme>| {
+                let run = guest_run("fibonacci-guest", &inputs, &[], &[]);
+                let config = derive_config(&run);
+                assert_eq!(config.trace_length, 1 << 16);
+                prove_guest_with(run, config, false, &[], backend)
+            };
+            let encode = |proved: &ProvedGuest| {
+                bincode::serde::encode_to_vec(&proved.proof, bincode::config::standard())
+                    .expect("serialize packed proof")
+            };
+            let metal = prove(&metal_backend(1 << 16));
+            verify(&metal).expect("the Metal byte-link proof must verify");
+            let cpu = prove(&JoltAkitaBackend::optimized());
+            assert!(
+                encode(&metal) == encode(&cpu),
+                "Metal and CPU proofs differ"
+            );
+        }
     }
 }
 

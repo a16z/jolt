@@ -10,7 +10,7 @@ workspace = true
 
 [features]
 default = []
-metal = ["dep:akita-metal"]
+metal = ["dep:akita-metal", "dep:metal"]
 profiling = []
 
 [dependencies]
@@ -37,6 +37,7 @@ tracing.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 akita-metal = { workspace = true, optional = true, features = ["parallel"] }
+metal = { workspace = true, optional = true }
 
 [dev-dependencies]
 bincode.workspace = true

@@ -1,6 +1,12 @@
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_metal::{MetalBackend, MetalExecutionPolicy, MetalPreparedSetup};
 use akita_pcs::{AkitaError, ComputeBackendSetup, CpuBackend};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_prover::UniformProverStack;
 use akita_prover::{GroupContext, RootPolyMeta, SignedBytePoly};
 use akita_schedules::ValidatedScheduleCatalog;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams};
 use akita_types::{PolynomialGroupLayout, PrecommittedGroupProfiles};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
@@ -11,11 +17,15 @@ use jolt_openings::{
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use metal::Buffer;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use std::{collections::HashMap, sync::Mutex};
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::adapters::AkitaBackendProverSetup;
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
     domain_size, invalid_batch, invalid_setup, one_hot_polynomial, one_hot_trace_family,
@@ -67,8 +77,8 @@ enum TraceCommitmentBackendKind {
 #[cfg(all(feature = "metal", target_os = "macos"))]
 #[derive(Clone)]
 pub(crate) struct RequiredMetalTraceCommitment {
-    pub(crate) backend: akita_metal::MetalBackend,
-    prepared: Arc<Mutex<HashMap<usize, Arc<akita_metal::MetalPreparedSetup>>>>,
+    pub(crate) backend: MetalBackend,
+    prepared: Arc<Mutex<HashMap<usize, Arc<MetalPreparedSetup>>>>,
 }
 
 impl std::fmt::Debug for TraceCommitmentBackend {
@@ -87,9 +97,8 @@ impl TraceCommitmentBackend {
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
     pub fn metal_required() -> Result<Self, OpeningsError> {
-        let backend =
-            akita_metal::MetalBackend::new(akita_metal::MetalExecutionPolicy::RequireMetal)
-                .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+        let backend = MetalBackend::new(MetalExecutionPolicy::RequireMetal)
+            .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
         Ok(Self {
             kind: TraceCommitmentBackendKind::MetalRequired(RequiredMetalTraceCommitment {
                 backend,
@@ -137,14 +146,25 @@ impl TraceCommitmentBackend {
             TraceCommitmentBackendKind::Cpu => None,
         }
     }
+
+    /// The Metal backend that commits and opens a signed-byte group whose root
+    /// commits at `root`, when the device commits that root.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn signed_byte_metal(
+        &self,
+        root: &GroupCommitPhaseParams,
+    ) -> Option<&RequiredMetalTraceCommitment> {
+        self.required_metal()
+            .filter(|_| MetalBackend::commits_signed_bytes(root))
+    }
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 impl RequiredMetalTraceCommitment {
     pub(crate) fn prepared_setup(
         &self,
-        setup: &Arc<akita_prover::AkitaProverSetup<AkitaField>>,
-    ) -> Result<Arc<akita_metal::MetalPreparedSetup>, OpeningsError> {
+        setup: &AkitaBackendProverSetup,
+    ) -> Result<Arc<MetalPreparedSetup>, OpeningsError> {
         let key = Arc::as_ptr(&setup.expanded) as usize;
         let mut prepared = self.prepared.lock().map_err(|_| {
             OpeningsError::InvalidSetup("Akita Metal prepared-setup cache is poisoned".to_string())
@@ -206,6 +226,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 
     /// See [`AkitaScheme::commit_signed_byte_trace`].
     fn commit_signed_byte_trace(
+        backend: &TraceCommitmentBackend,
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
         bytes: Vec<i8>,
@@ -221,6 +242,18 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
         tables: &[Vec<Self::Field>],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
+
+    /// See [`AkitaScheme::commit_field_digit_group_on_device`].
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn commit_field_digit_group_on_device(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        tables: &Buffer,
+        offset: usize,
+        num_vars: usize,
+        num_polys: usize,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
     /// Reinstalls rows regenerated from the committed witness; rejects rows
@@ -466,8 +499,10 @@ impl AkitaScheme {
     /// Commits the signed-byte trace `Q`: `bytes` in Jolt index order (it
     /// opens at the reversed point), against the profiles of every group its
     /// opening batches: the advice hints' groups, then the setup's field-digit
-    /// groups.
+    /// groups. A Metal `backend` commits on the device when the scheduled root
+    /// admits it, and the opening then runs there too.
     pub fn commit_signed_byte_trace(
+        backend: &TraceCommitmentBackend,
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
         bytes: Vec<i8>,
@@ -477,29 +512,53 @@ impl AkitaScheme {
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let profiles = Self::precommitted_profiles(setup, precommitted_hints)?;
         let source = SignedBytePoly::new(num_vars, bytes).map_err(commit_failed)?;
-        let (backend_prover_setup, prepared_backend_setup) = setup.trace_backend()?;
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            setup
-                .verifier
-                .signed_byte_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit(
-                    backend_prover_setup,
-                    std::slice::from_ref(&source),
-                    &stack,
-                    GroupContext::scheduler_with_precommitted_groups(&profiles),
-                )
-        })
-        .map(split_commit_output)
-        .map_err(commit_failed)?;
-        Self::package_commitment(
+        let sources = std::slice::from_ref(&source);
+        let scheme = setup.verifier.signed_byte_scheme()?;
+        let (prover_setup, cpu_prepared) = setup.trace_backend()?;
+        let context = GroupContext::scheduler_with_precommitted_groups(&profiles);
+        let commit_on_cpu = || {
+            let stack = backend_stack(prover_setup, cpu_prepared)?;
+            with_backend_pool(|| scheme.commit(prover_setup, sources, &stack, context))
+                .map_err(commit_failed)
+        };
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        let committed = {
+            let root = scheme
+                .schedules()
+                .resolve_key(&AkitaScheduleLookupKey {
+                    final_group: PolynomialGroupLayout::new(num_vars, 1),
+                    precommitteds: profiles.as_slice().to_vec(),
+                })
+                .map_err(akita_error)?
+                .profiles()
+                .final_group;
+            match backend.signed_byte_metal(&root) {
+                Some(metal) => {
+                    let prepared = metal.prepared_setup(prover_setup)?;
+                    let stack = UniformProverStack::uniform(
+                        &metal.backend,
+                        prepared.as_ref(),
+                        prover_setup.expanded.as_ref(),
+                    )
+                    .map_err(akita_error)?;
+                    with_backend_pool(|| scheme.commit(prover_setup, sources, &stack, context))
+                        .map_err(commit_failed)
+                }
+                None => commit_on_cpu(),
+            }
+        };
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let committed = commit_on_cpu();
+        let (backend_commitment, backend_hint) = split_commit_output(committed?);
+        let (commitment, mut hint) = Self::package_commitment(
             layout_digest,
             num_vars,
             backend_commitment,
             backend_hint,
             AkitaHintPolynomials::SignedBytes(vec![source].into()),
-        )
+        )?;
+        hint.trace_backend = Some(backend.clone());
+        Ok((commitment, hint))
     }
 
     /// Commits one field-digit group the setup provisioned: `tables` are its
@@ -537,6 +596,63 @@ impl AkitaScheme {
             .collect::<Result<Vec<_>, _>>()
             .map_err(commit_failed)?;
         let stack = backend_stack(prover_setup, prepared)?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+            scheme.commit(
+                prover_setup,
+                &sources,
+                &stack,
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::FieldDigits(sources.into()),
+        )
+    }
+
+    /// [`Self::commit_field_digit_group`] of the `num_polys` tables of
+    /// `2^num_vars` canonical field values that start `offset` bytes into the
+    /// device buffer `tables` and follow back to back, decomposed and
+    /// committed on the device.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub fn commit_field_digit_group_on_device(
+        backend: &TraceCommitmentBackend,
+        setup: &AkitaProverSetup,
+        layout_digest: [u8; 32],
+        tables: &Buffer,
+        offset: usize,
+        num_vars: usize,
+        num_polys: usize,
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let metal = backend
+            .required_metal()
+            .ok_or_else(|| invalid_batch("device field-digit tables need a Metal trace backend"))?;
+        let FieldDigitBackend {
+            scheme,
+            prover_setup,
+            ..
+        } = setup.field_digit_backend()?;
+        let table_bytes = size_of::<u128>() << num_vars;
+        let sources = (0..num_polys)
+            .map(|table| {
+                metal
+                    .backend
+                    .balanced_byte_digits(tables, offset + table * table_bytes, num_vars)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(commit_failed)?;
+        let prepared = metal.prepared_setup(prover_setup)?;
+        let stack = UniformProverStack::uniform(
+            &metal.backend,
+            prepared.as_ref(),
+            prover_setup.expanded.as_ref(),
+        )
+        .map_err(akita_error)?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
             scheme.commit(
                 prover_setup,
@@ -623,7 +739,7 @@ impl AkitaScheme {
             .as_ref()
             .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
         let prepared = metal.prepared_setup(setup_owner)?;
-        let stack = akita_prover::UniformProverStack::uniform(
+        let stack = UniformProverStack::uniform(
             &metal.backend,
             prepared.as_ref(),
             backend_prover_setup.expanded.as_ref(),
@@ -634,7 +750,7 @@ impl AkitaScheme {
                 .verifier
                 .one_hot_k16_scheme()
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit::<TracePackedOneHot, akita_metal::MetalBackend>(
+                .commit::<TracePackedOneHot, MetalBackend>(
                     backend_prover_setup,
                     std::slice::from_ref(source),
                     &stack,
@@ -644,7 +760,7 @@ impl AkitaScheme {
                 .verifier
                 .one_hot_k16_scheme()
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit::<TracePackedOneHot, akita_metal::MetalBackend>(
+                .commit::<TracePackedOneHot, MetalBackend>(
                     backend_prover_setup,
                     std::slice::from_ref(source),
                     &stack,
@@ -654,7 +770,7 @@ impl AkitaScheme {
                 .verifier
                 .one_hot_k256_scheme()
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit::<TracePackedOneHot, akita_metal::MetalBackend>(
+                .commit::<TracePackedOneHot, MetalBackend>(
                     backend_prover_setup,
                     std::slice::from_ref(source),
                     &stack,
@@ -664,7 +780,7 @@ impl AkitaScheme {
                 .verifier
                 .one_hot_k256_scheme()
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit::<TracePackedOneHot, akita_metal::MetalBackend>(
+                .commit::<TracePackedOneHot, MetalBackend>(
                     backend_prover_setup,
                     std::slice::from_ref(source),
                     &stack,
@@ -901,12 +1017,13 @@ impl TraceOneHotCommitment for AkitaScheme {
     }
 
     fn commit_signed_byte_trace(
+        backend: &TraceCommitmentBackend,
         setup: &Self::ProverSetup,
         layout_digest: [u8; 32],
         bytes: Vec<i8>,
         precommitted_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit_signed_byte_trace(setup, layout_digest, bytes, precommitted_hints)
+        Self::commit_signed_byte_trace(backend, setup, layout_digest, bytes, precommitted_hints)
     }
 
     fn signed_byte_trace(hint: &Self::OpeningHint) -> Option<&[i8]> {
@@ -926,6 +1043,27 @@ impl TraceOneHotCommitment for AkitaScheme {
         tables: &[Vec<Self::Field>],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
         Self::commit_field_digit_group(setup, layout_digest, tables)
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    fn commit_field_digit_group_on_device(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        layout_digest: [u8; 32],
+        tables: &Buffer,
+        offset: usize,
+        num_vars: usize,
+        num_polys: usize,
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        Self::commit_field_digit_group_on_device(
+            backend,
+            setup,
+            layout_digest,
+            tables,
+            offset,
+            num_vars,
+            num_polys,
+        )
     }
 
     fn release_trace_rows(hint: &mut Self::OpeningHint) -> Result<(), OpeningsError> {

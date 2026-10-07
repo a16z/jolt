@@ -263,10 +263,12 @@ where
             link,
             histogram_hints,
         } = prove_byte_link_stage::<F, PCS, T>(
+            backend,
             &preprocessing.pcs_setup,
-            &ByteTrace {
+            ByteTrace {
                 plan: &stage0.byte_trace_plan,
                 bytes,
+                active_rows: stage0.byte_trace_active_rows,
             },
             &stage6b.clear_output.byte_link_inputs()?,
             &mut transcript,

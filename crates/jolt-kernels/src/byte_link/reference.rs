@@ -14,17 +14,62 @@ use jolt_verifier::stages::byte_link::{ByteLinkCompression, ByteLinkOpening, Byt
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::{ByteLinkDraw, ByteLinkMessage, ByteLinkTranscript};
+use super::{
+    ByteLinkDraw, ByteLinkKernel, ByteLinkMessage, ByteLinkRun, ByteLinkTranscript, HistogramTables,
+};
 use crate::KernelError;
 
 const STORED_HEIGHT: usize = 3;
 
 /// The byte trace `Q`: every slot of `plan` over its `2^log_t` cycles, slot `c`
-/// of cycle `t` at `bytes[c · 2^log_t + t]`.
+/// of cycle `t` at `bytes[c · 2^log_t + t]`. The caller guarantees that every
+/// slot is zero from cycle `active_rows` on.
 #[derive(Clone, Copy, Debug)]
 pub struct ByteTrace<'a> {
     pub plan: &'a ByteTraceLayoutPlan,
     pub bytes: &'a [i8],
+    pub active_rows: usize,
+}
+
+/// The host prover as a backend's [`ByteLinkKernel`].
+pub struct ReferenceByteLink;
+
+impl<F: JoltField> ByteLinkKernel<F> for ReferenceByteLink {
+    fn histograms<'a>(
+        &self,
+        trace: ByteTrace<'a>,
+        inputs: &ByteLinkInputs<F>,
+    ) -> Result<Box<dyn ByteLinkRun<F> + 'a>, KernelError<F>> {
+        let histograms = histograms(&trace, inputs)?;
+        Ok(Box::new(Run { trace, histograms }))
+    }
+}
+
+/// The host prover over `trace` with `histograms` as `W`.
+pub struct Run<'a, F> {
+    pub trace: ByteTrace<'a>,
+    pub histograms: Histograms<F>,
+}
+
+impl<F: JoltField> ByteLinkRun<F> for Run<'_, F> {
+    fn tables(&self) -> HistogramTables<'_, F> {
+        HistogramTables::Host(&self.histograms)
+    }
+
+    fn prove(
+        self: Box<Self>,
+        inputs: &ByteLinkInputs<F>,
+        compression: &ByteLinkCompression<F>,
+        mut transcript: &mut dyn ByteLinkTranscript<F>,
+    ) -> Result<ByteLinkOpenings<F>, KernelError<F>> {
+        prove(
+            &self.trace,
+            &self.histograms,
+            inputs,
+            compression,
+            &mut transcript,
+        )
+    }
 }
 
 /// `W` of every pack in pack order: `W_j(h) = Σ_{t : h_j(t) = h} eq(r, t)` over

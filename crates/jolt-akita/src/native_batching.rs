@@ -312,9 +312,17 @@ fn prove_grouped_trace_metal(
                 akita_transcript,
                 BasisMode::Lagrange,
             ),
-        TraceFamily::SignedBytes => Err(AkitaError::InvalidSetup(
-            "the signed-byte trace has no Metal opening; it opens on the CPU backend".to_owned(),
-        )),
+        TraceFamily::SignedBytes => setup
+            .verifier
+            .signed_byte_scheme()
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
+            .batched_prove_with_stack(
+                backend_prover_setup,
+                opening,
+                &releasing_stack,
+                akita_transcript,
+                BasisMode::Lagrange,
+            ),
     })
     .map_err(prove_failed)
 }
@@ -330,8 +338,26 @@ impl AkitaNativeBatching {
     where
         T: Transcript<Challenge = AkitaField>,
     {
+        let trace = setup.verifier.trace_family()?;
         #[cfg(all(feature = "metal", target_os = "macos"))]
-        let trace_backend = main_hint.trace_backend.clone();
+        let metal = main_hint
+            .trace_backend
+            .as_ref()
+            .and_then(|backend| match trace {
+                TraceFamily::SignedBytes => main_hint
+                    .backend
+                    .as_ref()
+                    .and_then(|(committed, _)| backend.signed_byte_metal(&committed.profile)),
+                TraceFamily::OneHotK16 | TraceFamily::OneHotK256 => {
+                    TraceCommitmentBackend::opening_shape_is_metal_qualified(
+                        setup.one_hot_k(),
+                        main.commitment.num_vars,
+                    )
+                    .then(|| backend.required_metal())
+                    .flatten()
+                }
+            })
+            .cloned();
         let precommitted_claims = precommitted
             .iter()
             .map(|(entry, _)| entry.clone())
@@ -423,7 +449,7 @@ impl AkitaNativeBatching {
             .collect::<Vec<_>>();
         let group_slices = group_refs.iter().map(Vec::as_slice).collect::<Vec<_>>();
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
-        let opening = match setup.verifier.trace_family()? {
+        let opening = match trace {
             TraceFamily::OneHotK256 => {
                 SelectedProverOpeningData::from_committed_claims::<AkitaOneHotK256Config>(
                     claims,
@@ -459,14 +485,7 @@ impl AkitaNativeBatching {
             &main,
         )?;
         #[cfg(all(feature = "metal", target_os = "macos"))]
-        let backend_proof = match trace_backend.as_ref().and_then(|backend| {
-            TraceCommitmentBackend::opening_shape_is_metal_qualified(
-                setup.one_hot_k(),
-                main.commitment.num_vars,
-            )
-            .then(|| backend.required_metal())
-            .flatten()
-        }) {
+        let backend_proof = match &metal {
             Some(metal) => prove_grouped_trace_metal(setup, opening, metal, &mut akita_transcript)?,
             None => prove_grouped_trace_cpu(setup, opening, &mut akita_transcript)?,
         };

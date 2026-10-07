@@ -46,6 +46,9 @@ where
     pub one_hot_trace_plan: OneHotTraceLayoutPlan,
     #[cfg(feature = "akita-byte-link")]
     pub byte_trace_plan: ByteTraceLayoutPlan,
+    /// Every slot of `Q` is zero from this cycle on.
+    #[cfg(feature = "akita-byte-link")]
+    pub byte_trace_active_rows: usize,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
 }
 
@@ -214,11 +217,12 @@ where
         .map(|(_, _, hint)| *hint)
         .collect::<Vec<_>>();
     #[cfg(feature = "akita-byte-link")]
-    let (commitment, hint) = {
-        let bytes = assemble_byte_trace(witness, &plan, &byte_trace_plan, log_t)?;
-        tracing::info_span!("akita_byte_trace_commit")
+    let (commitment, hint, byte_trace_active_rows) = {
+        let (bytes, active_rows) = assemble_byte_trace(witness, &plan, &byte_trace_plan, log_t)?;
+        let (commitment, hint) = tracing::info_span!("akita_byte_trace_commit")
             .in_scope(|| {
                 let committed = PCS::commit_signed_byte_trace(
+                    &backend.trace_commitment,
                     &preprocessing.pcs_setup,
                     byte_trace_plan.layout_digest(),
                     bytes,
@@ -232,7 +236,8 @@ where
             })
             .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                 reason: error.to_string(),
-            })?
+            })?;
+        (commitment, hint, active_rows)
     };
     #[cfg(not(feature = "akita-byte-link"))]
     let required_batch_polys = precommitted.len() + 1;
@@ -317,6 +322,8 @@ where
         one_hot_trace_plan: plan,
         #[cfg(feature = "akita-byte-link")]
         byte_trace_plan,
+        #[cfg(feature = "akita-byte-link")]
+        byte_trace_active_rows,
         untrusted_advice,
     })
 }

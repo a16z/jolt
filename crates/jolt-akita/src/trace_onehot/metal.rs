@@ -389,10 +389,32 @@ impl<const D: usize>
 {
     fn coefficient_packing_partials_batch(
         &self,
-        _prepared: Option<&Self::PreparedSetup>,
+        prepared: Option<&Self::PreparedSetup>,
         source: GroupedRootBatchView<'_, D>,
         plan: SubringCoefficientPackingPlan<'_, AkitaField>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<AkitaField>>, AkitaError> {
+        if matches!(
+            source.sources.first(),
+            Some(GroupedRootSource::SignedBytes(_))
+        ) {
+            let bytes = source
+                .sources
+                .iter()
+                .map(|source| match source {
+                    GroupedRootSource::SignedBytes(member) => Ok(member.poly()),
+                    GroupedRootSource::Dense(_)
+                    | GroupedRootSource::OneHot(_)
+                    | GroupedRootSource::Trace(_) => Err(mixed_group("coefficient-packing")),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let view = <SignedBytePoly as RootOpeningSource<AkitaField, D>>::opening_batch(&bytes)?;
+            return SubringCoefficientPackingBatchKernel::<
+                SignedByteBatchView<'_, D>,
+                AkitaField,
+                AkitaField,
+                D,
+            >::coefficient_packing_partials_batch(self, prepared, view, plan);
+        }
         if matches!(source.sources.first(), Some(GroupedRootSource::Trace(_))) {
             let trace = source
                 .sources

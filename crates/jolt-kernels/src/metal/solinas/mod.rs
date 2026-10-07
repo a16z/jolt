@@ -759,6 +759,8 @@ pub enum MetalError {
     ByteLinkArena { bytes: u64 },
     #[error("byte link cycle point has {len} coordinates for 2^{log_rows} rows")]
     ByteLinkPoint { log_rows: u32, len: usize },
+    #[error("byte link trace of {bytes} bytes at {address:#x} is not whole 16 KiB pages")]
+    ByteLinkSourcePages { address: usize, bytes: usize },
 }
 
 impl MetalError {
