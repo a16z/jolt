@@ -56,6 +56,8 @@ jobs:
           filter: blob:none
       - name: check style invariants
         run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
+      - name: Test benchmark profile selection
+        run: python3 -m unittest scripts.tests.test_benchmark_profiles -v
 
   field-stack:
     name: Shared field feature matrix
@@ -413,6 +415,8 @@ jobs:
       # specifics: forced K=256, advice, committed-program, and live tampers.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
+      - name: Test Akita profiling artifact and CSV names
+        run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,profiling --lib -E 'test(profile::tests)' --cargo-quiet
 
   # NOTE: the profiling smoke test (`cargo nextest run -p jolt-prover
   # --features profiling -E 'binary(profiling_smoke)'`) is deliberately not
