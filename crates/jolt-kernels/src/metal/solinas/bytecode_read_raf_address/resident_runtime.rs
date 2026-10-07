@@ -506,26 +506,6 @@ fn enforce_member_cap(rows: usize, bytes: usize) -> Result<(), BytecodeAddressSp
     Ok(())
 }
 
-#[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "validated address-major fixtures")]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn budget_admits_resident_count_and_row_planes() {
-        for log_rows in [28, 29] {
-            let shape = AddressMajorShape::new(log_rows, 16, INNER_LOG2).unwrap();
-            let rows = shape.rows().unwrap();
-            let count_bytes =
-                shape.addresses().unwrap() * shape.outer_length().unwrap() * size_of::<u32>();
-            let row_bytes = rows * (size_of::<u16>() + size_of::<u64>());
-            let minimum_bytes = count_bytes + row_bytes;
-            assert!(enforce_member_cap(rows, minimum_bytes).is_ok());
-            assert!(enforce_member_cap(rows, 2 * minimum_bytes).is_err());
-        }
-    }
-}
-
 fn one_dimensional_groups(elements: usize, threads: usize) -> MTLSize {
     MTLSize {
         width: elements.div_ceil(threads) as u64,
@@ -575,4 +555,24 @@ fn read_fp128s(
     // SAFETY: the shared buffer holds exactly `elements` Fp128 values and the
     // producing command has completed before host access.
     Ok(unsafe { slice::from_raw_parts(buffer.contents().cast::<Fp128>(), elements) })
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "validated address-major fixtures")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn budget_admits_resident_count_and_row_planes() {
+        for log_rows in [28, 29] {
+            let shape = AddressMajorShape::new(log_rows, 16, INNER_LOG2).unwrap();
+            let rows = shape.rows().unwrap();
+            let count_bytes =
+                shape.addresses().unwrap() * shape.outer_length().unwrap() * size_of::<u32>();
+            let row_bytes = rows * (size_of::<u16>() + size_of::<u64>());
+            let minimum_bytes = count_bytes + row_bytes;
+            assert!(enforce_member_cap(rows, minimum_bytes).is_ok());
+            assert!(enforce_member_cap(rows, 2 * minimum_bytes).is_err());
+        }
+    }
 }
