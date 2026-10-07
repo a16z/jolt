@@ -92,6 +92,8 @@ impl<T: TraceSource> TraceBackend<T> {
                     Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
                 }
                 C::BalancedIncCarry => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
+                C::RamActivity | C::ZeroSlot(_) => Err(not_served(id, UNSERVED_REASON)),
+                C::LinkHistogram(_) => Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => Ok(Shape::new(self.ram_read_write_log_rows()?, Dense)),
@@ -206,6 +208,8 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                         width: self.config.one_hot.committed_chunk_bits(),
                     },
                 ),
+                C::RamActivity | C::ZeroSlot(_) => Err(not_served(id, UNSERVED_REASON)),
+                C::LinkHistogram(_) => Err(not_served(id, PROTOCOL_INTERMEDIATE_REASON)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => self.materialize_ram_read_write_virtual(virtual_id),

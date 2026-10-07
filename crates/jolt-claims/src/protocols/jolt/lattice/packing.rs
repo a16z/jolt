@@ -108,6 +108,29 @@ pub fn one_hot_trace_columns(
     Ok(polynomials)
 }
 
+/// Returns the slots of the signed-byte trace `Q`: the `OneHotTrace` columns,
+/// each committed as its selected row's signed byte, then the shared RAM
+/// activity bit and the two zero slots. Only K=2^8 with 16/2/2 columns.
+pub fn byte_trace_columns(
+    shape: &OneHotTraceShape,
+) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
+    let layout = shape.ra_layout;
+    if shape.log_k_chunk != 8
+        || (layout.instruction(), layout.bytecode(), layout.ram()) != (16, 2, 2)
+    {
+        return Err(LatticeGeometryError::UnsupportedByteTraceShape {
+            chunk_width: shape.log_k_chunk,
+            instruction: layout.instruction(),
+            bytecode: layout.bytecode(),
+            ram: layout.ram(),
+        });
+    }
+    let mut columns = one_hot_trace_columns(shape)?;
+    columns.push(JoltCommittedPolynomial::RamActivity);
+    columns.extend((0..2).map(JoltCommittedPolynomial::ZeroSlot));
+    Ok(columns)
+}
+
 /// Number of selector slots in the packed `OneHotTrace`.
 pub const fn one_hot_trace_column_capacity(
     log_k_chunk: usize,

@@ -39,6 +39,7 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
+    ByteLink,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -344,6 +345,11 @@ pub enum JoltCommittedPolynomial {
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
+    // Byte-link mode: the shared RAM activity bit and the two zero slots of
+    // the byte trace, and the W histogram of each link pack.
+    RamActivity,
+    ZeroSlot(usize),
+    LinkHistogram(usize),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

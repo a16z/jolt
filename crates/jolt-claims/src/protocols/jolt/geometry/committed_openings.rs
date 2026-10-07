@@ -78,6 +78,9 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
 
         JoltCommittedPolynomial::BalancedIncDigit(_)
         | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
+        JoltCommittedPolynomial::RamActivity
+        | JoltCommittedPolynomial::ZeroSlot(_)
+        | JoltCommittedPolynomial::LinkHistogram(_) => JoltRelationId::ByteLink,
     }
 }
 

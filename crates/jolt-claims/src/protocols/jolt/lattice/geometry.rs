@@ -5,9 +5,10 @@ use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 use thiserror::Error;
 
 use super::super::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use super::super::JoltCommittedPolynomial;
 
 /// Bit width the balanced fused-increment digits cover, and hence the place
-/// value of [`BalancedIncCarry`](crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncCarry).
+/// value of [`BalancedIncCarry`](JoltCommittedPolynomial::BalancedIncCarry).
 pub const FUSED_INC_BITS: usize = 64;
 
 /// Bytecode read-raf val stages in lattice mode: the base stages plus one
@@ -47,11 +48,25 @@ pub enum LatticeGeometryError {
         actual: usize,
         capacity: usize,
     },
+    #[error(
+        "the byte trace supports only K=2^8 with 16/2/2 instruction/bytecode/RAM columns, \
+         got K=2^{chunk_width} with {instruction}/{bytecode}/{ram}"
+    )]
+    UnsupportedByteTraceShape {
+        chunk_width: usize,
+        instruction: usize,
+        bytecode: usize,
+        ram: usize,
+    },
+    #[error("byte link has no S6b claim for {column:?}")]
+    ByteLinkMissingClaim { column: JoltCommittedPolynomial },
+    #[error("byte link claim {column:?} is not an address chunk at the shared S6b cycle point")]
+    ByteLinkPointMismatch { column: JoltCommittedPolynomial },
 }
 
 /// The balanced radix-`2^chunk_width` decomposition of the fused increment:
 /// `FUSED_INC_BITS / chunk_width` digit columns plus the signed
-/// [`BalancedIncCarry`](crate::protocols::jolt::JoltCommittedPolynomial::BalancedIncCarry),
+/// [`BalancedIncCarry`](JoltCommittedPolynomial::BalancedIncCarry),
 /// every digit centered in `[-2^(chunk_width-1), 2^(chunk_width-1))` so that
 /// `Σ_j 2^(chunk_width·j)·digit_j + 2^FUSED_INC_BITS·carry` is the signed
 /// increment itself — no unsigned shift. See [`balanced_inc_value`] for the
@@ -93,6 +108,15 @@ impl BalancedIncChunking {
     pub fn place_value<F: Ring>(self, index: usize) -> F {
         F::pow2(self.chunk_width * index)
     }
+
+    /// The fused-increment decode: the place value of every increment column
+    /// in layout order, digits then the carry at `2^FUSED_INC_BITS`, so
+    /// `Σ place_value · column` is the signed increment.
+    pub fn column_place_values<F: Ring>(self) -> impl Iterator<Item = F> {
+        (0..self.chunk_count())
+            .map(move |index| self.place_value(index))
+            .chain(std::iter::once(F::pow2(FUSED_INC_BITS)))
+    }
 }
 
 /// MLE of the centered row value used by balanced increment digits.
@@ -126,16 +150,28 @@ mod tests {
     }
 
     #[test]
-    fn place_values_reconstruct_little_endian_chunks() {
-        let chunking = BalancedIncChunking::new(16).unwrap();
-        assert_eq!(chunking.chunk_count(), 4);
-
-        let value: u64 = 0x0123_4567_89ab_cdef;
-        let reconstructed = (0..chunking.chunk_count()).fold(Fr::from_u64(0), |acc, index| {
-            let chunk = (value >> (16 * index)) & 0xffff;
-            acc + chunking.place_value::<Fr>(index) * Fr::from_u64(chunk)
-        });
-        assert_eq!(reconstructed, Fr::from_u64(value));
+    fn column_place_values_decode_balanced_digits_and_carry() {
+        for width in [8, 16] {
+            let chunking = BalancedIncChunking::new(width).unwrap();
+            let radix = 1i128 << width;
+            for increment in [0x0123_4567_89ab_cdef_i128, -0x7654_3210_fedc_ba98, -1] {
+                let mut rest = increment;
+                let mut columns = Vec::new();
+                for _ in 0..chunking.chunk_count() {
+                    let digit = (rest + radix / 2).rem_euclid(radix) - radix / 2;
+                    columns.push(digit);
+                    rest = (rest - digit) / radix;
+                }
+                columns.push(rest);
+                let decoded = chunking
+                    .column_place_values::<Fr>()
+                    .zip(&columns)
+                    .fold(Fr::from_u64(0), |sum, (place_value, column)| {
+                        sum + place_value * Fr::from_i128(*column)
+                    });
+                assert_eq!(decoded, Fr::from_i128(increment));
+            }
+        }
     }
 
     #[test]

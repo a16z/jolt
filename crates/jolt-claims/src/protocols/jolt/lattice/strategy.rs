@@ -1,9 +1,10 @@
-//! Canonical layout of the prefix-packed Akita `OneHotTrace` commitment.
+//! Canonical layouts of the prefix-packed Akita trace commitments: the
+//! one-hot `OneHotTrace` and the signed-byte trace `Q`.
 //!
 //! The protocol fixes the semantic column order and selector capacity. Every
-//! column has the same `(cycle || address)` point, so
-//! [`jolt_openings::PrefixPackedLayout`] reduces the columns directly to one
-//! opening of one physical polynomial.
+//! column has the same point (`(cycle || address)` one-hot, the cycle point
+//! for `Q`), so [`jolt_openings::PrefixPackedLayout`] reduces the columns
+//! directly to one opening of one physical polynomial.
 
 use std::ops::Range;
 
@@ -12,7 +13,11 @@ use jolt_field::Field;
 use jolt_openings::{OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
 
 use super::super::JoltCommittedPolynomial;
-use super::packing::{one_hot_trace_column_capacity, one_hot_trace_columns, OneHotTraceShape};
+use super::byte_link::byte_link_catalog_digest;
+use super::geometry::LatticeGeometryError;
+use super::packing::{
+    byte_trace_columns, one_hot_trace_column_capacity, one_hot_trace_columns, OneHotTraceShape,
+};
 
 /// `OneHotTrace` is committed as one prefix-packed physical polynomial.
 pub const ONE_HOT_TRACE_LAYOUT: OneHotTraceLayout = OneHotTraceLayout;
@@ -168,6 +173,36 @@ impl OneHotTraceLayoutPlan {
     }
 }
 
+/// `Q`: every slot of [`byte_trace_columns`] is a `log_t`-variable polynomial
+/// over the cycle, stored in flat order `slot · T + cycle`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByteTraceLayoutPlan {
+    packing: PrefixPackedLayout<JoltCommittedPolynomial>,
+    layout_digest: [u8; 32],
+}
+
+impl ByteTraceLayoutPlan {
+    pub fn new(shape: &OneHotTraceShape) -> Result<Self, LatticeGeometryError> {
+        let columns = byte_trace_columns(shape)?;
+        let packing = PrefixPackedLayout::new(shape.log_t, columns.len(), columns)?;
+        let layout_digest = byte_trace_layout_digest(&packing)?;
+        Ok(Self {
+            packing,
+            layout_digest,
+        })
+    }
+
+    pub const fn packing(&self) -> &PrefixPackedLayout<JoltCommittedPolynomial> {
+        &self.packing
+    }
+
+    /// Digest of the slot map, the byte-link catalog, and the trace length,
+    /// which the `Q` commitment and setup metadata must equal.
+    pub const fn layout_digest(&self) -> [u8; 32] {
+        self.layout_digest
+    }
+}
+
 fn layout_digest(
     shape: &OneHotTraceShape,
     packing: &PrefixPackedLayout<JoltCommittedPolynomial>,
@@ -185,35 +220,55 @@ fn layout_digest(
     append_usize(&mut hasher, shape.ra_layout.bytecode());
     append_usize(&mut hasher, shape.ra_layout.ram());
     for column in packing.ids() {
-        match column {
-            JoltCommittedPolynomial::InstructionRa(index) => {
-                hasher.update([0]);
-                append_usize(&mut hasher, *index);
-            }
-            JoltCommittedPolynomial::BytecodeRa(index) => {
-                hasher.update([1]);
-                append_usize(&mut hasher, *index);
-            }
-            JoltCommittedPolynomial::RamRa(index) => {
-                hasher.update([2]);
-                append_usize(&mut hasher, *index);
-            }
-            JoltCommittedPolynomial::BalancedIncDigit(index) => {
-                hasher.update([3]);
-                append_usize(&mut hasher, *index);
-            }
-            JoltCommittedPolynomial::BalancedIncCarry => hasher.update([4]),
-            other => {
-                return Err(OpeningsError::InvalidBatch(format!(
-                    "non-OneHotTrace polynomial {other:?} in packed one-hot layout"
-                )));
-            }
-        }
+        append_trace_column(&mut hasher, *column)?;
     }
     Ok(hasher.finalize().into())
 }
 
-fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
+fn byte_trace_layout_digest(
+    packing: &PrefixPackedLayout<JoltCommittedPolynomial>,
+) -> Result<[u8; 32], OpeningsError> {
+    let mut hasher = Blake2b::<U32>::new();
+    hasher.update(b"jolt/akita/byte-trace/v1");
+    append_usize(&mut hasher, packing.logical_num_vars());
+    append_usize(&mut hasher, packing.packed_num_vars());
+    append_usize(&mut hasher, packing.slot_capacity());
+    append_usize(&mut hasher, packing.ids().len());
+    for column in packing.ids() {
+        append_trace_column(&mut hasher, *column)?;
+    }
+    hasher.update(byte_link_catalog_digest()?);
+    Ok(hasher.finalize().into())
+}
+
+/// Tags one trace or byte-link column in a layout digest.
+pub(super) fn append_trace_column(
+    hasher: &mut Blake2b<U32>,
+    column: JoltCommittedPolynomial,
+) -> Result<(), OpeningsError> {
+    let (tag, index) = match column {
+        JoltCommittedPolynomial::InstructionRa(index) => (0, Some(index)),
+        JoltCommittedPolynomial::BytecodeRa(index) => (1, Some(index)),
+        JoltCommittedPolynomial::RamRa(index) => (2, Some(index)),
+        JoltCommittedPolynomial::BalancedIncDigit(index) => (3, Some(index)),
+        JoltCommittedPolynomial::BalancedIncCarry => (4, None),
+        JoltCommittedPolynomial::RamActivity => (5, None),
+        JoltCommittedPolynomial::ZeroSlot(index) => (6, Some(index)),
+        JoltCommittedPolynomial::LinkHistogram(index) => (7, Some(index)),
+        other => {
+            return Err(OpeningsError::InvalidBatch(format!(
+                "polynomial {other:?} is not a trace or byte-link column"
+            )));
+        }
+    };
+    hasher.update([tag]);
+    if let Some(index) = index {
+        append_usize(hasher, index);
+    }
+    Ok(())
+}
+
+pub(super) fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
     hasher.update((value as u64).to_le_bytes());
 }
 
@@ -283,6 +338,63 @@ mod tests {
                     .column_point(polynomial, 2, &leaf)
                     .unwrap(),
                 expected
+            );
+        }
+    }
+
+    fn byte_shape(log_t: usize) -> OneHotTraceShape {
+        OneHotTraceShape {
+            ra_layout: JoltRaPolynomialLayout::new(16, 2, 2).unwrap(),
+            log_t,
+            log_k_chunk: 8,
+        }
+    }
+
+    #[test]
+    fn byte_trace_places_the_design_slots() {
+        use JoltCommittedPolynomial as Poly;
+
+        let plan = ByteTraceLayoutPlan::new(&byte_shape(5)).unwrap();
+        let mut expected = (0..16).map(Poly::InstructionRa).collect::<Vec<_>>();
+        expected.extend((0..8).map(Poly::BalancedIncDigit));
+        expected.extend([
+            Poly::BalancedIncCarry,
+            Poly::BytecodeRa(0),
+            Poly::BytecodeRa(1),
+        ]);
+        expected.extend([Poly::RamRa(0), Poly::RamRa(1), Poly::RamActivity]);
+        expected.extend([Poly::ZeroSlot(0), Poly::ZeroSlot(1)]);
+        assert_eq!(plan.packing().ids(), expected);
+        assert_eq!(plan.packing().slot_capacity(), 32);
+        assert_eq!(plan.packing().packed_num_vars(), 5 + 5);
+        assert_ne!(
+            plan.layout_digest(),
+            ONE_HOT_TRACE_LAYOUT.layout_digest(&byte_shape(5)).unwrap()
+        );
+        assert_ne!(
+            plan.layout_digest(),
+            ByteTraceLayoutPlan::new(&byte_shape(6))
+                .unwrap()
+                .layout_digest()
+        );
+    }
+
+    #[test]
+    fn byte_trace_rejects_every_other_geometry() {
+        for (log_k_chunk, (instruction, bytecode, ram)) in [(8, (16, 1, 2)), (4, (32, 3, 4))] {
+            let shape = OneHotTraceShape {
+                ra_layout: JoltRaPolynomialLayout::new(instruction, bytecode, ram).unwrap(),
+                log_t: 5,
+                log_k_chunk,
+            };
+            assert_eq!(
+                ByteTraceLayoutPlan::new(&shape),
+                Err(LatticeGeometryError::UnsupportedByteTraceShape {
+                    chunk_width: log_k_chunk,
+                    instruction,
+                    bytecode,
+                    ram,
+                })
             );
         }
     }

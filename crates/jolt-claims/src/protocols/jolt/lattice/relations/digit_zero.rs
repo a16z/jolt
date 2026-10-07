@@ -38,7 +38,7 @@ use crate::{challenge, constant, derived, opening, InputClaims, OutputClaims, Sy
 
 use crate::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
 
-use super::super::geometry::{BalancedIncChunking, LatticeGeometryError, FUSED_INC_BITS};
+use super::super::geometry::{BalancedIncChunking, LatticeGeometryError};
 use super::booleanity::{
     booleanity_balanced_inc_carry_opening, booleanity_balanced_inc_digit_opening,
 };
@@ -262,18 +262,17 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
             };
             output = output + coefficient * opening(reduced_claim(polynomial));
         }
-        for index in 0..self.shape.chunking.chunk_count() {
+        let columns = (0..self.shape.chunking.chunk_count())
+            .map(reduced_balanced_inc_digit_opening)
+            .chain(std::iter::once(reduced_balanced_inc_carry_opening()));
+        for (place_value, column) in self.shape.chunking.column_place_values::<F>().zip(columns) {
             let coefficient = gamma.clone().pow(power)
                 * (eq_booleanity.clone() - eq_booleanity_digit_zero.clone())
-                + decode_scale.clone()
-                    * constant(self.shape.chunking.place_value::<F>(index))
-                    * inc_value.clone();
-            output = output + coefficient * opening(reduced_balanced_inc_digit_opening(index));
+                + decode_scale.clone() * constant(place_value) * inc_value.clone();
+            output = output + coefficient * opening(column);
             power += 1;
         }
-        let coefficient = gamma.pow(power) * (eq_booleanity - eq_booleanity_digit_zero)
-            + decode_scale * constant(F::pow2(FUSED_INC_BITS)) * inc_value;
-        output + coefficient * opening(reduced_balanced_inc_carry_opening())
+        output
     }
 }
 

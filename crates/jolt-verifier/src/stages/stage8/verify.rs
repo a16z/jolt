@@ -414,7 +414,10 @@ where
                     id,
                 )?,
                 JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry => {
+                | JoltCommittedPolynomial::BalancedIncCarry
+                | JoltCommittedPolynomial::RamActivity
+                | JoltCommittedPolynomial::ZeroSlot(_)
+                | JoltCommittedPolynomial::LinkHistogram(_) => {
                     // Lattice-mode polynomials open through the fixed-prefix
                     // path in `stage8::packed`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {

@@ -3,9 +3,10 @@
 //! non-homomorphic PCS. Design: `specs/lattice-claims.md`.
 //!
 //! This module names facts only — the canonical OneHotTrace selector layout,
-//! precommitted fixed-prefix layouts, extra relations,
-//! and final-opening map. Witness generation, transcripts, and stage
-//! orchestration live in the verifier and prover crates.
+//! the signed-byte trace `Q` and its byte-link catalog, precommitted
+//! fixed-prefix layouts, extra relations, and final-opening map. Witness
+//! generation, transcripts, and stage orchestration live in the verifier and
+//! prover crates.
 //!
 //! # Vocabulary
 //!
@@ -29,6 +30,7 @@
 //!   physical polynomial is opened once. Precommitted columns use packed-slot
 //!   claims.
 
+pub mod byte_link;
 pub mod geometry;
 pub mod packing;
 pub mod relations;
@@ -38,12 +40,12 @@ pub use geometry::{
 };
 pub mod strategy;
 pub use packing::{
-    advice_packing_plan, committed_program_packing_plan, one_hot_trace_columns,
+    advice_packing_plan, byte_trace_columns, committed_program_packing_plan, one_hot_trace_columns,
     precommitted_packing_plan, OneHotTraceShape, PrecommittedPackingPlan, PrecommittedPackingShape,
     PrefixPackedObjectPlan, ADVICE_MAX_PHYSICAL_VARS, ADVICE_MIN_PHYSICAL_VARS,
     DIRECT_PROGRAM_MAX_PHYSICAL_VARS,
 };
 pub use strategy::{
-    OneHotTraceColumnRanges, OneHotTraceLayout, OneHotTraceLayoutPlan, OneHotTraceSetupShape,
-    ONE_HOT_TRACE_LAYOUT,
+    ByteTraceLayoutPlan, OneHotTraceColumnRanges, OneHotTraceLayout, OneHotTraceLayoutPlan,
+    OneHotTraceSetupShape, ONE_HOT_TRACE_LAYOUT,
 };
