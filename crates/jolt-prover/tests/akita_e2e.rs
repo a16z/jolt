@@ -687,9 +687,11 @@ mod akita_tests {
                 trace
                     .metal_signed_byte_commits()
                     .expect("read the Metal signed-byte commits")
-                    .get(&q),
-                Some(&1),
-                "Q must commit on the device"
+                    .iter()
+                    .filter(|&&source| source == q)
+                    .count(),
+                1,
+                "Q must commit on the device once"
             );
             let opening = trace
                 .last_metal_opening_metrics()

@@ -24,10 +24,7 @@ use metal::Buffer;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[cfg(all(feature = "metal", target_os = "macos"))]
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Mutex,
-};
+use std::{collections::HashMap, sync::Mutex};
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::adapters::AkitaBackendProverSetup;
@@ -161,13 +158,11 @@ impl TraceCommitmentBackend {
         })
     }
 
-    /// Signed-byte sources this backend committed on the device, counted by
-    /// shape; empty for the CPU backend.
+    /// Each signed-byte source this backend committed on the device; empty
+    /// for the CPU backend.
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    pub fn metal_signed_byte_commits(
-        &self,
-    ) -> Result<BTreeMap<SignedByteSource, usize>, OpeningsError> {
-        self.required_metal().map_or(Ok(BTreeMap::new()), |metal| {
+    pub fn metal_signed_byte_commits(&self) -> Result<Vec<SignedByteSource>, OpeningsError> {
+        self.required_metal().map_or(Ok(Vec::new()), |metal| {
             metal.backend.signed_byte_commits().map_err(invalid_setup)
         })
     }
