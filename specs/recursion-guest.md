@@ -4,7 +4,8 @@ The recursion example executes Jolt's Akita verifier as a RISC-V guest: it
 verifies an inner Akita, field-inline proof and reports the verdict. The cost of
 interest is the guest's **total trace rows**, the length an outer proof of that
 execution would have to cover, including setup and proof decoding. The working
-target is a Fibonacci inner proof below 2^26 rows. This document records the
+target is a Fibonacci inner proof below 2^26 rows; this revision is 513,456 rows
+above it (see [Measurements](#measurements)). This document records the
 mechanisms the guest uses, the trust they rely on, and where the rows go.
 
 Only trace execution is implemented for the Akita guest. No outer recursive
@@ -169,9 +170,10 @@ With `--embed` the host also:
 ## Measurements
 
 Fibonacci, one inner proof, `--features akita,field-inline,ntt-inline`,
-`trace --embed`, release guest, `RAYON_NUM_THREADS=1`. The last row is a
-freshly generated proof at this revision with the pinned companion; each other
-row is the cumulative total after its change.
+`trace --embed`, release guest, `RAYON_NUM_THREADS=1`. Each row is the
+cumulative total after its change. From the rebase onto `main` on, every row
+traces one freshly generated proof with the pinned companion; the last row is
+this revision.
 
 | Build | Total rows |
 | --- | ---: |
@@ -187,12 +189,16 @@ row is the cumulative total after its change.
 | + in-place digest transcript, blocked sparse MLE | 68,530,020 |
 | + doubleword NTT input stores, word-sized flag-class slots | 67,738,580 |
 | + inline proof-atom encoding | 66,554,373 |
-| **Fresh proof, this revision** (64,433,863 verification cycles) | **66,273,665** |
+| Fresh proof before rebasing onto `main` (64,433,863 verification cycles) | 66,273,665 |
+| Rebase onto `main`, Akita `22530c7b`, fresh proof | 66,254,853 |
+| + direct read-RAF and digit-zero output opening sets | 65,441,486 |
+| − word-wise `memcpy`, `memset`, and `memcmp` overrides | 69,059,130 |
+| **+ inline-store limits, Blake2b word packing, word-copy `realloc`** (65,533,039 verification cycles) | **67,622,320** |
 
 The first row was rebuilt and re-measured from its archived sources and
 reproduces its recorded numbers exactly. Input mode, which reads the setup
-from the guest input, accepts at 73,311,922 rows. A proof with one bit flipped
-in its Akita opening proof is rejected after 47,763,416 rows, inside the PCS
+from the guest input, accepts at 74,982,115 rows. A proof with one bit flipped
+in its Akita opening proof is rejected after 48,888,406 rows, inside the PCS
 verifier.
 
 ## Levers not taken here
@@ -201,6 +207,10 @@ verifier.
   3 rows to 2 if the ISA had a non-accumulating memory load, which the
   2^26-era ISA had. This touches every field-inline operand, so it is the
   largest remaining lever. It is a field-inline protocol change.
+- **Cheaper sub-word memory.** Tiers 1 and 2 of
+  [byte-addressable-memory.md](byte-addressable-memory.md) lower the row cost
+  of byte, half, and word accesses, which musl's `mem*` routines and proof
+  decoding still issue in bulk. It is a protocol change, tracked in #2013.
 - **Horner or multi-output dots for geometric powers.** The compression-matrix
   columns evaluate `Σ c_j α^j` with shared powers; a Horner kernel removes the
   power loads (about 1.7M rows).
