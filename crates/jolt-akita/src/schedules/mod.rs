@@ -59,7 +59,7 @@ pub mod emit {
     );
     /// The T29 `Q` root: one D128 byte plane over `2^16` positions. Unpinned,
     /// the setup-first objective picks `2^15` positions, whose root witness is
-    /// 27% larger; smaller traces cannot fill `2^16` positions.
+    /// 27% larger.
     pub const SIGNED_BYTE_PINNED_ROOT: (usize, RootShape) = (
         29 + SIGNED_BYTE_PACKING_VARIABLES,
         RootShape {
@@ -68,8 +68,7 @@ pub mod emit {
         },
     );
     /// The byte link's histogram groups (jolt-claims `HistogramGroup::ALL`):
-    /// six 24-variable triple tables and one 17-variable RAM table. A setup
-    /// requesting any other field-digit group fails to resolve its profile.
+    /// six 24-variable triple tables and one 17-variable RAM table.
     pub const FIELD_DIGIT_GROUPS: [PolynomialGroupLayout; 2] = [
         PolynomialGroupLayout::new(24, 6),
         PolynomialGroupLayout::new(17, 1),

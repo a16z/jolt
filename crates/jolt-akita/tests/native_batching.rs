@@ -297,8 +297,6 @@ fn artifacts_with_field_digit_groups(
 #[test]
 fn signed_byte_trace_opens_beside_advice_and_late_field_digit_groups() {
     const TRACE_NUM_VARS: usize = 17;
-    // The advice is wider than the trace, so the setup capacity exceeds the
-    // trace's exact final arity.
     const ADVICE_NUM_VARS: usize = 18;
     let field_digit_groups = [(14, 2), (12, 1)];
     let artifacts = artifacts_with_field_digit_groups(
