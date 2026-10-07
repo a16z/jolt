@@ -362,7 +362,6 @@ fn stage<O>(
     Ok(output)
 }
 
-/// Pushes the statements of each named member of a stage's clear output.
 macro_rules! members {
     ($statements:ident, $output:ident; $($member:ident),+) => {
         $($statements.member(
@@ -373,7 +372,6 @@ macro_rules! members {
     };
 }
 
-/// [`members!`] for members present only with their precommitted layout.
 macro_rules! optional_members {
     ($statements:ident, $output:ident; $($member:ident),+) => {
         $($statements.optional_member(
