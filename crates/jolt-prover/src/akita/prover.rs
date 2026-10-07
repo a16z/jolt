@@ -176,8 +176,8 @@ where
     // footprint headroom for them. A host-bound stage 7 would share its cores
     // and its peak with them, so stage 8 assembles them otherwise. A separate
     // pool keeps stage 7's rayon jobs from queueing behind the assembly's.
-    // The byte link's stage 7 has no trace member, and its rows must wait for
-    // the release below.
+    // Under the byte link stage 7 has no device member, and the opening's rows
+    // are assembled only after the session release below.
     #[cfg(all(feature = "metal", target_os = "macos"))]
     let stage7_on_device = !cfg!(feature = "akita-byte-link")
         && backend
@@ -221,10 +221,9 @@ where
         (stage7, rows)
     });
     let stage7 = stage7?;
-    // Link entry (spec §5): nothing after the trace stages reads the session,
-    // so its BooleanityRows and every other carry go before the link allocates.
+    // Stage 8 takes no session, so nothing reads it past this point.
     #[cfg(feature = "akita-byte-link")]
-    drop(session);
+    backend.end_trace_stages(session, log_t);
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,

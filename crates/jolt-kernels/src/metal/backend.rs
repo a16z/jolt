@@ -190,6 +190,13 @@ pub struct MetalBackend {
 }
 
 impl MetalBackend {
+    /// Releases the device views of host trace tables that the trace stages
+    /// cached, once no stage will dispatch over them again.
+    #[cfg(feature = "akita-byte-link")]
+    pub fn release_trace_buffers(&self) {
+        self.context.release_no_copy_buffers();
+    }
+
     /// Creates the supported Akita Metal backend.
     pub fn production() -> Result<Self, MetalError> {
         Self::new(MetalConfig::production())

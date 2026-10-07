@@ -179,6 +179,22 @@ where
     pub fn begin_proof(&self) -> ProofSession {
         ProofSession::default()
     }
+
+    /// Byte-link entry (spec §5): the session's carries, `BooleanityRows`
+    /// among them, and the Metal views of host trace tables go before the
+    /// link allocates. Nothing after stage 7 reads either. The purge returns
+    /// the freed pages now; macOS otherwise reclaims them up to a second
+    /// later, while the link already allocates.
+    #[cfg(feature = "akita-byte-link")]
+    pub fn end_trace_stages(&self, session: ProofSession, log_t: usize) {
+        drop(session);
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if let Some(metal) = &self.piop_metal {
+            metal.release_trace_buffers();
+        }
+        tracing::info_span!("release_retained_memory", stage = "stage7")
+            .in_scope(|| jolt_kernels::mem::purge_retained_memory(log_t));
+    }
 }
 
 #[cfg(all(feature = "metal", target_os = "macos"))]

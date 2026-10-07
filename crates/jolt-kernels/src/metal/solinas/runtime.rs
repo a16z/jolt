@@ -266,6 +266,17 @@ impl SolinasMetal {
         Ok((buffer, false))
     }
 
+    /// Forgets every cached no-copy view and the host owner it kept alive.
+    /// Every other holder of a view also holds that owner (`_columns`), so no
+    /// live view outlives its memory.
+    #[cfg(feature = "akita-byte-link")]
+    pub(crate) fn release_no_copy_buffers(&self) {
+        self.no_copy_buffer_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
     pub(super) fn begin_private_buffer_pool_epoch(
         &self,
         shape: (usize, usize),
@@ -542,4 +553,30 @@ pub(super) fn validate_completed_command(
         return Err(MetalError::CommandFailed(status));
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "akita-byte-link"))]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use std::{ffi::c_void, sync::Arc};
+
+    use super::SolinasMetal;
+
+    #[test]
+    fn released_no_copy_views_drop_their_host_owners() {
+        let Ok(metal) = SolinasMetal::for_akita() else {
+            return;
+        };
+        let owner = Arc::new(vec![0u32; 1 << 20]);
+        let weak = Arc::downgrade(&owner);
+        let pointer = owner.as_ptr().cast_mut().cast::<c_void>();
+        let (view, reused) = metal
+            .shared_no_copy_buffer(Arc::clone(&owner), pointer, 4 << 20)
+            .unwrap();
+        assert!(!reused);
+        drop((view, owner));
+        assert!(weak.upgrade().is_some());
+        metal.release_no_copy_buffers();
+        assert!(weak.upgrade().is_none());
+    }
 }
