@@ -71,6 +71,22 @@ selecting a profile whose companion catalog is absent fails during setup.
 Grouped opening rows inherit the selected trace profile; precommit producers
 keep their fixed profiles.
 
+### Field-inline provisioning coverage
+
+PR CI resolves every K=16 production key under Single and the six
+width 51/64 × arity 16/25/34 boundary shapes under each of W2R2, W4R2,
+and W8R2. The three exhaustive chunked-grid tests remain available for
+catalog/provisioner changes but are excluded from the PR CI invocation:
+
+```sh
+cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline \
+  -E 'test(/field_inline_rows_cover_k16_w[248]r2_production_grid/)' --cargo-quiet
+```
+
+These tests run real schedule adaptation for 266 keys per profile and can
+consume tens of minutes. They are separate from catalog freshness checking
+with `gen_jolt_schedules … --check`.
+
 ### Grouped provisioning diagnostic
 
 Audit the complete advice matrix without allocating backend matrices or proving

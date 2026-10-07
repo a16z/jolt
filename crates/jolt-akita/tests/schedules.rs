@@ -751,6 +751,30 @@ mod field_inc {
         assert_k16_production_coverage(AkitaChunkProfile::Single);
     }
 
+    fn assert_k16_chunked_boundary_coverage(profile: AkitaChunkProfile) {
+        let groups = [51, 64].into_iter().flat_map(|width| {
+            [16, 25, 34]
+                .into_iter()
+                .map(move |arity| PolynomialGroupLayout::new(arity, width))
+        });
+        field_inline_rows_plan_and_resolve(AKITA_ONE_HOT_K16, profile, groups);
+    }
+
+    #[test]
+    fn field_inline_rows_cover_k16_w2r2_boundaries() {
+        assert_k16_chunked_boundary_coverage(AkitaChunkProfile::Two);
+    }
+
+    #[test]
+    fn field_inline_rows_cover_k16_w4r2_boundaries() {
+        assert_k16_chunked_boundary_coverage(AkitaChunkProfile::Four);
+    }
+
+    #[test]
+    fn field_inline_rows_cover_k16_w8r2_boundaries() {
+        assert_k16_chunked_boundary_coverage(AkitaChunkProfile::Eight);
+    }
+
     #[test]
     fn field_inline_rows_cover_k16_w2r2_production_grid() {
         assert_k16_production_coverage(AkitaChunkProfile::Two);
