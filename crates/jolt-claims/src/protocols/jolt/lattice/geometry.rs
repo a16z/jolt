@@ -62,6 +62,8 @@ pub enum LatticeGeometryError {
     ByteLinkMissingClaim { column: JoltCommittedPolynomial },
     #[error("byte link claim {column:?} is not an address chunk at the shared S6b cycle point")]
     ByteLinkPointMismatch { column: JoltCommittedPolynomial },
+    #[error("one-hot claim {column:?} has no byte link pack")]
+    ByteLinkUnroutedClaim { column: JoltCommittedPolynomial },
 }
 
 /// The balanced radix-`2^chunk_width` decomposition of the fused increment:

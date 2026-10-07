@@ -209,12 +209,21 @@ impl<F: Field> ByteLinkInputs<F> {
     /// Takes every one-hot column's claim from `claims`, each at
     /// `(address chunk ‖ r)` where `r` is the fused increment's point.
     ///
-    /// Rejects a missing column and a claim off `r`: one W per pack
-    /// authenticates claims at one cycle point only.
+    /// Rejects a missing column, a claim off `r` (one W per pack
+    /// authenticates claims at one cycle point only), and a one-hot claim on a
+    /// column outside the packs, which no histogram query would authenticate.
     pub fn new(
         claims: &BTreeMap<Poly, EvaluationClaim<F>>,
         fused_inc: &EvaluationClaim<F>,
     ) -> Result<Self, LatticeGeometryError> {
+        if let Some(column) = claims.keys().copied().find(|column| {
+            matches!(
+                column,
+                Poly::InstructionRa(_) | Poly::BytecodeRa(_) | Poly::RamRa(_)
+            ) && !one_hot_slots().any(|(_, _, linked)| linked == *column)
+        }) {
+            return Err(LatticeGeometryError::ByteLinkUnroutedClaim { column });
+        }
         let cycle_point = fused_inc.point.as_slice();
         let one_hot = one_hot_slots()
             .map(|(_, _, column)| {
@@ -419,6 +428,17 @@ mod tests {
                 column: Poly::RamRa(1),
             })
         );
+        for column in [Poly::InstructionRa(16), Poly::BytecodeRa(2), Poly::RamRa(2)] {
+            let mut unrouted = honest.clone();
+            let _ = unrouted.insert(
+                column,
+                EvaluationClaim::new([point(4, BYTE_BITS), r.clone()].concat(), Fr::from_u64(1)),
+            );
+            assert_eq!(
+                ByteLinkInputs::new(&unrouted, &fused_inc),
+                Err(LatticeGeometryError::ByteLinkUnroutedClaim { column })
+            );
+        }
         for point in [point(2, BYTE_BITS + LOG_T), point(2, BYTE_BITS - 1)] {
             let mut off_point = honest.clone();
             let _ = off_point.insert(
