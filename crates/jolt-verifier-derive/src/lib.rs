@@ -697,7 +697,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // caller MUST have already absorbed commitments to those claim scalars into
     // the transcript before invoking this driver. Without that prior binding a
     // malicious prover could choose its claim openings adaptively after seeing
-    // the batching challenge.
+    // the batching challenge. One exception: stage 4's staged advice and
+    // program-image openings are committed only in stage 4's own output rows.
+    // They stay sound because each is the evaluation of a committed polynomial
+    // at a point fixed before stage 4, pinned later by the stage-6/7 reductions
+    // and the PCS opening rather than by transcript order.
     let verify_zk_method = {
         let max_fold = max_fold();
 

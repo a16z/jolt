@@ -158,8 +158,14 @@ fn compressed<S: DorySerialize + ?Sized>(value: &S) -> Vec<u8> {
 }
 
 /// Rebuilds the Dory proof for a `num_vars`-variable opening from the next
-/// prover messages, reading them from `scout`, a scratch copy of the live
-/// verifier transcript. Message order mirrors `dory::verify`.
+/// prover messages, parsing ahead in `unread`, the bytes the live verifier
+/// transcript has not yet received.
+///
+/// WARNING: this restates `dory::verify`'s message order and compressed
+/// widths, which dory-pcs owns. A drift from an upstream reorder fails
+/// completeness, not soundness: [`DoryVerifierChannel`] still receives every
+/// byte and checks it against the parsed value. Update this parser with any
+/// dory-pcs bump.
 pub(crate) fn read_proof(
     unread: &[u8],
     num_vars: usize,
@@ -283,7 +289,6 @@ impl CompressedWidth for ArkGT {
     const BYTES: usize = 384;
 }
 
-/// Reads one compressed element.
 /// Parses the next compressed `T` from the unread proof bytes, advancing
 /// `unread` past it.
 fn read<T>(unread: &mut &[u8]) -> Result<T, OpeningsError>

@@ -69,7 +69,7 @@ where
     };
 
     // Draw each relation's batching gamma in declaration order (shift, instruction
-    // input, register reduction); each is a single `challenge_scalar`. The drawn
+    // input, register reduction); each is a single exact `challenge()`. The drawn
     // challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;

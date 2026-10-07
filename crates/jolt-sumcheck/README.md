@@ -17,10 +17,10 @@ pool. Its default feature set is empty.
 
 Polynomial storage, compression, round generation, and the shared prover and
 verifier engines require `jolt_field::Field`. The stock clear recorder and
-proof-verification conveniences additionally require
-`jolt_transcript::AppendToTranscript`, because they absorb field elements.
-Implement `jolt_transcript::Transcript` to choose challenge generation; stock
-hash transcripts retain their `CanonicalEncoding` requirement. Jolt's own
+the verifiers additionally require `jolt_field::CanonicalEncoding`, because
+they send, receive, and absorb field elements through `jolt_transcript`'s
+prover and verifier transcripts. Choose the sponge with the transcripts' `H`
+parameter. Jolt's own
 optimized kernels and commitment-backed modes may require the broader
 `JoltField` bundle at their integration boundary.
 
@@ -33,10 +33,9 @@ Run the minimal example with:
 cargo run -p jolt-sumcheck --example clear_custom_transcript --no-default-features
 ```
 
-The example transcript tracks every absorb but returns fixed challenges, which
-makes the Fiat–Shamir schedule and algebraic API easy to inspect. It is not a
-production transcript; applications must use a cryptographic transcript with
-adequate challenge entropy.
+The example proves one round into a Keccak prover transcript and verifies the
+resulting argument string, which keeps the Fiat–Shamir schedule and the
+algebraic API small enough to read in one file.
 
 The isolated fixture runs outside Cargo's Jolt workspace feature unification:
 

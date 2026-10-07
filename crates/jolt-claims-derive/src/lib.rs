@@ -70,7 +70,7 @@
 //! (one drawn Fiat-Shamir scalar). A `Vec<F>` field is rejected (challenge sub-enum
 //! variants are unit, so there is no indexed id), and an `Option<F>` field is
 //! rejected (no relation draws a conditional challenge, and the `draw_challenges`
-//! default treats every field as one unconditional `challenge_scalar`).
+//! default treats every field as one unconditional exact `challenge()`).
 //!
 //! Generates both halves of [`SumcheckChallenges`]: `resolve_challenge` (id →
 //! value) and `from_transcript_values` (consume one drawn scalar per field in
@@ -798,7 +798,7 @@ fn plan_challenge_field(field: &Field) -> Result<ChallengeFieldPlan> {
             &field.ty,
             "challenge fields are an unconditional scalar `F`; a conditional \
              `Option<F>` challenge is not supported (no relation draws one, and the \
-             `draw_challenges` default treats every field as one `challenge_scalar`)",
+             `draw_challenges` default treats every field as one exact `challenge()`)",
         ));
     }
     Ok(ChallengeFieldPlan { ident, path })

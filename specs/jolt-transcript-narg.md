@@ -4,8 +4,9 @@
 | --------- | ------------------ |
 | Author(s) | @markosg04         |
 | Created   | 2026-10-01         |
-| Status    | implemented (in review) |
+| Status    | implemented (in review); amended |
 | PR        | (Jolt) / (Akita)   |
+| Amended by | `specs/jolt-transcript-spongefish-state.md`: the transcript runs on spongefish's prover and verifier state, `Preview<H>` is removed, and grinding and fold-response search run on seeded forks. Sections below that describe previews are superseded. |
 
 ## Summary
 
@@ -225,6 +226,9 @@ Every NARG byte is therefore absorbed exactly once on each side, and invariant
 2 holds without trusting `dory-pcs` to absorb what it reads.
 
 ### Grinding and previews
+
+> Superseded: previews are gone. Grinding squeezes a seed and searches nonces
+> on seeded forks; see `specs/jolt-transcript-spongefish-state.md`.
 
 `Preview<H>` clones the sponge and exposes `absorb`, `absorb_bytes`,
 `absorb_nonce`, and `squeeze::<N>()`. `grind(bits)` searches LEB128 nonces

@@ -69,17 +69,17 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
 
     /// Draws the booleanity pre-batch challenges at the frozen wire positions:
     /// the reference address is the reversed stage-5 instruction address,
-    /// padded with a fresh `challenge_vector` draw or truncated to the
+    /// padded with fresh `challenges_small` draws or truncated to the
     /// committed chunk width (`log_k_chunk`); then the batching gamma. This
     /// member is declared after the bytecode read-RAF one in
     /// `Stage6aSumchecks`, so the generated aggregate draw lands these
     /// squeezes exactly where the hand pre-batch block drew them — after the
     /// bytecode member's six gammas.
     ///
-    /// MUST stay `challenge_vector` + `challenge()` (not `challenge_scalar`):
-    /// both decode the same 16-byte squeeze, but differently, so switching
-    /// would silently change the reference/gamma values without changing the
-    /// transcript bytes.
+    /// WARNING: these MUST stay `challenges_small` + `challenge_small()`,
+    /// unlike the relations' default exact `challenge()`: the two consume
+    /// different squeezes and decode them differently, so switching would
+    /// change the reference, the gamma, and every challenge after them.
     fn draw_challenges<C: Channel>(
         &self,
         transcript: &mut C,

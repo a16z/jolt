@@ -4,7 +4,7 @@
 | --------- | --------------------------------------------------------------- |
 | Author(s) | @markosg04                                                      |
 | Created   | 2026-10-05                                                      |
-| Status    | proposed                                                        |
+| Status    | implemented (in review)                                         |
 | Amends    | `specs/jolt-transcript-narg.md` (Grinding and previews; Alternatives considered) |
 
 ## Decision
@@ -24,7 +24,7 @@ state. The four reasons given there now resolve as follows:
 
 | Reason given | Resolution |
 | --- | --- |
-| `VerificationError` is a unit type | The wrapper maps it to `TranscriptError` with the message index and site, which it tracks itself. |
+| `VerificationError` is a unit type | The wrapper checks each read against the remaining proof itself and reports a typed `TranscriptError` (`Truncated`, `NonCanonical`, `OutOfBounds`, ...). Sites stay in the diagnostic log. |
 | Previews need `yolocrypto` | Previews are removed. Twin and replay checks compare argument strings plus one final 32-byte squeeze on each side. Grinding no longer previews. |
 | Encode and serialize are separate | For byte sponges (`H::U = u8`), spongefish's blanket `NargSerialize for T: Encoding<[u8]>` makes them identical. Jolt pins byte sponges only (see Non-goals). |
 | No logging hook | The wrapper logs each call with its site before delegating. |
@@ -40,9 +40,7 @@ state. The four reasons given there now resolve as follows:
    rejection over fixed-width `verifier_message::<[u8; N]>()` squeezes, using
    `Field::random`'s contract. The small challenge set is unchanged: 16
    squeezed bytes through `CanonicalEncoding::from_challenge_bytes`.
-4. The prover's private randomness comes from spongefish's transcript-bound
-   `ProverState::rng()`. Protocol code never seeds its own RNG for blindings.
-5. Message shapes stay positional. No message carries a length the public
+4. Message shapes stay positional. No message carries a length the public
    parameters already fix.
 
 ## Mechanism
@@ -64,16 +62,16 @@ travel as byte arrays.
 sponge id). A transcript starts from
 `DomainSeparator::new(protocol_id).session(B(session)).instance(B(instance))`
 followed by `to_prover(H::default())` or `to_verifier(H::default(), narg)`.
-`B` is a length-framed byte string. Jolt passes an empty instance and keeps
-binding its preamble through public messages. Akita and Aerie pass their
-instance digests.
+`B` is a length-framed byte string. Every transcript passes an empty instance:
+Jolt, Akita, and Aerie bind their statement data through public messages, so
+the instance slot carries nothing.
 
 **Operations.**
 
 | `jolt-transcript` | spongefish |
 | --- | --- |
 | `send` / `send_all`, `receive` / `receive_n` | `prover_message`, `prover_messages`, `prover_messages_vec` |
-| `send_bytes(len known)` / `receive_bytes(len)` | `prover_messages::<u8>` / `prover_messages_vec::<u8>(len)` |
+| `send_bytes(len known)` / `receive_bytes(len)` | one `[u8; 32]` message per whole block, then one `[u8; 1]` message per remaining byte, on both sides; the verifier also checks the bytes it returns equal the bytes the sponge absorbed |
 | `send_bounded_bytes` / `receive_bounded_bytes` | `u32` LE length as a prover message, then the bytes; the verifier enforces the maximum before reading |
 | `public*` | `public_message*` |
 | `challenge::<F>()` | rejection loop over `verifier_message::<[u8; N]>()` |
@@ -87,8 +85,9 @@ transcript, and `LE32(counter)`. Every prover search runs on forks:
 1. Squeeze a 32-byte seed `s` from the transcript.
 2. The prover tries counters `c` upward from zero, each on `Fork(s, c)`, off
    the transcript.
-3. The prover sends the accepted `c` as a `u32` prover message. The verifier
-   receives it, range-checks it, and rebuilds `Fork(s, c)`.
+3. The prover sends the accepted `c` as a canonical unsigned LEB128 `Nonce`
+   message. The verifier receives it, rejects a non-minimal encoding or a
+   value outside the search range, and rebuilds `Fork(s, c)`.
 
 Proof of work with difficulty `g > 0` searches `c` in `[0, 2^(g+7))` and
 accepts when the fork's first 32 squeezed bytes have `g` leading zero bits,
@@ -96,8 +95,8 @@ least significant bit first. The protected challenge is drawn from the
 transcript after the nonce. Akita's fold-response search (Fiat-Shamir with
 aborts) draws each candidate's fold challenges from the fork and accepts the
 first counter whose response meets its bounds. Both roles draw the accepted
-challenges from the same fork. The transcript sees one squeeze and one 4-byte
-message per search, whatever the search cost. The seed binds the full
+challenges from the same fork. The transcript sees one squeeze and one nonce
+message of at most five bytes per search, whatever the search cost. The seed binds the full
 prechallenge state, and the counter is in the argument string.
 
 **Replay checkpoint.** The ZK prover replays its argument string through the
@@ -116,8 +115,16 @@ Fixtures that cloned a mid-proof transcript rebuild it from a closure.
 
 ## Non-goals
 
+- Transcript-bound prover randomness. BlindFold and the committed recorders
+  draw blindings from the operating system's RNG, not from spongefish's
+  `ProverState::rng()`. Binding them to the transcript is a separate change;
+  the `StdRng` inside `ProverState` is unused.
+
 - Algebraic sponges (`H::U` a field element). The encoding traits are
-  implemented over `[u8]` only. Supporting a field-native Poseidon later means
+  implemented over `[u8]` only. The byte-level `PoseidonSponge` emits only the
+  low 16 bytes of each permutation's output, whose distribution is within
+  $2^{-125}$ of uniform, so challenges drawn from it stay exact up to that
+  distance. Supporting a field-native Poseidon later means
   adding `Encoding<[Fr]>` impls. It does not change the typed layer.
 - Changing message order or adding labels. Aerie's event headers stay an
   Aerie-level framing, absorbed as public messages.
@@ -141,8 +148,8 @@ Fixtures that cloned a mid-proof transcript rebuild it from a closure.
 
 ## Compatibility
 
-Every proof changes. The domain-separator layout, the grinding transition,
-and the nonce encoding (`u32` LE instead of LEB128) all differ. Fixtures,
+Every proof changes. The domain-separator layout and the grinding transition
+differ; the nonce keeps its canonical unsigned LEB128 encoding. Fixtures,
 known-answer tests, the FS census, and Akita's and Aerie's grinding tables are
 regenerated. Akita's `specs/transcript-grinding.md` and Aerie's
 `specs/falcon.md` §10.1–10.2 are amended in their own PRs.
@@ -167,7 +174,7 @@ Three PRs, landed together. Akita and Aerie pin the Jolt PR's revision.
 - Clear, ZK, and Akita e2e; the verifier fixtures; tamper and FS sweeps; the
   census re-blessed and reviewed.
 - Per-sponge known answers regenerated, plus a test that the exact sampler
-  rejects and resamples at the boundary.
+  rejects an out-of-range candidate and resamples from the next squeeze.
 - Grinding: tests for accept, reject, an out-of-range nonce, and a wrong seed.
 - `cargo tree -e features` contains no `yolocrypto` in any of the three
   workspaces.
