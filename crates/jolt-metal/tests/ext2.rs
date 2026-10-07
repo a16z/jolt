@@ -163,17 +163,17 @@ mod gpu {
             let (a1, b0) = low_carry::<F>();
             let top = element::<F>(modulus::<F>() - 1);
             pairs.push((Ext2::new(top, element(a1)), Ext2::new(element(b0), top)));
-            let coefficient_sums = |product: fn(u128, u128, u128, u128) -> [u128; 3]| {
+            let coefficient_sums = |product: fn(u128, u128, u128, u128) -> [u128; 2]| {
                 pairs
                     .iter()
                     .map(|&(a, b)| {
                         let [a0, a1, b0, b1] = [a.c0(), a.c1(), b.c0(), b.c1()].map(value);
                         product(a0, a1, b0, b1)
                     })
-                    .collect::<Vec<[u128; 3]>>()
+                    .collect::<Vec<[u128; 2]>>()
             };
-            let c0 = coefficient_sums(|a0, a1, b0, b1| [a0 * b0, a1 * b1, a1 * b1]);
-            let c1 = coefficient_sums(|a0, a1, b0, b1| [a0 * b1, a1 * b0, 0]);
+            let c0 = coefficient_sums(|a0, a1, b0, b1| [a0 * b0, (2 * a1 % modulus::<F>()) * b1]);
+            let c1 = coefficient_sums(|a0, a1, b0, b1| [a0 * b1, a1 * b0]);
             for (name, sums) in [("c0", &c0), ("c1", &c1)] {
                 let branches: Vec<Fold2> = sums.iter().map(|sum| fold2_branch::<F>(sum)).collect();
                 for branch in BRANCHES {
