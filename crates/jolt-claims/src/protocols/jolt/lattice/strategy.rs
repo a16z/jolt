@@ -241,7 +241,6 @@ fn byte_trace_layout_digest(
     Ok(hasher.finalize().into())
 }
 
-/// Tags one trace or byte-link column in a layout digest.
 pub(super) fn append_trace_column(
     hasher: &mut Blake2b<U32>,
     column: JoltCommittedPolynomial,

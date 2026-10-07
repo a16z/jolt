@@ -19,7 +19,6 @@ use super::super::JoltCommittedPolynomial as Poly;
 use super::geometry::LatticeGeometryError;
 use super::strategy::{append_trace_column, append_usize};
 
-/// Bits of one signed byte and of one one-hot address chunk.
 const BYTE_BITS: usize = 8;
 
 /// The link packs in canonical order: five instruction triples, the last
@@ -124,16 +123,27 @@ impl HistogramGroup {
         }
     }
 
-    /// Digest binding the group's histograms and arity; the group commitment's
-    /// layout metadata must equal it.
+    /// Digest binding the group's role, histograms, and arity; the group
+    /// commitment's layout metadata must equal it.
     pub fn layout_digest(self) -> Result<[u8; 32], OpeningsError> {
         let mut hasher = Blake2b::<U32>::new();
         hasher.update(b"jolt/akita/byte-link/v1/histogram-group");
-        self.append_shape(&mut hasher)?;
+        self.append_identity(&mut hasher)?;
         Ok(hasher.finalize().into())
     }
 
-    fn append_shape(self, hasher: &mut Blake2b<U32>) -> Result<(), OpeningsError> {
+    fn append_identity(self, hasher: &mut Blake2b<U32>) -> Result<(), OpeningsError> {
+        let role = self.role();
+        hasher.update(role.order().to_le_bytes());
+        append_usize(hasher, role.transcript_label().len());
+        hasher.update(role.transcript_label());
+        match role.transcript_index() {
+            None => hasher.update([0]),
+            Some(index) => {
+                hasher.update([1]);
+                hasher.update(index.to_le_bytes());
+            }
+        }
         append_usize(hasher, self.num_vars());
         append_usize(hasher, self.packs().len());
         for polynomial in self.polynomials() {
@@ -155,7 +165,7 @@ pub(super) fn byte_link_catalog_digest() -> Result<[u8; 32], OpeningsError> {
         }
     }
     for group in HistogramGroup::ALL {
-        group.append_shape(&mut hasher)?;
+        group.append_identity(&mut hasher)?;
     }
     Ok(hasher.finalize().into())
 }
@@ -292,7 +302,6 @@ mod tests {
             .collect()
     }
 
-    /// Selected-row code of column `c` at cycle `t`, with zero rows at `t = 0`.
     fn code(c: usize, t: usize) -> usize {
         if t == 0 {
             0
@@ -321,7 +330,6 @@ mod tests {
         assert_eq!(BYTE_LINK_PACKS[RAM_PACK][2], Poly::RamActivity);
     }
 
-    /// One claim per one-hot column at `(address chunk ‖ r)`, valued by `value`.
     fn claims_at(
         r: &[Fr],
         value: impl Fn(usize, Poly, &[Fr]) -> Fr,

@@ -54,6 +54,7 @@ jolt-blindfold::verify.rs::RelaxedInstance<F,Com>::append_to_transcript::append#
 jolt-blindfold::verify.rs::RelaxedInstance<F,Com>::append_to_transcript::append_to_transcript#1::self.u.append_to_transcript(transcript)
 jolt-blindfold::verify.rs::append_vector_opening::append#0::transcript.append(&Label(blinding_label))
 jolt-blindfold::verify.rs::append_vector_opening::append_to_transcript#1::opening.combined_blinding.append_to_transcript(transcript)
+jolt-claims::protocols/jolt/lattice/byte_link.rs::HistogramGroup::append_identity::append_usize#0::append_usize(hasher,role.transcript_label().len())
 jolt-crypto::ec/bn254/gt.rs::Bn254GT::append_to_transcript::append_bytes#0::transcript.append_bytes(&buf)
 jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::append_bytes::append#0::self.transcript.append(&LabelWithCount(b"dory_bytes",bytes.len()asu64))
 jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::append_bytes::append_bytes#1::self.transcript.append_bytes(bytes)
