@@ -636,7 +636,7 @@ fn append_opening_claims<F, T>(
     }
 }
 
-#[cfg(all(test, not(feature = "akita-byte-link")))]
+#[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     #[cfg(not(feature = "akita"))]
@@ -648,9 +648,11 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
+    #[cfg(not(feature = "akita-byte-link"))]
     use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
+    #[cfg(not(feature = "akita-byte-link"))]
     use crate::stages::relations::append_recording::RecordingTranscript;
     use jolt_field::{Fr, Ring};
 
@@ -662,6 +664,7 @@ mod tests {
     /// order: base interleaves the inc member after the RA virtualizations;
     /// Akita carries the read-raf `FusedInc` cell and the lattice booleanity
     /// digit/carry cells instead.
+    #[cfg(not(feature = "akita-byte-link"))]
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(not(feature = "akita"))]
         let (bytecode_read_raf, booleanity, last) = (
@@ -745,6 +748,7 @@ mod tests {
             bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf)
                 .bytecode_ra
                 .len();
+        #[cfg(not(feature = "akita-byte-link"))]
         let ra_layout = formula_dimensions.ra_layout;
         #[cfg(not(feature = "akita"))]
         let bytecode_read_raf = BytecodeReadRafOutputClaims {
@@ -761,7 +765,7 @@ mod tests {
             bytecode_ra: vec![fr(4); ra_layout.bytecode()],
             ram_ra: vec![fr(5); ra_layout.ram()],
         };
-        #[cfg(feature = "akita")]
+        #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
         let booleanity =
             jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
                 instruction_ra: vec![fr(3); ra_layout.instruction()],
@@ -779,7 +783,9 @@ mod tests {
             };
         Stage6bOutputClaims {
             bytecode_read_raf,
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity,
+            #[cfg(not(feature = "akita-byte-link"))]
             ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: fr(8),
             },
@@ -817,16 +823,13 @@ mod tests {
         formula_dimensions: &JoltFormulaDimensions,
         claims: &Stage6bOutputClaims<Fr>,
     ) -> Result<(), VerifierError> {
-        #[cfg(not(feature = "akita"))]
-        let result = validate_cycle_phase_claim_shape(formula_dimensions, claims, None);
-        #[cfg(feature = "akita")]
-        let result = validate_cycle_phase_claim_shape(
+        validate_cycle_phase_claim_shape(
             formula_dimensions,
             claims,
             None,
+            #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
             TEST_COMMITTED_CHUNK_BITS,
-        );
-        result
+        )
     }
 
     fn tamper_vec(vec: &mut Vec<Fr>, pad: bool) {
@@ -848,17 +851,23 @@ mod tests {
         validate_shape(&formula_dimensions, &claims).expect("shape-matched claims validate");
 
         type Tamper = fn(&mut Stage6bOutputClaims<Fr>, bool);
-        #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
+        #[cfg_attr(
+            any(not(feature = "akita"), feature = "akita-byte-link"),
+            expect(unused_mut)
+        )]
         let mut tampers: Vec<(&str, Tamper)> = vec![
             ("bytecode_read_raf.bytecode_ra", |c, pad| {
                 tamper_vec(&mut c.bytecode_read_raf.bytecode_ra, pad);
             }),
+            #[cfg(not(feature = "akita-byte-link"))]
             ("booleanity.instruction_ra", |c, pad| {
                 tamper_vec(&mut c.booleanity.instruction_ra, pad);
             }),
+            #[cfg(not(feature = "akita-byte-link"))]
             ("booleanity.bytecode_ra", |c, pad| {
                 tamper_vec(&mut c.booleanity.bytecode_ra, pad);
             }),
+            #[cfg(not(feature = "akita-byte-link"))]
             ("booleanity.ram_ra", |c, pad| {
                 tamper_vec(&mut c.booleanity.ram_ra, pad);
             }),
@@ -875,7 +884,7 @@ mod tests {
                 },
             ),
         ];
-        #[cfg(feature = "akita")]
+        #[cfg(all(feature = "akita", not(feature = "akita-byte-link")))]
         tampers.push(("booleanity.balanced_inc_digits", |c, pad| {
             tamper_vec(&mut c.booleanity.balanced_inc_digits, pad);
         }));
@@ -898,6 +907,7 @@ mod tests {
     /// `booleanity` (conditional `bytecode_ra` dedup) and the optional reductions
     /// stay explicit. Points are empty so no `bytecode_ra` element is deduped;
     /// the `None` reductions carry absent sentinels to prove they are not appended.
+    #[cfg(not(feature = "akita-byte-link"))]
     #[test]
     fn append_opening_claims_follows_canonical_order() {
         let (claims, last) = sample_claims();
@@ -913,6 +923,7 @@ mod tests {
         assert_eq!(got.chunks, want.chunks);
     }
 
+    #[cfg(not(feature = "akita-byte-link"))]
     #[test]
     fn bytecode_runtime_alias_requires_equal_claims() {
         let (mut claims, _) = sample_claims();

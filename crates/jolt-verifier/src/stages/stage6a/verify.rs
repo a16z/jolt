@@ -161,8 +161,9 @@ where
     }))
 }
 
-#[cfg(all(test, not(feature = "akita-byte-link")))]
+#[cfg(test)]
 mod tests {
+    #[cfg(not(feature = "akita-byte-link"))]
     use super::super::booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims};
     use super::super::bytecode_read_raf::{
         BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseOutputClaims, BytecodeStagePoints,
@@ -170,9 +171,12 @@ mod tests {
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
     use crate::stages::relations::append_recording::RecordingTranscript;
+    #[cfg(not(feature = "akita-byte-link"))]
     use crate::stages::relations::draw_recording::{record, DrawEvent};
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
+    #[cfg(not(feature = "akita-byte-link"))]
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::{Fr, Ring};
 
@@ -180,13 +184,16 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// A stage-6a batch whose booleanity member has committed chunk width 2, so
-    /// the reference-address draw pads a 1-variable stage-5 instruction address
-    /// and truncates a 3-variable one.
-    #[expect(clippy::unwrap_used)]
+    /// A stage-6a batch whose booleanity member (outside the byte link) has
+    /// committed chunk width 2, so the reference-address draw pads a 1-variable
+    /// stage-5 instruction address and truncates a 3-variable one.
+    #[cfg_attr(not(feature = "akita-byte-link"), expect(clippy::unwrap_used))]
     fn sumchecks(
+        #[cfg_attr(feature = "akita-byte-link", expect(unused_variables))]
         instruction_r_address: Vec<Fr>,
-        instruction_r_cycle: Vec<Fr>,
+        #[cfg_attr(feature = "akita-byte-link", expect(unused_variables))] instruction_r_cycle: Vec<
+            Fr,
+        >,
     ) -> Stage6aSumchecks<Fr> {
         Stage6aSumchecks::<Fr> {
             bytecode_read_raf: BytecodeReadRafAddressPhase::new(
@@ -200,6 +207,7 @@ mod tests {
                 },
                 0,
             ),
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity: BooleanityAddressPhase::new(
                 BooleanityDimensions::new(JoltRaPolynomialLayout::new(2, 1, 1).unwrap(), 4, 2),
                 instruction_r_address,
@@ -214,6 +222,7 @@ mod tests {
                 intermediate: fr(901),
                 val_stages: Vec::new(),
             },
+            #[cfg(not(feature = "akita-byte-link"))]
             booleanity: BooleanityAddressPhaseOutputClaims {
                 intermediate: fr(902),
             },
@@ -226,6 +235,7 @@ mod tests {
     /// is narrower than the committed chunk width here) and the booleanity
     /// gamma. The reference vectors are pure computation (reversal, pad slot)
     /// off the stage-5 point the relation carries.
+    #[cfg(not(feature = "akita-byte-link"))]
     #[test]
     #[expect(clippy::unwrap_used)]
     fn draw_challenges_matches_inline_draw_sequence() {
@@ -272,6 +282,7 @@ mod tests {
     /// The truncate branch: a stage-5 instruction address wider than the
     /// committed chunk width keeps its reversed tail and draws no pad — only
     /// the booleanity gamma squeeze follows the bytecode member's six.
+    #[cfg(not(feature = "akita-byte-link"))]
     #[test]
     #[expect(
         clippy::unwrap_used,
@@ -295,9 +306,9 @@ mod tests {
     }
 
     /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
-    /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
-    /// booleanity `intermediate`. Single-sourced from the generated
-    /// `append_output_claims`.
+    /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then,
+    /// outside the byte link, booleanity `intermediate`. Single-sourced from the
+    /// generated `append_output_claims`.
     #[test]
     fn stage6a_output_claims_append_follows_canonical_order() {
         let sumchecks = sumchecks(Vec::new(), Vec::new());
@@ -308,7 +319,18 @@ mod tests {
         sumchecks.append_output_claims(&mut got, &claims);
 
         let mut want = RecordingTranscript::default();
-        for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
+        for value in [
+            901,
+            903,
+            904,
+            905,
+            906,
+            907,
+            #[cfg(not(feature = "akita-byte-link"))]
+            902,
+        ]
+        .map(fr)
+        {
             want.append_labeled(b"opening_claim", &value);
         }
 
