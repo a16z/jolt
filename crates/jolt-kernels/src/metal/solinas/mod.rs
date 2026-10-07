@@ -45,6 +45,8 @@ mod address_sequence;
 mod address_suffix_full;
 mod booleanity;
 mod booleanity_address;
+#[cfg(feature = "akita-byte-link")]
+pub mod byte_link;
 mod bytecode_cycle;
 #[doc(hidden)]
 pub mod bytecode_read_raf_address;
@@ -751,6 +753,12 @@ pub enum MetalError {
     InvalidGpuTimestamps { start: f64, end: f64 },
     #[error("execute the invocation before reading its output")]
     NotExecuted,
+    #[error(
+        "byte link supports 2^16..=2^30 rows with at most that many active, got 2^{log_rows} rows, {active_rows} active"
+    )]
+    ByteLinkShape { log_rows: u32, active_rows: usize },
+    #[error("byte link could not allocate {bytes} bytes from its arena")]
+    ByteLinkArena { bytes: u64 },
 }
 
 impl MetalError {
