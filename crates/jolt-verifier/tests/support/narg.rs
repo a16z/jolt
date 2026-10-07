@@ -327,6 +327,10 @@ mod dory {
     };
 
     use super::{finish_trace, new_transcript, Trace, TracedCase};
+    #[cfg(not(feature = "zk"))]
+    use crate::support::verifier_fixtures::VerifierFixtureCase;
+    #[cfg(feature = "zk")]
+    use crate::support::verifier_fixtures::ZkVerifierFixtureCase;
 
     type Preprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
@@ -411,9 +415,9 @@ mod dory {
     }
 
     #[cfg(not(feature = "zk"))]
-    impl_traced_case!(crate::support::verifier_fixtures::VerifierFixtureCase);
+    impl_traced_case!(VerifierFixtureCase);
     #[cfg(feature = "zk")]
-    impl_traced_case!(crate::support::verifier_fixtures::ZkVerifierFixtureCase);
+    impl_traced_case!(ZkVerifierFixtureCase);
 }
 
 #[cfg(feature = "akita")]
@@ -433,6 +437,8 @@ mod akita {
 
     use super::{finish_trace, new_transcript, Trace, TracedCase};
     use crate::support::akita_fixtures::AkitaFixtureCase;
+    use jolt_transcript::VerifierTranscript;
+    use stage8::Stage8Output;
 
     type Preprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
 
@@ -443,7 +449,7 @@ mod akita {
         preprocessing: &Preprocessing,
         public_io: &JoltDevice,
         trusted_advice_commitment: Option<&AkitaCommitment>,
-        transcript: &mut jolt_transcript::VerifierTranscript<'_, JoltSponge>,
+        transcript: &mut VerifierTranscript<'_, JoltSponge>,
     ) -> Result<(), VerifierError> {
         let SeededTranscript {
             checked,
@@ -498,10 +504,8 @@ mod akita {
             &s7,
         )?;
         match s8 {
-            stage8::Stage8Output::Clear => Ok(()),
-            stage8::Stage8Output::Zk(_) => {
-                Err(VerifierError::ExpectedClearProof { field: "stage8" })
-            }
+            Stage8Output::Clear => Ok(()),
+            Stage8Output::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage8" }),
         }
     }
 

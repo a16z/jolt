@@ -1,5 +1,6 @@
 //! The prover's end: spongefish's prover state, written through typed atoms.
 
+use core::fmt::Result as FmtResult;
 use std::num::NonZeroU8;
 
 use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
@@ -8,10 +9,13 @@ use spongefish::ProverState;
 
 use crate::grinding::{grind_nonce, nonce_bits, GRINDING_SEED_LEN};
 use crate::site::{Log, TranscriptOp};
+use crate::state::SMALL_CHALLENGE_BYTES;
 use crate::state::{domain, Framed, Squeeze, BYTE_BLOCK};
 #[cfg(feature = "logging")]
 use crate::TranscriptEvent;
 use crate::{Channel, Nonce, ProtocolId, SiteId, Sponge, TranscriptError};
+use core::fmt::Debug;
+use core::fmt::Formatter;
 
 /// Prover transcript: spongefish's [`ProverState`], which appends every prover
 /// message to the argument string and absorbs exactly its encoding.
@@ -23,8 +27,8 @@ pub struct ProverTranscript<H: Sponge> {
     log: Log,
 }
 
-impl<H: Sponge> core::fmt::Debug for ProverTranscript<H> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl<H: Sponge> Debug for ProverTranscript<H> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("ProverTranscript")
             .field("narg_len", &self.state.narg_string().len())
             .finish_non_exhaustive()
@@ -193,11 +197,8 @@ impl<H: Sponge> Channel for ProverTranscript<H> {
 
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
         let value = self.state.small_challenge();
-        self.log.record(
-            TranscriptOp::Challenge,
-            crate::state::SMALL_CHALLENGE_BYTES,
-            None,
-        );
+        self.log
+            .record(TranscriptOp::Challenge, SMALL_CHALLENGE_BYTES, None);
         value
     }
 

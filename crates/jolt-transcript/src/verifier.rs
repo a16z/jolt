@@ -1,5 +1,6 @@
 //! The verifier's end: spongefish's verifier state, read through typed atoms.
 
+use core::fmt::Result as FmtResult;
 use std::num::NonZeroU8;
 
 use jolt_field::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
@@ -8,10 +9,13 @@ use spongefish::VerifierState;
 use crate::grinding::{grinding_accepts, nonce_bits, GRINDING_SEED_LEN};
 use crate::nonce::NONCE_MAX_BYTES;
 use crate::site::{Log, TranscriptOp};
+use crate::state::SMALL_CHALLENGE_BYTES;
 use crate::state::{domain, Framed, Squeeze, BYTE_BLOCK};
 #[cfg(feature = "logging")]
 use crate::TranscriptEvent;
 use crate::{Channel, Nonce, ProtocolId, SiteId, Sponge, TranscriptError};
+use core::fmt::Debug;
+use core::fmt::Formatter;
 
 /// Verifier transcript: spongefish's [`VerifierState`] over the proof bytes.
 ///
@@ -28,8 +32,8 @@ pub struct VerifierTranscript<'a, H: Sponge> {
     log: Log,
 }
 
-impl<H: Sponge> core::fmt::Debug for VerifierTranscript<'_, H> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl<H: Sponge> Debug for VerifierTranscript<'_, H> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("VerifierTranscript")
             .field("consumed", &self.consumed)
             .field("remaining", &self.remaining())
@@ -317,11 +321,8 @@ impl<H: Sponge> Channel for VerifierTranscript<'_, H> {
 
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
         let value = self.state.small_challenge();
-        self.log.record(
-            TranscriptOp::Challenge,
-            crate::state::SMALL_CHALLENGE_BYTES,
-            None,
-        );
+        self.log
+            .record(TranscriptOp::Challenge, SMALL_CHALLENGE_BYTES, None);
         value
     }
 

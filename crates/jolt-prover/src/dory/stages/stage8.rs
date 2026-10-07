@@ -58,6 +58,8 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 use jolt_witness::JoltWitnessPlane;
 
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
+#[cfg(not(feature = "zk"))]
+use core::marker::PhantomData;
 
 /// Stage 8's ZK output: the joint evaluation and its blind, the secrets inside
 /// the hiding evaluation commitment that the BlindFold final-opening binding
@@ -71,7 +73,7 @@ pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
 /// Stage 8's clear output: the opening is written to the transcript.
 #[cfg(not(feature = "zk"))]
 pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
-    _pcs: core::marker::PhantomData<PCS>,
+    _pcs: PhantomData<PCS>,
 }
 
 /// Prove stage 8 on `transcript` (positioned at the stage-7 boundary).
@@ -336,9 +338,7 @@ where
         )
         .map_err(KernelError::<F>::from)?;
 
-        Ok(Stage8ProverOutput {
-            _pcs: core::marker::PhantomData,
-        })
+        Ok(Stage8ProverOutput { _pcs: PhantomData })
     }
     #[cfg(feature = "zk")]
     {

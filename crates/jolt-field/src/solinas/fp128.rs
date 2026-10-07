@@ -26,6 +26,9 @@ use crate::{
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
 use rand_core::RngCore;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 #[cfg(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))]
 use std::arch::asm;
 #[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
@@ -1123,7 +1126,7 @@ impl<const P: u128> CanonicalBytes for Fp128<P> {
     }
 }
 
-impl<const P: u128> ::spongefish::Encoding<[u8]> for Fp128<P> {
+impl<const P: u128> Encoding<[u8]> for Fp128<P> {
     fn encode(&self) -> impl AsRef<[u8]> {
         crate::narg::encode(self)
     }
@@ -1137,8 +1140,8 @@ impl<const P: u128> CanonicalDecode for Fp128<P> {
     }
 }
 
-impl<const P: u128> ::spongefish::NargDeserialize for Fp128<P> {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl<const P: u128> NargDeserialize for Fp128<P> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         crate::narg::deserialize(buf)
     }
 }

@@ -7,6 +7,9 @@ use std::{
 use jolt_field::{Accumulator, CanonicalBytes, CanonicalDecode, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
@@ -54,7 +57,7 @@ impl CanonicalBytes for NoCommitment {
     fn to_bytes_le(&self, _out: &mut [u8]) {}
 }
 
-impl ::spongefish::Encoding<[u8]> for NoCommitment {
+impl Encoding<[u8]> for NoCommitment {
     fn encode(&self) -> impl AsRef<[u8]> {
         ::jolt_field::narg::encode(self)
     }
@@ -66,8 +69,8 @@ impl CanonicalDecode for NoCommitment {
     }
 }
 
-impl ::spongefish::NargDeserialize for NoCommitment {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl NargDeserialize for NoCommitment {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         ::jolt_field::narg::deserialize(buf)
     }
 }

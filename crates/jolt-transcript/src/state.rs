@@ -5,6 +5,11 @@ use rand_core::RngCore;
 use spongefish::{Encoding, ProverState, VerifierState};
 
 use crate::{ProtocolId, Sponge};
+use rand::rngs::StdRng;
+use rand_core::Error;
+use spongefish::DomainSeparator;
+use spongefish::WithInstance;
+use spongefish::WithSession;
 
 /// Bytes squeezed for a [`Channel::challenge_small`](crate::Channel::challenge_small).
 pub(crate) const SMALL_CHALLENGE_BYTES: usize = 16;
@@ -35,11 +40,8 @@ impl Encoding<[u8]> for Framed<'_> {
 pub(crate) fn domain<'s>(
     protocol: &ProtocolId,
     session: &'s [u8],
-) -> spongefish::DomainSeparator<
-    spongefish::WithInstance<Framed<'static>>,
-    spongefish::WithSession<Framed<'s>>,
-> {
-    spongefish::DomainSeparator::new(*protocol.as_bytes())
+) -> DomainSeparator<WithInstance<Framed<'static>>, WithSession<Framed<'s>>> {
+    DomainSeparator::new(*protocol.as_bytes())
         .session(Framed(session))
         .instance(Framed(&[]))
 }
@@ -89,7 +91,7 @@ macro_rules! squeeze_blocks {
     }};
 }
 
-impl<H: Sponge> Squeeze for ProverState<H, rand::rngs::StdRng> {
+impl<H: Sponge> Squeeze for ProverState<H, StdRng> {
     fn squeeze_into(&mut self, out: &mut [u8]) {
         squeeze_blocks!(self, out);
     }
@@ -125,7 +127,7 @@ impl<S: Squeeze> RngCore for SqueezeRng<'_, S> {
         self.squeezed += dest.len();
     }
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
         self.fill_bytes(dest);
         Ok(())
     }

@@ -1,5 +1,11 @@
 //! Duplex sponges a transcript can run on.
 
+#[cfg(feature = "transcript-poseidon")]
+use crate::PoseidonSponge;
+#[cfg(feature = "transcript-blake2b")]
+use spongefish::instantiations::Blake2b512;
+#[cfg(feature = "transcript-keccak")]
+use spongefish::instantiations::Keccak;
 use spongefish::DuplexSpongeInterface;
 
 /// A byte-oriented duplex sponge with a stable identity.
@@ -14,16 +20,16 @@ pub trait Sponge: DuplexSpongeInterface<U = u8> + Default + Clone + Send + Sync 
 }
 
 #[cfg(feature = "transcript-blake2b")]
-impl Sponge for spongefish::instantiations::Blake2b512 {
+impl Sponge for Blake2b512 {
     const ID: &'static str = "blake2b512";
 }
 
 #[cfg(feature = "transcript-keccak")]
-impl Sponge for spongefish::instantiations::Keccak {
+impl Sponge for Keccak {
     const ID: &'static str = "keccak-f1600";
 }
 
 #[cfg(feature = "transcript-poseidon")]
-impl Sponge for crate::PoseidonSponge {
+impl Sponge for PoseidonSponge {
     const ID: &'static str = "poseidon-bn254-circom-t4";
 }

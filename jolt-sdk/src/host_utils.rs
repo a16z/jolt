@@ -19,6 +19,8 @@ use jolt_dory::{DoryCommitment, DoryScheme};
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 #[cfg(feature = "host")]
 use jolt_prover::{JoltProverPreprocessing as GenericJoltProverPreprocessing, ProverConfig};
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+use jolt_verifier::JoltProof as VerifierJoltProof;
 #[cfg(feature = "host")]
 use jolt_verifier::ProgramPreprocessing as GenericProgramPreprocessing;
 #[cfg(feature = "host")]
@@ -68,7 +70,7 @@ pub type VerifierField = jolt_field::Fr;
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 #[cfg(feature = "host")]
-pub type RV64IMACProof = jolt_verifier::JoltProof;
+pub type RV64IMACProof = VerifierJoltProof;
 #[cfg(feature = "host")]
 pub type JoltProof = RV64IMACProof;
 #[cfg(feature = "host")]
@@ -142,7 +144,7 @@ pub type VerifierField = jolt_field::Fr;
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type RV64IMACProof = jolt_verifier::JoltProof;
+pub type RV64IMACProof = VerifierJoltProof;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltProof = RV64IMACProof;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]

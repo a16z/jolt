@@ -359,10 +359,11 @@ mod tests {
 
     use super::{Bn254, Bn254G1, Bn254G2};
     use crate::JoltGroup;
+    use std::fmt::Debug;
 
     #[test]
     fn canonical_codec_is_the_compressed_encoding() {
-        fn check<P: CanonicalBytes + CanonicalDecode + PartialEq + std::fmt::Debug>(
+        fn check<P: CanonicalBytes + CanonicalDecode + PartialEq + Debug>(
             point: P,
             compressed: &impl CanonicalSerialize,
         ) {
@@ -385,7 +386,7 @@ mod tests {
     /// alias it.
     #[test]
     fn identity_has_one_accepted_encoding() {
-        fn check<P: CanonicalBytes + CanonicalDecode + PartialEq + std::fmt::Debug>(identity: P) {
+        fn check<P: CanonicalBytes + CanonicalDecode + PartialEq + Debug>(identity: P) {
             let canonical = identity.to_bytes_le_vec();
             assert_eq!(P::from_bytes_le_checked(&canonical), Some(identity));
             let mut alias = canonical;

@@ -9,6 +9,10 @@ use jolt_field::{CanonicalBytes, CanonicalDecode, JoltField};
 use crate::JoltGroup;
 
 use super::field_to_fr;
+use serde::de::Error;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 /// BN254 target group element (pairing output).
 ///
@@ -198,7 +202,7 @@ impl serde::Serialize for Bn254GT {
 impl<'de> serde::Deserialize<'de> for Bn254GT {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf = <Vec<u8>>::deserialize(deserializer)?;
-        Self::decode_compressed(&buf).map_err(serde::de::Error::custom)
+        Self::decode_compressed(&buf).map_err(Error::custom)
     }
 }
 
@@ -256,7 +260,7 @@ impl CanonicalBytes for Bn254GT {
     }
 }
 
-impl ::spongefish::Encoding<[u8]> for Bn254GT {
+impl Encoding<[u8]> for Bn254GT {
     fn encode(&self) -> impl AsRef<[u8]> {
         ::jolt_field::narg::encode(self)
     }
@@ -268,8 +272,8 @@ impl CanonicalDecode for Bn254GT {
     }
 }
 
-impl ::spongefish::NargDeserialize for Bn254GT {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl NargDeserialize for Bn254GT {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         ::jolt_field::narg::deserialize(buf)
     }
 }

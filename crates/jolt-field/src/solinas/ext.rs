@@ -33,6 +33,9 @@ use crate::{
 use bytemuck::{CheckedBitPattern, NoUninit, Pod, Zeroable};
 use num_traits::Zero;
 use rand_core::RngCore;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 use std::marker::PhantomData;
 
 /// Quadratic extension element `c0 + c1·u` with `u^2 = NR` given by the
@@ -142,7 +145,7 @@ impl<F: Field + CanonicalBytes, C: Ext2Config<F>> CanonicalBytes for FpExt2<F, C
     }
 }
 
-impl<F: Field + CanonicalBytes, C: Ext2Config<F>> ::spongefish::Encoding<[u8]> for FpExt2<F, C> {
+impl<F: Field + CanonicalBytes, C: Ext2Config<F>> Encoding<[u8]> for FpExt2<F, C> {
     fn encode(&self) -> impl AsRef<[u8]> {
         crate::narg::encode(self)
     }
@@ -155,8 +158,8 @@ impl<F: Field + CanonicalDecode, C: Ext2Config<F>> CanonicalDecode for FpExt2<F,
     }
 }
 
-impl<F: Field + CanonicalDecode, C: Ext2Config<F>> ::spongefish::NargDeserialize for FpExt2<F, C> {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl<F: Field + CanonicalDecode, C: Ext2Config<F>> NargDeserialize for FpExt2<F, C> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         crate::narg::deserialize(buf)
     }
 }
@@ -364,7 +367,7 @@ impl<F: PseudoMersenne> CanonicalBytes for FpExt4<F> {
     }
 }
 
-impl<F: PseudoMersenne> ::spongefish::Encoding<[u8]> for FpExt4<F> {
+impl<F: PseudoMersenne> Encoding<[u8]> for FpExt4<F> {
     fn encode(&self) -> impl AsRef<[u8]> {
         crate::narg::encode(self)
     }
@@ -376,8 +379,8 @@ impl<F: PseudoMersenne> CanonicalDecode for FpExt4<F> {
     }
 }
 
-impl<F: PseudoMersenne> ::spongefish::NargDeserialize for FpExt4<F> {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl<F: PseudoMersenne> NargDeserialize for FpExt4<F> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         crate::narg::deserialize(buf)
     }
 }
@@ -520,7 +523,7 @@ impl<F: PseudoMersenne> CanonicalBytes for FpExt8<F> {
     }
 }
 
-impl<F: PseudoMersenne> ::spongefish::Encoding<[u8]> for FpExt8<F> {
+impl<F: PseudoMersenne> Encoding<[u8]> for FpExt8<F> {
     fn encode(&self) -> impl AsRef<[u8]> {
         crate::narg::encode(self)
     }
@@ -532,8 +535,8 @@ impl<F: PseudoMersenne> CanonicalDecode for FpExt8<F> {
     }
 }
 
-impl<F: PseudoMersenne> ::spongefish::NargDeserialize for FpExt8<F> {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl<F: PseudoMersenne> NargDeserialize for FpExt8<F> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         crate::narg::deserialize(buf)
     }
 }

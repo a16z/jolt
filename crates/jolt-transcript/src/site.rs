@@ -4,6 +4,7 @@
 //! and without the `logging` feature. Under `logging`, each transcript records
 //! one [`TranscriptEvent`] per operation, tagged with the site set by the most
 //! recent [`Channel::site`](crate::Channel::site) call.
+use core::ops::Range;
 
 /// Opaque 32-byte name of a protocol site, chosen by the protocol.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -56,7 +57,7 @@ pub struct TranscriptEvent {
     /// Bytes absorbed or squeezed.
     pub len: usize,
     /// Argument-string byte range of a prover message.
-    pub narg: Option<core::ops::Range<usize>>,
+    pub narg: Option<Range<usize>>,
 }
 
 /// Event log of one transcript; empty and free without the `logging` feature.
@@ -74,12 +75,7 @@ impl Log {
         self.site = site;
     }
 
-    pub(crate) fn record(
-        &mut self,
-        op: TranscriptOp,
-        len: usize,
-        narg: Option<core::ops::Range<usize>>,
-    ) {
+    pub(crate) fn record(&mut self, op: TranscriptOp, len: usize, narg: Option<Range<usize>>) {
         self.events.push(TranscriptEvent {
             site: self.site,
             op,
@@ -103,11 +99,5 @@ impl Log {
     pub(crate) fn set_site(&mut self, _site: SiteId) {}
 
     #[inline(always)]
-    pub(crate) fn record(
-        &mut self,
-        _op: TranscriptOp,
-        _len: usize,
-        _narg: Option<core::ops::Range<usize>>,
-    ) {
-    }
+    pub(crate) fn record(&mut self, _op: TranscriptOp, _len: usize, _narg: Option<Range<usize>>) {}
 }

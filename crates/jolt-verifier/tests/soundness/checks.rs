@@ -21,6 +21,12 @@ use crate::support::narg::{
     assert_coverage_closure, assert_truncations_reject, decode_header, message_in, sweep,
     with_header, CommitmentOf, Region, TracedCase,
 };
+use jolt_crypto::VectorCommitment;
+use jolt_transcript::VerifierTranscript;
+use jolt_verifier::CommittedProgramPreprocessing;
+use jolt_verifier::JoltProtocolConfig;
+use jolt_verifier::JoltSponge;
+use jolt_verifier::JOLT_SESSION;
 
 /// Coverage closure, then the single-byte message sweep with deadlines.
 /// `budget` caps the number of tampers (`None`: every tamper).
@@ -69,7 +75,7 @@ pub fn structural_tampers<C: TracedCase>(case: &C, truncation_budget: Option<usi
     }
 }
 
-fn wrong_protocols(proof: &JoltProof) -> Vec<jolt_verifier::JoltProtocolConfig> {
+fn wrong_protocols(proof: &JoltProof) -> Vec<JoltProtocolConfig> {
     use jolt_verifier::config::CommitmentConfig;
     use jolt_verifier::ZkConfig;
 
@@ -243,9 +249,9 @@ pub fn trusted_advice_tampers<C: TracedCase>(case: &C, replacement: &CommitmentO
 pub fn sent_commitment<C: TracedCase>(case: &C, index: usize) -> CommitmentOf<C> {
     let trace = case.honest_trace();
     let start = message_in(&trace, Region::Commitments, 0).start;
-    let mut transcript = jolt_transcript::VerifierTranscript::<jolt_verifier::JoltSponge>::new(
-        &jolt_verifier::jolt_protocol_id::<jolt_verifier::JoltSponge>(),
-        jolt_verifier::JOLT_SESSION,
+    let mut transcript = VerifierTranscript::<JoltSponge>::new(
+        &jolt_verifier::jolt_protocol_id::<JoltSponge>(),
+        JOLT_SESSION,
         &case.proof().narg[start..],
     );
     let mut receive = || {
@@ -433,9 +439,9 @@ pub fn committed_program_tampers<C: TracedCase>(
 /// Mutable committed-program preprocessing.
 pub fn committed_mut<PCS: CommitmentScheme, VC>(
     preprocessing: &mut JoltVerifierPreprocessing<PCS, VC>,
-) -> &mut jolt_verifier::CommittedProgramPreprocessing<PCS>
+) -> &mut CommittedProgramPreprocessing<PCS>
 where
-    VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
+    VC: VectorCommitment<Field = PCS::Field>,
 {
     let ProgramPreprocessing::Committed(committed) = &mut preprocessing.program else {
         panic!("fixture must carry committed-program preprocessing");

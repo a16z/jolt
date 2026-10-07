@@ -10,6 +10,7 @@
 
 use std::num::NonZeroU8;
 
+use crate::FORK_SEED_LEN;
 use crate::{Fork, Sponge};
 
 /// Extra nonce bits searched beyond the difficulty.
@@ -19,7 +20,7 @@ pub const MAX_GRINDING_BITS: u8 = u32::BITS as u8 - GRINDING_NONCE_SLACK_BITS;
 /// Byte length of the squeezed proof-of-work predicate.
 pub const GRINDING_PREDICATE_LEN: usize = 32;
 /// Byte length of the seed a grind squeezes from the transcript.
-pub(crate) const GRINDING_SEED_LEN: usize = crate::FORK_SEED_LEN;
+pub(crate) const GRINDING_SEED_LEN: usize = FORK_SEED_LEN;
 /// Returns whether the low `bits` bits of `predicate`, low byte first and low
 /// bit first within each byte, are all zero.
 #[must_use]

@@ -27,6 +27,11 @@ use jolt_verifier::{
 };
 
 use crate::fs_transcript::{decode_challenge, decode_small_challenge, ChallengeTape};
+#[cfg(not(feature = "akita"))]
+use sites::COMMITMENTS;
+use sites::STAGE1;
+#[cfg(not(feature = "akita"))]
+use sites::STAGE8;
 
 /// One verifier transcript operation, with the bytes it touched.
 #[derive(Clone, Debug)]
@@ -164,7 +169,7 @@ pub fn cancel_dory_final_opening_commitments<C>(
 ) where
     C: CanonicalDecode + HomomorphicCommitment<Fr> + PartialEq,
 {
-    let mut commitments = SiteEvents::new(events, sites::COMMITMENTS, tape);
+    let mut commitments = SiteEvents::new(events, COMMITMENTS, tape);
     // `ProofCommitments` send order: RdInc, RamInc, then the instruction RA family.
     let rd_inc = commitments.message("RdInc commitment");
     let ram_inc = commitments.message("RamInc commitment");
@@ -172,8 +177,8 @@ pub fn cancel_dory_final_opening_commitments<C>(
     for range in [&rd_inc, &ram_inc, &instruction_ra] {
         assert_eq!(range.len(), C::NUM_BYTES, "commitment message width");
     }
-    let gamma: Fr = SiteEvents::new(events, sites::STAGE8, tape)
-        .challenge("stage-8 final-opening batching challenge");
+    let gamma: Fr =
+        SiteEvents::new(events, STAGE8, tape).challenge("stage-8 final-opening batching challenge");
 
     let direction: C = read(narg, instruction_ra.start);
     let original_ram_inc: C = read(narg, ram_inc.start);
@@ -203,7 +208,7 @@ pub fn equivocate_stage1_clear<F: JoltField>(
     delta: F,
 ) {
     let params = UniskipParams::spartan_outer();
-    let mut stage1 = SiteEvents::new(events, sites::STAGE1, tape);
+    let mut stage1 = SiteEvents::new(events, STAGE1, tape);
     // The uni-skip round is the stage's first message, after the tau draws.
     let uniskip_round = stage1
         .next_skipping(

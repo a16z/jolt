@@ -22,11 +22,17 @@ use jolt_sumcheck::{prove_uniskip_committed, CommittedSumcheckRecorder, Committe
 use jolt_transcript::{ProverTranscript, Sponge};
 
 use crate::ProverError;
+#[cfg(all(test, not(feature = "zk")))]
+use jolt_sumcheck::CommittedSumcheckRecorder;
+#[cfg(feature = "zk")]
+use rand_core::OsRng;
+#[cfg(any(feature = "zk", test))]
+use rand_core::RngCore;
 
 /// The compiled mode's batch recorder type.
 #[cfg(feature = "zk")]
 pub type ModeRecorder<'a, VC> =
-    CommittedSumcheckRecorder<'a, <VC as VectorCommitment>::Field, VC, rand_core::OsRng>;
+    CommittedSumcheckRecorder<'a, <VC as VectorCommitment>::Field, VC, OsRng>;
 #[cfg(not(feature = "zk"))]
 pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::Field>;
 
@@ -44,11 +50,11 @@ impl<F> ClaimRecorder for ClearSumcheckRecorder<F> {
 
 // The driver's twin tests run a committed recorder in clear builds too.
 #[cfg(any(feature = "zk", test))]
-impl<F, VC, R> ClaimRecorder for jolt_sumcheck::CommittedSumcheckRecorder<'_, F, VC, R>
+impl<F, VC, R> ClaimRecorder for CommittedSumcheckRecorder<'_, F, VC, R>
 where
     F: JoltField,
     VC: VectorCommitment<Field = F>,
-    R: rand_core::RngCore,
+    R: RngCore,
 {
     const RECORDS_STAGED: bool = true;
 }

@@ -1,6 +1,7 @@
 #[cfg(test)]
 #[cfg(feature = "host")]
 mod tests {
+    use jolt_sdk::ProtocolSponge;
     use jolt_sdk::{
         deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,
     };
@@ -40,7 +41,7 @@ mod tests {
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
-            jolt_sdk::ProtocolSponge,
+            ProtocolSponge,
         >(&preprocessing, &device, &proof, None);
         let duration = start.elapsed();
         println!("Verification took: {} ms", duration.as_millis());

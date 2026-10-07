@@ -26,6 +26,9 @@ use jolt_transcript::{
     Blake2b512, Channel, Keccak, ProtocolId, ProverTranscript, Sponge, VerifierTranscript,
 };
 use num_traits::{One, Zero};
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 const MODULUS: u64 = (1u64 << 61) - 1;
 
@@ -250,7 +253,7 @@ impl CanonicalBytes for Mersenne61 {
     }
 }
 
-impl spongefish::Encoding<[u8]> for Mersenne61 {
+impl Encoding<[u8]> for Mersenne61 {
     fn encode(&self) -> impl AsRef<[u8]> {
         jolt_field::narg::encode(self)
     }
@@ -263,8 +266,8 @@ impl CanonicalDecode for Mersenne61 {
     }
 }
 
-impl spongefish::NargDeserialize for Mersenne61 {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+impl NargDeserialize for Mersenne61 {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         jolt_field::narg::deserialize(buf)
     }
 }

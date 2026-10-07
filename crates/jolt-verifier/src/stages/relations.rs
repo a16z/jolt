@@ -1044,6 +1044,7 @@ mod sumcheck_batch_derive_tests {
         InstructionReadRaf, InstructionReadRafOutputClaims, RegistersValEvaluation,
         RegistersValEvaluationOutputClaims,
     };
+    use crate::VerifierError;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
     use jolt_field::{Fr, JoltField, Ring};
 
@@ -1154,7 +1155,7 @@ mod sumcheck_batch_derive_tests {
             .unwrap();
         assert!(matches!(
             sumchecks.validate_output_shape(&unexpected, &points),
-            Err(crate::VerifierError::StageClaimSumcheckFailed { .. })
+            Err(VerifierError::StageClaimSumcheckFailed { .. })
         ));
 
         let well_formed = FixtureOptionOutputClaims::<Fr> {

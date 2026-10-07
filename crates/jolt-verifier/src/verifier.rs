@@ -34,19 +34,31 @@ use crate::{
     },
     VerifierError,
 };
+use common::jolt_device::MemoryLayout;
+#[cfg(not(any(feature = "transcript-keccak", feature = "transcript-poseidon")))]
+use jolt_transcript::Blake2b512;
+#[cfg(all(feature = "transcript-keccak", not(feature = "transcript-poseidon")))]
+use jolt_transcript::Keccak;
+#[cfg(feature = "transcript-poseidon")]
+use jolt_transcript::PoseidonSponge;
+
+#[cfg(feature = "akita")]
+use crate::stages::stage8::OneHotTraceCommitmentMetadata;
+#[cfg(not(feature = "akita"))]
+use crate::stages::stage8::Stage8Output;
 
 /// The sponge Jolt proofs run on: Poseidon under `transcript-poseidon`, else
 /// Keccak under `transcript-keccak`, else Blake2b. Every prover and verifier
 /// entry point is generic over the sponge; this alias is the one place the
 /// default is chosen, and the SDK's `ProtocolSponge` is this alias.
 #[cfg(feature = "transcript-poseidon")]
-pub type JoltSponge = jolt_transcript::PoseidonSponge;
+pub type JoltSponge = PoseidonSponge;
 /// See the Poseidon arm.
 #[cfg(all(feature = "transcript-keccak", not(feature = "transcript-poseidon")))]
-pub type JoltSponge = jolt_transcript::Keccak;
+pub type JoltSponge = Keccak;
 /// See the Poseidon arm.
 #[cfg(not(any(feature = "transcript-keccak", feature = "transcript-poseidon")))]
-pub type JoltSponge = jolt_transcript::Blake2b512;
+pub type JoltSponge = Blake2b512;
 
 /// The session every Jolt transcript is bound to.
 pub const JOLT_SESSION: &[u8] = b"";
@@ -194,7 +206,7 @@ where
     )?;
 
     if !checked.zk {
-        let stage8::Stage8Output::Clear(_) = stage8 else {
+        let Stage8Output::Clear(_) = stage8 else {
             return Err(VerifierError::ExpectedClearProof { field: "stage8" });
         };
         return Ok(VerifiedStages::Clear);
@@ -232,7 +244,7 @@ pub fn verify<F, PCS, VC, H>(
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + stage8::OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + CanonicalDecode,
@@ -673,9 +685,7 @@ where
 /// access at remapped word zero (see "Where the RAM activation is pinned" in
 /// `specs/lattice-claims.md`). Mirrors the prover-side
 /// `UnmapRamAddressPolynomial::new` assertion (`start_address > 8`).
-fn validate_ram_remap_base(
-    memory_layout: &common::jolt_device::MemoryLayout,
-) -> Result<(), VerifierError> {
+fn validate_ram_remap_base(memory_layout: &MemoryLayout) -> Result<(), VerifierError> {
     let lowest_address = memory_layout.get_lowest_address();
     if lowest_address <= 8 {
         return Err(VerifierError::InvalidMemoryLayout {

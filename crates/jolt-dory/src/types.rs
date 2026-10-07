@@ -5,6 +5,9 @@ use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT, ArkworksProverSetup, Arkwork
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
 use jolt_field::{CanonicalBytes, CanonicalDecode, Fr};
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 /// Bounds the rounds any supported proof can use, and so the verifier setup's
 /// per-round tables. Dory runs `ceil(num_vars / 2)` rounds, so 64 covers
@@ -45,7 +48,7 @@ impl CanonicalBytes for DoryCommitment {
     }
 }
 
-impl ::spongefish::Encoding<[u8]> for DoryCommitment {
+impl Encoding<[u8]> for DoryCommitment {
     fn encode(&self) -> impl AsRef<[u8]> {
         ::jolt_field::narg::encode(self)
     }
@@ -57,8 +60,8 @@ impl CanonicalDecode for DoryCommitment {
     }
 }
 
-impl ::spongefish::NargDeserialize for DoryCommitment {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl NargDeserialize for DoryCommitment {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         ::jolt_field::narg::deserialize(buf)
     }
 }
@@ -214,6 +217,7 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
+    use crate::DoryScheme;
     use jolt_field::Fr;
 
     #[test]
@@ -253,7 +257,7 @@ mod tests {
             crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
         let mut prove_transcript = crate::test_support::prover(b"serde-vs");
-        crate::DoryScheme::open(
+        DoryScheme::open(
             &poly,
             &point,
             eval,

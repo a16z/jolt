@@ -1135,7 +1135,6 @@ dependencies = [
  "jolt-utils",
  "rand_core 0.6.4",
  "rayon",
- "serde",
  "thiserror 2.0.18",
 ]
 
@@ -1499,7 +1498,6 @@ dependencies = [
  "jolt-program",
  "jolt-prover",
  "jolt-sdk-macros",
- "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
  "postcard",
@@ -1573,7 +1571,6 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
- "ark-serialize",
  "bincode 2.0.1",
  "blake2 0.11.0-rc.6",
  "common",

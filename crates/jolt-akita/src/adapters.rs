@@ -34,6 +34,9 @@ use crate::one_hot_family::{
 };
 pub use crate::one_hot_family::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 use crate::schedule_registry::GroupedScheduleParams;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = JoltDenseBounded;
@@ -1067,20 +1070,20 @@ impl CommitmentHeader {
 }
 
 impl CanonicalBytes for CommitmentHeader {
-    const NUM_BYTES: usize = 1 + Self::DIGEST_BYTES + Self::WORDS * u64::NUM_BYTES;
+    const NUM_BYTES: usize = 1 + Self::DIGEST_BYTES + Self::WORDS * size_of::<u64>();
 
     fn to_bytes_le(&self, out: &mut [u8]) {
         let (tag, rest) = out.split_at_mut(1);
         tag.copy_from_slice(&[self.backend_flavor.wire_tag()]);
         let (digest, words) = rest.split_at_mut(Self::DIGEST_BYTES);
         digest.copy_from_slice(&self.layout_digest);
-        for (out, word) in words.chunks_exact_mut(u64::NUM_BYTES).zip(self.words()) {
+        for (out, word) in words.chunks_exact_mut(size_of::<u64>()).zip(self.words()) {
             (word as u64).to_bytes_le(out);
         }
     }
 }
 
-impl ::spongefish::Encoding<[u8]> for CommitmentHeader {
+impl Encoding<[u8]> for CommitmentHeader {
     fn encode(&self) -> impl AsRef<[u8]> {
         ::jolt_field::narg::encode(self)
     }
@@ -1096,7 +1099,7 @@ impl CanonicalDecode for CommitmentHeader {
         }
         let (&tag, rest) = bytes.split_first()?;
         let (digest, words) = rest.split_first_chunk::<{ Self::DIGEST_BYTES }>()?;
-        let mut words = words.chunks_exact(u64::NUM_BYTES).map(|word| {
+        let mut words = words.chunks_exact(size_of::<u64>()).map(|word| {
             let word = u64::from_le_bytes(word.try_into().ok()?);
             usize::try_from(word).ok()
         });
@@ -1117,8 +1120,8 @@ impl CanonicalDecode for CommitmentHeader {
     }
 }
 
-impl ::spongefish::NargDeserialize for CommitmentHeader {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl NargDeserialize for CommitmentHeader {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         ::jolt_field::narg::deserialize(buf)
     }
 }
@@ -1148,7 +1151,7 @@ impl CanonicalBytes for AkitaHidingCommitment {
     }
 }
 
-impl ::spongefish::Encoding<[u8]> for AkitaHidingCommitment {
+impl Encoding<[u8]> for AkitaHidingCommitment {
     fn encode(&self) -> impl AsRef<[u8]> {
         ::jolt_field::narg::encode(self)
     }
@@ -1160,8 +1163,8 @@ impl CanonicalDecode for AkitaHidingCommitment {
     }
 }
 
-impl ::spongefish::NargDeserialize for AkitaHidingCommitment {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> ::spongefish::VerificationResult<Self> {
+impl NargDeserialize for AkitaHidingCommitment {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         ::jolt_field::narg::deserialize(buf)
     }
 }

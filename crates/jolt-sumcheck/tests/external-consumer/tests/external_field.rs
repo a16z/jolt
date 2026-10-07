@@ -15,6 +15,9 @@ use jolt_sumcheck::{
 use jolt_transcript::{Channel, Keccak, ProtocolId, ProverTranscript, VerifierTranscript};
 use num_traits::{One, Zero};
 use rand_core::RngCore;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct ExternalField(Prime64Offset59);
@@ -181,7 +184,7 @@ impl CanonicalBytes for ExternalField {
     }
 }
 
-impl spongefish::Encoding<[u8]> for ExternalField {
+impl Encoding<[u8]> for ExternalField {
     fn encode(&self) -> impl AsRef<[u8]> {
         jolt_field::narg::encode(self)
     }
@@ -193,8 +196,8 @@ impl CanonicalDecode for ExternalField {
     }
 }
 
-impl spongefish::NargDeserialize for ExternalField {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+impl NargDeserialize for ExternalField {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         jolt_field::narg::deserialize(buf)
     }
 }

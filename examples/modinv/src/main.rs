@@ -1,3 +1,4 @@
+use jolt_sdk::ProtocolSponge;
 use std::time::Instant;
 use tracing::info;
 
@@ -25,7 +26,7 @@ pub fn main() {
     info!("Prover runtime: {} s", prove_time_advice.as_secs_f64());
 
     let trace_length_advice = proof_advice
-        .header::<jolt_sdk::ProtocolSponge>()
+        .header::<ProtocolSponge>()
         .expect("proof header")
         .trace_length;
 

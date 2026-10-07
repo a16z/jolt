@@ -12,6 +12,9 @@ use jolt_field::{
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 const P: u64 = (1 << 61) - 1;
 
@@ -88,7 +91,7 @@ impl CanonicalBytes for M61 {
     }
 }
 
-impl spongefish::Encoding<[u8]> for M61 {
+impl Encoding<[u8]> for M61 {
     fn encode(&self) -> impl AsRef<[u8]> {
         jolt_field::narg::encode(self)
     }
@@ -101,8 +104,8 @@ impl CanonicalDecode for M61 {
     }
 }
 
-impl spongefish::NargDeserialize for M61 {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+impl NargDeserialize for M61 {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         jolt_field::narg::deserialize(buf)
     }
 }

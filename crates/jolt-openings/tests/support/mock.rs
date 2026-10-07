@@ -6,6 +6,9 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOp
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
+use spongefish::VerificationResult;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -172,7 +175,7 @@ impl<F: JoltField> CanonicalBytes for MockHidingCommitment<F> {
     }
 }
 
-impl<F: JoltField> spongefish::Encoding<[u8]> for MockHidingCommitment<F> {
+impl<F: JoltField> Encoding<[u8]> for MockHidingCommitment<F> {
     fn encode(&self) -> impl AsRef<[u8]> {
         jolt_field::narg::encode(self)
     }
@@ -184,8 +187,8 @@ impl<F: JoltField> CanonicalDecode for MockHidingCommitment<F> {
     }
 }
 
-impl<F: JoltField> spongefish::NargDeserialize for MockHidingCommitment<F> {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> spongefish::VerificationResult<Self> {
+impl<F: JoltField> NargDeserialize for MockHidingCommitment<F> {
+    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
         jolt_field::narg::deserialize(buf)
     }
 }

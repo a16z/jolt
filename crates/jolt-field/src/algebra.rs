@@ -20,6 +20,8 @@ use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::signed::S256;
+use spongefish::Encoding;
+use spongefish::NargDeserialize;
 
 pub trait AdditiveGroup:
     Sized
@@ -256,7 +258,7 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
 ///   [`NUM_BYTES`](Self::NUM_BYTES) bytes of the unique representative.
 /// - The spongefish [`Encoding`](spongefish::Encoding) is this encoding;
 ///   implement it with [`narg::encode`].
-pub trait CanonicalBytes: spongefish::Encoding<[u8]> {
+pub trait CanonicalBytes: Encoding<[u8]> {
     /// Byte length of the fixed-size canonical encoding.
     const NUM_BYTES: usize;
 
@@ -284,7 +286,7 @@ pub trait CanonicalBytes: spongefish::Encoding<[u8]> {
 ///   [`CanonicalBytes::NUM_BYTES`], decodes to `None`.
 /// - The spongefish [`NargDeserialize`](spongefish::NargDeserialize) reads
 ///   exactly this decoding; implement it with [`narg::deserialize`].
-pub trait CanonicalDecode: CanonicalBytes + spongefish::NargDeserialize + Sized {
+pub trait CanonicalDecode: CanonicalBytes + NargDeserialize + Sized {
     /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
     /// `None` on wrong length or a non-canonical value.
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;

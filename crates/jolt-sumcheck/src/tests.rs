@@ -29,6 +29,7 @@ use crate::round_proof::{
     receive_compressed_round, receive_full_round, send_compressed_round, send_full_round,
 };
 use crate::verifier::SumcheckVerifier;
+use jolt_poly::EvaluationClaim;
 
 type F = Fr;
 type H = Blake2b512;
@@ -111,7 +112,7 @@ fn verify_single_round(
     degree: usize,
     claimed_sum: F,
     domain: CenteredIntegerDomain,
-) -> Result<jolt_poly::EvaluationClaim<F>, SumcheckError<F>> {
+) -> Result<EvaluationClaim<F>, SumcheckError<F>> {
     let mut transcript = prover(b"integer-domain");
     send_full_round(round, degree, &mut transcript).unwrap();
     let narg = transcript.finish();
