@@ -92,18 +92,29 @@ impl JoltInstructionRow {
     /// therefore decode to the same flags, whatever their address and operands.
     ///
     /// WARNING: the verifier's folded read-RAF evaluation reads each class's
-    /// flags from one row, so a flag that depended on an operand would break
-    /// soundness. Only `flag_class_determines_read_raf_flag_terms` guards this.
+    /// flags from one row, so a flag that depended on an excluded field would
+    /// break soundness. A field added to the row fails to compile here until
+    /// it is keyed or excluded; only `flag_class_determines_read_raf_flag_terms`
+    /// guards a flag starting to read the address or operands.
     pub fn flag_class(&self) -> u32 {
-        let sequence = match self.virtual_sequence_remaining {
+        // Names every field without `..`, so a new row field must be decided here.
+        let Self {
+            instruction_kind,
+            virtual_sequence_remaining,
+            is_compressed,
+            is_first_in_sequence,
+            address: _,
+            operands: _,
+        } = self;
+        let sequence = match virtual_sequence_remaining {
             None => 0,
             Some(0) => 1,
             Some(_) => 2,
         };
-        (u32::from(self.instruction_kind.tag().0) << 4)
+        (u32::from(instruction_kind.tag().0) << 4)
             | (sequence << 2)
-            | (u32::from(self.is_compressed) << 1)
-            | u32::from(self.is_first_in_sequence)
+            | (u32::from(*is_compressed) << 1)
+            | u32::from(*is_first_in_sequence)
     }
 
     /// Logical operands belonging to the field register file, including an
