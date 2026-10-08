@@ -4,8 +4,8 @@ The recursion example executes Jolt's Akita verifier as a RISC-V guest: it
 verifies an inner Akita, field-inline proof and reports the verdict. The cost of
 interest is the guest's **total trace rows**, the length an outer proof of that
 execution would have to cover, including setup and proof decoding. The working
-target is a Fibonacci inner proof below 2^26 rows; this revision is 513,456 rows
-above it (see [Measurements](#measurements)). This document records the
+target is a Fibonacci inner proof below 2^26 rows; this revision is 11,787,344
+rows above it (see [Measurements](#measurements)). This document records the
 mechanisms the guest uses, the trust they rely on, and where the rows go.
 
 Only trace execution is implemented for the Akita guest. No outer recursive
@@ -171,9 +171,9 @@ With `--embed` the host also:
 
 Fibonacci, one inner proof, `--features akita,field-inline,ntt-inline`,
 `trace --embed`, release guest, `RAYON_NUM_THREADS=1`. Each row is the
-cumulative total after its change. From the rebase onto `main` on, every row
-traces one freshly generated proof with the pinned companion; the last row is
-this revision.
+cumulative total after its change. From the rebase onto `main` through the
+fast-mem rows, every row traces one freshly generated proof with the pinned
+companion; the last row traces a fresh proof at this revision.
 
 | Build | Total rows |
 | --- | ---: |
@@ -193,13 +193,20 @@ this revision.
 | Rebase onto `main`, Akita `22530c7b`, fresh proof | 66,254,853 |
 | + direct read-RAF and digit-zero output opening sets | 65,441,486 |
 | − word-wise `memcpy`, `memset`, and `memcmp` overrides | 69,059,130 |
-| **+ inline-store limits, Blake2b word packing, word-copy `realloc`** (65,533,039 verification cycles) | **67,622,320** |
+| + inline-store limits, Blake2b word packing, word-copy `realloc` | 67,622,320 |
+| **Merge `main`: native Akita trace batching (#2012), Akita `d98400c5` (#175), fresh proof** (76,805,832 verification cycles) | **78,896,208** |
 
 The first row was rebuilt and re-measured from its archived sources and
 reproduces its recorded numbers exactly. Input mode, which reads the setup
-from the guest input, accepts at 74,982,115 rows. A proof with one bit flipped
-in its Akita opening proof is rejected after 48,888,406 rows, inside the PCS
+from the guest input, accepts at 86,254,204 rows. A proof with one bit flipped
+in its Akita opening proof is rejected after 60,145,138 rows, inside the PCS
 verifier.
+
+The merge's increase is inside the Akita trace-batch opening
+(`verify_trace_batch`, 56.07M to 67.86M rows), almost all of it in the root
+fold (`verify_root`, 14.56M to 24.46M rows): its relation-matrix evaluation
+and direct setup-contribution scan run over the natively batched trace
+columns. The terminal checks are unchanged.
 
 ## Levers not taken here
 
