@@ -41,7 +41,9 @@ jobs:
         with:
           components: clippy
       - name: Install nextest
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       # The Linux workspace jobs build only the uninhabited backend; this is
       # the one CI build of the Objective-C backend.
       - name: Lint the macOS backend
