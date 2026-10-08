@@ -64,21 +64,21 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
             // write(2) to stdout or stderr: route the bytes to the host console,
             // so std guests' `println!` and panic messages reach the tracer
             // instead of failing with ENOSYS and aborting silently. Without the
-            // `stdout` feature ZeroOS has no console; with it, writing the bytes
-            // directly is equivalent and skips the VFS.
+            // `stdout` feature ZeroOS has no console; with it, this takes the
+            // console's path (one host call per write, keeping multi-byte UTF-8
+            // intact) and skips the VFS. Descriptors 1 and 2 always reach the
+            // host, even if the guest closed or redirected them.
             if (*regs).a7 == SYS_WRITE && ((*regs).a0 == 1 || (*regs).a0 == 2) {
-                if (*regs).a2 != 0 {
-                    let bytes = core::slice::from_raw_parts((*regs).a1 as *const u8, (*regs).a2);
-                    for &byte in bytes {
-                        jolt_platform::putchar(byte);
-                    }
-                }
+                super::__platform_stdout_write((*regs).a1 as *const u8, (*regs).a2);
                 (*regs).a0 = (*regs).a2;
                 return;
             }
-            // clock_gettime(2): the zkVM has no clock, so report a zero
-            // timespec rather than ENOSYS; std's `Instant::now` aborts on
-            // failure, and verifier code may take timestamps for diagnostics.
+            // clock_gettime(2): the zkVM has no clock, so every clock reads as
+            // a zero timespec rather than failing with ENOSYS; std's
+            // `Instant::now` aborts on failure, and verifier code may take
+            // timestamps for diagnostics. A fixed value also keeps execution
+            // deterministic. Documented for guest authors under "Time" in
+            // book/src/usage/guests_hosts/guests.md.
             if (*regs).a7 == SYS_CLOCK_GETTIME {
                 let ts = (*regs).a1 as *mut u64;
                 if !ts.is_null() {
