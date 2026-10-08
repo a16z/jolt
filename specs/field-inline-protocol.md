@@ -757,7 +757,7 @@ openings and field-inline openings in one RLC.
 Target module:
 
 ```text
-crates/jolt-r1cs/src/constraints/
+crates/jolt-claims/src/protocols/composed/r1cs/
   mod.rs
   rv64.rs
   field_constraints.rs
@@ -858,7 +858,7 @@ immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(imm, F)) = 0
 ```
 
-Conversion semantics (`jolt-r1cs` `constraints::field_constraints`): each
+Conversion semantics (`jolt-claims::protocols::composed::r1cs::field_constraints`): each
 bridge transfers one 64-bit limb on the x-register side. Ingress reads the
 old destination through `FieldRs1Value` and updates it to
 `old_destination * 2^64 + limb` in the proof field. Start a new value with
@@ -1044,7 +1044,7 @@ jolt-claims::protocols::field_inline:
 jolt-claims::protocols::composed:
   selected opening carriers, symbolic relations, and product geometry
 
-jolt-r1cs::constraints::jolt:
+jolt-claims::protocols::composed::r1cs:
   selected R1CS column layout and constraint coefficients
 
 jolt-verifier::stages::stage1:
@@ -1054,9 +1054,9 @@ jolt-verifier::stages::stage1:
 The protocol families expose their own Spartan openings. The sibling
 `composed` module appends field-inline openings after the ordinary RV64
 openings when field inline is enabled and defines the symbolic relation over
-the combined claims. `jolt-claims` depends on neither `jolt-r1cs` nor
-`jolt-verifier`; concrete verification supplies R1CS coefficients to the
-symbolic relation.
+the combined claims. `jolt-claims` builds the R1CS with `jolt-r1cs` and never
+depends on `jolt-verifier`; concrete verification
+supplies R1CS coefficients to the symbolic relation.
 
 The selected R1CS layout uses the ordinary RV64 `Rs1Value`, `RdWriteValue`,
 `Imm`, and `OpFlags(CircuitFlags::Field*)` columns directly. Their openings
@@ -1073,7 +1073,7 @@ FieldInvProduct
 
 `jolt-verifier` evaluates the selected Spartan outer symbolic relation using
 the selected equality constraints, row weights, and opening columns from
-`jolt-r1cs::constraints::jolt`. Without field inline, the composed relation
+`jolt-claims::protocols::composed::r1cs`. Without field inline, the composed relation
 reduces to the ordinary RV64 relation.
 
 This stage-1 change must land for both verifier modes:
@@ -1339,9 +1339,10 @@ protocols::field_inline::formulas::claim_reductions::increments::claim_reduction
 protocols::field_inline::formulas::claim_reductions::increments::claim_reduction_output_openings()
 ```
 
-`jolt-claims` should stay focused on these claim formulas and opening helpers.
-`field_constraints` and bridge constraints live in
-`jolt-r1cs::constraints::field_constraints`. The `jolt-claims` surface should
+`jolt-claims` owns these claim formulas and opening helpers, with protocol-owned
+field and bridge constraints in
+`jolt-claims::protocols::composed::r1cs::field_constraints`. Generic R1CS builders and
+sparse matrices remain in `jolt-r1cs`. The field-inline formula surface should
 stay as close as possible to the ordinary-register formula pattern.
 
 ## Transcript And Optionality
@@ -1410,7 +1411,7 @@ Each step should be reviewed before continuing to the next.
      evaluation.
 
 4. Add `field_constraints`.
-   - Implement `jolt-r1cs::constraints::field_constraints`.
+   - Implement `jolt-claims::protocols::composed::r1cs::field_constraints`.
    - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, ASSERT_ZERO, and bridge rows.
    - Review gate: constraint tests prove native-field arithmetic and reject bad
      FieldProduct witnesses.
@@ -1432,7 +1433,7 @@ Each step should be reviewed before continuing to the next.
      compile-time verifier config before any stage logic runs.
    - Commitment absorption: absorb the nested FieldRegisters commitment,
      currently `FieldRdInc`, only when field inline is enabled.
-   - Selected R1CS composition: add `jolt-r1cs::constraints::jolt` so the
+   - Selected R1CS composition: add `jolt-claims::protocols::composed::r1cs` so the
      compile-time selected R1CS is RV64 alone when field-inline is off and RV64 plus
      field-inline rows when field-inline is on. The composition keeps protocol semantics
      separate and performs the mixing only in the selected R1CS layout: it

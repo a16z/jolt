@@ -2,15 +2,121 @@
 
 pub mod support;
 
-use jolt_akita::{AkitaCommitment, AkitaNativeBatching, AkitaProverHint, AkitaScheme};
-use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, OpeningsError, VerifierOpeningClaim,
+use std::sync::Arc;
+
+use akita_params::PolynomialGroupLayout;
+use jolt_akita::{
+    AkitaCommitment, AkitaNativeBatching, AkitaProverHint, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaSetupParams, GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
 };
+use jolt_openings::{
+    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError,
+    VerifierOpeningClaim,
+};
+use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{
     batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
     single_statement,
 };
+
+struct TraceRows {
+    indices: Vec<[u8; 2]>,
+}
+
+impl TraceOneHotRows for TraceRows {
+    fn num_rows(&self) -> usize {
+        self.indices.len()
+    }
+
+    fn num_columns(&self) -> usize {
+        2
+    }
+
+    fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
+        selected_rows.copy_from_slice(&self.indices[row]);
+    }
+
+    fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
+        2
+    }
+}
+
+#[test]
+fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
+    const NUM_VARS: usize = 16;
+    let (prover_setup, verifier_setup) =
+        AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
+            NUM_VARS,
+            2,
+            2,
+            layout(7),
+            AKITA_ONE_HOT_K16,
+            Some(GroupedScheduleParams::new(
+                None,
+                None,
+                Vec::new(),
+                PolynomialGroupLayout::new(NUM_VARS, 2),
+            )),
+            AkitaScheduleArtifacts::shared_from_default_directory(),
+        ))
+        .expect("streamed trace setup should build");
+    let indices: Vec<_> = (0..1 << (NUM_VARS - 4))
+        .map(|row| [(row % 16) as u8, ((row * 3 + 1) % 16) as u8])
+        .collect();
+    let point: Vec<_> = (0..NUM_VARS).map(|index| f(2 + 3 * index as u64)).collect();
+    let evaluations = (0..2)
+        .map(|column| {
+            let polynomial = OneHotPolynomial::new(
+                AKITA_ONE_HOT_K16,
+                indices
+                    .iter()
+                    .map(|row| (row[column] != 0 || column == 1).then_some(row[column]))
+                    .collect(),
+            );
+            polynomial.evaluate(&point)
+        })
+        .collect::<Vec<_>>();
+    assert_ne!(evaluations[0], evaluations[1]);
+    let (commitment, hint) = AkitaScheme::commit_trace_one_hot(
+        &prover_setup,
+        layout(7),
+        Arc::new(TraceRows { indices }),
+        &[],
+    )
+    .expect("streamed trace group should commit");
+    let mut statement = GroupOpeningClaim::new(commitment, point, evaluations);
+    let mut prover_transcript = Blake2bTranscript::new(b"akita-streamed-tamper");
+    let proof = AkitaScheme::prove_batch(
+        &prover_setup,
+        Vec::new(),
+        statement.clone(),
+        hint,
+        &mut prover_transcript,
+    )
+    .expect("streamed trace batch should prove");
+    let mut verifier_transcript = Blake2bTranscript::new(b"akita-streamed-tamper");
+    AkitaScheme::verify_batch(
+        &verifier_setup,
+        &[],
+        &statement,
+        &proof,
+        &mut verifier_transcript,
+    )
+    .expect("original streamed trace evaluations must verify");
+    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+
+    statement.evaluations.swap(0, 1);
+    let mut verifier_transcript = Blake2bTranscript::new(b"akita-streamed-tamper");
+    assert!(AkitaScheme::verify_batch(
+        &verifier_setup,
+        &[],
+        &statement,
+        &proof,
+        &mut verifier_transcript,
+    )
+    .is_err());
+}
 
 #[test]
 fn akita_native_batching_roundtrips_grouped_commitment() {
@@ -208,6 +314,18 @@ fn akita_native_batching_rejects_tampered_verifier_inputs() {
     )
     .expect("black-box proof should be produced");
 
+    let mut verifier_transcript = Blake2bTranscript::new(b"akita-bb-tamper");
+    <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+        &verifier_setup,
+        &statement,
+        &proof,
+        &mut verifier_transcript,
+    )
+    .expect("original ordered evaluations must verify");
+    assert_ne!(eval_a, eval_b);
+    let swapped_values = native_statement(commitment.clone(), &point, [eval_b, eval_a]);
+    assert_native_verify_rejects(&verifier_setup, swapped_values, &proof);
+
     let mut tampered_value = statement.clone();
     tampered_value[0].evaluation.value += f(1);
     assert_native_verify_rejects(&verifier_setup, tampered_value, &proof);
@@ -302,7 +420,6 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     )
     .expect("proof should be produced");
 
-    // A 14-variable commitment against a 15-variable verifier setup.
     let (_, wider_verifier) = setup_for(15, 2, layout(7));
     let mut transcript = Blake2bTranscript::new(b"akita-bb-cross-setup");
     expect_invalid_batch(
@@ -315,7 +432,6 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
         "does not match exact setup dimension",
     );
 
-    // A two-polynomial group against a verifier setup capped at one slot.
     let (two_slot_setup, _) = native_setup();
     let poly_a = polynomial(16, 1);
     let poly_b = polynomial(16, 20);
@@ -353,8 +469,6 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     );
 }
 
-/// A dense-flavor commitment claiming a one-hot chunk size is internally
-/// inconsistent and must be rejected before any backend work.
 #[test]
 fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
     let (prover_setup, verifier_setup) = native_setup();
@@ -399,9 +513,6 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
 /// prover dense witnesses for such a hint must reject.
 #[test]
 fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
-    use jolt_akita::{AkitaScheduleArtifacts, AkitaSetupParams, AKITA_ONE_HOT_K16};
-    use jolt_poly::OneHotPolynomial;
-
     let (one_hot_setup, _) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
         12,
         1,

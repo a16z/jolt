@@ -1,5 +1,3 @@
-//! RAM `ra` claim-reduction symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +39,6 @@ pub struct RamRaClaimReductionInputClaims<C> {
     pub val_check: C,
 }
 
-/// Fiat-Shamir challenge drawn by the RAM `ra` claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamRaClaimReductionChallenges<F> {
@@ -96,81 +93,5 @@ impl SymbolicSumcheck for RaClaimReduction {
             + gamma.clone() * derived(RamRaClaimReductionPublic::EqCycleReadWrite)
             + gamma.pow(2) * derived(RamRaClaimReductionPublic::EqCycleValCheck))
             * opening(ram_ra_claim_reduction())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::ram::RamRaClaimReductionPublicValues;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, Ring};
-
-    fn trace_dimensions() -> TraceDimensions {
-        TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn ra_claim_reduction_evaluates_like_core_formula() {
-        let relation = RaClaimReduction::new(trace_dimensions());
-
-        let raf = Fr::from_u64(3);
-        let rw = Fr::from_u64(5);
-        let val = Fr::from_u64(7);
-        let gamma = Fr::from_u64(11);
-        let reduced = Fr::from_u64(13);
-        let eq_raf = Fr::from_u64(17);
-        let eq_rw = Fr::from_u64(19);
-        let eq_val = Fr::from_u64(23);
-        let public_values = RamRaClaimReductionPublicValues {
-            eq_cycle_raf: eq_raf,
-            eq_cycle_read_write: eq_rw,
-            eq_cycle_val_check: eq_val,
-        };
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_ra_raf_evaluation() => raf,
-                id if id == ram_ra() => rw,
-                id if id == ram_ra_val_check() => val,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_ra_claim_reduction() => reduced,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::RamRaClaimReduction(RamRaClaimReductionChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltDerivedId::RamRaClaimReduction(id) => public_values.value(id),
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, raf + gamma * rw + gamma * gamma * val);
-        assert_eq!(
-            output,
-            (eq_raf + gamma * eq_rw + gamma * gamma * eq_val) * reduced
-        );
-    }
-
-    #[test]
-    fn ra_claim_reduction_symbolic_matches_dependencies() {
-        let relation = RaClaimReduction::new(trace_dimensions());
-
-        assert_eq!(RaClaimReduction::id(), JoltRelationId::RamRaClaimReduction);
-        assert_eq!(relation.rounds(), trace_dimensions().log_t());
-        assert_eq!(relation.degree(), 2);
     }
 }

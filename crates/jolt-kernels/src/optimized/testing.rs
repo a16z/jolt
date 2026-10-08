@@ -36,7 +36,6 @@ use crate::{ProverInputs, SumcheckKernel};
 /// and termination (1) words; scripts should use words `>= 2`.
 pub(crate) const TERMINATION_WORD: u64 = 1;
 
-/// The fixture's word 0 lives at this byte address (the layout's lowest).
 const BASE_ADDRESS: u64 = 0x1000;
 
 /// The fixture layout's lowest mapped address (word 0), as the RAF
@@ -165,7 +164,6 @@ pub(crate) fn with_ram_fixture_init<R>(
             post: 1,
         });
     }
-    // Build RAM traffic as valid final LD/SD rows.
     let mut rd_value = 0;
     let rows: Vec<TraceRow> = script
         .into_iter()
@@ -245,7 +243,6 @@ pub(crate) fn with_ram_fixture_init<R>(
     f(&backend)
 }
 
-/// Deterministic scalars for fixture points and challenges.
 pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
     let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed);
     (0..count).map(|_| Fr::random(&mut rng)).collect()

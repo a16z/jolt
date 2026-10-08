@@ -1,6 +1,6 @@
-# Optimal committed-data form for the packed (Akita) path
+# Historical investigation: optimal Akita committed-data form
 
-> **Status 2026-07-16**: superseded in part by the #1683 distillation
+> **Historical status 2026-07-16**: superseded in part by the #1683 distillation
 > (`specs/akita-1683-distillation.md`): OneHotTrace now commits as the native
 > one-hot group and opens at one common point (no packed union, no
 > reduction sumcheck), K=16 below 2^25 with jolt-owned schedule catalogs.
@@ -277,38 +277,47 @@ item** (unit-norm preset + narrow-CRT bit kernel + schedule regen); Phase 4
 is jolt plumbing over existing upstream APIs. NEON and the fusion preset
 remain akita-side fallback tracks.
 
-## Current state and code map (for the cleanup phase)
+## Current state and code map
 
-The measurements above describe the earlier grouped-member design. The current
-protocol supersedes it: `OneHotTrace` is one fixed-capacity prefix-packed
-physical polynomial in `(slot || cycle || address)` order. Logical address row
-zero is public and omitted from the witness; Stage 7 recenters each semantic
-claim around that row. Stage 8 samples the slot selector only after binding
-the common point and all semantic evaluations, then opens the one physical
-polynomial directly.
+The measurements and proposals above describe historical formats. The current
+protocol is specified in [Akita Native Trace Batching](akita-native-trace-batching.md).
+`OneHotTrace` is one native commitment group containing the actual trace columns,
+with each polynomial in `(cycle || address)` order. There are no selector slots
+or selector challenge for the trace. Instruction, bytecode, digit, and carry
+columns omit the public digit-zero row; Stage 7 recenters their semantic claims
+around that row. RAM columns retain digit zero on cycles with a remappable RAM
+access.
+Stage 8 binds the common point and ordered evaluations, then passes those claims
+to Akita's native batch opening.
 
-Advice objects use the same fixed-prefix API as singleton dense word objects.
-Committed programs use one direct bounded-dense `BytecodeChunk(i)` object per
-chunk plus one direct `ProgramImageInit` object. Each logical polynomial is
-zero-prefix embedded only to Akita's physical arity floor. These objects join
-`OneHotTrace` in one role-bound grouped opening; no reconstruction sumcheck or
-separate auxiliary proof path remains.
+Advice objects retain singleton dense prefix layouts. Committed programs use one
+direct bounded-dense `BytecodeChunk(i)` object per chunk plus one direct
+`ProgramImageInit` object. Each auxiliary logical polynomial is zero-prefix
+embedded only to Akita's physical arity floor. These objects join the native trace
+group in one role-bound opening. Field-inline additionally contributes one
+full-width field-register increment group.
+
+Production traces use K=16, actual widths 51–64, and column arities 16–34.
+K=256 native trace rows cover explicit adapter, benchmark, and override fixtures.
+Single, W2R2, W4R2, and W8R2 profiles preserve first-fold cycle locality; later
+recursive ownership alignment remains tracked by Akita #175.
 
 | piece | where |
 |---|---|
 | compact-source column assembly (`assemble_one_hot_trace_rows`) | `crates/jolt-prover/src/akita/witness.rs` |
-| prove pipeline (one grouped opening over OneHotTrace and all precommitted objects) | `crates/jolt-prover/src/akita/` |
-| layout and point mapping (`address‖cycle` → `cycle‖address`) | `crates/jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
-| fixed-capacity prefix selector reduction (`PrefixPackedLayout`) | `crates/jolt-openings/src/prefix.rs` |
-| owned backend adapter (`commit_one_hot_group_owned`, `open_one_hot_group_from_hint`) | `crates/jolt-akita/src/{scheme,adapters}.rs` |
-| verifier mirror | `crates/jolt-verifier/src/stages/stage8/packed.rs` |
-| flavor/measurement bench (`flavor_bench`, `BENCH_*` env knobs) | `crates/jolt-akita/src/scheme.rs` |
-| packed config (`K=16` or `K=256`, selected like Dory) | `crates/jolt-prover/src/config.rs`, `crates/jolt-prover/src/akita/` |
+| native trace kernels and shared row traversal | `crates/jolt-akita/src/trace_onehot/` |
+| prove pipeline (one batch over the native trace group and precommitted objects) | `crates/jolt-prover/src/akita/` |
+| ordered trace columns and point mapping (`address‖cycle` → `cycle‖address`) | `crates/jolt-claims/src/protocols/jolt/lattice/strategy.rs` |
+| auxiliary prefix layouts (`PrefixPackedObjectPlan`) | `crates/jolt-claims/src/protocols/jolt/lattice/packing.rs` |
+| backend group commit and batch opening | `crates/jolt-akita/src/{scheme,native_batching}.rs` |
+| verifier mirror | `crates/jolt-verifier/src/stages/stage8/akita.rs` |
+| profile harness | `crates/jolt-prover/src/profile.rs` |
+| Akita configuration and frozen schedule catalogs | `crates/jolt-prover/src/config.rs`, `crates/jolt-akita/src/{configs,schedule_registry}.rs` |
 
-The workspace pins the `akita-*` crates to revision `2322d485` in the root
-`Cargo.toml`.
+The workspace pins the `akita-*` crates to revision `83574331d4e51f8cce1d8689d05592fa4ef4c138`
+in the root `Cargo.toml`.
 
-## Status (2026-07-14): paused at the decision gate
+## Historical status (2026-07-14): paused at the decision gate
 
 Optimization is paused with the state at ~17 s (1.27× dory). The cheap
 jolt-side knobs are exhausted (see the floor table); what remains is:
@@ -325,10 +334,11 @@ jolt-side knobs are exhausted (see the floor table); what remains is:
    existed, and the next format (bit-planes) is on the table, so the
    abstraction should make strategy changes cheap.
 
-## Engineering debt tracked for future PRs
+## Historical engineering debt (2026-07-14)
 
-Identified during the 2026-07-14 simplification pass; each is a
-self-contained PR candidate.
+Identified during the 2026-07-14 simplification pass. The legacy prover and
+`AkitaPackedScheme` mentioned below have since been removed; these notes describe
+the old implementation, not the current native batching pipeline.
 
 1. **Narrow the legacy prover's PCS bounds.** `JoltCpuProver` and its main
    impl demand `StreamingCommitmentScheme + ZkEvalCommitment` for

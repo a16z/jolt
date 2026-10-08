@@ -10,10 +10,8 @@ use crate::WitnessError;
 /// Total, and total on purpose: a row whose instruction has no bytecode
 /// mapping cannot be materialized (`BytecodePreprocessing::get_pc` returning
 /// `None` is a hard trace error), and every no-op already sits on slot 0, so
-/// there is no cold cycle for this column to represent. The two conventions
-/// this used to be split across — `BytecodePc`, which zeroed no-op rows, and
-/// `MappedPc`, which did not — were the same value on every row. See
-/// `jolt-program`'s `noop_maps_to_bytecode_slot_zero`.
+/// there is no cold cycle for this column to represent. See `jolt-program`'s
+/// `noop_maps_to_bytecode_slot_zero`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BytecodePc(pub usize);
 

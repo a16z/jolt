@@ -72,7 +72,6 @@ impl MemoryPlane {
         unsafe { core::slice::from_raw_parts(self.base, self.size) }.to_vec()
     }
 
-    /// Restore a previously captured image (same size by construction).
     pub fn restore(&mut self, image: &[u8]) {
         let len = image.len().min(self.size);
         // SAFETY: len <= self.size, and image is a distinct allocation.

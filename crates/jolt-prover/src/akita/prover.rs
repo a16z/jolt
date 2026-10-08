@@ -1,6 +1,6 @@
-//! The packed top-level prover: the stage recipes run in protocol order on
+//! The Akita top-level prover: the stage recipes run in protocol order on
 //! one transcript and one backend session, and their wire outputs assemble
-//! into the packed-envelope [`JoltProof`].
+//! into the Akita-envelope [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
@@ -49,7 +49,7 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
-    // The packed path is transparent-only (`akita` and `zk` are mutually
+    // The Akita path is transparent-only (`akita` and `zk` are mutually
     // exclusive), so the mode context carries nothing; the shared stage
     // recipes still thread it to mint their clear recorders.
     let mode = ProofMode::<VC>::new(None)?;
@@ -191,6 +191,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage8", log_t, &session, &());
+    jolt_kernels::mem::drop_in_background_thread(session);
 
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),

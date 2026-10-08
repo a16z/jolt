@@ -87,10 +87,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote!(#(#impls)*))
 }
 
-/// Parse the serde-style `#[kernel_slots(crate = "...")]` override: a string
-/// literal holding the path the emitted impls name `jolt-kernels` by
-/// (`"crate"` in the defining crate). `None` means the absolute
-/// `::jolt_kernels` default.
 fn crate_path(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Path>> {
     let mut krate = None;
     for attr in attrs {
@@ -129,10 +125,6 @@ fn crate_path(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Path>> {
     Ok(krate)
 }
 
-/// If `ty` is syntactically `Box<dyn PrepareKernel<F, R>>` — a `Box` path with
-/// one type argument that is a trait object with the single bound
-/// `PrepareKernel<F, R>` (matched by its final path segment, with exactly two
-/// type arguments) — return `(F, R)`.
 fn prepare_kernel_args(ty: &Type) -> Option<(&Type, &Type)> {
     let Type::Path(path) = ty else {
         return None;

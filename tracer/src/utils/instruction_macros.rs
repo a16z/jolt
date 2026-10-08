@@ -17,7 +17,6 @@ macro_rules! declare_riscv_instr {
             pub operands: $format,
             pub virtual_sequence_remaining: Option<u16>,
             pub is_first_in_sequence: bool,
-            /// Set if instruction is C-Type
             pub is_compressed: bool,
         }
 

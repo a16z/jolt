@@ -1,5 +1,3 @@
-//! RAM virtual polynomials and memory-state reconstruction.
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

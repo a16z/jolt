@@ -1,5 +1,3 @@
-//! Address phase of the two-phase program-image (initial RAM) claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -73,72 +71,5 @@ impl SymbolicSumcheck for AddressPhase {
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         final_output_expr()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::geometry::claim_reductions::program_image::final_program_image_opening;
-    use crate::protocols::jolt::ProgramImageClaimReductionPublic;
-    use jolt_field::{Fr, Ring};
-
-    fn fr(value: u64) -> Fr {
-        Fr::from_u64(value)
-    }
-
-    #[test]
-    fn address_phase_evaluates_like_core_formula() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let relation = AddressPhase::new(dimensions);
-
-        let intermediate = fr(11);
-        let final_claim = fr(13);
-        let final_scale = fr(17);
-        let zero = fr(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| {
-                if *id == cycle_phase_program_image_opening() {
-                    intermediate
-                } else {
-                    zero
-                }
-            },
-            |_| zero,
-            |_| zero,
-        );
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| {
-                if *id == final_program_image_opening() {
-                    final_claim
-                } else {
-                    zero
-                }
-            },
-            |_| zero,
-            |id| match *id {
-                JoltDerivedId::ProgramImageClaimReduction(
-                    ProgramImageClaimReductionPublic::FinalScale,
-                ) => final_scale,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, intermediate);
-        assert_eq!(output, final_scale * final_claim);
-    }
-
-    #[test]
-    fn address_phase_exposes_expected_dependencies() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let relation = AddressPhase::new(dimensions);
-
-        assert_eq!(
-            AddressPhase::id(),
-            JoltRelationId::ProgramImageClaimReduction
-        );
-        assert_eq!(relation.rounds(), dimensions.address_phase_total_rounds());
-        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
     }
 }

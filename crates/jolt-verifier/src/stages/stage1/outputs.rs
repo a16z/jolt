@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 1 verification.
-
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
@@ -18,7 +16,6 @@ pub struct Stage1OutputClaims<F: JoltField> {
 }
 
 impl<F: JoltField> Stage1OutputClaims<F> {
-    /// Construct the stage-1 claims from the uni-skip and remainder outputs.
     pub fn new(uniskip_output_claim: F, outer: Stage1BatchOutputClaims<F>) -> Self {
         Self {
             uniskip_output_claim,

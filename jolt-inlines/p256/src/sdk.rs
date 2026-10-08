@@ -39,14 +39,12 @@ fn is_non_canonical(x: &[u64; 4], modulus: &[u64; 4]) -> bool {
     x[0] >= modulus[0]
 }
 
-/// Add with carry: a + b + carry_in -> (sum, carry_out)
 #[inline(always)]
 const fn adc(a: u64, b: u64, carry: u64) -> (u64, u64) {
     let wide = a as u128 + b as u128 + carry as u128;
     (wide as u64, (wide >> 64) as u64)
 }
 
-/// Subtract with borrow: a - b - borrow_in -> (diff, borrow_out)
 #[inline(always)]
 const fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
     let wide = (a as u128)
@@ -63,7 +61,6 @@ fn add_mod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     let (r2, c) = adc(a[2], b[2], c);
     let (r3, c) = adc(a[3], b[3], c);
 
-    // Try subtracting modulus; if underflow we keep the original sum
     let (s0, bw) = sbb(r0, modulus[0], 0);
     let (s1, bw) = sbb(r1, modulus[1], bw);
     let (s2, bw) = sbb(r2, modulus[2], bw);
@@ -88,7 +85,6 @@ fn sub_mod(a: &[u64; 4], b: &[u64; 4], modulus: &[u64; 4]) -> [u64; 4] {
     let (r2, bw) = sbb(a[2], b[2], bw);
     let (r3, bw) = sbb(a[3], b[3], bw);
 
-    // If there was a borrow, add modulus back
     if bw != 0 {
         let (s0, c) = adc(r0, modulus[0], 0);
         let (s1, c) = adc(r1, modulus[1], c);
@@ -145,16 +141,15 @@ fn bytes_to_limbs(bytes: &[u8; 32]) -> [u64; 4] {
     limbs
 }
 
-/// Error types for P-256 operations.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum P256Error {
-    InvalidFqElement, // input array does not correspond to a valid Fq element
-    InvalidFrElement, // input array does not correspond to a valid Fr element
-    NotOnCurve,       // point is not on the P-256 curve
-    QAtInfinity,      // public key is point at infinity
-    ROrSZero,         // one of the signature components is zero
+    InvalidFqElement,
+    InvalidFrElement,
+    NotOnCurve,
+    QAtInfinity,
+    ROrSZero,
     ZeroMessageHash,
-    RxMismatch,              // computed R.x does not match r
+    RxMismatch,
     InvalidGlvSignWord(u64), // GLV sign word is not 0 or 1
 }
 
@@ -168,9 +163,6 @@ fn decode_glv_sign_word(w: u64) -> Result<bool, P256Error> {
     jolt_inlines_sdk::decode_sign_word(w).ok_or(P256Error::InvalidGlvSignWord(w))
 }
 
-/// Configuration trait that captures the differences between the P-256 base
-/// field (Fq) and scalar field (Fr).  All shared arithmetic lives on the
-/// generic `P256Field<C>` impl.
 pub trait P256FieldConfig: Clone + 'static {
     const MODULUS: [u64; 4];
     const MUL_FUNCT3: u32;
@@ -263,7 +255,6 @@ impl<C: P256FieldConfig> P256Field<C> {
         Self::from_u64_arr(&limbs)
     }
 
-    /// Returns the additive identity element (0).
     #[inline(always)]
     pub fn zero() -> Self {
         Self {
@@ -272,7 +263,6 @@ impl<C: P256FieldConfig> P256Field<C> {
         }
     }
 
-    /// Returns true if the element is zero.
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
         self.e == [0u64; 4]
@@ -635,7 +625,6 @@ impl CurveParams<P256Fq> for P256Curve {
     type Error = P256Error;
 
     fn curve_a() -> Option<P256Fq> {
-        // a = p - 3
         Some(P256Fq::from_u64_arr_unchecked(&[
             0xFFFF_FFFF_FFFF_FFFC,
             0x0000_0000_FFFF_FFFF,
@@ -657,7 +646,6 @@ impl CurveParams<P256Fq> for P256Curve {
 /// is_on_curve) is provided by `AffinePoint` in `jolt-inlines-sdk`.
 pub type P256Point = AffinePoint<P256Fq, P256Curve>;
 
-/// Extension trait for P-256-specific point operations.
 pub trait P256PointExt {
     fn generator() -> P256Point;
 }
@@ -677,14 +665,11 @@ impl P256PointExt for P256Point {
 // Reference: "Fake GLV: You don't need an efficient endomorphism to implement
 // GLV-like scalar multiplication in SNARK circuits" (Latincrypt 2025)
 
-/// Call the Fake GLV advice inline to get R = s*P and half-GCD decomposition.
-/// Returns (R, a_lo, a_hi, a_sign, b_lo, b_hi, b_sign).
 #[cfg(all(
     not(feature = "host"),
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u128, bool) {
-    // Output buffer: 14 u64 values
     let mut out = [0u64; 14];
     let s_arr = s.e();
     let p_arr = p.to_u64_arr();
@@ -719,7 +704,6 @@ fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u12
     use ark_ff::{BigInt, PrimeField};
     use num_bigint::BigInt as NBigInt;
 
-    // Compute R = s * P using arkworks
     use ark_ec::CurveGroup;
     use ark_secp256r1::{Affine, Fq, Fr, Projective};
     let s_fr = Fr::new(BigInt(s.e()));
@@ -731,7 +715,6 @@ fn fake_glv_scalar_mul(s: &P256Fr, p: &P256Point) -> (P256Point, u128, bool, u12
         rx[0], rx[1], rx[2], rx[3], ry[0], ry[1], ry[2], ry[3],
     ]);
 
-    // Half-GCD decomposition via shared module
     let s_big: NBigInt = Fr::new(BigInt(s.e())).into_bigint().into();
     let (a_val, a_sign, b_val, b_sign) = crate::fake_glv::decompose_to_u128s(&s_big);
     (r_point, a_val, a_sign, b_val, b_sign)
@@ -803,7 +786,6 @@ fn shamir_2x128(scalars: [u128; 2], points: [P256Point; 2]) -> P256Point {
 /// All inputs are validated internally — no caller-side validation is required.
 #[inline(always)]
 pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(), P256Error> {
-    // Validate scalar field ranges: z, r, s must be in [0, n)
     if is_non_canonical(&z.e(), &P256_ORDER) {
         return Err(P256Error::InvalidFrElement);
     }
@@ -813,18 +795,15 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
     if is_non_canonical(&s.e(), &P256_ORDER) {
         return Err(P256Error::InvalidFrElement);
     }
-    // Validate base field ranges: q.x, q.y must be in [0, p)
     if is_non_canonical(&q.x().e(), &P256_MODULUS) {
         return Err(P256Error::InvalidFqElement);
     }
     if is_non_canonical(&q.y().e(), &P256_MODULUS) {
         return Err(P256Error::InvalidFqElement);
     }
-    // Validate q is on the curve
     if !q.is_on_curve() {
         return Err(P256Error::NotOnCurve);
     }
-    // Check that q is not infinity
     if q.is_infinity() {
         return Err(P256Error::QAtInfinity);
     }
@@ -835,15 +814,12 @@ pub fn ecdsa_verify(z: P256Fr, r: P256Fr, s: P256Fr, q: P256Point) -> Result<(),
         return Err(P256Error::ZeroMessageHash);
     }
 
-    // Step 1: Compute u1 = z/s, u2 = r/s
     let u1 = z.div_assume_nonzero(&s);
     let u2 = r.div_assume_nonzero(&s);
 
-    // Step 2: Get R1 = u1*G and decomposition via Fake GLV advice
     let g = P256Point::generator();
     let (r1, a1_val, a1_sign, b1_val, b1_sign) = fake_glv_scalar_mul(&u1, &g);
 
-    // Step 3: Get R2 = u2*Q and decomposition via Fake GLV advice
     let (r2, a2_val, a2_sign, b2_val, b2_sign) = fake_glv_scalar_mul(&u2, &q);
 
     verify_ecdsa_inner(
@@ -874,7 +850,21 @@ pub(crate) fn verify_ecdsa_inner(
 ) -> Result<(), P256Error> {
     let g = P256Point::generator();
 
-    // Step 4: Verify R1, R2 are on curve
+    // R1/R2 limbs are prover-supplied fake-GLV advice (VIRTUAL_ADVICE range
+    // checks only). Non-canonical limbs pass `is_on_curve` because the
+    // mul/square inlines are residue-correct, but they violate the canonical
+    // operand contract of add_mod/sub_mod and the raw-limb branch selection in
+    // `AffinePoint::add`: an x-limb shifted by p degenerates the final
+    // `r1.add(&r2)` slope division to 0/0, handing the prover a free slope
+    // and with it the ECDSA result.
+    if is_non_canonical(&r1.x().e(), &P256_MODULUS)
+        || is_non_canonical(&r1.y().e(), &P256_MODULUS)
+        || is_non_canonical(&r2.x().e(), &P256_MODULUS)
+        || is_non_canonical(&r2.y().e(), &P256_MODULUS)
+    {
+        spoil_proof();
+    }
+
     if !r1.is_on_curve() {
         spoil_proof();
     }
@@ -882,8 +872,6 @@ pub(crate) fn verify_ecdsa_inner(
         spoil_proof();
     }
 
-    // Step 5: Verify decompositions: b_i * u_i = a_i (mod n)
-    // Construct a_i and b_i as P256Fr elements
     let make_fr = |val: u128, sign: bool| -> P256Fr {
         let lo = val as u64;
         let hi = (val >> 64) as u64;
@@ -899,12 +887,10 @@ pub(crate) fn verify_ecdsa_inner(
     let a2_fr = make_fr(a2_val, a2_sign);
     let b2_fr = make_fr(b2_val, b2_sign);
 
-    // Check b1*u1 = a1 (mod n)
     let check1 = b1_fr.mul(u1);
     if check1.e() != a1_fr.e() {
         spoil_proof();
     }
-    // Check b2*u2 = a2 (mod n)
     let check2 = b2_fr.mul(u2);
     if check2.e() != a2_fr.e() {
         spoil_proof();
@@ -943,7 +929,6 @@ pub(crate) fn verify_ecdsa_inner(
         spoil_proof();
     }
 
-    // Step 7: Check (R1 + R2).x mod n == r
     let r_sum = r1.add(&r2);
     if r_sum.is_infinity() {
         return Err(P256Error::RxMismatch);

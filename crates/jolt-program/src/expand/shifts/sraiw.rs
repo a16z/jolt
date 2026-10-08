@@ -1,6 +1,5 @@
 use super::*;
 
-/// Lowers `SRAIW` to one word-width arithmetic-shift lookup.
 pub(in crate::expand) fn expand_sraiw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

@@ -822,7 +822,6 @@ impl CommitmentGroupRole {
         self.transcript_label
     }
 
-    /// Protocol-defined name used in validation diagnostics.
     pub const fn diagnostic_name(self) -> &'static str {
         self.diagnostic_name
     }

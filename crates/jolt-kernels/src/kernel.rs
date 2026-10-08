@@ -77,7 +77,7 @@ pub enum SumcheckKernelError<F: Field> {
 // site), and spelling them with the relation's own id families — required for
 // non-jolt protocol families — would name `Self` in a bound's type arguments,
 // which breaks dyn compatibility.
-pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + MaybeAllocative {
+pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + MaybeAllocative + Send {
     type Relation: ConcreteSumcheck<F>;
 
     /// Extract the member's typed produced-opening values from its fully
@@ -122,10 +122,17 @@ pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + MaybeAllocative {
     /// generated stage drivers call it uniformly on every member, after typed
     /// extraction and derived-table validation (both borrow the kernel; this
     /// call consumes it, so it is necessarily last). The default parks
-    /// nothing; the stage-6b precommitted cycle kernels override it to park
-    /// their post-cycle bound state as plain owned data for stage 7's
-    /// address-phase `prepare` to reclaim.
-    fn park_residue(self: Box<Self>, _session: &mut ProofSession) {}
+    /// nothing and passes the kernel to
+    /// [`drop_in_background_thread`](crate::mem::drop_in_background_thread);
+    /// the stage-6b precommitted cycle kernels override it to park their
+    /// post-cycle bound state as plain owned data for stage 7's address-phase
+    /// `prepare` to reclaim.
+    fn park_residue(self: Box<Self>, _session: &mut ProofSession)
+    where
+        Self: 'static,
+    {
+        crate::mem::drop_in_background_thread(self);
+    }
 }
 
 /// One batch member's prepare-time protocol inputs, bundled: the stage's

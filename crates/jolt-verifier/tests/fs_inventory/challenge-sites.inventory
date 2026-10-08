@@ -2,16 +2,24 @@
 #   --test fs_obligations --features fs-audit`.
 # Review changes; this inventories identities, not transcript values.
 jolt-akita::adapters.rs::bridged_akita_session::challenge_scalar#0
-jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::folded_instance_from_proof::challenge#2
+jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::folded_instance_from_proof::challenge#3
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#0
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#1
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#2
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenge_vector#1
+jolt-claims::r1cs.rs::lower_claim_expr::challenge#0
 jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge_scalar#0
-jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenge_vector#5
+jolt-hyperkzg::kzg.rs::absorb_evaluations::challenge#1
+jolt-hyperkzg::kzg.rs::absorb_witnesses::challenge#1
+jolt-hyperkzg::scheme.rs::HyperKZGScheme::open_table::challenge#1
+jolt-hyperkzg::scheme.rs::HyperKZGScheme::verify_opening::challenge#1
+jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenge_vector#7
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_scalar_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_scalar_powers#0
-jolt-r1cs::lowering.rs::lower_claim_expr::challenge#0
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin::challenge_vector#4
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#1
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#2
+jolt-spartan-verifier::key.rs::SpartanKey<F>::begin_inner::challenge#3
 jolt-sumcheck::r1cs.rs::append_sumcheck_r1cs_constraints_for_domain::challenge#0
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F,C>::absorb_round::challenge#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::challenge#1

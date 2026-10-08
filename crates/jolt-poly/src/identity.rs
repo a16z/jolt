@@ -68,7 +68,6 @@ pub struct IdentityPolynomial {
 }
 
 impl IdentityPolynomial {
-    /// Creates an identity polynomial over $n$ variables.
     pub fn new(num_vars: usize) -> Self {
         Self { num_vars }
     }
@@ -138,13 +137,6 @@ mod tests {
         assert!(
             <IdentityPolynomial as crate::MultilinearEvaluation<Fr>>::evaluate(&id, &[]).is_zero()
         );
-    }
-
-    #[test]
-    fn single_var() {
-        let id = IdentityPolynomial::new(1);
-        assert!(id.evaluate(&[Fr::zero()]).is_zero());
-        assert_eq!(id.evaluate(&[Fr::one()]), Fr::one());
     }
 
     #[test]

@@ -15,6 +15,7 @@
 //!   target equals its own source address executes once, then execution
 //!   stops.
 
+use common::constants::STACK_CANARY_SIZE;
 use dynasmrt::{dynasm, x64::Rq, AssemblyOffset, DynasmApi, DynasmLabelApi};
 use jolt_program::execution::TraceError;
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
@@ -22,15 +23,13 @@ use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
 use super::super::helpers;
 use super::super::state::{
     advice_slot_offset, reg_offset, ExitReason, OBSERVATION_SIZE, OBS_RAM_ADDRESS, OBS_RAM_POST,
-    OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_EXIT,
-    OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC, OFF_ROW_LIMIT,
-    OFF_TRACE_LEN,
+    OBS_RAM_PRE, OBS_RD_POST, OBS_RD_PRE, OBS_ROW_INDEX, OBS_RS1, OBS_RS2, OFF_CANARY_OFFSET,
+    OFF_EXIT, OFF_FAULT_ADDR, OFF_MEM_BASE, OFF_MEM_SIZE, OFF_OBS_CURSOR, OFF_OBS_END, OFF_PC,
+    OFF_ROW_LIMIT, OFF_TRACE_LEN,
 };
 use super::emitter::{EmitOutcome, RowEmitter};
 use super::{EmitMode, Emitter};
 
-/// The dynasm-template emitter: the production implementor of the
-/// [`RowEmitter`] seam, covering every final-bytecode row kind.
 pub struct DynasmEmitter;
 
 impl RowEmitter for DynasmEmitter {
@@ -75,7 +74,6 @@ impl Emitter {
     /// register per ALU row, the most frequent shape in the bytecode.
     fn alu_reg_operand(&mut self, op: AluRR, dst: Rq, reg: Option<u8>) {
         let Some(r) = reg.filter(|r| *r != 0) else {
-            // x0: fold the identity/annihilator rather than touching memory.
             match op {
                 AluRR::Add | AluRR::Sub | AluRR::Or | AluRR::Xor => {}
                 AluRR::And | AluRR::Mul => {
@@ -95,7 +93,6 @@ impl Emitter {
         }
     }
 
-    /// Compare against a guest register straight from the state plane.
     fn cmp_reg_operand(&mut self, dst: Rq, reg: Option<u8>) {
         if let Some(r) = reg.filter(|r| *r != 0) {
             dynasm!(self.ops ; .arch x64 ; cmp Rq(dst), QWORD [r12 + reg_offset(r)]);
@@ -159,7 +156,6 @@ pub(super) struct Stubs {
 }
 
 impl Emitter {
-    /// Function prologue: pin registers, dispatch to `state.pc`.
     pub(super) fn emit_prologue(&mut self) -> AssemblyOffset {
         let entry = self.ops.offset();
         dynasm!(self.ops
@@ -377,7 +373,6 @@ impl DynasmEmitter {
         e.store_rd(RAX, row.operands.rd);
     }
 
-    /// `Sd`: mirror of `Ld` with the store value in rsi's place.
     fn emit_store_doubleword(e: &mut Emitter, row: &JoltInstructionRow) {
         // EA = x[rs1].wrapping_add(imm) as u64 — imm used as full i64 here.
         e.load_reg(RAX, row.operands.rs1);
@@ -406,6 +401,13 @@ impl DynasmEmitter {
             ; jae >slow
             ; test al, 7
             ; jnz >slow
+            // Stack canary: plane offsets in [canary_offset, canary_offset +
+            // STACK_CANARY_SIZE) are a stack overflow. One unsigned compare
+            // covers both ends of the range; the helper reports the fault.
+            ; mov rsi, rcx
+            ; sub rsi, QWORD [r12 + OFF_CANARY_OFFSET]
+            ; cmp rsi, STACK_CANARY_SIZE as i32
+            ; jb >slow
         );
         if e.mode == EmitMode::Record {
             e.obs_reload();
@@ -427,8 +429,6 @@ impl DynasmEmitter {
         dynasm!(e.ops ; .arch x64 ; done:);
     }
 
-    /// Alignment asserts: compute EA, test low bits, call the fatal helper on
-    /// failure. `mask` is 1 (halfword) or 3 (word); `code` selects the message.
     fn emit_assert_alignment(e: &mut Emitter, row: &JoltInstructionRow, mask: i8, code: u64) {
         e.load_reg(RAX, row.operands.rs1);
         e.load_imm(RCX, row.operands.imm as i64);
@@ -457,7 +457,6 @@ impl Emitter {
 }
 
 impl DynasmEmitter {
-    /// `(x[rs1] ^ x[rs2]).rotate_right(n)`, 64-bit.
     fn emit_xor_rot(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
         e.load_reg(RAX, row.operands.rs1);
         e.load_reg(RCX, row.operands.rs2);
@@ -475,7 +474,6 @@ impl DynasmEmitter {
 }
 
 impl Emitter {
-    /// Emit a group's advice computation before its rows.
     pub(super) fn emit_advice_compute(&mut self, job_index: usize) {
         dynasm!(self.ops ; .arch x64 ; mov rsi, job_index as i32);
         self.call_helper(helpers::advice_compute as *const () as usize);
@@ -502,7 +500,6 @@ impl Emitter {
         dynasm!(self.ops ; .arch x64 ; mov r10, QWORD [r12 + OFF_OBS_CURSOR]);
     }
 
-    /// Record mode: advance the cursor past this row's slot.
     fn obs_close(&mut self) {
         dynasm!(self.ops
             ; .arch x64
@@ -512,8 +509,6 @@ impl Emitter {
         );
     }
 
-    /// Record mode: capture the register values this row reads and the
-    /// destination's pre-value, before the row's own template runs.
     fn obs_registers_pre(&mut self, row: &JoltInstructionRow) {
         self.obs_reload();
         for (slot, register) in [
@@ -553,7 +548,6 @@ impl Emitter {
         );
     }
 
-    /// Record mode: capture the destination's post-value, after the template ran.
     fn obs_rd_post(&mut self, row: &JoltInstructionRow) {
         self.obs_reload();
         match row.operands.rd {
@@ -585,7 +579,6 @@ impl DynasmEmitter {
             return Ok(EmitOutcome::Unsupported);
         }
 
-        // Every row is one trace row.
         dynasm!(e.ops ; .arch x64 ; inc r14);
 
         // Record mode brackets each row's template with value capture. Rows that
@@ -636,7 +629,6 @@ impl DynasmEmitter {
             K::MulI(_) => Self::emit_alu_ri(e, row, AluRR::Mul),
 
             K::MulHU(_) => {
-                // rd = high 64 bits of unsigned x[rs1] * x[rs2].
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops ; .arch x64 ; mul rcx);
@@ -666,7 +658,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::Auipc(_) => {
-                // rd = address + imm, fully static.
                 let value = (row.address as i64).wrapping_add(row.operands.imm as i64);
                 e.load_imm(RAX, value);
                 e.store_rd(RAX, row.operands.rd);
@@ -679,7 +670,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualShiftRightBitmask(_) => {
-                // rd = u64::MAX << (x[rs1] & 63) — bits [63:shift] set.
                 e.load_reg(RCX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; mov rax, -1 ; shl rax, cl);
                 e.store_rd(RAX, row.operands.rd);
@@ -732,7 +722,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSraw(_) => {
-                // rd = (x[rs1] as i32 >> tz(x[rs2])) as i64.
                 e.load_reg(RCX, row.operands.rs2);
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; sar eax, cl ; movsxd rax, eax);
@@ -756,8 +745,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::WindowMaskW(_) => {
-                // rd = 0xFFFFFFFF << (32 * bit2(x[rs1] + imm)): byte mask of
-                // the addressed word's lane within its containing doubleword.
                 e.load_reg(RCX, row.operands.rs1);
                 e.load_imm(RAX, row.operands.imm as i64);
                 dynasm!(e.ops
@@ -771,8 +758,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::WindowMaskB(_) => {
-                // rd = 0xFF << (8 * ((x[rs1] + imm) & 7)): byte mask of the
-                // addressed byte's lane within its containing doubleword.
                 e.load_reg(RCX, row.operands.rs1);
                 e.load_imm(RAX, row.operands.imm as i64);
                 dynasm!(e.ops
@@ -803,8 +788,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::AlignAddr(_) => {
-                // rd = (x[rs1] + imm) & !7: the fused ADDI + ANDI(-8) of the
-                // sub-word memory sequences.
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_imm(RCX, row.operands.imm as i64);
                 dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -8);
@@ -910,7 +893,6 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -2);
                 e.load_imm(RCX, link_value(row));
                 e.store_rd(RCX, row.operands.rd);
-                // PC-stall check against this row's own source address.
                 dynasm!(e.ops ; .arch x64 ; mov rcx, QWORD row.address as i64 ; cmp rax, rcx ; jne >go);
                 e.terminal(row.address as u64);
                 dynasm!(e.ops ; .arch x64 ; go:);
@@ -923,7 +905,6 @@ impl DynasmEmitter {
             K::AssertHalfwordAlignment(_) => Self::emit_assert_alignment(e, row, 1, 0),
             K::AssertWordAlignment(_) => Self::emit_assert_alignment(e, row, 3, 1),
             K::AssertLte(_) => {
-                // assert!(x[rs1] as u64 <= x[rs2] as u64) — unsigned.
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops
@@ -943,14 +924,12 @@ impl DynasmEmitter {
                 e.set_cc_less(true, row.operands.rd);
             }
             K::Andn(_) => {
-                // rd = x[rs1] & !x[rs2]
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops ; .arch x64 ; not rcx ; and rax, rcx);
                 e.store_rd(RAX, row.operands.rd);
             }
             K::Pow2I(_) => {
-                // Static: rd = 1 << (imm % 64).
                 let value = 1i64 << ((row.operands.imm as u64) % 64);
                 e.load_imm(RAX, value);
                 e.store_rd(RAX, row.operands.rd);
@@ -961,13 +940,11 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::Pow2W(_) => {
-                // rd = 1 << ((x[rs1] as u64) % 32)
                 e.load_reg(RCX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; and ecx, 31 ; mov eax, 1 ; shl rax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
             K::MovSign(_) => {
-                // rd = -1 if the sign bit is set else 0.
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops ; .arch x64 ; sar rax, 63);
                 e.store_rd(RAX, row.operands.rd);
@@ -980,7 +957,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualRotri(_) => {
-                // Shift amount = imm.trailing_zeros() (bitmask encoding), mod 64.
                 let shift = (((row.operands.imm as u64).trailing_zeros()) % 64) as i8;
                 e.load_reg(RAX, row.operands.rs1);
                 if shift != 0 {
@@ -999,7 +975,6 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualShiftRightBitmaski(_) => {
-                // Static: bits [63:shift] set (all-ones when shift == 0).
                 let shift = (row.operands.imm as u64) % 64;
                 let value = (((1u128 << (64 - shift)) - 1) << shift) as u64 as i64;
                 e.load_imm(RAX, value);
@@ -1050,7 +1025,6 @@ impl DynasmEmitter {
                 }
             }
             K::AssertValidDiv0(_) => {
-                // divisor == 0 implies quotient == u64::MAX.
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops
@@ -1066,7 +1040,6 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; ok:);
             }
             K::AssertValidUnsignedRemainder(_) => {
-                // divisor == 0 || remainder < divisor (unsigned).
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
                 dynasm!(e.ops
@@ -1098,7 +1071,6 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; ok:);
             }
             K::VirtualNegateIf(_) => {
-                // rd = -x[rs2] (wrapping) if x[rs1] < 0 (signed), else x[rs2].
                 e.load_reg(RCX, row.operands.rs1);
                 e.load_reg(RAX, row.operands.rs2);
                 dynasm!(e.ops

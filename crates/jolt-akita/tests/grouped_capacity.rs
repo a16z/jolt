@@ -10,6 +10,7 @@
 )]
 mod support;
 
+use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
@@ -25,8 +26,7 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial};
 
 const FINAL_NUM_VARS: usize = 16;
-/// Six variables above this one-column trace group. The canonical Jolt trace
-/// adds selector variables; this smaller adapter fixture isolates capacity.
+/// Six variables above this one-column trace group.
 const ADVICE_NUM_VARS: usize = 22;
 const TRUSTED_ADVICE: CommitmentGroupRole =
     CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice");
@@ -67,7 +67,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
                 None,
                 Some(ADVICE_NUM_VARS),
                 Vec::new(),
-                FINAL_NUM_VARS,
+                PolynomialGroupLayout::new(FINAL_NUM_VARS, 1),
             )),
             artifacts.clone(),
         ))
@@ -99,7 +99,6 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     let (trace_commitment, trace_hint) = AkitaScheme::commit_trace_one_hot(
         &prover_setup,
         layout(5),
-        1,
         Arc::new(TraceRows { rows }),
         &[&advice_hint],
     )

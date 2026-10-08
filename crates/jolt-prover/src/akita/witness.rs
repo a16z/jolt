@@ -1,4 +1,4 @@
-//! Prover-side packed (Akita) witness assembly: the `OneHotTrace` columns
+//! Prover-side Akita witness assembly: the `OneHotTrace` columns
 //! from the witness plane's typed rows, the advice word objects, the
 //! direct bounded-dense committed-program objects.
 
@@ -31,9 +31,6 @@ use jolt_witness::{
 
 use crate::ProverError;
 
-/// The per-cycle sources every `OneHotTrace` column derives from: the
-/// instruction's lookup index, the mapped bytecode PC, the remapped RAM word
-/// address, and the fused increment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct OneHotTraceSourceRow {
     lookup_index: LookupIndex,
@@ -111,15 +108,15 @@ impl OneHotTraceRows {
     ) -> Result<(), ProverError<F>> {
         if !matches!(log_k_chunk, 4 | 8) {
             return Err(ProverError::Unsupported {
-                reason: "packed one-hot trace chunk width must be 4 or 8 bits",
+                reason: "native one-hot trace chunk width must be 4 or 8 bits",
             });
         }
         let logical_num_vars = log_t
             .checked_add(log_k_chunk)
             .ok_or(ProverError::Unsupported {
-                reason: "packed one-hot trace dimensions overflow",
+                reason: "native one-hot trace dimensions overflow",
             })?;
-        if plan.packing().logical_num_vars() != logical_num_vars {
+        if plan.num_vars() != logical_num_vars {
             return Err(ProverError::InvariantViolation {
                 reason: "OneHotTrace plan dimensions disagree with the witness dimensions",
             });
@@ -235,14 +232,14 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
 ) -> Result<AssembledTrace<F>, ProverError<F>> {
     OneHotTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
     let num_rows = 1usize << log_t;
-    let num_columns = plan.packing().ids().len();
+    let num_columns = plan.ids().len();
     let ram_digit_zero_mask = plan
         .ranges()
         .ram
         .clone()
         .fold(0u64, |mask, column| mask | (1u64 << column));
     let mut columns = Vec::with_capacity(num_columns);
-    for polynomial in plan.packing().ids() {
+    for polynomial in plan.ids() {
         match polynomial {
             JoltCommittedPolynomial::InstructionRa(index) => {
                 let selector = RaChunkSelector::new(*index, ra_layout.instruction(), log_k_chunk)?;
@@ -419,7 +416,8 @@ where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
     let bytecode_len = program.bytecode.bytecode.len();
-    let image_words = program_image_words_padded(program);
+    let image_words =
+        jolt_kernels::committed_program::program_image_words_padded(&program.ram.bytecode_words);
     let plan = committed_program_packing_plan(
         bytecode_len,
         bytecode_chunk_count,
@@ -484,15 +482,4 @@ where
         })
         .collect::<Result<Vec<_>, ProverError<PCS::Field>>>()?;
     Ok(DirectProgramObjects { objects })
-}
-
-/// The padded program-image words: the RAM preprocessing's bytecode words,
-/// zero-padded to `committed_program_image_num_words` (the next power of two,
-/// at least 2 — the packed word-domain convention legacy shares).
-pub fn program_image_words_padded(program: &JoltProgramPreprocessing) -> Vec<u64> {
-    let words = &program.ram.bytecode_words;
-    let padded_len = words.len().next_power_of_two().max(2);
-    let mut padded = words.clone();
-    padded.resize(padded_len, 0);
-    padded
 }

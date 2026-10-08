@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Expr;
 
-/// The field-inline protocol's expression type: an [`Expr`](crate::Expr) over the
-/// field-inline id families (openings, deriveds, challenges).
 pub type FieldInlineExpr<F> =
     Expr<F, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId>;
 

@@ -25,8 +25,6 @@ macro_rules! from_primitives {
     };
 }
 
-/// Stamps a BN254 field wrapper: operators, conversions, serde (canonical
-/// 32-byte LE), ark-serialize interop, and the canonical-encoding surface.
 macro_rules! wrap_bn254 {
     ($(#[$doc:meta])* $ty:ident, $inner:ty, accumulators($accum:ty, $small_accum:ty, $signed_accum:ty), challenge($low:ident, $high:ident): $challenge:expr) => {
         $(#[$doc])*
@@ -56,8 +54,6 @@ macro_rules! wrap_bn254 {
             }
         }
 
-        // Primitive-integer From conversions (reducing), matching the surface
-        // the plain arkworks types exposed to consumers.
         from_primitives!($ty: from_u128[bool, u8, u16, u32, u64, u128]);
         from_primitives!($ty: from_i128[i8, i16, i32, i64, i128]);
 

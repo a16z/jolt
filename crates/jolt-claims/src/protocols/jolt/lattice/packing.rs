@@ -21,16 +21,11 @@ use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
 use super::geometry::{BalancedIncChunking, LatticeGeometryError};
 
-/// Fixed selector capacity of the packed trace polynomial at K=16.
-pub const ONE_HOT_TRACE_K16_CAPACITY: usize = 64;
-/// Fixed selector capacity of the packed trace polynomial at K=256.
-pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
-
 pub use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
 /// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
 /// `Ra` families, balanced increment chunks, and signed carry as semantic
-/// columns of one packed polynomial. Instruction, bytecode, and increment
+/// columns of one native commitment batch. Instruction, bytecode, and increment
 /// columns omit row zero; RAM commits every row.
 /// Advice word columns are their own commitment objects
 /// ([`advice_packing_plan`]).
@@ -78,7 +73,11 @@ pub fn one_hot_trace_columns(
     shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
     let chunking = BalancedIncChunking::new(shape.log_k_chunk)?;
-    let _capacity = one_hot_trace_column_capacity(shape.log_k_chunk)?;
+    if !matches!(shape.log_k_chunk, 4 | 8) {
+        return Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth {
+            chunk_width: shape.log_k_chunk,
+        });
+    }
     let instruction_columns = 2 * XLEN / shape.log_k_chunk;
     if shape.ra_layout.instruction() != instruction_columns {
         return Err(
@@ -97,17 +96,6 @@ pub fn one_hot_trace_columns(
     polynomials.extend((0..shape.ra_layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
     polynomials.extend((0..shape.ra_layout.ram()).map(JoltCommittedPolynomial::RamRa));
     Ok(polynomials)
-}
-
-/// Number of selector slots in the packed `OneHotTrace`.
-pub const fn one_hot_trace_column_capacity(
-    log_k_chunk: usize,
-) -> Result<usize, LatticeGeometryError> {
-    match log_k_chunk {
-        4 => Ok(ONE_HOT_TRACE_K16_CAPACITY),
-        8 => Ok(ONE_HOT_TRACE_K256_CAPACITY),
-        chunk_width => Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth { chunk_width }),
-    }
 }
 
 /// Canonical committed-program packing plan.
@@ -164,7 +152,6 @@ pub fn precommitted_packing_plan(
     })
 }
 
-/// Derives the direct committed-program layout from public program metadata.
 pub fn committed_program_packing_plan(
     bytecode_len: usize,
     bytecode_chunks: usize,
@@ -528,8 +515,6 @@ mod tests {
 
     #[test]
     fn tiny_precommitted_objects_pad_slot_capacity_to_the_planner_floor() {
-        // A one-coefficient advice polynomial is below the planner
-        // floor, so the plan widens its otherwise-empty selector capacity.
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
             let plan = advice_packing_plan(kind, 0).unwrap();
             assert_eq!(plan.packing().ids().len(), 1);
@@ -538,18 +523,15 @@ mod tests {
             assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
         }
 
-        // One variable below the floor, capacity doubles to reach it.
         let plan = advice_packing_plan(JoltAdviceKind::Untrusted, 13).unwrap();
         assert_eq!(plan.packing().logical_num_vars(), 13);
         assert_eq!(plan.packing().slot_capacity(), 2);
         assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
 
-        // At the floor exactly, capacity stays a single slot.
         let plan = advice_packing_plan(JoltAdviceKind::Trusted, 14).unwrap();
         assert_eq!(plan.packing().slot_capacity(), 1);
         assert_eq!(plan.packing().packed_num_vars(), MIN_DENSE_OBJECT_NUM_VARS);
 
-        // A two-word program image pads the same way.
         let shape = PrecommittedPackingShape {
             program_image_log_words: Some(1),
             ..precommitted_shape()

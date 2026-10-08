@@ -38,7 +38,6 @@ impl<const D: usize> DigitWindows<D> {
         }
     }
 
-    /// Replaces the held entry with `src`.
     pub(super) fn load(&mut self, src: &CyclotomicRing<AkitaField, D>) {
         let (negative, positive) = self.digits.split_at_mut(D);
         for ((negative, positive), &value) in negative.iter_mut().zip(positive).zip(&src.coeffs) {

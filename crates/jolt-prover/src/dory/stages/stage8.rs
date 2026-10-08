@@ -274,7 +274,7 @@ where
                 })
         })
         .collect::<Result<_, _>>()?;
-    drop(hint_by_id);
+    jolt_kernels::mem::drop_in_background_thread(hint_by_id);
 
     // The witness-side twin of the composed plan splice above: the statement
     // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and

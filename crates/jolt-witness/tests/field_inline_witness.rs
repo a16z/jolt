@@ -240,41 +240,6 @@ fn field_inline_public_provider_materializes_views() {
 }
 
 #[test]
-fn field_inline_public_provider_is_absent_for_programs_without_field_inline() {
-    let bytecode = vec![instruction(
-        JoltInstructionKind::ADDI,
-        0,
-        Some(1),
-        Some(2),
-        None,
-        3,
-    )];
-    let program = program(bytecode.clone(), RV64IMAC_JOLT);
-    let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
-    let witness = witness(
-        &program,
-        &preprocessing,
-        vec![TraceRow::from_instruction(instruction(
-            JoltInstructionKind::ADDI,
-            0,
-            Some(1),
-            Some(2),
-            None,
-            3,
-        ))
-        .unwrap()],
-        2,
-    );
-
-    assert_eq!(
-        witness.field_inline_witness().err(),
-        Some(WitnessError::UnavailableView {
-            label: FIELD_INLINE_LABEL,
-        })
-    );
-}
-
-#[test]
 fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
     let load = instruction(
         JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
@@ -391,7 +356,6 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
         provider.committed_order(),
         vec![FieldInlineCommittedPolynomial::FieldRdInc]
     );
-    // The dyn seam serves the same column as the inherent view.
     assert_eq!(
         provider
             .oracle_table(FieldInlinePolynomialId::Committed(

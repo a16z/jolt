@@ -1,5 +1,3 @@
-//! Verifier preprocessing inputs.
-
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::JoltRelationId;

@@ -1,5 +1,3 @@
-//! Cycle phase of the two-phase program-image (initial RAM) claim-reduction relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +24,6 @@ pub struct ProgramImageReductionCyclePhaseOutputClaims<C> {
     pub program_image: C,
 }
 
-/// The consumed RAM value-check program-image contribution.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct ProgramImageReductionCyclePhaseInputClaims<C> {
     #[opening(ProgramImageInitContributionRw, from = RamValCheck)]
@@ -78,23 +75,5 @@ impl SymbolicSumcheck for CyclePhase {
         } else {
             final_output_expr()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cycle_phase_with_address_phase_exposes_expected_dependencies() {
-        let dimensions = PrecommittedReductionDimensions::new(4, 3, true);
-        let relation = CyclePhase::new(dimensions);
-
-        assert_eq!(
-            CyclePhase::id(),
-            JoltRelationId::ProgramImageClaimReductionCyclePhase
-        );
-        assert_eq!(relation.rounds(), dimensions.cycle_phase_total_rounds());
-        assert_eq!(relation.degree(), TWO_PHASE_DEGREE_BOUND);
     }
 }

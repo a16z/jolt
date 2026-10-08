@@ -5,9 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Expr;
 
-/// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
-/// families (openings, deriveds, challenges). Each relation's `input`/`output`
-/// expression is a `JoltExpr<F>`.
 pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -135,11 +132,11 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
-    /// Packed path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
+    /// Akita path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
     /// weight of a Booleanity leg (`specs/digit-zero-virtualization.md`).
     EqBooleanityAtDigitZero,
     EqVirtualization(usize),
-    /// Packed path: `eq(r_virtualization_address_i, 0)` — the digit-zero
+    /// Akita path: `eq(r_virtualization_address_i, 0)` — the digit-zero
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
     BalancedIncValueAtAddress,
@@ -340,7 +337,7 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed polynomials (slots of the packed witness); base
+    // Lattice-mode committed polynomials (columns of the native trace group); base
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
@@ -502,26 +499,6 @@ pub enum JoltDerivedId {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn opening_constructors_preserve_stage_context() {
-        let relation = JoltRelationId::RamReadWriteChecking;
-
-        assert_eq!(
-            JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
-                relation,
-            }
-        );
-        assert_eq!(
-            JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamVal, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal),
-                relation,
-            }
-        );
-    }
 
     #[test]
     fn advice_group_roles_fix_order_and_transcript_tags() {

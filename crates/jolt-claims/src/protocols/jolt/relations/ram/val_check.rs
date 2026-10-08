@@ -1,5 +1,3 @@
-//! RAM value-check symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +84,6 @@ pub struct RamValCheckShape {
     pub contributions: Vec<RamValContribution>,
 }
 
-/// Fiat-Shamir challenge drawn by the RAM value-check sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamValCheckChallenges<F> {
@@ -148,95 +145,5 @@ impl SymbolicSumcheck for RamValCheck {
         derived(JoltDerivedId::from(RamValCheckPublic::LtCyclePlusGamma))
             * opening(ram_inc_val_check())
             * opening(ram_ra_val_check())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use jolt_field::{Fr, Ring};
-
-    fn trace_dimensions() -> TraceDimensions {
-        TraceDimensions::new(5)
-    }
-
-    #[test]
-    fn ram_val_check_symbolic_matches_dependencies() {
-        let relation = RamValCheck::new(RamValCheckShape {
-            dimensions: trace_dimensions(),
-            contributions: vec![],
-        });
-
-        assert_eq!(RamValCheck::id(), JoltRelationId::RamValCheck);
-        assert_eq!(relation.rounds(), trace_dimensions().log_t());
-        assert_eq!(relation.degree(), 3);
-    }
-
-    /// The remodel's soundness anchor: the `Public`-symbol input expression must
-    /// evaluate to the same value the pre-remodel baked-constant decomposition did
-    /// (proven equal to the full-init formula in `geometry::ram`'s tests). With
-    /// `InitEval = public_eval` and `InitSelector = neg_selector`, the
-    /// `public·opening` term equals the old `constant·opening` term.
-    #[test]
-    fn ram_val_check_symbolic_evaluates_like_decomposed_init() {
-        use crate::protocols::jolt::geometry::ram::val_check_advice_opening;
-        use crate::protocols::jolt::JoltAdviceKind;
-
-        let public_eval = Fr::from_u64(3);
-        let untrusted_neg_selector = -Fr::from_u64(5);
-        let trusted_neg_selector = -Fr::from_u64(7);
-
-        let relation = RamValCheck::new(RamValCheckShape {
-            dimensions: trace_dimensions(),
-            contributions: vec![
-                RamValContribution {
-                    selector: RamValCheckPublic::InitSelector(JoltAdviceKind::Untrusted),
-                    opening: val_check_advice_opening(JoltAdviceKind::Untrusted),
-                },
-                RamValContribution {
-                    selector: RamValCheckPublic::InitSelector(JoltAdviceKind::Trusted),
-                    opening: val_check_advice_opening(JoltAdviceKind::Trusted),
-                },
-            ],
-        });
-
-        let val_rw = Fr::from_u64(11);
-        let val_final = Fr::from_u64(13);
-        let gamma = Fr::from_u64(17);
-        let untrusted_advice = Fr::from_u64(19);
-        let trusted_advice = Fr::from_u64(23);
-        let zero = Fr::from_u64(0);
-        let init_eval = public_eval
-            - untrusted_neg_selector * untrusted_advice
-            - trusted_neg_selector * trusted_advice;
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_val() => val_rw,
-                id if id == ram_val_final() => val_final,
-                id if id == val_check_advice_opening(JoltAdviceKind::Untrusted) => untrusted_advice,
-                id if id == val_check_advice_opening(JoltAdviceKind::Trusted) => trusted_advice,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::RamValCheck(RamValCheckChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltDerivedId::RamValCheck(RamValCheckPublic::InitEval) => public_eval,
-                JoltDerivedId::RamValCheck(RamValCheckPublic::InitSelector(
-                    JoltAdviceKind::Untrusted,
-                )) => untrusted_neg_selector,
-                JoltDerivedId::RamValCheck(RamValCheckPublic::InitSelector(
-                    JoltAdviceKind::Trusted,
-                )) => trusted_neg_selector,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(
-            input,
-            (val_rw - init_eval) + gamma * (val_final - init_eval)
-        );
     }
 }

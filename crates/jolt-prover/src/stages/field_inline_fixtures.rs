@@ -411,6 +411,8 @@ pub(crate) fn test_prover_config() -> ProverConfig {
         rw_config: crate::config::read_write_config(LOG_T, RAM_LOG_K),
         one_hot_config: crate::config::one_hot_config(LOG_T),
         trace_polynomial_order: Default::default(),
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: Default::default(),
     }
 }
 
@@ -429,7 +431,6 @@ pub(crate) fn test_memory_layout() -> MemoryLayout {
     })
 }
 
-/// The fixture traces' program I/O: empty, over [`test_memory_layout`].
 pub(crate) fn test_public_io() -> JoltDevice {
     JoltDevice {
         memory_layout: test_memory_layout(),
@@ -864,7 +865,7 @@ pub(crate) mod twins {
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,
         );
-        // The packed shape folds the four reduced Inc claims into the
+        // The Akita shape folds the four reduced Inc claims into the
         // fused-inc consumer stage slots (stage6a::verify's own wrapper).
         #[cfg(feature = "akita")]
         let base_input_values = LatticeReadRafAddressPhaseInputClaims {
@@ -903,7 +904,6 @@ pub(crate) mod twins {
     }
 }
 
-/// Shared upstream proving for clear and committed stage tests.
 pub(crate) mod proving {
     use super::*;
     use crate::stages::stage1::{prove_stage1, Stage1ProverOutput};
