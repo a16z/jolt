@@ -125,7 +125,9 @@ With `--embed` the host also:
     word stores.
 - `serde_bytes` on every proof and setup byte payload.
 - 8-byte-aligned guest record framing.
-- `write(2)` and `clock_gettime(2)` answered in the trap handler.
+- `write(2)` to stdout and stderr and `clock_gettime(2)` answered in the trap
+  handler: writes go to the host console in one host call each, and every
+  clock reads as a zero timestamp.
 
 ### Verifier algebra reshaped for guest costs
 
