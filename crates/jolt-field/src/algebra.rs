@@ -172,11 +172,16 @@ pub(crate) fn signed_sum_fold<'a, F: Ring + 'a>(
         })
 }
 
-/// The software fold behind [`Field::sum_of_products4`].
+/// The software fold behind [`Field::sum_of_products`].
 #[inline]
-pub(crate) fn sum_of_products4_fold<F: Ring>(terms: &[[F; 4]]) -> F {
-    terms.iter().fold(<F as Zero>::zero(), |acc, [a, b, c, d]| {
-        acc + *a * *b * *c * *d
+pub(crate) fn sum_of_products_fold<F: Ring, const K: usize>(terms: &[[F; K]]) -> F {
+    terms.iter().fold(<F as Zero>::zero(), |acc, factors| {
+        acc + match factors.split_first() {
+            Some((first, rest)) => rest
+                .iter()
+                .fold(*first, |product, factor| product * *factor),
+            None => <F as One>::one(),
+        }
     })
 }
 
@@ -204,11 +209,18 @@ pub trait Field: Ring {
         signed_sum_fold(terms)
     }
 
-    /// `Σ_i terms[i][0]·terms[i][1]·terms[i][2]·terms[i][3]`. Fields with a
+    /// `Σ_i Π_k terms[i][k]`, an empty product being one. Fields with a
     /// batched guest path (register-resident products and sum) override this.
     #[inline]
+    fn sum_of_products<const K: usize>(terms: &[[Self; K]]) -> Self {
+        sum_of_products_fold(terms)
+    }
+
+    /// Superseded by [`Self::sum_of_products`]; kept only until the Akita
+    /// companion calls that instead.
+    #[inline]
     fn sum_of_products4(terms: &[[Self; 4]]) -> Self {
-        sum_of_products4_fold(terms)
+        Self::sum_of_products(terms)
     }
 
     /// Multiplicative inverse with zero mapped to zero.

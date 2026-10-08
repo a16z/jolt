@@ -1093,14 +1093,14 @@ impl<const P: u128> Field for Fp128<P> {
 
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
-    fn sum_of_products4(terms: &[[Self; 4]]) -> Self {
+    fn sum_of_products<const K: usize>(terms: &[[Self; K]]) -> Self {
         if !Self::FIELD_INLINE {
-            return crate::algebra::sum_of_products4_fold(terms);
+            return crate::algebra::sum_of_products_fold(terms);
         }
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
-        let terms: &[[[u64; 2]; 4]] =
+        let terms: &[[[u64; 2]; K]] =
             unsafe { core::slice::from_raw_parts(terms.as_ptr().cast(), terms.len()) };
-        Self::from_inline_limbs(crate::field_inline::sum_of_products4(terms))
+        Self::from_inline_limbs(crate::field_inline::sum_of_products(terms))
     }
 
     #[inline(always)]

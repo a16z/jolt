@@ -60,8 +60,8 @@ field-inline instructions (`field_inline.rs`).
   about 8 per element: two 3-row operand loads, one multiply, and one add.
 - **Shared operands** let the weighted-rows kernel load each power once per
   block of five rows (5 rows per element and row). `dot_rows` does the same
-  for several rows against one shared vector, and `sum_of_products4` forms
-  four-factor products in registers.
+  for several rows against one shared vector, and `sum_of_products` forms
+  `K`-factor products in registers.
 - **Signed sums** (`Field::signed_sum`) keep a sum of ± elements in a field
   register: 4 rows per term, against about 24 for a reduced software add.
   Isolated additions stay in software, where two-limb arithmetic wins.
