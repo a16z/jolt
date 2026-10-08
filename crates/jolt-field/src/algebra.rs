@@ -216,13 +216,6 @@ pub trait Field: Ring {
         sum_of_products_fold(terms)
     }
 
-    /// Superseded by [`Self::sum_of_products`]; kept only until the Akita
-    /// companion calls that instead.
-    #[inline]
-    fn sum_of_products4(terms: &[[Self; 4]]) -> Self {
-        Self::sum_of_products(terms)
-    }
-
     /// Multiplicative inverse with zero mapped to zero.
     #[inline]
     fn inv_or_zero(self) -> Self {
