@@ -13,9 +13,7 @@
 //! - aux tables: the raw per-chunk grids, bound alongside; their fully bound
 //!   coefficients are the final per-chunk opening values.
 
-use jolt_claims::protocols::jolt::{
-    BytecodeClaimReductionLayout, JoltCommittedPolynomial, PrecommittedReductionLayout,
-};
+use jolt_claims::protocols::jolt::{BytecodeClaimReductionLayout, PrecommittedReductionLayout};
 use jolt_field::JoltField;
 use jolt_riscv::JoltInstructionRow;
 use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
@@ -47,8 +45,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Referenc
     }
 }
 
-/// The committed-bytecode reduction's cycle-phase kernel — see the module doc
-/// for the value/eq/aux table construction.
 fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
@@ -109,12 +105,4 @@ fn bytecode_reduction_kernel<F: JoltField>(
         }
     };
     CycleReductionKernel::new(reduction, value, eq, permuted.collect())
-}
-
-/// The final per-chunk opening ids, in chunk order — the wire order of the
-/// reduction's produced claims.
-pub fn bytecode_chunk_ids(chunk_count: usize) -> Vec<JoltCommittedPolynomial> {
-    (0..chunk_count)
-        .map(JoltCommittedPolynomial::BytecodeChunk)
-        .collect()
 }

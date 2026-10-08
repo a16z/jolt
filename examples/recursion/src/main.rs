@@ -490,10 +490,8 @@ fn generate_proofs(guest: GuestProgram, workdir: &Path, bytecode_chunk_count: Op
 
     let target_dir = "/tmp/jolt-guest-targets";
 
-    // Collect guest proofs
     let all_groups_data = collect_guest_proofs(guest, target_dir, false, bytecode_chunk_count);
 
-    // Save proof data
     save_proof_data(guest, &all_groups_data, workdir);
 
     info!("Proof generation completed for {}", guest.name());

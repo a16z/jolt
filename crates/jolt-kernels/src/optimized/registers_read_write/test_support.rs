@@ -1,5 +1,3 @@
-//! Shared parity-test support for the registers kernel family.
-
 use core::fmt::Debug;
 
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
@@ -19,8 +17,6 @@ use crate::optimized::testing::trimmed;
 use crate::reference::ReferenceBackend;
 use crate::{PrepareKernel, ProofSession, ProverInputs};
 
-/// Deterministic nonzero field elements (an LCG over odd u64s), used for
-/// both fixed points and round challenges.
 pub(crate) fn challenge_sequence(len: usize, seed: u64) -> Vec<Fr> {
     let mut state = seed;
     (0..len)

@@ -22,14 +22,10 @@ use crate::witnesses::{
 };
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
-/// Base-mode committed-program polynomials: precommitted from preprocessing,
-/// never derived from the execution trace.
 pub(crate) const COMMITTED_PROGRAM_REASON: &str =
     "committed-program polynomial served from preprocessing, not the execution trace";
-/// Openings produced by kernels during proving (owned by the proof session).
 pub(crate) const PROTOCOL_INTERMEDIATE_REASON: &str =
     "protocol intermediate produced during proving, never served by a witness backend";
-/// Vocabulary with no consumer on the modular stack; no derivation exists.
 pub(crate) const UNSERVED_REASON: &str =
     "no consumer on the modular stack; no trace derivation is defined";
 

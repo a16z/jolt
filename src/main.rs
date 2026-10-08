@@ -17,8 +17,6 @@ use build_wasm::build_wasm;
 use zeroos_build::cmds::{build::BacktraceMode, BuildArgs, StdMode};
 use zeroos_build::spec::TargetRenderOptions;
 
-/// Linker script template embedded at compile time.
-/// This linker script is for Jolt zkVM guests.
 static LINKER_TEMPLATE: &str = include_str!("linker.ld.template");
 
 #[derive(Parser)]
@@ -147,11 +145,6 @@ fn main() {
     }
 }
 
-// ============================================================================
-// Build command (from cargo-jolt)
-// ============================================================================
-
-/// Resolve the guest optimization level from `JOLT_GUEST_OPT` env var (default: "3").
 fn guest_opt_flag() -> String {
     let level = std::env::var("JOLT_GUEST_OPT").unwrap_or_else(|_| "3".to_string());
     match level.as_str() {
@@ -167,7 +160,6 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     let workspace_root = zeroos_build::cmds::find_workspace_root()?;
     debug!("workspace_root: {}", workspace_root.display());
 
-    // Use the embedded linker template (compiled into the binary)
     let linker_tpl = LINKER_TEMPLATE.to_string();
 
     let fully = args.base.mode == StdMode::Std || args.base.fully;
@@ -242,6 +234,13 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         std::env::set_var(&cflags_key, &cflags);
     }
 
+    // Builder paths (CARGO_HOME, checkout location, sysroot) otherwise end up in panic
+    // locations and debuginfo, making the ELF and its proof digest machine-dependent.
+    // Cargo accepts -Ztrim-paths because zeroos-build sets RUSTC_BOOTSTRAP for this build.
+    std::env::set_var("CARGO_UNSTABLE_TRIM_PATHS", "true");
+    std::env::set_var("CARGO_PROFILE_DEV_TRIM_PATHS", "all");
+    std::env::set_var("CARGO_PROFILE_RELEASE_TRIM_PATHS", "all");
+
     if !preserve_symbols {
         jolt_rustflags.push("-Cstrip=symbols");
     }
@@ -263,12 +262,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Run command (from cargo-jolt)
-// ============================================================================
-
 fn find_jolt_emu() -> Option<PathBuf> {
-    // First check if jolt-emu is in PATH
     if let Ok(output) = Command::new("which").arg("jolt-emu").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -278,12 +272,9 @@ fn find_jolt_emu() -> Option<PathBuf> {
         }
     }
 
-    // Check common locations relative to the jolt repository
     let common_paths = [
-        // Relative to current working directory (if in jolt repo)
         "target/release/jolt-emu",
         "target/debug/jolt-emu",
-        // Common sibling directory layout
         "../jolt/target/release/jolt-emu",
         "../jolt/target/debug/jolt-emu",
     ];
@@ -335,10 +326,6 @@ fn run_command(args: RunArgs) -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Generate commands (from cargo-jolt)
-// ============================================================================
 
 fn generate_target_command(cli_args: JoltGenerateTargetArgs) -> Result<()> {
     use zeroos_build::cmds::generate_target_spec;
@@ -399,10 +386,6 @@ fn generate_linker_command(cli_args: JoltGenerateLinkerArgs) -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Project scaffolding (original jolt new)
-// ============================================================================
 
 fn create_project(name: String, _wasm: bool, zk: bool) {
     create_folder_structure(&name).expect("could not create directory");

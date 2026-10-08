@@ -172,19 +172,15 @@ fn collect_rows(cycles: &[Cycle], bytecode: &BytecodePCMapper) -> Result<TraceDa
 /// by every chunk that resumes there — plus this chunk's row window
 /// relative to that boundary.
 pub struct TracerChunkCheckpoint {
-    /// Boundary CPU/MMU/device state.
     boundary: Arc<ChunkCheckpoint>,
     /// Full-size flat-memory image at the same boundary (SnapshotPool
     /// layout).
     image: Arc<Vec<u64>>,
     seed: Arc<WorkerSeed>,
-    /// Rows to discard after resuming at the boundary.
     skip_rows: usize,
-    /// Rows this chunk emits.
     take_rows: usize,
 }
 
-/// Static per-program worker seed, shared by every checkpoint.
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
@@ -237,9 +233,6 @@ impl TracerBackend {
             bytecode,
         });
 
-        // Construction-only bookkeeping: a captured boundary plus the row
-        // count pass-1 had produced there (used below to pick each mark's
-        // resume boundary; not needed at replay time).
         struct Boundary {
             checkpoint: Arc<ChunkCheckpoint>,
             image: Arc<Vec<u64>>,
@@ -254,8 +247,6 @@ impl TracerBackend {
             rows: pass.rows(),
         };
 
-        // The fast pass: execute mode, no rows; capture a boundary checkpoint
-        // whenever a chunk mark is crossed (subject to the spacing floor).
         let mut boundaries = vec![capture(&pass, &mut pool)];
         let mut next_mark = chunk_size;
         while pass.step() {
@@ -270,8 +261,6 @@ impl TracerBackend {
         }
         let trace_len = pass.rows();
 
-        // One contract checkpoint per exact chunk mark, resuming from the
-        // latest boundary at or before the mark.
         let mut checkpoints = Vec::with_capacity(trace_len.div_ceil(chunk_size));
         let mut boundary_index = 0;
         for chunk in 0..trace_len.div_ceil(chunk_size) {
@@ -569,16 +558,13 @@ mod tests {
 
         let rows = output.trace.rows();
         assert!(rows.len() >= 3, "two ADDIs plus the jump expansion");
-        // addi x1, x0, 1
         let rd = rows[0].registers().rd.expect("first ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (1, 0, 1));
-        // addi x2, x1, 2 reads the value the first ADDI wrote
         let rs1 = rows[1].registers().rs1.expect("second ADDI reads rs1");
         assert_eq!((rs1.register, rs1.value), (1, 1));
         let rd = rows[1].registers().rd.expect("second ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (2, 0, 3));
 
-        // The final memory image contains the loaded program bytes
         let image = output.final_memory.expect("memory image present");
         assert!(!image.bytes.is_empty());
         assert!(!output.device.panic);

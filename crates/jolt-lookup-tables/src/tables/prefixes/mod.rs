@@ -76,7 +76,6 @@ pub trait SparseDensePrefix<F: JoltField>: 'static + Sync {
     fn evaluate(checkpoints: &[PrefixEval<F>], b: LookupBits, suffix_len: usize) -> F;
 }
 
-/// Wrapper for prefix polynomial evaluations, used for type safety.
 #[derive(Clone, Copy)]
 pub struct PrefixEval<F>(pub(crate) F);
 
@@ -96,7 +95,6 @@ impl<F> From<F> for PrefixEval<F> {
 }
 
 impl<F: Copy> PrefixEval<F> {
-    /// Returns the underlying field evaluation.
     pub fn value(self) -> F {
         self.0
     }
@@ -116,7 +114,6 @@ impl<F> Index<Prefixes> for &[PrefixEval<F>] {
     }
 }
 
-/// All prefix types used by Jolt's lookup tables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::EnumCount, strum::VariantArray)]
 #[repr(u8)]
 pub enum Prefixes {
@@ -187,13 +184,9 @@ pub enum Prefixes {
     XorRotL1Wrap,
 }
 
-/// Total number of prefix variants.
-pub const NUM_PREFIXES: usize = <Prefixes as strum::EnumCount>::COUNT;
-
 /// All prefix variants in discriminant order.
 pub const ALL_PREFIXES: &[Prefixes] = <Prefixes as strum::VariantArray>::VARIANTS;
 
-/// Dispatches a `SparseDensePrefix` method call to the concrete type for each `Prefixes` variant.
 macro_rules! dispatch_prefix {
     ($self:expr, $method:ident) => {
         dispatch_prefix!($self, $method,)
@@ -267,7 +260,6 @@ macro_rules! dispatch_prefix {
 }
 
 impl Prefixes {
-    /// Return the default checkpoint value for this prefix variant.
     pub fn default_checkpoint<F: JoltField>(&self) -> PrefixEval<F> {
         PrefixEval(dispatch_prefix!(self, default_checkpoint))
     }

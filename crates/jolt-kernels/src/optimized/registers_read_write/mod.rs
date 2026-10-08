@@ -125,8 +125,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
 struct ReadWriteKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     dimensions: ReadWriteDimensions,
-    /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
-    /// cycle→address transition.
     cycle: CycleState<F>,
     gruen: GruenSplitEqPolynomial<F>,
     address: RegisterAddressState<F>,
@@ -136,9 +134,6 @@ struct ReadWriteKernel<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteKernel<F> {
-    /// Cycle-round message via Gruen factoring: the quadratic inner factor's
-    /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
-    /// into the exact cubic by `gruen_poly_deg_3`.
     fn cycle_round_message(
         &self,
         round: usize,
@@ -154,9 +149,6 @@ impl<F: JoltField> ReadWriteKernel<F> {
             })
     }
 
-    /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
-    /// sparse rows; the final cycle bind collapses to the K-sized dense
-    /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
         let mut layout_transitioned = false;
         if self.challenges.bound() < self.dimensions.log_t() {
@@ -179,7 +171,6 @@ impl<F: JoltField> ReadWriteKernel<F> {
             self.address.eq_scalar = self.gruen.current_scalar();
         }
 
-        // Return replaced entry generations immediately.
         if layout_transitioned {
             crate::mem::purge_retained_memory(self.dimensions.log_t());
         }

@@ -40,6 +40,7 @@ pub enum InlineExtension {
     Secp256k1,
     Grumpkin,
     P256,
+    External,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,6 +89,7 @@ pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionPro
         InlineExtension::Secp256k1,
         InlineExtension::Grumpkin,
         InlineExtension::P256,
+        InlineExtension::External,
     ],
 };
 
@@ -284,6 +286,7 @@ const fn inline_extension_code(extension: InlineExtension) -> u8 {
         InlineExtension::Secp256k1 => 5,
         InlineExtension::Grumpkin => 6,
         InlineExtension::P256 => 7,
+        InlineExtension::External => 8,
     }
 }
 
@@ -356,6 +359,15 @@ mod tests {
             RV64IMAC_JOLT.fingerprint(),
             RV64IMAC_JOLT_ALL_INLINES.fingerprint()
         );
+    }
+
+    #[test]
+    fn inline_extension_codes_are_distinct_and_stable() {
+        let codes = RV64IMAC_JOLT_ALL_INLINES
+            .inline_extensions
+            .iter()
+            .map(|e| inline_extension_code(*e));
+        assert!(codes.eq(0..=8));
     }
 
     #[test]

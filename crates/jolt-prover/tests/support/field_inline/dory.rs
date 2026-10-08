@@ -1,5 +1,3 @@
-//! Dory proof plumbing shared by field-inline acceptance and tamper suites.
-
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;

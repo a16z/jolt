@@ -1,7 +1,3 @@
-//! The owned one-hot commitment surface: `commit_one_hot_group_owned` must
-//! agree with the borrowed path, and its hint must drive native batching to
-//! proofs the batch verifier accepts.
-
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
 #[expect(

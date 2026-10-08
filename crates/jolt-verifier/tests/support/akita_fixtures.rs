@@ -1,5 +1,3 @@
-//! Akita prover artifacts backing verifier completeness and tamper tests.
-
 #![expect(
     clippy::expect_used,
     reason = "fixture generation should fail loudly when prover artifact construction breaks"
@@ -163,11 +161,11 @@ fn prove_prepared(
     }
 }
 
-/// The packed field-inline case: the eq-MLE field-inline guest proven by the MODULAR packed
+/// The Akita field-inline case: the eq-MLE field-inline guest proven by the MODULAR Akita
 /// prover (the only field-inline-capable one) over fp128, with the transparent grouped setup
-/// carrying the field-increment limb arity line — the packed twin of the Dory
+/// carrying the field-increment limb arity line — the Akita twin of the Dory
 /// `standard_field_inline_eqpoly_case`. Legacy-generated akita fixtures pin the field-inline
-/// axis disabled and cannot verify with field-inline enabled, so this is the only packed
+/// axis disabled and cannot verify with field-inline enabled, so this is the only Akita
 /// fixture the akita verifier suites with field-inline enabled run over.
 #[cfg(feature = "field-inline")]
 pub fn akita_field_inline_eqpoly_case() -> &'static AkitaFixtureCase {
@@ -202,7 +200,7 @@ mod field_inline {
         [u64::MAX - 3, 9],
     ];
 
-    /// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))` over the packed axis's
+    /// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))` over the Akita axis's
     /// proof field, pinned as four canonical little-endian u64 limbs (the
     /// 16-byte fp128 form fills the low two; the guest Horner-recomposes them
     /// in whatever field it proves over).
@@ -276,7 +274,7 @@ mod field_inline {
             program_preprocessing,
             &config,
         )
-        .expect("field-inline packed preprocessing");
+        .expect("field-inline Akita preprocessing");
 
         let program_preprocessing = prover_preprocessing
             .program_arc()
@@ -296,7 +294,7 @@ mod field_inline {
             &witness,
             &public_io,
         )
-        .expect("packed field-inline prove");
+        .expect("Akita field-inline prove");
         AkitaFixtureCase {
             preprocessing: prover_preprocessing.verifier,
             public_io,

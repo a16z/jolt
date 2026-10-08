@@ -1,6 +1,5 @@
 use super::*;
 
-/// Lowers `SRLIW` to one word-width logical-shift lookup.
 pub(in crate::expand) fn expand_srliw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {

@@ -1,5 +1,3 @@
-//! Typed runtime failures and the recovery class each one permits.
-
 use thiserror::Error;
 
 /// What a consumer may do after a [`MetalError`].

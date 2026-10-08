@@ -1,0 +1,548 @@
+//! The Akita final opening.
+//!
+//! `OneHotTrace` batches its native columns at one common point. Advice,
+//! field increments, and direct committed-program objects
+//! join it as auxiliary Akita groups and are discharged by one joint opening.
+
+use std::collections::BTreeMap;
+
+use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+use jolt_claims::protocols::jolt::lattice::packing::{
+    advice_packing_plan, committed_program_packing_plan, OneHotTraceShape, PrefixPackedObjectPlan,
+};
+use jolt_claims::protocols::jolt::lattice::strategy::{
+    OneHotTraceLayoutPlan, ONE_HOT_TRACE_LAYOUT,
+};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
+use jolt_crypto::VectorCommitment;
+use jolt_field::JoltField;
+use jolt_openings::{
+    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
+};
+use jolt_poly::Point;
+use jolt_transcript::{AppendToTranscript, Transcript};
+
+use super::precommitted::precommitted_final_openings;
+#[cfg(feature = "akita")]
+use crate::stages::stage4::outputs::Stage4ClearOutput;
+use crate::stages::stage6b::outputs::Stage6bClearOutput;
+use crate::stages::stage7::outputs::Stage7ClearOutput;
+use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
+use crate::stages::PrecommittedSchedule;
+use crate::VerifierError;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::lattice::{field_inc_group_role, FieldIncLayout};
+
+fn batch_failed(reason: impl ToString) -> VerifierError {
+    VerifierError::FinalOpeningBatchFailed {
+        reason: reason.to_string(),
+    }
+}
+
+fn opening_failed(reason: impl ToString) -> VerifierError {
+    VerifierError::FinalOpeningVerificationFailed {
+        reason: reason.to_string(),
+    }
+}
+
+fn validate_one_hot_trace_metadata<C, S>(
+    commitment: &C,
+    setup: &S,
+    canonical_digest: [u8; 32],
+    column_arity: usize,
+    physical_poly_count: usize,
+    one_hot_k: usize,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+    S: OneHotTraceSetupMetadata,
+{
+    if !commitment.is_one_hot_backend() {
+        return Err(batch_failed(
+            "OneHotTrace commitment must use Akita's one-hot backend",
+        ));
+    }
+    if commitment.one_hot_k() != one_hot_k || setup.one_hot_k() != one_hot_k {
+        return Err(batch_failed(format!(
+            "OneHotTrace commitment/setup one-hot chunk size must equal canonical K={one_hot_k}"
+        )));
+    }
+    if commitment.layout_digest() != canonical_digest {
+        return Err(batch_failed(
+            "OneHotTrace commitment has a noncanonical layout digest",
+        ));
+    }
+    if commitment.num_vars() != column_arity || setup.max_num_vars() != column_arity {
+        return Err(batch_failed(format!(
+            "OneHotTrace commitment/setup arity must equal canonical column arity {column_arity}"
+        )));
+    }
+    if commitment.poly_count() != physical_poly_count
+        || setup.max_num_polys_per_commitment_group() != physical_poly_count
+    {
+        return Err(batch_failed(format!(
+            "OneHotTrace commitment/setup physical polynomial count must equal {physical_poly_count}"
+        )));
+    }
+    if setup.default_layout_digest() != canonical_digest {
+        return Err(batch_failed(
+            "OneHotTrace verifier setup has a noncanonical layout digest",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_group_commitment_metadata<C>(
+    commitment: &C,
+    layout_digest: [u8; 32],
+    num_vars: usize,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+{
+    if commitment.is_one_hot_backend() {
+        return Err(batch_failed(
+            "auxiliary commitments must use Akita's dense backend",
+        ));
+    }
+    if commitment.layout_digest() != layout_digest {
+        return Err(batch_failed(
+            "auxiliary commitment has a noncanonical layout digest",
+        ));
+    }
+    if commitment.num_vars() != num_vars {
+        return Err(batch_failed(format!(
+            "auxiliary commitment arity must equal canonical arity {num_vars}"
+        )));
+    }
+    if commitment.poly_count() != 1 {
+        return Err(batch_failed(
+            "auxiliary groups must contain one physical polynomial",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_packed_object_metadata<C>(
+    commitment: &C,
+    plan: &PrefixPackedObjectPlan,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+{
+    validate_group_commitment_metadata(
+        commitment,
+        plan.layout_digest(),
+        plan.packing().packed_num_vars(),
+    )
+}
+
+struct ResolvedObject<'a, PCS: CommitmentScheme> {
+    plan: PrefixPackedObjectPlan,
+    commitment: &'a PCS::Output,
+}
+
+fn reduce_object<PCS, T>(
+    object: &ResolvedObject<'_, PCS>,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<PCS::Field>>,
+    transcript: &mut T,
+) -> Result<EvaluationClaim<PCS::Field>, VerifierError>
+where
+    PCS: CommitmentScheme,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    let claims = object_leaf_claims(&object.plan, leaves)?;
+    let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
+    object
+        .plan
+        .packing()
+        .reduce_claims(&semantic, transcript)
+        .map_err(batch_failed)
+}
+
+fn advice_object<'a, PCS: CommitmentScheme>(
+    leaf: Option<&EvaluationClaim<PCS::Field>>,
+    commitment: Option<&'a PCS::Output>,
+    kind: JoltAdviceKind,
+) -> Result<Option<ResolvedObject<'a, PCS>>, VerifierError> {
+    let (leaf, commitment) = match (leaf, commitment) {
+        (None, None) => return Ok(None),
+        (Some(_), None) => {
+            return Err(batch_failed(format!(
+                "{kind:?} advice final claim supplied without a commitment"
+            )));
+        }
+        (None, Some(_)) => {
+            return Err(batch_failed(format!(
+                "{kind:?} advice commitment supplied without a final claim"
+            )));
+        }
+        (Some(leaf), Some(commitment)) => (leaf, commitment),
+    };
+    let plan = advice_packing_plan(kind, leaf.point.len()).map_err(batch_failed)?;
+    Ok(Some(ResolvedObject { plan, commitment }))
+}
+
+/// Bind the existing stage-6b reduced claim directly to the full-field commitment.
+/// Shared by the prover and verifier so they consume the same claim and point.
+#[cfg(feature = "field-inline")]
+pub fn field_inc_claim<F: JoltField, C: Clone>(
+    commitment: &C,
+    stage6b: &Stage6bClearOutput<F>,
+) -> Result<TaggedGroupOpeningClaim<F, C>, VerifierError> {
+    let cycle_point = stage6b.output_points.field_registers_inc_opening_point();
+    let point = FieldIncLayout::new(cycle_point.len())
+        .opening_point(cycle_point)
+        .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+            reason: error.to_string(),
+        })?;
+    Ok(TaggedGroupOpeningClaim::new(
+        field_inc_group_role(),
+        GroupOpeningClaim::new(
+            commitment.clone(),
+            point,
+            vec![
+                stage6b
+                    .output_values
+                    .field_registers_inc_claim_reduction
+                    .rd_inc,
+            ],
+        ),
+    ))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the stage inputs are passed separately by the verifier driver"
+)]
+pub fn verify<PCS, VC, T>(
+    formula_dimensions: &JoltFormulaDimensions,
+    one_hot_config: JoltOneHotConfig,
+    preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
+    one_hot_trace_commitment: &PCS::Output,
+    untrusted_advice_commitment: Option<&PCS::Output>,
+    trusted_advice_commitment: Option<&PCS::Output>,
+    #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
+    proof: &PCS::Proof,
+    transcript: &mut T,
+    schedule: &PrecommittedSchedule,
+    #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
+    stage6b: &Stage6bClearOutput<PCS::Field>,
+    stage7: &Stage7ClearOutput<PCS::Field>,
+) -> Result<(), VerifierError>
+where
+    PCS: CommitmentScheme,
+    PCS::Output: Clone + AppendToTranscript + OneHotTraceCommitmentMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: Transcript<Challenge = PCS::Field>,
+{
+    // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
+    // (field-inline) the always-present field-increment commitment, then the direct
+    // committed-program objects. Optional objects join exactly when their direct final
+    // reductions exist; presence must agree with the proof/preprocessing commitment slots.
+    let chunk_width = one_hot_config.committed_chunk_bits();
+    let one_hot_trace_shape = OneHotTraceShape {
+        ra_layout: formula_dimensions.ra_layout,
+        log_t: formula_dimensions.trace.log_t(),
+        log_k_chunk: chunk_width,
+    };
+    let plan = ONE_HOT_TRACE_LAYOUT
+        .plan(&one_hot_trace_shape)
+        .map_err(batch_failed)?;
+    validate_one_hot_trace_metadata(
+        one_hot_trace_commitment,
+        &preprocessing.pcs_setup,
+        plan.layout_digest(),
+        plan.num_vars(),
+        plan.ids().len(),
+        1 << chunk_width,
+    )?;
+    let leaves = leaf_claims(
+        schedule,
+        #[cfg(feature = "akita")]
+        stage4,
+        stage6b,
+        stage7,
+    )?;
+    let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)?;
+    let untrusted = advice_object::<PCS>(
+        leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
+        untrusted_advice_commitment,
+        JoltAdviceKind::Untrusted,
+    )?;
+    let trusted = advice_object::<PCS>(
+        leaves.get(&JoltCommittedPolynomial::TrustedAdvice),
+        trusted_advice_commitment,
+        JoltAdviceKind::Trusted,
+    )?;
+
+    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+    let trusted_claim = if let Some(object) = trusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+
+    let committed = preprocessing.program.committed();
+    let program_plan = committed
+        .map(|committed| {
+            committed_program_packing_plan(
+                preprocessing.program.bytecode_len(),
+                committed.bytecode_chunk_count(),
+                preprocessing.program.program_image_len_words(),
+                committed.trace_order,
+            )
+            .map_err(batch_failed)
+        })
+        .transpose()?;
+    let plans = program_plan
+        .as_ref()
+        .map(|plan| plan.objects().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if committed.map_or(0, |program| program.direct_program_commitments.len()) != plans.len() {
+        return Err(batch_failed(
+            "direct committed-program commitments do not match the canonical plan",
+        ));
+    }
+
+    let capacity = 2usize
+        .checked_add(plans.len())
+        .ok_or_else(|| batch_failed("auxiliary group capacity overflows"))?;
+    let mut auxiliary_groups = Vec::with_capacity(capacity);
+    for (object, claim) in [
+        (untrusted.as_ref(), untrusted_claim.as_ref()),
+        (trusted.as_ref(), trusted_claim.as_ref()),
+    ] {
+        if let (Some(object), Some(claim)) = (object, claim) {
+            auxiliary_groups.push(TaggedGroupOpeningClaim::new(
+                object.plan.group_role(),
+                GroupOpeningClaim::new(
+                    (*object.commitment).clone(),
+                    claim.point.as_slice().to_vec(),
+                    vec![claim.value],
+                ),
+            ));
+        }
+    }
+    #[cfg(feature = "field-inline")]
+    {
+        let commitment = field_inc_commitment.ok_or(VerifierError::MissingProofPayload {
+            field: "field_inc_commitment",
+        })?;
+        let layout = FieldIncLayout::new(formula_dimensions.trace.log_t());
+        validate_group_commitment_metadata(commitment, layout.layout_digest(), layout.num_vars())?;
+        auxiliary_groups.push(field_inc_claim(commitment, stage6b)?);
+    }
+
+    if let Some(committed) = committed {
+        for (plan, commitment) in plans.into_iter().zip(&committed.direct_program_commitments) {
+            let object: ResolvedObject<'_, PCS> = ResolvedObject { plan, commitment };
+            validate_packed_object_metadata(object.commitment, &object.plan)?;
+            let physical = reduce_object(&object, &leaves, transcript)?;
+            auxiliary_groups.push(TaggedGroupOpeningClaim::new(
+                object.plan.group_role(),
+                GroupOpeningClaim::new(
+                    (*object.commitment).clone(),
+                    physical.point.as_slice().to_vec(),
+                    vec![physical.value],
+                ),
+            ));
+        }
+    }
+
+    PCS::verify_batch(
+        &preprocessing.pcs_setup,
+        &auxiliary_groups,
+        &main_group,
+        proof,
+        transcript,
+    )
+    .map_err(opening_failed)?;
+
+    Ok(())
+}
+
+/// Assembles the native `OneHotTrace` group claim: every canonical
+/// column's leaf claim, its point mapped to the committed row-major order,
+/// all required to share one canonical opening point. Shared verbatim by the
+/// Akita prover's stage 8, so both sides derive the same native statement.
+pub fn one_hot_trace_claim<F: JoltField, C: Clone>(
+    plan: &OneHotTraceLayoutPlan,
+    chunk_width: usize,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+    commitment: &C,
+) -> Result<GroupOpeningClaim<F, C>, VerifierError> {
+    let mut common_point: Option<Vec<F>> = None;
+    let mut evaluations = Vec::with_capacity(plan.ids().len());
+    for polynomial in plan.ids() {
+        let claim = leaves.get(polynomial).ok_or_else(|| {
+            batch_failed(format!(
+                "missing final OneHotTrace claim for {polynomial:?}"
+            ))
+        })?;
+        let point = ONE_HOT_TRACE_LAYOUT
+            .column_point(*polynomial, chunk_width, claim.point.as_slice())
+            .map_err(batch_failed)?;
+        if let Some(expected) = &common_point {
+            if expected != &point {
+                return Err(batch_failed(format!(
+                    "OneHotTrace column {polynomial:?} does not share the canonical opening point"
+                )));
+            }
+        } else {
+            common_point = Some(point);
+        }
+        evaluations.push(claim.value);
+    }
+    let common_point = common_point.ok_or_else(|| batch_failed("OneHotTrace has no columns"))?;
+    if common_point.len() != plan.num_vars() {
+        return Err(batch_failed(
+            "OneHotTrace opening point has incorrect arity",
+        ));
+    }
+    Ok(GroupOpeningClaim::new(
+        commitment.clone(),
+        common_point,
+        evaluations,
+    ))
+}
+
+/// One precommitted object's leaf claims: each of the plan's canonical columns
+/// paired with its resolved leaf claim. Shared verbatim by the Akita
+/// prover's stage 8, so both sides fail on the same missing leaf.
+pub fn object_leaf_claims<F: JoltField>(
+    plan: &PrefixPackedObjectPlan,
+    leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+) -> Result<BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>, VerifierError> {
+    plan.packing()
+        .ids()
+        .iter()
+        .map(|id| {
+            leaves
+                .get(id)
+                .cloned()
+                .map(|claim| (*id, claim))
+                .ok_or_else(|| {
+                    batch_failed(format!(
+                        "missing final precommitted claim for packed leaf {id:?}"
+                    ))
+                })
+        })
+        .collect()
+}
+
+/// Every committed column's single leaf claim, resolved from stage 4, the
+/// precommitted reductions, and stage 7, keyed by committed polynomial. The
+/// canonical object plans check coverage, point arity, and suffix compatibility.
+/// Shared verbatim by the Akita prover's stage 8.
+pub fn leaf_claims<F: JoltField>(
+    schedule: &PrecommittedSchedule,
+    #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<F>,
+    stage6b: &Stage6bClearOutput<F>,
+    stage7: &Stage7ClearOutput<F>,
+) -> Result<BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>, VerifierError> {
+    use JoltCommittedPolynomial as Poly;
+
+    fn leaf<F: JoltField>(value: F, point: &[F]) -> EvaluationClaim<F> {
+        EvaluationClaim::new(Point::high_to_low(point.to_vec()), value)
+    }
+    fn insert<F: JoltField>(
+        leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+        polynomial: JoltCommittedPolynomial,
+        claim: EvaluationClaim<F>,
+    ) -> Result<(), VerifierError> {
+        if leaves.insert(polynomial, claim).is_some() {
+            return Err(batch_failed(format!(
+                "duplicate Akita final claim for {polynomial:?}"
+            )));
+        }
+        Ok(())
+    }
+    fn insert_indexed<F: JoltField>(
+        leaves: &mut BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
+        values: &[F],
+        points: &[Vec<F>],
+        polynomial: impl Fn(usize) -> JoltCommittedPolynomial,
+    ) -> Result<(), VerifierError> {
+        for (index, (value, point)) in values.iter().zip(points).enumerate() {
+            insert(leaves, polynomial(index), leaf(*value, point))?;
+        }
+        Ok(())
+    }
+    let mut leaves = BTreeMap::new();
+
+    let hamming_values = &stage7.output_values.hamming_weight_claim_reduction;
+    let hamming_points = &stage7.output_points.hamming_weight_claim_reduction;
+    insert_indexed(
+        &mut leaves,
+        &hamming_values.instruction_ra,
+        &hamming_points.instruction_ra,
+        Poly::InstructionRa,
+    )?;
+    insert_indexed(
+        &mut leaves,
+        &hamming_values.bytecode_ra,
+        &hamming_points.bytecode_ra,
+        Poly::BytecodeRa,
+    )?;
+    insert_indexed(
+        &mut leaves,
+        &hamming_values.ram_ra,
+        &hamming_points.ram_ra,
+        Poly::RamRa,
+    )?;
+
+    insert_indexed(
+        &mut leaves,
+        &hamming_values.balanced_inc_digits,
+        &hamming_points.balanced_inc_digits,
+        Poly::BalancedIncDigit,
+    )?;
+    insert(
+        &mut leaves,
+        Poly::BalancedIncCarry,
+        leaf(
+            hamming_values.balanced_inc_carry,
+            &hamming_points.balanced_inc_carry,
+        ),
+    )?;
+
+    #[cfg(feature = "akita")]
+    for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
+        if let Some(contribution) = stage4.ram_val_check_init.advice_contribution(kind) {
+            let polynomial = match kind {
+                JoltAdviceKind::Trusted => Poly::TrustedAdvice,
+                JoltAdviceKind::Untrusted => Poly::UntrustedAdvice,
+            };
+            insert(
+                &mut leaves,
+                polynomial,
+                leaf(contribution.opening_value, &contribution.opening_point),
+            )?;
+        }
+    }
+
+    for opening in precommitted_final_openings(
+        schedule,
+        &stage7.output_points,
+        &stage6b.output_points,
+        Some((&stage7.output_values, &stage6b.output_values)),
+    )? {
+        let value = opening.opening_claim.ok_or_else(|| {
+            batch_failed(format!(
+                "missing clear final value for {:?}",
+                opening.polynomial
+            ))
+        })?;
+        insert(&mut leaves, opening.polynomial, leaf(value, &opening.point))?;
+    }
+
+    Ok(leaves)
+}

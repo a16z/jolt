@@ -1,5 +1,3 @@
-//! Proof structures for single and batched sumcheck protocols.
-
 use crate::{
     claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement},
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},

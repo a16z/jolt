@@ -15,8 +15,7 @@
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     is_valid_committed_bytecode_chunking_for_len, is_valid_committed_program_immediate,
-    total_lanes, BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY,
-    INVALID_COMMITTED_PROGRAM_IMMEDIATE,
+    BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
@@ -41,7 +40,6 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
     InstructionFlags::IsNoop,
 ];
 
-/// The sparse `(lane, value)` encoding of one committed bytecode row.
 fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
@@ -149,9 +147,4 @@ pub fn program_image_words_padded(bytecode_words: &[u64]) -> Vec<u64> {
     let mut words = bytecode_words.to_vec();
     words.resize(padded_len, 0);
     words
-}
-
-/// Sanity re-export target: the lane total the layout must fit.
-pub const fn committed_total_lanes() -> usize {
-    total_lanes()
 }

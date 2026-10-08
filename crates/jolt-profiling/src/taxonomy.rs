@@ -33,7 +33,7 @@
 //! `HomomorphicBatch::prove_batch` → `HomomorphicBatch::prove_batch_zk`.
 //! Exactly one of each pair fires per prove — [`always_present_spans`] takes
 //! the [`ProverMode`] and returns the matching presence set. The `akita`
-//! feature swaps the commitment seams wholesale: the packed prover commits
+//! feature swaps the commitment seams wholesale: the Akita prover commits
 //! one native `OneHotTrace` group in stage 0 (no `commit_witness` stream, no
 //! homomorphic stage-8 batch) and discharges it with a native same-point
 //! opening after stage 7:
@@ -77,9 +77,6 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-///
-/// Version 4 removes `ProverConfig::derive_compact`: unified trace rows use
-/// `ProverConfig::derive` in every feature mode.
 pub const TAXONOMY_VERSION: u32 = 4;
 
 /// Proof configuration derived by the SDK and profile harness before entering
@@ -133,7 +130,7 @@ pub const SUMCHECK_ENGINE_SPANS: [&str; 2] = ["prove_batch", "sumcheck_round"];
 /// `jolt-prover` at the slot call boundaries — not by any backend impl — so
 /// every backend genuinely inherits them by implementing the same traits.
 /// The [`UNISKIP_SEAM_SPANS`] tail is mode-neutral; the head is the
-/// homomorphic path's commit/opening seams (the packed path swaps them for
+/// homomorphic path's commit/opening seams (the Akita path swaps them for
 /// [`AKITA_MODE_SPANS`]).
 pub const KERNEL_SEAM_SPANS: [&str; 6] = [
     "commit_witness",
@@ -145,7 +142,7 @@ pub const KERNEL_SEAM_SPANS: [&str; 6] = [
 ];
 
 /// The mode-neutral uni-skip slot boundaries — [`KERNEL_SEAM_SPANS`] minus
-/// the homomorphic commit/opening seams; the packed prover fires exactly
+/// the homomorphic commit/opening seams; the Akita prover fires exactly
 /// these.
 pub const UNISKIP_SEAM_SPANS: [&str; 4] = [
     "SpartanOuterUniskip::prepare",
@@ -192,9 +189,9 @@ pub const ZK_MODE_SPANS: [&str; 2] = [
     "HomomorphicBatch::prove_batch_zk",
 ];
 
-/// Packed-mode (`akita` feature) seams: the `OneHotTrace` column assembly
+/// Akita-mode (`akita` feature) seams: the `OneHotTrace` column assembly
 /// and native group commit at stage 0, plus the native grouped stage-8
-/// opening. The packed prover keeps `prove_uniskip_clear` (its recorders are
+/// opening. The Akita prover keeps `prove_uniskip_clear` (its recorders are
 /// clear; `akita` and `zk` are mutually exclusive) and fires no `commit_witness` /
 /// `stream_witnesses` / `JointOpeningPolynomials::prepare` /
 /// `HomomorphicBatch::*`.
@@ -211,7 +208,7 @@ pub const AKITA_MODE_SPANS: [&str; 4] = [
 pub enum ProverMode {
     Clear,
     Zk,
-    /// The packed (lattice) prover — transparent by construction.
+    /// The Akita (lattice) prover — transparent by construction.
     Akita,
 }
 
@@ -233,7 +230,7 @@ pub fn always_present_spans(mode: ProverMode) -> Vec<&'static str> {
             labels.extend(KERNEL_SEAM_SPANS);
             labels.extend(WITNESS_AND_OPENING_SPANS);
         }
-        // The packed prover streams no witness commit and runs no
+        // The Akita prover streams no witness commit and runs no
         // homomorphic joint opening; its bundle collection and oracle reads
         // still fire (stage-0 assembly, the naive kernels).
         ProverMode::Akita => {

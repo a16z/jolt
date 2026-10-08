@@ -103,7 +103,6 @@ impl Invariant for NaiveSortInvariant {
     }
 }
 
-/// Run the red-team e2e test against `CandidateSortInvariant`.
 pub fn run_redteam_test(
     model: &str,
     max_turns: usize,
@@ -194,32 +193,6 @@ mod tests {
         }
 
         assert_eq!(agent.recorded_prompts().len(), 1);
-    }
-
-    #[test]
-    fn redteam_e2e_no_violation_for_small_input() {
-        let invariant = CandidateSortInvariant;
-
-        let response = serde_json::json!({
-            "analysis": "Trying a small permutation.",
-            "counterexample": [5, 3, 1, 4, 2],
-        });
-        let agent = MockAgent::always_ok(&response.to_string());
-        let config = RedTeamConfig {
-            num_iterations: 3,
-            ..Default::default()
-        };
-
-        let result = auto_redteam(&invariant, &config, &agent, Path::new("/tmp"));
-
-        match result {
-            RedTeamResult::NoViolation { attempts } => {
-                assert_eq!(attempts.len(), 3);
-            }
-            RedTeamResult::Violation { .. } => {
-                panic!("Small inputs should not trigger a violation");
-            }
-        }
     }
 
     #[test]

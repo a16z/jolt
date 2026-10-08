@@ -126,7 +126,7 @@ use crate::akita::witness::DirectProgramObjects;
 /// commitments' opening material (the stage-8 openings). Mirrors legacy's
 /// `CommittedProgramProverData`.
 ///
-/// On the packed (`akita`) build the per-chunk/image plans and hints are
+/// On the Akita (`akita`) build the per-chunk/image plans and hints are
 /// retained in direct bounded-dense program objects built at preprocessing
 /// time, so proving consumes them directly instead of re-deriving them.
 #[derive(Clone)]

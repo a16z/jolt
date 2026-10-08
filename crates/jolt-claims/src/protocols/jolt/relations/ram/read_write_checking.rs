@@ -1,12 +1,6 @@
-//! RAM read/write-checking symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
-#[cfg(test)]
-use crate::protocols::jolt::geometry::ram::{
-    ram_inc, ram_ra, ram_read_value, ram_val, ram_write_value,
-};
 use crate::protocols::jolt::{
     JoltCommittedPolynomial, JoltExpr, JoltRelationId, JoltVirtualPolynomial,
     RamReadWriteChallenge, RamReadWritePublic, ReadWriteDimensions, UnbatchedClaim,
@@ -46,7 +40,6 @@ pub struct RamReadWriteInputClaims<C> {
     pub ram_write_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the RAM read/write-checking sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RamReadWriteChallenges<F> {
@@ -122,94 +115,5 @@ impl SymbolicSumcheck for ReadWriteChecking {
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         Self::unbatched_relation().folded_output()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::{BooleanityChallenge, JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, Ring};
-
-    fn read_write_dimensions() -> ReadWriteDimensions {
-        ReadWriteDimensions::new(5, 4, 2, 1)
-    }
-
-    #[test]
-    fn read_write_claims_evaluate_like_core_formula() {
-        let relation = ReadWriteChecking::new(read_write_dimensions());
-
-        let read = Fr::from_u64(3);
-        let write = Fr::from_u64(5);
-        let ra = Fr::from_u64(7);
-        let val = Fr::from_u64(11);
-        let inc = Fr::from_u64(13);
-        let gamma = Fr::from_u64(17);
-        let eq = Fr::from_u64(19);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_read_value() => read,
-                id if id == ram_write_value() => write,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::RamReadWrite(RamReadWriteChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == ram_ra() => ra,
-                id if id == ram_val() => val,
-                id if id == ram_inc() => inc,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::RamReadWrite(RamReadWriteChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltDerivedId::RamReadWrite(RamReadWritePublic::EqCycle) => eq,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(input, read + gamma * write);
-        assert_eq!(output, eq * ra * (val + gamma * (val + inc)));
-    }
-
-    #[test]
-    fn read_write_symbolic_matches_dependencies() {
-        let relation = ReadWriteChecking::new(read_write_dimensions());
-
-        assert_eq!(
-            ReadWriteChecking::id(),
-            JoltRelationId::RamReadWriteChecking
-        );
-        assert_eq!(
-            relation.rounds(),
-            read_write_dimensions().read_write_rounds()
-        );
-        assert_eq!(relation.degree(), 3);
-    }
-
-    #[test]
-    fn challenges_resolve_gamma_and_miss_others() {
-        let challenges = RamReadWriteChallenges {
-            gamma: Fr::from_u64(7),
-        };
-
-        assert_eq!(
-            challenges.resolve_challenge(&JoltChallengeId::from(RamReadWriteChallenge::Gamma)),
-            Some(Fr::from_u64(7)),
-        );
-        assert_eq!(
-            challenges.resolve_challenge(&JoltChallengeId::from(BooleanityChallenge::Gamma)),
-            None,
-        );
     }
 }

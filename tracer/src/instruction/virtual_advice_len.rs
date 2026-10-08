@@ -18,7 +18,6 @@ declare_riscv_instr!(
 
 impl VirtualAdviceLen {
     fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAdviceLen as RISCVInstruction>::RAMAccess) {
-        // Get the number of bytes remaining in the advice tape and write to rd register
         let remaining = advice_tape_remaining(cpu);
         cpu.write_register(self.operands.rd as usize, remaining as i64);
     }

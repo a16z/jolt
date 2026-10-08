@@ -48,7 +48,7 @@ type CycleSymbolicCommitted = relations::bytecode::ReadRafCyclePhaseCommitted;
 type CycleSymbolicCommitted =
     jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafCyclePhaseCommitted;
 
-/// The cycle-phase produced-claims type: `BytecodeRa` openings, plus (packed)
+/// The cycle-phase produced-claims type: `BytecodeRa` openings, plus (Akita)
 /// the `FusedInc` opening at the bound cycle point.
 #[cfg(not(feature = "akita"))]
 pub type BytecodeReadRafCycleOutputClaims<C> = BytecodeReadRafOutputClaims<C>;
@@ -266,8 +266,6 @@ fn r_cycle_suffix<F: JoltField>(log_t: usize, opening_point: &[F]) -> Result<&[F
         .ok_or_else(|| public_input_failed("bytecode cycle opening point shorter than log_t"))
 }
 
-/// Evaluate the full-program bytecode read-RAF output expression at the produced
-/// `BytecodeRa` openings and public values.
 #[cfg(not(feature = "akita"))]
 #[expect(
     clippy::wildcard_enum_match_arm,
@@ -405,7 +403,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                 challenges.gamma,
             )
         }
-        // The packed fused-inc stages: the store fold (and its complement)
+        // The Akita fused-inc stages: the store fold (and its complement)
         // bound to the four consuming relations' cycle points, resolved
         // through the lattice cycle output expression against the `FusedInc`
         // opening.
@@ -476,8 +474,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
     }
 }
 
-// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
-// composition is covered by the prover's field-inline stage round-trips and the packed e2e
+// The dory-shaped composition pins (base input-claims struct, five stage points); the Akita
+// composition is covered by the prover's field-inline stage round-trips and the Akita e2e
 // suite.
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(
@@ -675,7 +673,7 @@ mod field_inline_tests {
 }
 
 /// Derive the cycle-phase produced opening points: one `(chunk ++ r_cycle)`
-/// point per committed `BytecodeRa` chunk, plus (packed) the `FusedInc` cycle
+/// point per committed `BytecodeRa` chunk, plus (Akita) the `FusedInc` cycle
 /// point.
 fn derive_cycle_opening_points<F: JoltField>(
     r_address: &[F],
@@ -700,7 +698,7 @@ fn derive_cycle_opening_points<F: JoltField>(
 }
 
 /// Construction inputs for the committed-program bytecode cycle relation.
-/// One cycle point per relation stage — five in base mode, nine on the packed
+/// One cycle point per relation stage — five in base mode, nine on the Akita
 /// path (the four fused-inc consumer points follow the base five).
 pub struct BytecodeReadRafCommittedCycleInputs<F: JoltField> {
     pub dimensions: BytecodeReadRafDimensions,

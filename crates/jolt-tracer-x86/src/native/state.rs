@@ -4,11 +4,10 @@
 //! hardcoded field offsets, so the layout is `repr(C)` and offsets are
 //! asserted at compile time.
 
-use common::constants::REGISTER_COUNT;
-use common::jolt_device::JoltDevice;
+use common::constants::{RAM_START_ADDRESS, REGISTER_COUNT};
+use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_program::execution::TraceError;
 
-/// Why generated code returned to the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 pub enum ExitReason {
@@ -49,7 +48,6 @@ pub struct GuestState {
     pub mem_base: u64,
     /// Size in bytes of the RAM plane.
     pub mem_size: u64,
-    /// Host context for helper calls (device, advice tape, panic state).
     pub host: *mut HostContext,
     /// Runtime advice values for the group being executed, filled by the
     /// group's advice helper and read by its `VirtualAdvice` rows in order.
@@ -65,10 +63,17 @@ pub struct GuestState {
     pub obs_cursor: *mut Observation,
     /// Record mode: one past the last writable slot.
     pub obs_end: *mut Observation,
+    /// Offset of the stack canary from the start of the RAM plane. Stores to
+    /// `[canary_offset, canary_offset + STACK_CANARY_SIZE)` are stack
+    /// overflows and must fault, as they do in the interpreter.
+    pub canary_offset: u64,
 }
 
 impl GuestState {
-    /// Translate the generated-code exit state into the backend error channel.
+    pub fn canary_offset(layout: &MemoryLayout) -> u64 {
+        layout.stack_end - RAM_START_ADDRESS
+    }
+
     #[expect(clippy::print_stderr)]
     pub fn check_exit(&self, host: &mut HostContext) -> Result<(), TraceError> {
         match self.exit {
@@ -176,6 +181,7 @@ pub const OFF_ADVICE_JOBS: i32 = OFF_ADVICE_SLOTS + (ADVICE_SLOTS as i32) * 8;
 pub const OFF_ROW_LIMIT: i32 = OFF_ADVICE_JOBS + 8;
 pub const OFF_OBS_CURSOR: i32 = OFF_ROW_LIMIT + 8;
 pub const OFF_OBS_END: i32 = OFF_OBS_CURSOR + 8;
+pub const OFF_CANARY_OFFSET: i32 = OFF_OBS_END + 8;
 
 const _: () = {
     assert!(core::mem::offset_of!(GuestState, x) == OFF_X as usize);
@@ -191,6 +197,7 @@ const _: () = {
     assert!(core::mem::offset_of!(GuestState, row_limit) == OFF_ROW_LIMIT as usize);
     assert!(core::mem::offset_of!(GuestState, obs_cursor) == OFF_OBS_CURSOR as usize);
     assert!(core::mem::offset_of!(GuestState, obs_end) == OFF_OBS_END as usize);
+    assert!(core::mem::offset_of!(GuestState, canary_offset) == OFF_CANARY_OFFSET as usize);
 };
 
 #[inline]

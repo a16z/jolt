@@ -296,7 +296,9 @@ conversion or normalization copy.
 
 `ProverConfig::derive` now consumes `&[JoltTraceRow]`; callers supply
 `proof_rows()`. Its existing minimum domain and final-no-op sizing law are
-unchanged. Witness and field construction validate the same retained
+unchanged. Its last-row Jump precondition (`ProverError::TraceDoesNotEndInJump`)
+also depends on that prefix: `rows()` can end in canonical padding and would
+reject an honest trace. Witness and field construction validate the same retained
 `proof_len` against the cycle domain, and random-access proof consumers use
 that same prefix. This shared bound prevents padding from changing proof
 shape near a power-of-two boundary while keeping full analysis content.

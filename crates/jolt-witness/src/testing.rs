@@ -1,5 +1,3 @@
-//! Sample-trace fixtures for the derive-generated bundle consistency tests.
-
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
 use jolt_field::Fr;
 use jolt_program::{

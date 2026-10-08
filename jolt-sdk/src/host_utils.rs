@@ -137,7 +137,7 @@ fn program_preprocessing(
     JoltProgramPreprocessing::new(
         bytecode,
         memory_init,
-        MemoryLayout::new(&memory_config),
+        MemoryLayout::try_new(&memory_config)?,
         entry_address,
         max_trace_length,
         source.instruction_profile(),

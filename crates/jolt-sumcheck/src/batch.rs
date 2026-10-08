@@ -66,7 +66,6 @@ impl<F: Field> BatchPrelude<F> {
         Self::try_new(members, max_num_vars, max_degree).expect("invalid sumcheck batch prelude")
     }
 
-    /// Validates and constructs a batched sumcheck prelude.
     pub fn try_new(
         members: Vec<BatchMember<F>>,
         max_num_vars: usize,

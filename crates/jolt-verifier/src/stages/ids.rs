@@ -10,7 +10,6 @@ use jolt_claims::protocols::field_inline::{
 };
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltRelationId};
 
-/// A relation id from either protocol family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VerifierRelationId {
     Jolt(JoltRelationId),
@@ -29,7 +28,6 @@ impl From<FieldInlineRelationId> for VerifierRelationId {
     }
 }
 
-/// A derived-value id from either protocol family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VerifierDerivedId {
     Jolt(JoltDerivedId),
@@ -48,7 +46,6 @@ impl From<FieldInlineDerivedId> for VerifierDerivedId {
     }
 }
 
-/// A challenge id from either protocol family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VerifierChallengeId {
     Jolt(JoltChallengeId),

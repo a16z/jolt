@@ -51,7 +51,6 @@ pub(crate) struct FieldRegisterTraceFixture {
     counter: u64,
 }
 
-/// One active field-inline cycle: the instruction row with its field-inline trace data.
 fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
     TraceEvent {
         row: TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),

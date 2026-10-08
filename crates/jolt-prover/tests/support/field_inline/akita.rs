@@ -1,4 +1,4 @@
-//! Packed field-inline proving shared by the acceptance matrix and the
+//! Akita field-inline proving shared by the acceptance matrix and the
 //! specialized parity and soundness suite.
 
 use common::jolt_device::JoltDevice;
@@ -22,7 +22,7 @@ pub struct ProveOutput {
     pub proof: Proof,
 }
 
-/// Prepare and prove a guest case with the modular packed prover. The grouped
+/// Prepare and prove a guest case with the modular Akita prover. The grouped
 /// setup includes the full-width field increment commitment, including all-zero traces.
 /// The callback inspects the attached witness before proving.
 pub fn prove<D>(
@@ -59,7 +59,7 @@ pub fn prove<D>(
         untrusted_advice,
         false,
     )
-    .expect("field-inline packed preprocessing");
+    .expect("field-inline Akita preprocessing");
 
     let witness_output = trace_output;
     let program_preprocessing = prover_preprocessing
@@ -86,7 +86,7 @@ pub fn prove<D>(
         &witness,
         &public_io,
     )
-    .expect("packed field-inline prove");
+    .expect("Akita field-inline prove");
     (
         ProveOutput {
             verifier_preprocessing: prover_preprocessing.verifier,

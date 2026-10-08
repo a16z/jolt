@@ -34,8 +34,6 @@ fn golden_cases() -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
-/// Lockstep-runs the guest in both modes; returns the tick count on success,
-/// or the first divergence report.
 fn run_case(guest: &str, input: &[u8]) -> Result<usize, String> {
     let (elf, _, memory_config) = support::build_guest(guest);
 

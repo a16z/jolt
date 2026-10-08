@@ -1,3 +1,4 @@
+use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
@@ -64,7 +65,7 @@ pub fn preprocess_full_with_advice(
     })
 }
 
-/// The grouped packed setup: the canonical `OneHotTrace` object plus every
+/// The grouped Akita setup: the canonical `OneHotTrace` object plus every
 /// auxiliary object (advice, field increments, then direct program objects)
 /// opened in one batch. Building it provisions the grouped schedule rows that
 /// commit, prove, and verify later resolve without planning.
@@ -126,7 +127,7 @@ pub(crate) fn grouped_setup_params(
             untrusted_physical_vars,
             trusted_physical_vars,
             mandatory_dense_layouts,
-            shape.num_vars,
+            PolynomialGroupLayout::new(shape.num_vars, shape.num_polys),
         )
     });
     let params = AkitaSetupParams::one_hot_only_grouped(
@@ -137,7 +138,8 @@ pub(crate) fn grouped_setup_params(
         one_hot_k,
         grouped_schedule,
         Arc::clone(schedule_artifacts),
-    );
+    )
+    .with_akita_chunk_profile(config.akita_chunk_profile);
     Ok(params)
 }
 
@@ -249,7 +251,6 @@ pub fn commit_trusted_advice(
     })
 }
 
-/// The physical arity of an advice object sized to the program's advice capacity.
 fn advice_physical_num_vars(
     program: &JoltProgramPreprocessing,
     kind: JoltAdviceKind,

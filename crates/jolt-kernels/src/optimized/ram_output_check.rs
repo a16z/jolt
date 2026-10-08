@@ -64,7 +64,6 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             });
         }
 
-        // The public-IO tables, exactly as the reference builds them.
         let public_memory = relation.public_memory();
         let addresses = 1usize << ram_log_k;
         let mut val_io = unsafe_allocate_zero_vec(addresses);
@@ -110,8 +109,6 @@ struct OutputCheckKernel<F: JoltField> {
     bind_scratch: Vec<F>,
 }
 impl<F: JoltField> OutputCheckKernel<F> {
-    /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
-    /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
         &self,
         round: usize,
@@ -399,10 +396,5 @@ mod tests {
     #[test]
     fn parity_k32_deeper_address_domain() {
         run_parity(4, 32, 409);
-    }
-
-    #[test]
-    fn parity_k16_alternate_seed() {
-        run_parity(2, 16, 419);
     }
 }

@@ -199,8 +199,6 @@ mod matrix {
         };
     }
 
-    // The mode is part of every test's name, so a lane's output states which
-    // matrix cell it proved.
     #[cfg(not(any(feature = "zk", feature = "akita")))]
     mod clear {
         #[cfg(not(feature = "field-inline"))]

@@ -1,6 +1,3 @@
-//! Guest preparation shared by the end-to-end suites: build the guest through
-//! the host toolchain, preprocess it, and trace it with the modular tracer.
-
 #![expect(
     clippy::expect_used,
     reason = "fixture preparation fails loudly when guest construction breaks"

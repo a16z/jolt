@@ -19,7 +19,6 @@ use jolt_sumcheck::{
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
-/// Bytes per BN254 scalar.
 const SCALAR_BYTES: usize = 32;
 
 /// Cap on `num_vars` to keep the fuzz iteration cheap. Real sumchecks bind up
@@ -27,12 +26,9 @@ const SCALAR_BYTES: usize = 32;
 /// handful of rounds.
 const MAX_NUM_VARS: usize = 8;
 
-/// Cap on `degree` to keep round polys small. Real sumchecks use degree
-/// 2..=4; we go up to 6 to exercise the high-degree path.
 const MAX_DEGREE: usize = 6;
 
 fuzz_target!(|data: &[u8]| {
-    // Header: 1 byte num_vars + 1 byte degree + 32 bytes claimed_sum.
     if data.len() < 2 + SCALAR_BYTES {
         return;
     }
@@ -52,7 +48,7 @@ fuzz_target!(|data: &[u8]| {
         if cursor >= data.len() {
             return;
         }
-        let coeff_count = (data[cursor] as usize) % (degree + 2); // 0..=degree+1
+        let coeff_count = (data[cursor] as usize) % (degree + 2);
         cursor += 1;
         let needed = coeff_count * SCALAR_BYTES;
         if cursor + needed > data.len() {

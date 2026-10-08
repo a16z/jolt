@@ -29,6 +29,7 @@ mod formula_error;
 pub mod lattice;
 mod ops;
 pub mod protocols;
+pub mod r1cs;
 mod sumcheck;
 mod symbolic;
 pub mod twist;

@@ -1,5 +1,3 @@
-//! Akita commitment of the field-inline register increment polynomial.
-
 use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
@@ -17,7 +15,6 @@ fn commit_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     })
 }
 
-/// The field increment commitment and its retained PCS opening hint.
 pub struct FieldIncObject<PCS: CommitmentScheme> {
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
@@ -46,7 +43,7 @@ where
             order: TracePolynomialOrder::CycleMajor,
         },
     )
-    .ok_or_else(|| commit_failed("FieldRdInc disagrees with the packed trace arity"))?;
+    .ok_or_else(|| commit_failed("FieldRdInc disagrees with the Akita trace arity"))?;
     let (commitment, hint) = tracing::info_span!("commit_field_inc", num_vars = layout.num_vars())
         .in_scope(|| PCS::commit_full_width_object(setup, &polynomial, layout.layout_digest()))
         .map_err(commit_failed)?;

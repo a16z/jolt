@@ -56,7 +56,6 @@ use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
 pub trait ProveRounds<F: Field> {
-    /// The number of rounds/variables in this member's sumcheck.
     fn num_rounds(&self) -> usize;
 
     /// Bind `bind` — the member's previous active round's challenge (`None`
@@ -77,7 +76,6 @@ pub trait ProveRounds<F: Field> {
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
 }
 
-/// One active member for a single batch round.
 pub struct MemberRound<'a, F: Field> {
     pub index: usize,
     pub local_round: usize,
@@ -246,8 +244,6 @@ where
     let mut pending_binds: Vec<Option<F>> = vec![None; members.len()];
 
     for round in 0..max_num_vars {
-        // Per-round span (~log T per batch): members' `<Relation>::prove_round`
-        // spans nest under it, never inside per-index inner loops.
         let _round_span = tracing::info_span!("sumcheck_round", round).entered();
 
         let mut batched_coefficients = vec![F::zero(); coefficient_count];
@@ -332,7 +328,6 @@ where
         }
     }
 
-    // Members that never activated have nothing pending.
     let mut finishes: Vec<MemberFinish<'_, F>> = Vec::with_capacity(members.len());
     for (member, bind) in members.iter_mut().zip(pending_binds.iter()) {
         if let Some(bind) = *bind {

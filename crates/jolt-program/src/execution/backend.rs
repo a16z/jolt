@@ -68,7 +68,6 @@ pub trait ChunkedExecutionBackend: ExecutionBackend {
     fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError>;
 }
 
-/// Result of a [`ChunkedExecutionBackend::execute`] fast pass.
 pub struct ExecutionSummary<C> {
     pub checkpoints: Vec<C>,
     pub trace_len: usize,

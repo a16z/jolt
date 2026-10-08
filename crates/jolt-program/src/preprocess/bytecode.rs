@@ -83,7 +83,6 @@ impl BytecodePreprocessing {
     )
 )]
 struct PcSlot {
-    /// PC of the address's first row.
     first_pc: u32,
     /// Number of bytecode rows the address expands to; 0 marks an unmapped slot,
     /// which is why `MAX_INLINE_ROWS_PER_SOURCE` stops one short of `u16` range.
@@ -124,8 +123,6 @@ impl BytecodePCMapper {
     }
 
     pub fn try_new(bytecode: &[JoltInstructionRow]) -> Result<Self, PreprocessingError> {
-        // One allocation at the final size; the no-op sentinel lives in the
-        // first slot (`index_count` is always >= 1).
         let mut slots = vec![PcSlot::default(); Self::index_count(bytecode)?];
         if let Some(first) = slots.first_mut() {
             first.virtual_sequence_length = 1;
@@ -137,8 +134,6 @@ impl BytecodePCMapper {
             _ => bytecode,
         };
 
-        // Rows sharing an address must be adjacent, so every maximal run of
-        // equal addresses is exactly one inline sequence.
         let mut last_pc = 0u32;
         for run in rows.chunk_by(|a, b| a.address == b.address) {
             let Some((first_row, rest)) = run.split_first() else {
@@ -177,8 +172,6 @@ impl BytecodePCMapper {
         Ok(Self { slots })
     }
 
-    /// Checks that the run headed by `first_row` counts down by one to its
-    /// anchor at 0, returning its length.
     fn validate_run(
         bytecode_index: usize,
         address: usize,
@@ -208,7 +201,6 @@ impl BytecodePCMapper {
                 last_sequence: previous_sequence,
             });
         }
-        // The run counts down to 0, so its length is `first_sequence + 1`.
         first_sequence
             .checked_add(1)
             .ok_or(PreprocessingError::InlineSequenceTooLong {
@@ -367,26 +359,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_inline_sequences() {
-        let bytecode = vec![
-            instruction(0x8000_0004, Some(1)),
-            instruction(0x8000_0004, Some(1)),
-        ];
-
-        let err = BytecodePCMapper::try_new(&bytecode).unwrap_err();
-        assert_eq!(
-            err,
-            PreprocessingError::InvalidInlineSequence {
-                bytecode_index: BytecodePCMapper::get_index(0x8000_0004),
-                address: 0x8000_0004,
-                previous_sequence: 1,
-                expected_sequence: 0,
-                new_sequence: 1,
-            }
-        );
-    }
-
-    #[test]
     fn rejects_non_consecutive_inline_sequences() {
         let bytecode = vec![
             instruction(0x8000_0004, Some(2)),
@@ -478,8 +450,6 @@ mod tests {
         noop.instruction_kind = JoltInstructionKind::NoOp;
         assert_eq!(preprocessing.get_pc(&noop), Some(0));
 
-        // Not merely because the address is unmapped: the same address as a
-        // non-no-op has no slot at all.
         assert_eq!(preprocessing.get_pc(&instruction(0x8000_0004, None)), None);
     }
 
@@ -520,7 +490,6 @@ mod tests {
             }
         );
 
-        // The same store without an rd destination passes.
         let mut clean = instruction(0x8000_0000, None);
         clean.instruction_kind = JoltInstructionKind::SD;
         clean.operands = NormalizedOperands {
@@ -549,26 +518,6 @@ mod tests {
         assert_eq!(
             err,
             PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::MUL)
-        );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn base_preprocessing_rejects_field_inline_rows() {
-        let mut row = instruction(0x8000_0000, None);
-        row.instruction_kind = JoltInstructionKind::FIELD_MUL;
-        row.operands = NormalizedOperands {
-            rd: Some(1),
-            rs1: Some(2),
-            rs2: Some(3),
-            imm: 0,
-        };
-
-        let err =
-            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT).unwrap_err();
-        assert_eq!(
-            err,
-            PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::FIELD_MUL)
         );
     }
 

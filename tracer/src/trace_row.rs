@@ -80,7 +80,6 @@ mod tests {
 
     const TEXT: u64 = 0x8000_0000;
 
-    // add x3, x1, x2 ; ld x3, 0(x1) ; sd x2, 8(x1)
     const ADD_WORD: u32 = (2 << 20) | (1 << 15) | (3 << 7) | 0x33;
     const LD_WORD: u32 = (1 << 15) | (0b011 << 12) | (3 << 7) | 0x03;
     const SD_WORD: u32 = (2 << 20) | (1 << 15) | (0b011 << 12) | (8 << 7) | 0x23;
@@ -101,7 +100,6 @@ mod tests {
         BytecodePreprocessing::preprocess(rows, TEXT, RV64IMAC_JOLT).unwrap()
     }
 
-    /// Trace the three-instruction program on a real CPU and return its cycles.
     fn traced_cycles() -> Vec<Cycle> {
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
         cpu.get_mut_mmu().init_memory(1 << 16);
@@ -136,14 +134,12 @@ mod tests {
         assert_eq!(rows[0].rd_write_value(), base + 7);
         assert_eq!(rows[0].ram_address(), 0);
 
-        // LD: load row collapses RamRead/RamWrite/RdWrite into one value
         assert_eq!(rows[1].pc(), 2);
         assert_eq!(rows[1].ram_address(), base);
         assert_eq!(rows[1].rd_write_value(), 0x1234_5678);
         assert_eq!(rows[1].ram_read_value(), 0x1234_5678);
         assert_eq!(rows[1].ram_write_value(), 0x1234_5678);
 
-        // SD: store row writes rs2 into RAM, no rd
         assert_eq!(rows[2].pc(), 3);
         assert_eq!(rows[2].ram_address(), base + 8);
         assert_eq!(rows[2].rs2_value(), 7);
@@ -173,7 +169,6 @@ mod tests {
     #[test]
     fn unknown_addresses_report_missing_bytecode_pc() {
         let preprocessing = preprocessing();
-        // Same ADD but at an address outside the preprocessed bytecode
         let stray = Instruction::decode(ADD_WORD, TEXT + 0x1000, false).unwrap();
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
         cpu.get_mut_mmu().init_memory(64);
@@ -195,7 +190,6 @@ mod tests {
         let preprocessing = preprocessing();
         let cycles = traced_cycles();
 
-        // Load whose RAM value disagrees with the register write
         let Cycle::LD(mut ld_cycle) = cycles[1] else {
             panic!("expected an LD cycle");
         };
@@ -210,7 +204,6 @@ mod tests {
             "got {err:?}"
         );
 
-        // Store whose written value disagrees with rs2
         let Cycle::SD(mut sd_cycle) = cycles[2] else {
             panic!("expected an SD cycle");
         };

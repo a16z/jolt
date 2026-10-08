@@ -44,7 +44,6 @@ use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 /// storage-format detail, not a protocol fact.
 const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 
-/// Sentinel stored in a register-id byte for an absent (`None`) operand.
 const REGISTER_NONE: u8 = u8::MAX;
 
 /// Field-inline builds use 24 circuit-flag bits; base builds retain the original
@@ -129,7 +128,6 @@ pub enum RamAccess {
     NoOp,
 }
 
-/// Witness values for a non-memory row.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NonMemoryState {
     pub rs1_value: u64,
@@ -207,8 +205,6 @@ impl CapturedState {
 /// A final row violates its representation or observation contract.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TraceRowError {
-    /// A final-row immediate does not fit the chosen signed-magnitude `u64`
-    /// encoding.
     #[error("immediate |{imm}| does not fit the u64 magnitude encoding")]
     ImmTooWide { imm: i128 },
     /// A register id does not fit the compact `u8` storage (with `0xFF`
@@ -252,13 +248,9 @@ struct TraceValueSlots {
 #[repr(C)]
 pub struct JoltTraceRow {
     values: TraceValueSlots,
-    /// Source RV64 instruction address (guest architectural address).
     unexpanded_pc: u64,
-    /// Magnitude of the immediate; sign is bit `META_IMM_NEGATIVE_SHIFT` of `meta`.
     imm_abs: u64,
-    /// Compact local bytecode index (expanded "PC"); see [`JoltTraceRow::pc`].
     bytecode_pc: u32,
-    /// Packed circuit flags, instruction flags, and immediate sign.
     meta: u32,
     /// Final Jolt instruction tag (stable identity, not a dense index). The
     /// lookup-table routing is derived from this in `jolt-lookup-tables`.
@@ -268,7 +260,6 @@ pub struct JoltTraceRow {
     rs1_id: u8,
     rs2_id: u8,
     rd_id: u8,
-    /// Capture presence, sequence presence, and integer-operand presence.
     control: u8,
 }
 
@@ -322,7 +313,6 @@ impl Default for JoltTraceRow {
 }
 
 impl JoltTraceRow {
-    /// Canonical no-op row.
     #[expect(
         clippy::expect_used,
         reason = "the canonical no-op satisfies the checked row contract"
@@ -471,7 +461,6 @@ impl JoltTraceRow {
         })
     }
 
-    /// The per-cycle witness values, typed by row class.
     #[inline]
     pub fn captured_state(&self) -> CapturedState {
         if self.is_load() {

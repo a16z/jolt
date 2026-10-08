@@ -1,5 +1,3 @@
-//! Register-domain virtual polynomials.
-
 use super::*;
 
 impl TraceBackend {

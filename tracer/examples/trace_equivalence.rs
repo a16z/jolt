@@ -42,7 +42,6 @@ struct TraceDigest {
     io_hash: String,
 }
 
-/// A tracer configuration, expressed as the environment that selects it.
 struct Config {
     name: &'static str,
     env: &'static [(&'static str, &'static str)],
@@ -87,11 +86,8 @@ const CONFIGS: &[Config] = &[
 /// a tiny guest covering M-extension mul/div and compressed instructions.
 fn cases() -> Vec<(&'static str, Vec<u8>)> {
     vec![
-        // ~3396 cycles/hash
         ("sha2-chain-guest", chain_input(300)),
-        // ~4330 cycles/hash
         ("sha3-chain-guest", chain_input(235)),
-        // ~12 cycles/unit
         ("fibonacci-guest", postcard::to_stdvec(&84_000u32).unwrap()),
         // ~1550 cycles/op; alloc-heavy, exercises rem via wyhash indexing
         ("btreemap-guest", postcard::to_stdvec(&650u32).unwrap()),
@@ -133,7 +129,6 @@ fn run_case(guest: &str, input: &[u8]) -> TraceDigest {
     }
 }
 
-/// Re-run this binary under `config` and collect its digests.
 fn digests_under(config: &Config, filter: Option<&str>) -> BTreeMap<String, TraceDigest> {
     let exe = std::env::current_exe().expect("cannot locate own executable");
     let mut command = std::process::Command::new(exe);
@@ -159,7 +154,6 @@ fn digests_under(config: &Config, filter: Option<&str>) -> BTreeMap<String, Trac
     serde_json::from_slice(&output.stdout).expect("malformed digest JSON from emit run")
 }
 
-/// Report every component that differs, not just the first.
 fn describe_divergence(guest: &str, reference: &TraceDigest, actual: &TraceDigest) -> Vec<String> {
     let mut parts = Vec::new();
     if reference.row_count != actual.row_count {

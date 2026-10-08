@@ -1,4 +1,4 @@
-//! Packed (Akita) field-inline parity and tamper tests over fp128.
+//! Akita field-inline parity and tamper tests over fp128.
 //!
 //! Both kernel backends prove the field-ops guest with full-width `FieldRdInc`
 //! values and muldiv with an identically zero `FieldRdInc`, producing identical
@@ -41,7 +41,6 @@ mod clear {
     use crate::support::field_inline::akita::Proof;
     use crate::support::field_inline::{akita, field_ops, muldiv};
 
-    /// A labeled packed kernel-backend constructor.
     type BackendCase = (
         &'static str,
         fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
@@ -76,7 +75,6 @@ mod clear {
         }
     }
 
-    /// Commit the honest increment polynomial under a supplied layout digest.
     fn commit_inc_with_digest(fixture: &IncFixture, digest: [u8; 32]) -> AkitaCommitment {
         use jolt_openings::TransparentObjectSetup;
         use jolt_poly::Polynomial;
@@ -95,7 +93,6 @@ mod clear {
         commitment
     }
 
-    /// Both backends' packed field-inline proofs must verify AND be equal wire objects.
     #[test]
     fn akita_field_inline_field_ops_backends_have_identical_proofs() {
         let mut case = field_ops();
@@ -110,7 +107,7 @@ mod clear {
             );
             assert!(
                 output.proof.field_inc_commitment.is_some(),
-                "packed field-inline proofs must carry the field-increment commitment ({label})",
+                "Akita field-inline proofs must carry the field-increment commitment ({label})",
             );
             assert!(
                 inc.rd_inc.iter().any(|value| {
@@ -125,13 +122,13 @@ mod clear {
                 &output.proof,
             )
             .unwrap_or_else(|error| {
-                panic!("packed field-inline proof must verify ({label}): {error}")
+                panic!("Akita field-inline proof must verify ({label}): {error}")
             });
             proofs.push(output.proof);
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized packed field-inline proofs must be identical wire objects",
+            "reference and optimized Akita field-inline proofs must be identical wire objects",
         );
     }
 
@@ -151,7 +148,7 @@ mod clear {
                 "a zero FieldRdInc still carries its commitment ({label})",
             );
             let JoltProofClaims::Clear(claims) = &output.proof.claims else {
-                panic!("packed proofs carry clear claims");
+                panic!("Akita proofs carry clear claims");
             };
             assert_eq!(
                 claims.stage6b.field_registers_inc_claim_reduction.rd_inc,
@@ -164,18 +161,16 @@ mod clear {
                 &output.proof,
             )
             .unwrap_or_else(|error| {
-                panic!("field-inactive packed proof must verify ({label}): {error}")
+                panic!("field-inactive Akita proof must verify ({label}): {error}")
             });
             proofs.push(output.proof);
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized field-inactive packed proofs must be identical wire objects",
+            "reference and optimized field-inactive Akita proofs must be identical wire objects",
         );
     }
 
-    /// The packed field-inline tamper matrix: one honest proof, mutations on fresh
-    /// clones, every one rejected.
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
         let (output, inc) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_inc);
@@ -193,7 +188,7 @@ mod clear {
                 .proof
                 .field_inc_commitment
                 .as_ref()
-                .expect("packed field-inline proofs carry the field-increment commitment");
+                .expect("Akita field-inline proofs carry the field-increment commitment");
             let digest = GroupCommitmentMetadata::layout_digest(honest);
             // The forgery path reproduces the prover's commit exactly under
             // the honest digest, so the flipped-digest commitment below
@@ -255,7 +250,7 @@ mod clear {
             assert!(
                 akita::verify_full(&output.verifier_preprocessing, &output.public_io, &tampered)
                     .is_err(),
-                "tampered packed field-inline proof must be rejected: {name}",
+                "tampered Akita field-inline proof must be rejected: {name}",
             );
         }
     }
@@ -275,7 +270,7 @@ mod clear {
             .proof
             .field_inc_commitment
             .clone()
-            .expect("packed field-inline proofs carry the field-increment commitment");
+            .expect("Akita field-inline proofs carry the field-increment commitment");
         let point = vec![AkitaField::from_u64(3); GroupCommitmentMetadata::num_vars(&commitment)];
         let field_claim = TaggedGroupOpeningClaim::new(
             field_inc_group_role(),
@@ -306,12 +301,3 @@ mod clear {
         );
     }
 }
-
-#[cfg(not(all(
-    feature = "prover-fixtures",
-    feature = "field-inline",
-    feature = "akita"
-)))]
-#[test]
-#[ignore = "enable --features prover-fixtures,field-inline,akita to run the packed field-inline e2e"]
-fn akita_field_inline_e2e() {}

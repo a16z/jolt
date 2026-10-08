@@ -108,7 +108,7 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
 /// [`draw`](Self::draw), so the squeeze order is single-sourced.
 pub struct Stage6bDraws<F> {
     pub instruction_ra_gamma: F,
-    /// Base only: the packed batch has no inc claim-reduction member.
+    /// Base only: the Akita batch has no inc claim-reduction member.
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
     /// The field-register increment-reduction gamma (the spec's `eta`), member-drawn in
@@ -282,8 +282,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let booleanity_dimensions =
             BooleanityDimensions::new(formula_dimensions.ra_layout, log_t, committed_chunk_bits);
 
-        // The bytecode folds below consume per-stage power VECTORS, expanded
-        // once here from the carried scalars.
         let stage_gamma_powers = carried.bytecode_read_raf.stage_gamma_powers();
         let bytecode_r_address = stage6a_points.bytecode_read_raf.intermediate.clone();
         let booleanity_r_address = stage6a_points.booleanity.intermediate.clone();
@@ -349,7 +347,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             super::field_inline::bytecode_fold_and_cycles(carried, stage4_points, stage5_points)?;
         #[cfg(not(feature = "akita"))]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = stage_points.stage_cycle_points;
-        // The packed fused-inc consumer points appended to the shared five: the
+        // The Akita fused-inc consumer points appended to the shared five: the
         // four inc-producing relations' cycle bindings, in stage order (γ^5..8).
         // The register cycle vectors move in here (no clones): the akita build
         // fuses the inc reduction into the read-RAF legs, so no `IncClaimReduction`
