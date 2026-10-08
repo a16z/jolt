@@ -253,6 +253,33 @@ pub use jolt_sdk_macros::advice;
 pub use jolt_sdk_macros::provable;
 pub use postcard;
 
+/// Wraps the Dory prove and verify functions `#[jolt::provable]` generates.
+/// The `akita` feature compiles out the Dory prover they call, so a host build
+/// that unifies it with a provable crate gets one error naming the cause
+/// instead of unresolved paths into the missing Dory API.
+#[doc(hidden)]
+#[cfg(not(all(feature = "host", feature = "akita")))]
+#[macro_export]
+macro_rules! __dory_host_items {
+    ($($item:item)*) => {
+        $($item)*
+    };
+}
+
+#[doc(hidden)]
+#[cfg(all(feature = "host", feature = "akita"))]
+#[macro_export]
+macro_rules! __dory_host_items {
+    ($($item:item)*) => {
+        ::core::compile_error!(
+            "#[jolt::provable] host functions prove and verify with Dory, but this build \
+             enables jolt-sdk's `akita` feature, which compiles the Dory prover out (the \
+             recursion example's `akita` feature turns it on). Build Akita hosts separately, \
+             against `jolt::jolt_prover::akita`."
+        );
+    };
+}
+
 use bytemuck::Pod;
 use serde::{Deserialize, Serialize};
 
