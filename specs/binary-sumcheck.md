@@ -93,12 +93,34 @@ Why zero extension is sound: for member `i`, `Σ_{x ∈ {0,1}^n} g_i(x_{W_i}) ·
 
 `member_output_scale` has no caller in the workspace's verifier, which is written for odd characteristic. It is added under the repository's allowance for a documented external contract: the contract is invariant 6, written out in its rustdoc, and its consumer is the future verifier of the binary-field opening claims that motivate this work. Without it a characteristic-2 verifier would have to restate the padding rule.
 
+### Prior Art
+
+A survey of public sum-check implementations, read from source at the commits listed under References (nothing was built or run), found four ways of batching instances over different numbers of variables.
+
+| Rule | Used by | Characteristic 2 |
+|---|---|---|
+| Zero extension: multiply by the indicator of zero on the unused variables and carry a running `∏ (1 − r_j)` | Binius64 (`PaddedSumcheckDecorator`), Expander's generic sum-check, Plonky3's stacked layout (as selector bits on the point) | valid |
+| Late joining: a shorter instance enters when the cube has shrunk to its size | Binius (both its batch verifiers), Ligerito, Plonky3's multi-AIR zerocheck, leanVM | valid |
+| Constant extension with a `2^k` scale and halving | Nova, Jolt | invalid; both are written for prime fields |
+| Equal sizes required | arkworks, HyperPlonk, flock, WHIR | not applicable |
+
+No surveyed project divides by 2 over a binary field. Binius64's decorator is the closest precedent for this spec: unscaled initial claim, padding round `claim · prefix · (1 − X)`, active round scaled by the prefix, prefix updated by `(1 − r)`, final claim scaled by the indicator at the padding challenges. It pads only variables bound before the instance starts; Jolt's `offset` also allows padding after, which the same rule covers.
+
+Round-polynomial formats fall in two groups. Binius, Binius64, leanVM, WHIR and Nova send monomial coefficients with one omitted (the top, the linear or the constant one) and recover it from the claim, so the round check is implicit. Jolt's `CompressedPoly` is in this group, and omitting the linear coefficient stays determined in characteristic 2 because `s(0) + s(1) = c_1 + … + c_d`. Expander, Ligerito and arkworks send evaluations, which over a binary field forces a choice of points other than `0, 1, 2, …`: Expander uses `{0, 1, X, X²}` behind a field-type branch and Ligerito `{0, 1, x + 1}`. Coefficient form needs neither.
+
+Three findings bear on later work rather than on this spec.
+
+- **Univariate skip.** Binius64 and flock both take the first-round domain to be a 64-point `F_2`-subspace of `GF(2^8)` together with a coset, send the round polynomial as its values on the coset (it vanishes on the subspace), and embed `GF(2^8)` into the large field through a 256-entry table. Both also fix some equality-polynomial coordinates to constants, which flock documents as a soundness dependency. This is the design a characteristic-2 first-round domain here should follow once `jolt-field` has the 8-bit field and its embeddings.
+- **Prover evaluation points.** Binius64 and flock evaluate the degree-2 part of a round polynomial at `1` and `∞`, recover the remaining value from the claim, keep the equality factor outside, and accumulate products unreduced. Members of this engine already return coefficients, so this belongs to the prover kernels.
+- **Equality-factored round format.** leanVM and Binius64 omit the constant coefficient in zerocheck rounds and recover it from `(1 + r) · h(0) + r · h(1) = claim`, sending one element fewer. It is a wire-format change and is not proposed here.
+
 ### Alternatives Considered
 
-1. **Require equal round counts in characteristic 2.** Smallest change, and no new method. Rejected: Jolt's stages batch relations over different numbers of variables as a matter of course, so every characteristic-2 caller would re-implement padding inside its members, each with its own convention.
-2. **Zero extension in every characteristic.** One rule instead of two. Rejected: it changes the round polynomials and transcripts of every existing proof, and the head-aligned kernels emit at the constant-extension scale.
-3. **A characteristic marker on `Field`** (an associated constant or a fallible `two_inv`). Rejected for now: `from_u64(2).inverse()` already answers the question through the existing contract, and a new trait item would touch every backend for one caller.
-4. **Let the caller pick the rule.** Rejected: constant extension is unsound to request in characteristic 2 and there is no reason to pick zero extension elsewhere, so the parameter would have exactly one valid value per field.
+1. **Late joining instead of padding.** A shorter member would enter the batch at the round where the remaining cube matches its size, with no padding rounds at all. Rejected: it requires every member to end at the last round, and `BatchMember::offset` places a member's window anywhere, including head-aligned members that finish early.
+2. **Require equal round counts in characteristic 2.** Smallest change, and no new method. Rejected: Jolt's stages batch relations over different numbers of variables as a matter of course, so every characteristic-2 caller would re-implement padding inside its members, each with its own convention.
+3. **Zero extension in every characteristic.** One rule instead of two. Rejected: it changes the round polynomials and transcripts of every existing proof, and the head-aligned kernels emit at the constant-extension scale.
+4. **A characteristic marker on `Field`** (an associated constant or a fallible `two_inv`). Rejected for now: `from_u64(2).inverse()` already answers the question through the existing contract, and a new trait item would touch every backend for one caller.
+5. **Let the caller pick the rule.** Rejected: constant extension is unsound to request in characteristic 2 and there is no reason to pick zero extension elsewhere, so the parameter would have exactly one valid value per field.
 
 ## Documentation
 
@@ -113,3 +135,13 @@ One commit for the padding rule and `member_output_scale`, one for the integer-d
 - `specs/binary-field.md`
 - LaBinius, ePrint 2026/2103
 - `crates/jolt-sumcheck/src/batch.rs`, `crates/jolt-sumcheck/src/prover.rs`, `crates/jolt-sumcheck/src/domain.rs`
+- Surveyed implementations, with the commit read:
+  - Binius64 `4428e759`: `crates/ip-prover/src/sumcheck/padded.rs`, `crates/ip/src/sumcheck/common.rs`, `crates/verifier/src/protocols/bitand.rs`
+  - Binius `47675e19`: `crates/core/src/protocols/sumcheck/{verify_sumcheck,front_loaded,verify_zerocheck}.rs`
+  - Plonky3 `3152b14a`: `sumcheck/src/layout`, `sumcheck/src/strategy.rs`, `multi-stark/src/zerocheck.rs`
+  - leanMultisig `c7b1daa5`: `crates/leanvm_core/src/constraints.rs`, `crates/fiat_shamir/src/transcript.rs`, `crates/flock/src/zerocheck.rs`
+  - flock `b684b125`: `flock-core/src/zerocheck.rs`
+  - WHIR `afec1fac`: `src/protocols/sumcheck.rs`
+  - Expander `096581e1`: `sumcheck/src/sumcheck_generic/prover.rs`, `sumcheck/src/prover_helper/product_gate.rs`
+  - Ligerito `df97afeb` (`ligerito-impl`): `Sumcheck/src/{verifier,ligerito}.jl`
+  - arkworks sumcheck `d241e9b1`, HyperPlonk `2a3b55c9`, Nova `01b1e2d6`: `src/spartan/sumcheck.rs`
