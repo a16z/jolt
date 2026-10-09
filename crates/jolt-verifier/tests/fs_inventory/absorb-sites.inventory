@@ -174,7 +174,7 @@ jolt-verifier::verifier.rs::absorb_commitments::absorb_committed_program_commitm
 jolt-verifier::verifier.rs::absorb_commitments::absorb_transcript_commitments#0::absorb_transcript_commitments(&proof.commitments,proof.untrusted_advice_commitment.as_ref(),trusted_advice_commitment,transcript,)
 jolt-verifier::verifier.rs::absorb_committed_program_commitments::append#1::transcript.append(bytecode_commitment)
 jolt-verifier::verifier.rs::absorb_committed_program_commitments::append#3::transcript.append(program_image_commitment)
-jolt-verifier::verifier.rs::absorb_committed_program_commitments::append_payload_label#0::append_payload_label(transcript,b"program_bytecode_commit",bytecode_commitment,)
+jolt-verifier::verifier.rs::absorb_committed_program_commitments::append_payload_label#0::append_payload_label(transcript,b"program_bytecode_commit",bytecode_commitment)
 jolt-verifier::verifier.rs::absorb_committed_program_commitments::append_payload_label#2::append_payload_label(transcript,b"program_image_commitment",program_image_commitment,)
 jolt-verifier::verifier.rs::absorb_labeled_bytes::append#0::transcript.append(&LabelWithCount(label,num::u64_from_usize(bytes.len())))
 jolt-verifier::verifier.rs::absorb_labeled_bytes::append_bytes#1::transcript.append_bytes(bytes)

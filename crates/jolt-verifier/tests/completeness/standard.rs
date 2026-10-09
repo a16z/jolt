@@ -1,3 +1,11 @@
+#![cfg_attr(
+    not(feature = "zk"),
+    expect(
+        clippy::unwrap_used,
+        reason = "fixture transport assertions fail loudly"
+    )
+)]
+
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support;
 
