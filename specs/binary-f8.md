@@ -9,7 +9,7 @@
 
 ## Summary
 
-A sum-check over a binary field cannot use consecutive integers as evaluation points: `specs/binary-sumcheck.md` rejects `CenteredIntegerDomain` in characteristic 2 for that reason. The binary-field systems surveyed there (Binius64, flock) take their univariate-skip domain to be an $\mathbb F_2$-subspace of $\mathrm{GF}(2^8)$, embedded into the large field. This spec adds the 8-bit field `F8` to the `binary` backend of `jolt-field` and its embeddings into `F64`, `F128` and `F192`, which is step 3 of the roadmap in `specs/binary-field.md`. The domain itself, and the sum-check round that uses it, are a later spec.
+A sum-check over a binary field cannot use consecutive integers as evaluation points: `specs/binary-sumcheck.md` rejects `CenteredIntegerDomain` in characteristic 2 for that reason. The binary-field systems surveyed there (Binius64, flock) take their univariate-skip domain to be an $\mathbb F_2$-subspace of $\mathrm{GF}(2^8)$, embedded into the large field. This spec adds the 8-bit field `F8` to the `binary` backend of `jolt-field` and its embeddings into `F64`, `F128` and `F192`, which is the subfield part of step 3 of the roadmap in `specs/binary-field.md`. `From<F8>` is the conversion contract for that subfield; a general capability for packed-bit embeddings stays deferred until it has a caller. The domain itself, and the sum-check round that uses it, are a later spec.
 
 ## Intent
 
@@ -51,23 +51,23 @@ Add `F8` $= \mathbb F_2[x]/(x^8+x^4+x^3+x+1)$ to `jolt-field`'s `binary` backend
 - [ ] Compile-time bound assertions: `F8: JoltField`, with and without `allocative`; `F64: From<F8>`, `F128: From<F8>`, `F192: From<F8>`.
 - [ ] Multiplication against FIPS 197: `{57} * {83} == {c1}` and `{57} * {13} == {fe}` (section 4.2), and `{53}.inverse() == {ca}` (the pair used in the S-box literature). `inverse` of zero is `None`.
 - [ ] Exhaustive field checks over all 256 elements: `a * a.inverse() == 1` for nonzero `a`; `a.square() == a * a`; $a^{256} = a$. Exhaustive over all 65,536 pairs: commutativity, and distributivity against a third fixed nonzero element.
-- [ ] `x` has multiplicative order 51 and `x + 1` (raw `0x03`) has order 255, checked by exponentiation. (The AES polynomial is irreducible and not primitive.)
-- [ ] The spine tests that `specs/binary-field.md` requires of `F64` are repeated for `F8`: `from_u64(2)`, `pow2(1)`, `one().mul_pow_2(1)` are zero and `from_u64(3)`, `from_i64(-1)` are one; frozen `to_bytes_le` and bincode bytes for one element; `from_bytes_le_reduced` on an empty and a two-byte input; `from_bytes_le_checked` on lengths 0, 1, 2; `from_u128_checked(0x100)` is `None`; `num_bits` of zero, one and `0x80`; `random` consumes one byte, checked with a counting RNG.
+- [ ] `x` has multiplicative order exactly 51 ($x^{51} = 1$, $x^{17} \ne 1$, $x^{3} \ne 1$) and `x + 1` (raw `0x03`) has order exactly 255 (its powers 85, 51 and 15 are not one). (The AES polynomial is irreducible and not primitive.)
+- [ ] A contract test for the `F8` spine, covering the following and no more: `NUM_BYTES == 1` and `MODULUS_BITS == 9`; `from_u64(2)`, `pow2(1)`, `one().mul_pow_2(1)` are zero and `from_u64(3)`, `from_i64(-1)` are one; `two_inv` and `half` panic; the accumulator's signed `fmadd` variants act by parity; frozen `to_bytes_le` and bincode bytes for one element, and `to_bytes_le` panics on a buffer of length 0 or 2; `from_bytes_le_reduced` on an empty and a two-byte input, and both challenge constructors agree with it; `from_bytes_le_checked` on lengths 0, 1, 2; `from_u128_checked(0x100)` is `None`, `from_u128_reduced(0x1ab)` is `0xab`, and `to_u128_checked` returns the raw byte; `num_bits` of zero, one and `0x80`; `Display` of zero and one is `00` and `01`; `random` consumes one byte, checked with a counting RNG. Inherited default methods need no test of their own.
 - [ ] Embedding, for each of `F64` and `F128`:
   - `E::from(F8::from_raw(2))` equals the constant of invariant 4, written out in the test.
   - That value is a root: $\beta^8+\beta^4+\beta^3+\beta+1 = 0$ in `E`.
   - Minimality: the raw words of $\beta^{2^i}$ for $i = 0..8$ are eight distinct values, and $\beta$ is the smallest. (The roots of an irreducible polynomial are exactly the Frobenius conjugates of one root, so this checks the rule without a root-finding routine.)
   - Homomorphism, exhaustively: `E::from(a * b) == E::from(a) * E::from(b)` and `E::from(a + b) == E::from(a) + E::from(b)` over all 65,536 pairs, and `E::from(F8::one()) == E::one()`.
   - Injectivity: the 256 images are distinct.
-- [ ] `F192::from(a) == F192::lift_base(F64::from(a))` for all 256 elements, and the multiplicative half of the homomorphism check is repeated for `F192` over all pairs.
-- [ ] Two frozen images per target field, written out in the test: `F64::from(F8::from_raw(0x53)) == 0xff054c3f7cef0cca`, `F64::from(F8::from_raw(0xff)) == 0x5c8346787364a654`, `F128::from(F8::from_raw(0x53)) == 0xde77167b8539a7970d972a0b4c6fa967`, `F128::from(F8::from_raw(0xff)) == 0xfae6e08c31e89f90017eb6dcd4f33a26`.
-- [ ] The embedding tables are computed at compile time from the eight basis images or from $\beta$ alone; no 256-entry literal is checked in. Lookup is a table read with no field multiplication at run time.
+- [ ] `F192::from(a) == F192::lift_base(F64::from(a))` for all 256 elements. With the `F64` checks this determines every `F192` image, and `lift_base` is already tested as a homomorphism, so no pair check is repeated for `F192`.
+- [ ] Two frozen images for each of `F64` and `F128`, written out in the test: `F64::from(F8::from_raw(0x53)) == 0xff054c3f7cef0cca`, `F64::from(F8::from_raw(0xff)) == 0x5c8346787364a654`, `F128::from(F8::from_raw(0x53)) == 0xde77167b8539a7970d972a0b4c6fa967`, `F128::from(F8::from_raw(0xff)) == 0xfae6e08c31e89f90017eb6dcd4f33a26`.
+- [ ] One embedding table each for `F64` and `F128`, computed at compile time from the eight basis images or from $\beta$ alone; no 256-entry literal is checked in. `F192::from` reads the `F64` table and lifts the result; it has no table of its own. No embedding performs a field multiplication at run time.
 - [ ] `cargo clippy -p jolt-field --all-targets -- -D warnings` passes with `--no-default-features --features binary`, `--no-default-features --features binary,allocative` and `--features solinas,binary,allocative`; `cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet` passes; `cargo fmt --check` passes. The four binary configurations of `.github/workflows/field-portability.yml` run the new tests without a workflow change, since they run the whole binary suite.
 - [ ] `crates/jolt-field/src/lib.rs` and `binary/mod.rs` module docs list `F8` and state that `From<F8>` is the field embedding of invariant 4.
 
 ### Testing Strategy
 
-A new `crates/jolt-field/tests/binary_f8.rs`, gated on the `binary` feature. Ground truth is FIPS 197 for multiplication, exhaustive algebraic properties for the field, and for the embeddings the root equation, the minimality rule and the exhaustive homomorphism check. The frozen images guard against a silent change of root. Existing tests pass unchanged.
+A new `crates/jolt-field/tests/binary_f8.rs`, gated on the `binary` feature. Ground truth is FIPS 197 for multiplication, exhaustive algebraic properties for the field (the one-element distributivity check is a smoke test; the embedding checks into fields already tested carry the rest), and for the embeddings the root equation, the minimality rule and the exhaustive homomorphism check. The frozen images guard against a silent change of root. Existing tests pass unchanged.
 
 ### Performance
 
@@ -79,9 +79,9 @@ None measured. `F8` arithmetic is not on a hot path: its elements are domain poi
 
 `F8` is a fourth type in `binary/`, written like `F64`: a newtype over its word, portable shift-and-XOR multiplication reduced by `0x1b`, operators stamped by `impl_ring_ops!`, inversion by the shared `inverse` helper (exponentiation to $2^8 - 2$).
 
-`GF(2^8)` is a subfield of `GF(2^n)` exactly when 8 divides `n`, which holds for 64 and 128, and for 192 through `F64`. The embedding is $\mathbb F_2$-linear, so it is determined by the images $\beta^0, \ldots, \beta^7$ of the monomial basis, and the image of a byte is the XOR of the basis images selected by its bits. The 256-entry table for each target is built in a `const` context from those eight words, which needs only XOR; the eight words are themselves either literals derived from $\beta$ or computed by a `const fn` portable multiply. The implementer chooses; the tests pin the result either way.
+`GF(2^8)` is a subfield of `GF(2^n)` exactly when 8 divides `n`, which holds for 64 and 128, and for 192 through `F64`. The embedding is $\mathbb F_2$-linear, so it is determined by the images $\beta^0, \ldots, \beta^7$ of the monomial basis, and the image of a byte is the XOR of the basis images selected by its bits. The 256-entry tables for `F64` and `F128` are built in a `const` context from those eight words, which needs only XOR; the eight words are themselves either literals derived from $\beta$ or computed by a `const fn` portable multiply. The implementer chooses; the tests pin the result either way.
 
-The rule "smallest raw word" exists only to make the choice reproducible. Any of the eight roots gives a valid embedding, and they differ by a Frobenius automorphism of `F8`. Nothing in Jolt or Akita depends on which one is used, provided every party uses the same one, and a rule that a test can check is preferable to an unexplained constant.
+The rule "smallest raw word" exists only to make the choice reproducible. Any of the eight roots gives a valid embedding, and they differ by a power of the Frobenius automorphism of `F8`. Nothing in Jolt or Akita depends on which one is used, provided every party uses the same one, and a rule that a test can check is preferable to an unexplained constant.
 
 ### Alternatives Considered
 
@@ -103,4 +103,4 @@ Module docs as listed in the acceptance criteria. No book change.
 - `specs/binary-field.md`, roadmap step 3; `specs/binary-sumcheck.md`, Prior Art.
 - FIPS 197, section 4.2 (multiplication in $\mathrm{GF}(2^8)$).
 - Binius64 `4428e759`: `crates/field/src/fields/ghash.rs` (`From<Rijndael8b> for Ghash128b`).
-- leanMultisig `c7b1daa5`: `crates/primitives/src/field/phi8_tower.rs`.
+- leanMultisig `c7b1daa5b1fdd61cfc000a54ec30b22acb174a9b`: `crates/primitives/src/field/phi8_tower.rs`.
