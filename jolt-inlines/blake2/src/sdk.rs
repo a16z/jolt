@@ -190,24 +190,6 @@ impl Blake2b {
         }
     }
 
-    /// Absorb `block` as the next 128 input bytes and compress it now.
-    ///
-    /// BLAKE2b compresses its last block with the final flag, so this equals
-    /// [`Self::update`] only when at least one more byte is absorbed before
-    /// finalizing. A hasher prepared this way can be cloned to start many
-    /// hashes that share a constant first block.
-    ///
-    /// # Panics
-    /// Panics if earlier input is still buffered.
-    #[inline(always)]
-    pub fn update_block_eager(&mut self, block: &[u8; BLOCK_INPUT_SIZE_IN_BYTES]) {
-        assert_eq!(self.buffer_len, 0, "eager block after buffered input");
-        self.buffer.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
-        load_block(&mut self.buffer.words, block);
-        self.buffer.compress(&mut self.h, false);
-        clear_words(&mut self.buffer.words);
-    }
-
     /// Creates a new hasher with the given salt and personalization,
     /// matching the `blake2` crate's `new_with_params` semantics.
     ///
@@ -428,26 +410,6 @@ pub(crate) unsafe fn blake2b_compress(_state: *mut u64, _message: *const u64) {
 #[cfg(all(test, feature = "host"))]
 mod digest_tests {
     use super::*;
-
-    /// An eagerly compressed first block followed by more input hashes as
-    /// the `blake2` crate does over the concatenation.
-    #[test]
-    fn eager_block_matches_blake2_over_concatenation() {
-        use blake2::{Blake2b512, Digest as _};
-        let block: [u8; BLOCK_INPUT_SIZE_IN_BYTES] = core::array::from_fn(|i| (i * 7 + 3) as u8);
-        for tail_len in [1, 64, 128, 129, 300] {
-            let tail: Vec<u8> = (0..tail_len).map(|i| (i * 13 + 1) as u8).collect();
-            let mut hasher = Blake2b::new();
-            hasher.update_block_eager(&block);
-            hasher.update(&tail);
-            let expected = Blake2b512::digest([block.as_slice(), &tail].concat());
-            assert_eq!(
-                hasher.finalize().as_slice(),
-                expected.as_slice(),
-                "tail {tail_len}"
-            );
-        }
-    }
 
     /// EIP-152 vectors 5 (final) and 6 (not final): 12 rounds, h = BLAKE2b-512
     /// IV with the parameter block, m = "abc" zero-padded, t = 3.

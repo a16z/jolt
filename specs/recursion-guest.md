@@ -4,7 +4,7 @@ The recursion example executes Jolt's Akita verifier as a RISC-V guest: it
 verifies an inner Akita, field-inline proof and reports the verdict. The cost of
 interest is the guest's **total trace rows**, the length an outer proof of that
 execution would have to cover, including setup and proof decoding. The working
-target is a Fibonacci inner proof below 2^26 rows; this revision is 11,787,344
+target is a Fibonacci inner proof below 2^26 rows; this revision is 12,239,538
 rows above it (see [Measurements](#measurements)). This document records the
 mechanisms the guest uses, the trust they rely on, and where the rows go.
 
@@ -70,17 +70,17 @@ field-inline instructions (`field_inline.rs`).
   `K`-factor products in registers.
 - **Signed sums** (`Field::signed_sum`) keep a sum of ± elements in a field
   register: 4 rows per term, against about 24 for a reduced software add.
-  Isolated additions stay in software, where two-limb arithmetic wins.
+  Isolated additions stay in software, where two-limb arithmetic wins. The
+  sum's iterator runs between terms, so the accumulating kernels are marked
+  lent until the readout and take their software path if the iterator calls
+  them.
 
 ### Hash and NTT inlines
 
 - **Blake2b inline** (`jolt-inlines-blake2`, with a `digest` adapter). The Jolt
   transcript, descriptor digests, layout digests, and the preprocessing digest
   hash through it, with the same bytes as the `blake2` crate. Akita's
-  transcript uses a sponge over it that is byte-identical to spongefish's
-  `Blake2b512` duplex but compresses each phase's constant 128-byte mask block
-  once (`Blake2b::update_block_eager`), saving a compression per phase;
-  `jolt-akita` tests it against spongefish.
+  transcript is spongefish's own `Hash` sponge over that adapter.
 - **Keccak inline** for Akita's SHAKE challenge sampler (`keccak-inline`).
 - **64-point i32 NTT and six-product pointwise dot** (`jolt-inlines-ntt`).
   These expand into existing proved integer instructions, with no advice and no
@@ -202,12 +202,13 @@ companion; the last row traces a fresh proof at this revision.
 | + direct read-RAF and digit-zero output opening sets | 65,441,486 |
 | − word-wise `memcpy`, `memset`, and `memcmp` overrides | 69,059,130 |
 | + inline-store limits, Blake2b word packing, word-copy `realloc` | 67,622,320 |
-| **Merge `main`: native Akita trace batching (#2012), Akita `d98400c5` (#175), fresh proof** (76,805,832 verification cycles) | **78,896,208** |
+| Merge `main`: native Akita trace batching (#2012), Akita `d98400c5` (#175), fresh proof | 78,896,208 |
+| **Akita review revisions of LayerZero-Labs/akita#186-#190 on Akita `main` `401e7972`, spongefish's own Blake2b sponge, lent-accumulator `signed_sum`, fresh proof** (77,258,009 verification cycles) | **79,348,402** |
 
 The first row was rebuilt and re-measured from its archived sources and
 reproduces its recorded numbers exactly. Input mode, which reads the setup
-from the guest input, accepts at 86,254,204 rows. A proof with one bit flipped
-in its Akita opening proof is rejected after 60,145,138 rows, inside the PCS
+from the guest input, accepts at 86,708,895 rows. A proof with one bit flipped
+in its Akita opening proof is rejected after 60,376,476 rows, inside the PCS
 verifier.
 
 The merge's increase is inside the Akita trace-batch opening
@@ -215,6 +216,15 @@ The merge's increase is inside the Akita trace-batch opening
 fold (`verify_root`, 14.56M to 24.46M rows): its relation-matrix evaluation
 and direct setup-contribution scan run over the natively batched trace
 columns. The terminal checks are unchanged.
+
+The last row's 452,194-row increase nets two measured effects, besides the
+boot-time modulus binding. Replacing the
+hand-written transcript sponge, which reused each phase's compressed mask block,
+with spongefish's sponge over the inline adapter costs about 1.16M rows, and the
+remaining review revisions save about 0.71M. The `signed_sum` accumulator guard
+costs about 9,000 rows. Recovering the mask compressions through a digest that
+recognizes the mask blocks cost more rows (0.36M) than it saved, because the
+128-byte check runs bytewise in the guest.
 
 ## Levers not taken here
 
