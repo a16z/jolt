@@ -52,8 +52,9 @@ Historical sources: [SDK proof path](https://github.com/a16z/jolt/blob/47130f3dc
 
 ## Row contract and layout
 
-The private value slots retain their existing aliasing. `CapturedState` owns
-packing for the three final row classes:
+The private value slots retain their existing aliasing. The checked
+constructor packs them for the three final row classes, and the logical
+accessors read them back by the cached `Load`/`Store` circuit flags:
 
 | Row class | Slot 0 | Slot 1 | Slot 2 | Slot 3 |
 | --- | --- | --- | --- | --- |
@@ -127,10 +128,11 @@ JoltTraceRow::new(
 ) -> Result<JoltTraceRow, TraceRowError>
 ```
 
-The constructor validates logical observations, constructs `CapturedState`,
-and uses its single slot-packing implementation. Interpreter and x86 adapters
-extract observations and resolve the PC. `from_components` has been removed.
-Producer failures carry context through `TraceError`.
+The constructor validates logical observations and is the single
+slot-packing implementation. Interpreter and x86 adapters extract
+observations and resolve the PC. `from_components` and the `CapturedState`
+view it consumed have been removed. Producer failures carry context through
+`TraceError`.
 
 Release checks enforce:
 
@@ -155,8 +157,8 @@ proof values are zero; memory-alias checks use that same zero when a capture
 is absent. The constructor does not require every declared operand to have a
 capture. Accepted no-op addresses, operands, immediates, and sequence counts
 are preserved, so not every accepted no-op is canonical padding.
-`JoltTraceRow::default()` / `no_op()` produce the canonical padding row with
-its existing proof columns.
+`JoltTraceRow::default()` produces the canonical padding row with its
+existing proof columns.
 
 Both execution producers derive captured IDs from integer operands. The
 [baseline mismatched-ID test](https://github.com/a16z/jolt/blob/47130f3dc9a51a7ac2754a98ff0aa31981a6b810/crates/jolt-program/src/execution/trace/row.rs#L702)
@@ -179,13 +181,14 @@ writes. Field witness installation retains payload shape, bridge, bytecode,
 profile, and register-continuity checks. Row-local construction does not
 replace these checks or proof constraints.
 
-Execution accessors (`instruction`, `address`, `virtual_sequence_remaining`,
-`rs1_read`, `rs2_read`, `rd_write`, `registers`, and `ram_access`) and `JoltCycle`
-are implemented on the unified row. A load's proof `ram_write_value()` equals
-its loaded value, while its execution view reports a RAM read. Proof
-`rs1_index`, `rs2_index`, and `rd_index` retain integer-operand semantics;
-execution register views use capture presence. `instruction_kind()` retains
-its existing optional return type.
+Execution accessors (`instruction`, `virtual_sequence_remaining`, `rs1_read`,
+`rs2_read`, `rd_write`, `registers`, and `ram_access`) are implemented on the
+unified row. The row does not implement `JoltCycle`; witness lookup queries
+adapt it through the proof accessors in `jolt-witness`. A load's proof
+`ram_write_value()` equals its loaded value, while its execution view reports
+a RAM read. Proof `rs1_index`, `rs2_index`, and `rd_index` retain
+integer-operand semantics; execution register views use capture presence.
+`instruction_kind()` retains its existing optional return type.
 
 Raw emulator `Cycle` and instruction-specific `RegisterSnapshot` types remain
 unchanged. They precede final instruction expansion and rd=x0 rewriting and
@@ -333,8 +336,13 @@ summary iteration, and direct `row.field_inline` access need migration.
 `jolt::TraceSource`), `ExecutionBackend::Trace`, and the generic parameters on
 `TraceOutput` and `JoltVmWitnessInputs` are removed. Callers read
 `TraceOutput::trace` (`Arc<TraceData>`) directly, and generated `trace_*`
-functions return `jolt::TraceOutput`. Neither `ProgramSummary` nor the trace
-row (formerly `jolt_program::TraceRow`) implements `Deserialize`. The deployed
+functions return `jolt::TraceOutput`. `CapturedState` with its
+`NonMemoryState`, `LoadState`, and `StoreState` payloads is removed; slot
+values are read through the row accessors. `JoltTraceRow::no_op()` is folded
+into `Default`. `JoltInstruction` converts from `JoltInstructionRow` through an
+infallible `From`, replacing a `TryFrom` whose match over the same kind enum
+could not fail. Neither `ProgramSummary` nor the trace row (formerly
+`jolt_program::TraceRow`) implements `Deserialize`. The deployed
 proof and preprocessing formats are unchanged.
 `Program::trace_to_file` still writes raw `Cycle` records and is outside this
 wire migration. See [summary implementation](../crates/jolt-host/src/analyze.rs).

@@ -20,7 +20,6 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
-use jolt_riscv::instructions::Noop;
 use jolt_riscv::{
     Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction, JoltInstructionRow,
     CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
@@ -44,8 +43,7 @@ fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
 ) {
-    let decoded = JoltInstruction::try_from(*instruction)
-        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+    let decoded = JoltInstruction::from(*instruction);
     let circuit_flags = decoded.circuit_flags();
     let instruction_flags = decoded.instruction_flags();
     let layout = BYTECODE_LANE_LAYOUT;

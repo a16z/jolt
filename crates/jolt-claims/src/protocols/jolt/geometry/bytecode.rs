@@ -2,8 +2,8 @@ use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{InstructionLookupTable, LookupTableKind, XLEN};
 use jolt_poly::{EqPolynomial, IdentityPolynomial, MultilinearEvaluation};
 use jolt_riscv::{
-    instructions::Noop, CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker,
-    JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
+    CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker, JoltInstruction,
+    JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
 use crate::{challenge, derived, opening};
@@ -543,8 +543,7 @@ fn read_raf_row_values<F>(
 where
     F: JoltField,
 {
-    let decoded = JoltInstruction::try_from(*instruction)
-        .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+    let decoded = JoltInstruction::from(*instruction);
     let circuit_flags = decoded.circuit_flags();
     let instruction_flags = decoded.instruction_flags();
 

@@ -98,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    fn cycles_convert_to_rows_with_their_bytecode_pc_and_captured_state() {
+    fn cycles_convert_to_rows_with_their_bytecode_pc_and_captured_values() {
         let preprocessing = preprocessing();
         let cycles = traced_cycles();
         let rows: Vec<_> = cycles

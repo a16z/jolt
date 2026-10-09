@@ -268,9 +268,7 @@ impl BytecodePCMapper {
 /// only ever comes from a `Store`-flagged row) is asserted during witness
 /// generation.
 fn check_store_rd_disjoint(instruction: &JoltInstructionRow) -> Result<(), PreprocessingError> {
-    let decoded = JoltInstruction::try_from(*instruction).unwrap_or(JoltInstruction::Noop(
-        jolt_riscv::instructions::Noop(*instruction),
-    ));
+    let decoded = JoltInstruction::from(*instruction);
     match instruction.operands.rd {
         Some(rd) if decoded.circuit_flags()[CircuitFlags::Store] => {
             Err(PreprocessingError::StoreWritesRd {

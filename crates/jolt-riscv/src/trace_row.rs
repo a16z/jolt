@@ -5,17 +5,15 @@
 //! exposed through accessors, while the **physical storage** is private and free
 //! to alias mutually-exclusive or equal values for final memory rows.
 //!
-//! # Captured state
+//! # Value slots
 //!
-//! The per-cycle witness values are described by [`CapturedState`], a typed enum
-//! over the three final row classes (`NonMemory` / `Load` / `Store`). Each
-//! variant only names the columns that are independent for that class. The
-//! constructor checks equalities between logical register and RAM observations;
-//! the packed accessor view then stores one value per alias: a load's
-//! `RamReadValue`, `RamWriteValue`, and `RdWriteValue` are one field, and a
-//! store's `RamWriteValue` and `Rs2Value` are one field. The cached
-//! `Load`/`Store` circuit flags determine the class on read, so the enum is the
-//! accessor view while storage stays flat (no separate discriminant).
+//! The per-cycle witness values occupy four 64-bit slots whose meaning depends
+//! on the final row class (non-memory / load / store). The constructor checks
+//! equalities between logical register and RAM observations, then stores one
+//! value per alias: a load's `RamReadValue`, `RamWriteValue`, and
+//! `RdWriteValue` are one slot, and a store's `RamWriteValue` and `Rs2Value`
+//! are one slot. The cached `Load`/`Store` circuit flags determine the class on
+//! read, so storage stays flat (no separate discriminant).
 //!
 //! # Crate boundaries
 //!
@@ -27,13 +25,13 @@
 //! # Logical vs physical
 //!
 //! Proof code must depend on the logical accessors (`rs1_value`, `ram_address`,
-//! `captured_state`, ...), never on the private storage slots, so the physical
-//! layout stays swappable.
+//! ...), never on the private storage slots, so the physical layout stays
+//! swappable.
 
 use crate::{
-    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags, JoltCycle,
-    JoltInstruction, JoltInstructionKind, JoltInstructionRow, JoltInstructionTag,
-    NormalizedOperands, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
+    CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags, JoltInstruction,
+    JoltInstructionKind, JoltInstructionRow, JoltInstructionTag, NormalizedOperands,
+    NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 #[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize, Serializer};
@@ -146,80 +144,6 @@ impl From<()> for RamAccess {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NonMemoryState {
-    pub rs1_value: u64,
-    pub rs2_value: u64,
-    pub rd_pre_value: u64,
-    pub rd_write_value: u64,
-}
-
-/// Witness values for a final load row.
-///
-/// `rd_write_value` is also `RamReadValue` and `RamWriteValue` (the loaded
-/// value); the type collapses the three equal logical columns into one field.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LoadState {
-    pub rs1_value: u64,
-    pub ram_address: u64,
-    pub rd_pre_value: u64,
-    pub rd_write_value: u64,
-}
-
-/// Witness values for a final store row.
-///
-/// `rs2_value` is also `RamWriteValue`; `ram_read_value` is the old memory
-/// value. Stores write no register, so there is no `rd_*` field.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct StoreState {
-    pub rs1_value: u64,
-    pub rs2_value: u64,
-    pub ram_read_value: u64,
-    pub ram_address: u64,
-}
-
-/// The per-cycle witness values, typed by final row class.
-///
-/// This is the [`JoltTraceRow::captured_state`] view. Register *indices* are not
-/// part of it; they come from the instruction's operands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CapturedState {
-    NonMemory(NonMemoryState),
-    Load(LoadState),
-    Store(StoreState),
-}
-
-impl Default for CapturedState {
-    fn default() -> Self {
-        CapturedState::NonMemory(NonMemoryState::default())
-    }
-}
-
-impl CapturedState {
-    fn into_value_slots(self) -> TraceValueSlots {
-        match self {
-            CapturedState::NonMemory(s) => TraceValueSlots {
-                slot0: s.rs1_value,
-                slot1: s.rs2_value,
-                slot2: s.rd_pre_value,
-                slot3: s.rd_write_value,
-            },
-            CapturedState::Load(s) => TraceValueSlots {
-                slot0: s.rs1_value,
-                slot1: s.ram_address,
-                slot2: s.rd_pre_value,
-                slot3: s.rd_write_value,
-            },
-            CapturedState::Store(s) => TraceValueSlots {
-                slot0: s.rs1_value,
-                slot1: s.rs2_value,
-                slot2: s.ram_read_value,
-                slot3: s.ram_address,
-            },
-        }
-    }
-}
-
 /// A final row violates its representation or observation contract.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TraceRowError {
@@ -229,8 +153,6 @@ pub enum TraceRowError {
     /// reserved as the `None` sentinel).
     #[error("register id {id} exceeds the compact storage bound (max {max})", max = MAX_REGISTER_ID)]
     RegisterIdTooWide { id: u8 },
-    #[error("instruction {kind:?} has no final instruction lowering")]
-    UnsupportedInstruction { kind: JoltInstructionKind },
     #[error("captured {operand} register {actual} does not match integer operand {expected:?}")]
     RegisterMismatch {
         operand: &'static str,
@@ -250,8 +172,9 @@ pub enum TraceRowError {
 }
 
 /// Four aliased 64-bit value slots. Their logical meaning depends on the row's
-/// class (derived from the cached `Load`/`Store` circuit flags); see the
-/// [`JoltTraceRow`] accessors and [`JoltTraceRow::captured_state`].
+/// class (derived from the cached `Load`/`Store` circuit flags):
+/// [`JoltTraceRow::new`] packs them and the [`JoltTraceRow`] accessors read
+/// them back.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 struct TraceValueSlots {
@@ -311,17 +234,11 @@ const _: () = assert!(
 impl Default for JoltTraceRow {
     /// The canonical no-op/padding row, whose logical accessors match a
     /// `NoOp` cycle (in particular `IsNoop` is set).
-    fn default() -> Self {
-        Self::no_op()
-    }
-}
-
-impl JoltTraceRow {
     #[expect(
         clippy::expect_used,
         reason = "the canonical no-op satisfies the checked row contract"
     )]
-    pub fn no_op() -> Self {
+    fn default() -> Self {
         Self::new(
             JoltInstructionRow::default(),
             RegisterState::default(),
@@ -330,7 +247,9 @@ impl JoltTraceRow {
         )
         .expect("the canonical no-op satisfies the checked row contract")
     }
+}
 
+impl JoltTraceRow {
     /// Build a final row from logical observations and an already resolved PC.
     ///
     /// This checks slot aliasing, captured integer-register identities, storage
@@ -346,8 +265,7 @@ impl JoltTraceRow {
         bytecode_pc: u32,
     ) -> Result<Self, TraceRowError> {
         let kind = instruction.instruction_kind;
-        let lowered = JoltInstruction::try_from(instruction)
-            .map_err(|_| TraceRowError::UnsupportedInstruction { kind })?;
+        let lowered = JoltInstruction::from(instruction);
         let circuit_flags = lowered.circuit_flags();
         let instruction_flags = lowered.instruction_flags();
         let is_noop = instruction_flags.get(InstructionFlags::IsNoop);
@@ -397,19 +315,19 @@ impl JoltTraceRow {
         let rs2_value = registers.rs2.map_or(0, |read| read.value);
         let rd_pre_value = registers.rd.map_or(0, |write| write.pre_value);
         let rd_write_value = registers.rd.map_or(0, |write| write.post_value);
-        let state = if circuit_flags.get(CircuitFlags::Load) {
+        let values = if circuit_flags.get(CircuitFlags::Load) {
             let RamAccess::Read(read) = ram_access else {
                 return Err(TraceRowError::RamAccessMismatch { kind });
             };
             if registers.rs2.is_some() || read.value != rd_write_value {
                 return Err(TraceRowError::MemoryValueMismatch { kind });
             }
-            CapturedState::Load(LoadState {
-                rs1_value,
-                ram_address: read.address,
-                rd_pre_value,
-                rd_write_value,
-            })
+            TraceValueSlots {
+                slot0: rs1_value,
+                slot1: read.address,
+                slot2: rd_pre_value,
+                slot3: rd_write_value,
+            }
         } else if circuit_flags.get(CircuitFlags::Store) {
             let RamAccess::Write(write) = ram_access else {
                 return Err(TraceRowError::RamAccessMismatch { kind });
@@ -417,22 +335,22 @@ impl JoltTraceRow {
             if registers.rd.is_some() || write.post_value != rs2_value {
                 return Err(TraceRowError::MemoryValueMismatch { kind });
             }
-            CapturedState::Store(StoreState {
-                rs1_value,
-                rs2_value,
-                ram_read_value: write.pre_value,
-                ram_address: write.address,
-            })
+            TraceValueSlots {
+                slot0: rs1_value,
+                slot1: rs2_value,
+                slot2: write.pre_value,
+                slot3: write.address,
+            }
         } else {
             if ram_access != RamAccess::NoOp {
                 return Err(TraceRowError::RamAccessMismatch { kind });
             }
-            CapturedState::NonMemory(NonMemoryState {
-                rs1_value,
-                rs2_value,
-                rd_pre_value,
-                rd_write_value,
-            })
+            TraceValueSlots {
+                slot0: rs1_value,
+                slot1: rs2_value,
+                slot2: rd_pre_value,
+                slot3: rd_write_value,
+            }
         };
 
         let imm = instruction.operands.imm;
@@ -451,7 +369,7 @@ impl JoltTraceRow {
             | (u8::from(integer_operands.rd.is_some()) * INTEGER_RD);
 
         Ok(Self {
-            values: state.into_value_slots(),
+            values,
             unexpanded_pc: instruction.address as u64,
             imm_abs: imm_magnitude as u64,
             bytecode_pc,
@@ -463,32 +381,6 @@ impl JoltTraceRow {
             rd_id: checked_register_id(instruction.operands.rd)?,
             control,
         })
-    }
-
-    #[inline]
-    pub fn captured_state(&self) -> CapturedState {
-        if self.is_load() {
-            CapturedState::Load(LoadState {
-                rs1_value: self.values.slot0,
-                ram_address: self.values.slot1,
-                rd_pre_value: self.values.slot2,
-                rd_write_value: self.values.slot3,
-            })
-        } else if self.is_store() {
-            CapturedState::Store(StoreState {
-                rs1_value: self.values.slot0,
-                rs2_value: self.values.slot1,
-                ram_read_value: self.values.slot2,
-                ram_address: self.values.slot3,
-            })
-        } else {
-            CapturedState::NonMemory(NonMemoryState {
-                rs1_value: self.values.slot0,
-                rs2_value: self.values.slot1,
-                rd_pre_value: self.values.slot2,
-                rd_write_value: self.values.slot3,
-            })
-        }
     }
 
     #[inline(always)]
@@ -565,11 +457,6 @@ impl JoltTraceRow {
     /// Source RV64 instruction address.
     #[inline(always)]
     pub fn unexpanded_pc(&self) -> u64 {
-        self.unexpanded_pc
-    }
-
-    #[inline]
-    pub fn address(&self) -> u64 {
         self.unexpanded_pc
     }
 
@@ -711,47 +598,6 @@ impl JoltTraceRow {
     }
 }
 
-impl JoltCycle for JoltTraceRow {
-    type Instruction = JoltInstructionRow;
-
-    #[inline]
-    fn instruction(&self) -> Self::Instruction {
-        JoltTraceRow::instruction(self)
-    }
-
-    #[inline]
-    fn rs1_val(&self) -> Option<u64> {
-        self.rs1_read().map(|read| read.value)
-    }
-
-    #[inline]
-    fn rs2_val(&self) -> Option<u64> {
-        self.rs2_read().map(|read| read.value)
-    }
-
-    #[inline]
-    fn rd_vals(&self) -> Option<(u64, u64)> {
-        self.rd_write()
-            .map(|write| (write.pre_value, write.post_value))
-    }
-
-    #[inline]
-    fn ram_access_address(&self) -> Option<u64> {
-        (self.is_load() || self.is_store()).then_some(self.ram_address())
-    }
-
-    #[inline]
-    fn ram_read_value(&self) -> Option<u64> {
-        (self.is_load() || self.is_store()).then_some(JoltTraceRow::ram_read_value(self))
-    }
-
-    #[inline]
-    fn ram_write_value(&self) -> Option<u64> {
-        self.is_store()
-            .then_some(JoltTraceRow::ram_write_value(self))
-    }
-}
-
 #[inline]
 fn pack_meta(
     circuit_flags: CircuitFlagSet,
@@ -805,7 +651,6 @@ mod tests {
     #[test]
     fn default_is_canonical_no_op() {
         let row = JoltTraceRow::default();
-        assert_eq!(row, JoltTraceRow::no_op());
         assert_eq!(row.instruction(), JoltInstructionRow::default());
         assert_eq!(row.registers(), RegisterState::default());
         assert_eq!(row.ram_access(), RamAccess::NoOp);
@@ -815,10 +660,17 @@ mod tests {
         assert_eq!(row.rs1_index(), None);
         assert!(row.is_noop());
         assert!(!row.is_load() && !row.is_store());
-        assert_eq!(
-            row.captured_state(),
-            CapturedState::NonMemory(NonMemoryState::default())
-        );
+        for value in [
+            row.rs1_value(),
+            row.rs2_value(),
+            row.rd_pre_value(),
+            row.rd_write_value(),
+            row.ram_address(),
+            row.ram_read_value(),
+            row.ram_write_value(),
+        ] {
+            assert_eq!(value, 0);
+        }
         let instruction = JoltInstructionRow {
             address: 0x8000_0000,
             operands: NormalizedOperands {
@@ -867,7 +719,6 @@ mod tests {
                 assert_eq!(row.registers(), registers);
                 assert_eq!(row.rs1_value(), 0);
                 assert_eq!(row.rs1_index(), Some(2));
-                assert_eq!(row.rs1_val(), read.map(|read| read.value));
                 assert_eq!(row.rd_index(), Some(1));
                 assert_eq!(row.rd_write(), None);
             }
@@ -875,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn non_memory_state_round_trips_columns() {
+    fn non_memory_row_round_trips_columns() {
         let source = instruction(
             JoltInstructionKind::ADD,
             NormalizedOperands {
@@ -902,17 +753,14 @@ mod tests {
         };
         let row = JoltTraceRow::new(source, registers, RamAccess::NoOp, 7).unwrap();
         assert_eq!(row.registers(), registers);
-        assert_eq!(
-            row.captured_state(),
-            CapturedState::NonMemory(NonMemoryState {
-                rs1_value: 11,
-                rs2_value: 22,
-                rd_pre_value: 33,
-                rd_write_value: 44,
-            })
-        );
+        assert_eq!(row.ram_access(), RamAccess::NoOp);
+        assert_eq!(row.rs1_value(), 11);
+        assert_eq!(row.rs2_value(), 22);
+        assert_eq!(row.rd_pre_value(), 33);
+        assert_eq!(row.rd_write_value(), 44);
+        assert_eq!(row.ram_address(), 0);
         assert_eq!(row.ram_read_value(), 0);
-        assert_eq!(JoltCycle::ram_read_value(&row), None);
+        assert_eq!(row.ram_write_value(), 0);
     }
 
     #[test]
@@ -945,20 +793,13 @@ mod tests {
         let row = JoltTraceRow::new(source, registers, ram, 3).unwrap();
         assert_eq!(row.registers(), registers);
         assert_eq!(row.ram_access(), ram);
-        assert_eq!(
-            row.captured_state(),
-            CapturedState::Load(LoadState {
-                rs1_value: 0x1000,
-                ram_address: 0x1008,
-                rd_pre_value: 5,
-                rd_write_value: 0xdead_beef,
-            })
-        );
+        assert_eq!(row.rs1_value(), 0x1000);
         assert_eq!(row.rs2_value(), 0);
+        assert_eq!(row.rd_pre_value(), 5);
+        assert_eq!(row.rd_write_value(), 0xdead_beef);
+        assert_eq!(row.ram_address(), 0x1008);
         assert_eq!(row.ram_read_value(), 0xdead_beef);
         assert_eq!(row.ram_write_value(), 0xdead_beef);
-        assert_eq!(JoltCycle::ram_read_value(&row), Some(0xdead_beef));
-        assert_eq!(JoltCycle::ram_write_value(&row), None);
     }
 
     #[test]
@@ -991,18 +832,13 @@ mod tests {
         let row = JoltTraceRow::new(source, registers, ram, 9).unwrap();
         assert_eq!(row.registers(), registers);
         assert_eq!(row.ram_access(), ram);
-        assert_eq!(
-            row.captured_state(),
-            CapturedState::Store(StoreState {
-                rs1_value: 0x3000,
-                rs2_value: 0x1234,
-                ram_read_value: 0x5678,
-                ram_address: 0x2ffc,
-            })
-        );
+        assert_eq!(row.rs1_value(), 0x3000);
+        assert_eq!(row.rs2_value(), 0x1234);
         assert_eq!(row.rd_pre_value(), 0);
         assert_eq!(row.rd_write_value(), 0);
-        assert_eq!(JoltCycle::ram_write_value(&row), Some(0x1234));
+        assert_eq!(row.ram_address(), 0x2ffc);
+        assert_eq!(row.ram_read_value(), 0x5678);
+        assert_eq!(row.ram_write_value(), 0x1234);
     }
 
     #[test]
@@ -1184,7 +1020,7 @@ mod tests {
             ] {
                 assert!(integer.is_none() || integer == encoded);
             }
-            let flags = JoltInstruction::try_from(source).unwrap().circuit_flags();
+            let flags = JoltInstruction::from(source).circuit_flags();
             let ram = if flags.get(CircuitFlags::Load) {
                 RamAccess::Read(RamRead::default())
             } else {
