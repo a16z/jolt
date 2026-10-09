@@ -8,6 +8,44 @@ mod f128;
 mod f192;
 mod f64;
 
+#[cfg(any(
+    all(target_arch = "aarch64", target_feature = "aes"),
+    all(target_arch = "x86_64", target_feature = "pclmulqdq")
+))]
+mod kernels;
+#[cfg_attr(
+    all(
+        not(test),
+        any(
+            all(target_arch = "aarch64", target_feature = "aes"),
+            all(target_arch = "x86_64", target_feature = "pclmulqdq")
+        )
+    ),
+    expect(
+        dead_code,
+        reason = "portable arithmetic stays compiled for kernel differential tests"
+    )
+)]
+mod portable;
+
+#[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
+#[path = "arch/aarch64.rs"]
+mod arch;
+#[cfg(all(target_arch = "x86_64", target_feature = "pclmulqdq"))]
+#[path = "arch/x86_64.rs"]
+mod arch;
+
+#[cfg(any(
+    all(target_arch = "aarch64", target_feature = "aes"),
+    all(target_arch = "x86_64", target_feature = "pclmulqdq")
+))]
+use kernels as arithmetic;
+#[cfg(not(any(
+    all(target_arch = "aarch64", target_feature = "aes"),
+    all(target_arch = "x86_64", target_feature = "pclmulqdq")
+)))]
+use portable as arithmetic;
+
 pub use f128::F128;
 pub use f192::F192;
 pub use f64::F64;
@@ -25,3 +63,12 @@ fn inverse<F: Field + CanonicalEncoding>(value: F) -> Option<F> {
     }
     Some(result.square())
 }
+
+#[cfg(all(
+    test,
+    any(
+        all(target_arch = "aarch64", target_feature = "aes"),
+        all(target_arch = "x86_64", target_feature = "pclmulqdq")
+    )
+))]
+mod tests;

@@ -32,6 +32,93 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  binary-x86:
+    name: Binary fields on x86_64 (${{ matrix.feature }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - feature: +pclmulqdq
+            kernel: true
+          - feature: -pclmulqdq
+            kernel: false
+    env:
+      RUSTFLAGS: -D warnings -C target-feature=${{ matrix.feature }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      - name: Require native x86_64 carry-less multiply
+        run: |
+          test "$(uname -m)" = "x86_64"
+          grep -Eq '(^|[[:space:]])pclmulqdq([[:space:]]|$)' /proc/cpuinfo
+      - name: Require kernel differential test discovery
+        if: matrix.kernel
+        run: |
+          cargo nextest list -p jolt-field --no-default-features --features binary --cargo-quiet --lib --message-format json > /tmp/binary-tests.json
+          python3 -c 'import json; suites = json.load(open("/tmp/binary-tests.json"))["rust-suites"]; assert any("binary::tests::kernel_matches_portable" in suite["testcases"] for suite in suites.values()), "binary kernel differential test was not discovered"'
+      - name: Run whole binary field suite
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
+
+  binary-aarch64:
+    name: Binary fields on AArch64 (${{ matrix.feature }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        include:
+          - feature: +aes
+            kernel: true
+          - feature: -aes
+            kernel: false
+    env:
+      RUSTFLAGS: -D warnings -C target-feature=${{ matrix.feature }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      - name: Require native AArch64 polynomial multiply
+        run: |
+          test "$(uname -m)" = "aarch64"
+          grep -Eq '(^|[[:space:]])aes([[:space:]]|$)' /proc/cpuinfo
+          grep -Eq '(^|[[:space:]])pmull([[:space:]]|$)' /proc/cpuinfo
+      - name: Require kernel differential test discovery
+        if: matrix.kernel
+        run: |
+          cargo nextest list -p jolt-field --no-default-features --features binary --cargo-quiet --lib --message-format json > /tmp/binary-tests.json
+          python3 -c 'import json; suites = json.load(open("/tmp/binary-tests.json"))["rust-suites"]; assert any("binary::tests::kernel_matches_portable" in suite["testcases"] for suite in suites.values()), "binary kernel differential test was not discovered"'
+      - name: Run whole binary field suite
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
+
+  binary-cross-compile:
+    name: Binary field compile on ${{ matrix.target }} (${{ matrix.feature }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            feature: +pclmulqdq
+          - target: x86_64-unknown-linux-gnu
+            feature: -pclmulqdq
+          - target: aarch64-unknown-linux-gnu
+            feature: +aes
+          - target: aarch64-unknown-linux-gnu
+            feature: -aes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          target: ${{ matrix.target }}
+      - name: Check binary library
+        env:
+          RUSTFLAGS: -D warnings -C target-feature=${{ matrix.feature }}
+        run: cargo check -p jolt-field --lib --no-default-features --features binary --target ${{ matrix.target }}
+
   avx2:
     name: AVX2 field kernels
     runs-on: ubuntu-latest

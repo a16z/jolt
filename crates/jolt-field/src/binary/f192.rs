@@ -1,4 +1,4 @@
-use super::{inverse, F64};
+use super::{arithmetic, inverse, F64};
 use crate::{
     CanonicalBytes, CanonicalEncoding, ExtField, Field, NaiveAccumulator, One, Ring,
     WithAccumulator, Zero,
@@ -16,17 +16,6 @@ pub struct F192([F64; 3]);
 impl F192 {
     fn add_coefficients(self, rhs: Self) -> Self {
         Self(std::array::from_fn(|i| self.0[i] + rhs.0[i]))
-    }
-
-    fn multiply(self, rhs: Self) -> Self {
-        let [a0, a1, a2] = self.0;
-        let [b0, b1, b2] = rhs.0;
-        let c0 = a0 * b0;
-        let c1 = a0 * b1 + a1 * b0;
-        let c2 = a0 * b2 + a1 * b1 + a2 * b0;
-        let c3 = a1 * b2 + a2 * b1;
-        let c4 = a2 * b2;
-        Self([c0 + c3, c1 + c3 + c4, c2 + c4])
     }
 }
 
@@ -46,13 +35,18 @@ impl Display for F192 {
 crate::impl_ring_ops!(impl[] F192 {
     add(a, b): a.add_coefficients(b),
     sub(a, b): a.add_coefficients(b),
-    mul(a, b): a.multiply(b),
+    mul(a, b): F192(arithmetic::multiply192(a.0.map(F64::to_raw), b.0.map(F64::to_raw)).map(F64::from_raw)),
     neg(a): a,
     zero: F192([F64::zero(); 3]),
     one: F192::lift_base(F64::one()),
 });
 
 impl Ring for F192 {
+    #[inline]
+    fn square(&self) -> Self {
+        Self(arithmetic::square192(self.0.map(F64::to_raw)).map(F64::from_raw))
+    }
+
     fn from_u64(v: u64) -> Self {
         Self::lift_base(F64::from_u64(v))
     }

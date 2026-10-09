@@ -67,6 +67,11 @@ name = "field_arithmetic"
 harness = false
 required-features = ["solinas"]
 
+[[bench]]
+name = "binary_kernels"
+harness = false
+required-features = ["binary"]
+
 [[example]]
 name = "fp128_production_witness"
 required-features = ["solinas", "fp128-proof-linkage"]

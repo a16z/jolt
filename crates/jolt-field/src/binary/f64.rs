@@ -1,4 +1,4 @@
-use super::inverse;
+use super::{arithmetic, inverse};
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -24,21 +24,6 @@ impl F64 {
     fn add_coefficients(self, rhs: Self) -> Self {
         Self(self.0 ^ rhs.0)
     }
-
-    fn multiply(self, rhs: Self) -> Self {
-        let mut a = self.0;
-        let mut b = rhs.0;
-        let mut product = 0;
-        for _ in 0..64 {
-            if b & 1 != 0 {
-                product ^= a;
-            }
-            let carry = a >> (64 - 1);
-            a = (a << 1) ^ (carry * 0x1b);
-            b >>= 1;
-        }
-        Self(product)
-    }
 }
 
 impl Display for F64 {
@@ -50,13 +35,18 @@ impl Display for F64 {
 crate::impl_ring_ops!(impl[] F64 {
     add(a, b): a.add_coefficients(b),
     sub(a, b): a.add_coefficients(b),
-    mul(a, b): a.multiply(b),
+    mul(a, b): F64(arithmetic::multiply64(a.0, b.0)),
     neg(a): a,
     zero: F64(0),
     one: F64(1),
 });
 
 impl Ring for F64 {
+    #[inline]
+    fn square(&self) -> Self {
+        Self(arithmetic::square64(self.0))
+    }
+
     fn from_u64(v: u64) -> Self {
         Self(v & 1)
     }

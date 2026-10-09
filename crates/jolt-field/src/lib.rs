@@ -42,8 +42,9 @@
 //!   and fold matrices; packed SIMD backends (NEON, AVX2, AVX-512) for
 //!   32/64/128-bit lanes and packed extensions.
 //!
-//! - `binary`: portable `F64`, `F128`, and `F192` binary fields for Jolt,
-//!   matching Akita's binary-field commitment (LaBinius) coordinates.
+//! - `binary`: `F64`, `F128`, and `F192` binary fields for Jolt,
+//!   matching Akita's binary-field commitment (LaBinius) coordinates, with
+//!   compile-time carry-less multiply kernels and a portable fallback.
 //!
 //! # Feature flags
 //!
