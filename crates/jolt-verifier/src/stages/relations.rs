@@ -44,13 +44,11 @@ pub use jolt_claims::protocols::composed::ComposedOpeningId;
 /// single-sourced by [`OutputClaims::opening_values`] and cannot disagree with it.
 pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
     /// Append every produced opening to the transcript in canonical
-    /// ([`OutputClaims::opening_values`]) order, each under the `b"opening_claim"`
-    /// label. This is the Fiat-Shamir order and MUST match the order in which the
+    /// ([`OutputClaims::opening_values`]) order as one opening-claim message.
+    /// This is the Fiat-Shamir order and MUST match the order in which the
     /// prover commits the openings.
     fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
+        jolt_sumcheck::append_opening_claims(transcript, &self.opening_values());
     }
 }
 
@@ -672,9 +670,7 @@ mod tests {
         claims.append_openings(&mut via_append);
 
         let mut via_values = RecordingTranscript::default();
-        for value in claims.opening_values() {
-            via_values.append_labeled(b"opening_claim", &value);
-        }
+        jolt_sumcheck::append_opening_claims(&mut via_values, &claims.opening_values());
 
         assert_eq!(via_append.chunks, via_values.chunks);
     }

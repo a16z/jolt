@@ -11,7 +11,7 @@ macro_rules! debug_writeln {
     };
 }
 
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", feature = "guest-size-class-alloc"))]
 use zeroos::foundation::ops::MemoryOps;
 
 extern "C" {
@@ -37,15 +37,17 @@ pub extern "C" fn __platform_bootstrap() {
 
     zeroos::initialize();
 
-    // no_std guests: register the O(1) size-class allocator BEFORE kinit (the
-    // registered ops receive the heap). This is the only registration —
-    // no_std builds enable just zeroos's `memory` feature, so `initialize()`
-    // above registers no allocator and `linked_list_allocator` stays out of
-    // the guest binary. Motivation and measurements in
-    // `jolt_platform::size_class_alloc`. std/musl guests keep ZeroOS's
-    // linked-list allocator (musl's malloc manages its own arenas over
-    // mmap/brk).
-    #[cfg(target_os = "none")]
+    // Register the O(1) size-class allocator as ZeroOS's kernel heap BEFORE
+    // kinit (the registered ops receive the heap). no_std builds enable just
+    // zeroos's `memory` feature, so `initialize()` above registers no
+    // allocator and `linked_list_allocator` stays out of the guest binary.
+    // std guests on `guest-size-class-alloc` replace the linked-list allocator
+    // `initialize()` registered: the kernel heap backs musl's mmap (malloc
+    // arenas, pthread stacks), and the Rust global allocator draws from the
+    // same arena, so neither side has a fixed share of the heap. Other std
+    // guests keep the linked-list allocator. Motivation and measurements in
+    // `jolt_platform::size_class_alloc`.
+    #[cfg(any(target_os = "none", feature = "guest-size-class-alloc"))]
     zeroos::foundation::register_memory(MemoryOps {
         init: jolt_platform::size_class_alloc::init,
         alloc: jolt_platform::size_class_alloc::alloc,
@@ -121,6 +123,11 @@ pub extern "C" fn __platform_bootstrap() {
             }
         }
     }
+
+    // Before any field arithmetic, prove the field-inline unit computes in
+    // the field the guest selected; a no-op without a jolt-field selector.
+    #[cfg(feature = "guest-std")]
+    jolt_field::bind_field_inline_modulus();
 }
 
 #[cfg(feature = "zeroos-vfs-device-console")]

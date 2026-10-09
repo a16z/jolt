@@ -15,6 +15,7 @@ ignored = ["cc", "allocative"]
 workspace = true
 
 [dependencies]
+jolt-riscv = { workspace = true, features = ["field-inline"], optional = true }
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -38,6 +39,13 @@ allocative = ["dep:allocative"]
 bytemuck = ["dep:bytemuck"]
 fp128-proof-linkage = ["asm"]
 fp64-proof-linkage = []
+# Guest arithmetic on the field-inline unit (see `field_inline`), which computes in
+# one field: a guest selects it with `-bn254` (`Fr`) or `-fp128`
+# (`Prime128OffsetA7F7`); other fields keep software arithmetic.
+# Internal: enable through exactly one field selector below.
+field-inline-guest = ["dep:jolt-riscv"]
+field-inline-guest-bn254 = ["field-inline-guest"]
+field-inline-guest-fp128 = ["field-inline-guest"]
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires

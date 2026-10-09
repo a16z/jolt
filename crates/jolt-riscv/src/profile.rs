@@ -41,6 +41,7 @@ pub enum InlineExtension {
     Grumpkin,
     P256,
     External,
+    Ntt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -90,6 +91,7 @@ pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionPro
         InlineExtension::Grumpkin,
         InlineExtension::P256,
         InlineExtension::External,
+        InlineExtension::Ntt,
     ],
 };
 
@@ -287,6 +289,7 @@ const fn inline_extension_code(extension: InlineExtension) -> u8 {
         InlineExtension::Grumpkin => 6,
         InlineExtension::P256 => 7,
         InlineExtension::External => 8,
+        InlineExtension::Ntt => 9,
     }
 }
 
@@ -367,7 +370,7 @@ mod tests {
             .inline_extensions
             .iter()
             .map(|e| inline_extension_code(*e));
-        assert!(codes.eq(0..=8));
+        assert!(codes.eq(0..=9));
     }
 
     #[test]

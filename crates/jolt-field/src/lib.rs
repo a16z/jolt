@@ -108,6 +108,36 @@ pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+mod field_inline;
+
+/// Prove that the field-inline unit computes in the field this guest's
+/// selector names, so that a guest built for one field cannot run under a
+/// tracer for the other. jolt-sdk's std runtime calls this once at boot,
+/// before `main`. Without a selector, or off a RISC-V guest, it does nothing.
+pub fn bind_field_inline_modulus() {
+    #[cfg(all(
+        feature = "field-inline-guest-bn254",
+        feature = "bn254",
+        target_arch = "riscv64"
+    ))]
+    field_inline::bind_modulus(&Fr::MODULUS_LIMBS);
+    #[cfg(all(
+        feature = "field-inline-guest-fp128",
+        feature = "solinas",
+        target_arch = "riscv64"
+    ))]
+    field_inline::bind_modulus(&Prime128OffsetA7F7::MODULUS_LIMBS);
+}
+#[cfg(all(
+    feature = "field-inline-guest-bn254",
+    feature = "field-inline-guest-fp128",
+    target_arch = "riscv64"
+))]
+compile_error!(
+    "the field-inline unit computes in one field: enable field-inline-guest-bn254 or \
+     field-inline-guest-fp128, not both"
+);
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};

@@ -16,8 +16,24 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+# std guests: route Rust allocations to jolt-platform's O(1) size-class
+# arena instead of musl's malloc over ZeroOS's first-fit heap.
+guest-size-class-alloc = []
+blake2-inline = [
+  "jolt-transcript?/blake2-inline",
+  "jolt-verifier?/blake2-inline",
+]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
+# Akita-backed proving for the recursion flow. Not additive: it compiles out
+# the Dory host helpers `#[jolt::provable]` expands to, so a host build that
+# unifies it with a provable crate fails with a compile error naming this
+# feature (`__dory_host_items!`).
+akita = [
+  "jolt-prover?/akita",
+  "jolt-verifier?/akita",
+  "tracer?/fp128-field-inline",
+]
 field-inline = [
   "jolt-prover?/field-inline",
   "jolt-verifier?/field-inline",
@@ -33,7 +49,7 @@ host = [
   "dep:common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
-  "dep:jolt-field",
+  "jolt-field/bn254",
   "dep:jolt-host",
   "dep:jolt-openings",
   "dep:jolt-program",
@@ -50,6 +66,8 @@ guest-nostd = ["zeroos-nostd"]
 
 # ZeroOS features
 guest-std = [
+  # Boot binds the field-inline unit's modulus (`bind_field_inline_modulus`).
+  "dep:jolt-field",
   "postcard/use-std",
   "jolt-platform/std",
   "jolt-sdk-macros/guest-std",
@@ -63,7 +81,7 @@ guest-verifier = [
   "dep:common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
-  "dep:jolt-field",
+  "jolt-field/bn254",
   "dep:jolt-transcript",
   "dep:jolt-verifier",
 ]
@@ -110,7 +128,9 @@ bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
-jolt-field = { workspace = true, optional = true }
+# Not inherited: the workspace entry keeps jolt-field's default BN254 field,
+# which std guests booting through `guest-std` do not need.
+jolt-field = { path = "../crates/jolt-field", default-features = false, optional = true }
 jolt-host = { workspace = true, optional = true }
 jolt-openings = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }

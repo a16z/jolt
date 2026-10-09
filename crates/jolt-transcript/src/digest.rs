@@ -85,11 +85,17 @@ where
         self.challenge_bytes(out);
     }
 
+    /// `hash(state || round || payload)`. The hasher is updated in place
+    /// rather than threaded through `chain_update`, which moves it per call.
     #[inline]
-    fn hasher(&self) -> D {
+    fn round_hash(&self, payload: &[u8]) -> [u8; 32] {
         let mut round_bytes = [0u8; 32];
         round_bytes[28..].copy_from_slice(&self.n_rounds.to_be_bytes());
-        D::new().chain_update(self.state).chain_update(round_bytes)
+        let mut hasher = D::new();
+        Digest::update(&mut hasher, self.state);
+        Digest::update(&mut hasher, round_bytes);
+        Digest::update(&mut hasher, payload);
+        hasher.finalize().into()
     }
 
     fn challenge_bytes(&mut self, out: &mut [u8]) {
@@ -111,7 +117,7 @@ where
 
     #[inline]
     fn challenge_bytes32(&mut self, out: &mut [u8; 32]) {
-        let hash: [u8; 32] = self.hasher().finalize().into();
+        let hash = self.round_hash(&[]);
         out.copy_from_slice(&hash);
         self.update_state(hash);
     }
@@ -168,7 +174,7 @@ where
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) {
-        let hash: [u8; 32] = self.hasher().chain_update(bytes).finalize().into();
+        let hash = self.round_hash(bytes);
         self.update_state(hash);
     }
 

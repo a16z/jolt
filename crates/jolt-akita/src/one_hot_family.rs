@@ -1,5 +1,6 @@
-use akita_config::CommitmentConfig;
-use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier};
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_params::OpeningScheduleSelection;
+use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier, TrustedTerminalCache};
 use akita_types::AkitaVerifierSetup;
 
 use crate::adapters::AkitaScheduleArtifacts;
@@ -126,6 +127,20 @@ macro_rules! define_family_types {
                 }
             }
 
+            /// The scheme over a catalog verifier view (see
+            /// [`crate::AkitaVerifierSetup::prepare_verifier`]).
+            pub(crate) fn from_verifier_view(
+                family: OneHotFamily,
+                view: &[u8],
+            ) -> Result<Self, AkitaError> {
+                match family {
+                    $(OneHotFamily::$variant =>
+                        TrustedScheduleCatalog::<$cfg>::from_verifier_view(view)
+                            .map(AkitaCommitmentScheme::new)
+                            .map(Self::$variant)),+
+                }
+            }
+
             pub(crate) fn verifier(
                 &self,
                 setup: AkitaVerifierSetup<<JoltOneHotK16 as CommitmentConfig>::Field>,
@@ -133,6 +148,25 @@ macro_rules! define_family_types {
                 match self {
                     $(Self::$variant(scheme) => scheme.verifier(setup)
                         .map(AkitaOneHotBackendVerifier::$variant)),+
+                }
+            }
+
+            /// The verifier for one prepared schedule row, over a trusted key
+            /// and terminal NTT cache.
+            pub(crate) fn verifier_for_selection(
+                &self,
+                setup: AkitaVerifierSetup<<JoltOneHotK16 as CommitmentConfig>::Field>,
+                selection: OpeningScheduleSelection,
+                terminal_cache: TrustedTerminalCache<'_>,
+            ) -> Result<AkitaOneHotBackendVerifier, AkitaError> {
+                match self {
+                    $(Self::$variant(scheme) => AkitaVerifier::for_selection(
+                        setup,
+                        scheme.schedules().clone(),
+                        selection,
+                        Some(terminal_cache),
+                    )
+                    .map(AkitaOneHotBackendVerifier::$variant)),+
                 }
             }
         }

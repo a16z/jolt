@@ -103,20 +103,22 @@ impl MacroBuilder {
 
             #require_zk
             #memory_config_fn
-            #build_prover_fn
-            #build_verifier_fn
             #execute_fn
             #analyze_fn
             #trace_fn
             #trace_to_file_fn
             #compile_fn
             #preprocess_shared_fn
-            #preprocess_prover_fn
-            #preprocess_committed_prover_fn
-            #preprocess_verifier_fn
-            #verifier_preprocess_from_prover_fn
-            #commit_trusted_advice_fn
-            #prove_fn
+            jolt::__dory_host_items! {
+                #build_prover_fn
+                #build_verifier_fn
+                #preprocess_prover_fn
+                #preprocess_committed_prover_fn
+                #preprocess_verifier_fn
+                #verifier_preprocess_from_prover_fn
+                #commit_trusted_advice_fn
+                #prove_fn
+            }
             #main_fn
         }
         .into()

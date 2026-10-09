@@ -1,6 +1,7 @@
 #[cfg(feature = "host")]
+use std::error::Error as StdError;
+#[cfg(all(feature = "host", not(feature = "akita")))]
 use std::{
-    error::Error as StdError,
     io::{Error as IoError, ErrorKind},
     sync::Arc,
 };
@@ -17,10 +18,12 @@ use jolt_dory::DoryHint;
 use jolt_dory::{DoryCommitment, DoryScheme};
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 use jolt_field::Fr;
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 #[cfg(feature = "host")]
-use jolt_prover::{JoltProverPreprocessing as GenericJoltProverPreprocessing, ProverConfig};
+use jolt_prover::JoltProverPreprocessing as GenericJoltProverPreprocessing;
+#[cfg(all(feature = "host", not(feature = "akita")))]
+use jolt_prover::ProverConfig;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
     feature = "transcript-keccak"
@@ -45,7 +48,7 @@ use jolt_transcript::LegacyBlake2bTranscript;
 use jolt_transcript::PoseidonTranscript;
 #[cfg(feature = "host")]
 use jolt_verifier::ProgramPreprocessing as GenericProgramPreprocessing;
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend as WitnessTraceBackend};
 #[cfg(feature = "host")]
 use tracer::TracerInlineExpansionProvider;
@@ -158,7 +161,7 @@ pub fn preprocess_shared_program(
     )?)
 }
 
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 pub fn preprocess_program(
     source: &mut dyn host::JoltProgramSource,
     memory_config: MemoryConfig,
@@ -172,7 +175,7 @@ pub fn preprocess_program(
     }
 }
 
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 pub fn verifier_preprocessing_from_prover(
     prover: &JoltProverPreprocessing,
 ) -> JoltVerifierPreprocessing {
@@ -270,7 +273,7 @@ pub fn compute_advice_tape(
     Ok(trace.advice_tape)
 }
 
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 #[expect(
     clippy::too_many_arguments,
     reason = "SDK proof boundary mirrors guest inputs"

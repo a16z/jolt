@@ -19,11 +19,11 @@ use std::marker::PhantomData;
 
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
 #[cfg(feature = "committed")]
 use jolt_field::JoltField;
+use jolt_field::{CanonicalBytes, Field};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Transcript;
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -33,7 +33,7 @@ use crate::committed::CommittedSumcheckWitness;
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, CompressedSumcheckProof, SumcheckProof};
 use crate::round_proof::{CompressedLabeledRoundPoly, RoundMessage};
-use crate::{append_sumcheck_claim, OPENING_CLAIM_TRANSCRIPT_LABEL};
+use crate::{append_opening_claims, append_sumcheck_claim};
 
 /// Records one sumcheck's proof material, abstracting over clear vs. committed
 /// (ZK) recording: `absorb_input_claims` once (from `begin_batch`),
@@ -64,9 +64,10 @@ pub trait SumcheckRecorder<F: Field> {
         T: Transcript<Challenge = F>;
 
     /// Record the flattened output-claim values (canonical absorb order) and
-    /// assemble the proof. Clear: each value appended under
-    /// `b"opening_claim"`. Committed: values are row-committed and only the
-    /// commitments are absorbed.
+    /// assemble the proof. Clear: the values absorbed as one opening-claim
+    /// message ([`append_opening_claims`](crate::append_opening_claims)).
+    /// Committed: values are row-committed and only the commitments are
+    /// absorbed.
     fn finish<T>(
         self,
         output_claim_values: &[F],
@@ -109,7 +110,7 @@ impl<F: Field, C> ClearSumcheckRecorder<F, C> {
     }
 }
 
-impl<F: Field + AppendToTranscript, C> SumcheckRecorder<F> for ClearSumcheckRecorder<F, C> {
+impl<F: Field + CanonicalBytes, C> SumcheckRecorder<F> for ClearSumcheckRecorder<F, C> {
     type Commitment = C;
 
     fn absorb_input_claims<T>(&mut self, input_claims: &[F], transcript: &mut T)
@@ -143,9 +144,7 @@ impl<F: Field + AppendToTranscript, C> SumcheckRecorder<F> for ClearSumcheckReco
     where
         T: Transcript<Challenge = F>,
     {
-        for opening_claim in output_claim_values {
-            transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, opening_claim);
-        }
+        append_opening_claims(transcript, output_claim_values);
         Ok(RecordedSumcheck {
             proof: SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof {
                 round_polynomials: self.round_polynomials,

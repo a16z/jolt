@@ -18,10 +18,11 @@
 //! use portable Rust.
 
 use super::word::mul64_wide;
+use super::FIELD_INLINE_FP128_MODULUS;
 use crate::PseudoMersenne;
 use crate::{
-    CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator, Ring,
-    WithAccumulator,
+    CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator,
+    MulBaseUnreduced, Ring, WithAccumulator,
 };
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
@@ -87,6 +88,9 @@ impl<const P: u128> Fp128<P> {
         );
         c
     };
+
+    /// The modulus as canonical little-endian limbs.
+    pub const MODULUS_LIMBS: [u64; 2] = [P as u64, (P >> 64) as u64];
 
     /// Low 64 bits of `C` (always equals `C` since `C < 2^32`).
     pub const C_LO: u64 = Self::C as u64;
@@ -1015,7 +1019,7 @@ impl<const P: u128> Fp128<P> {
 crate::impl_ring_ops!(impl[const P: u128] Fp128<P> {
     add(a, b): Fp128(Self::add_raw(a.0, b.0)),
     sub(a, b): Fp128(Self::sub_raw(a.0, b.0)),
-    mul(a, b): Fp128(Self::mul_raw(a.0, b.0)),
+    mul(a, b): Self::inline_mul(a, b),
     neg(a): Fp128(Self::sub_raw(pack(0, 0), a.0)),
     zero: Fp128(pack(0, 0)),
     // P > 1 is implied by the C asserts (odd and C(C+1) < P).
@@ -1060,19 +1064,51 @@ impl<const P: u128> Ring for Fp128<P> {
 
     #[inline(always)]
     fn square(&self) -> Self {
+        // A guest that routes this field squares in one field-inline multiply.
+        if Self::FIELD_INLINE && cfg!(target_arch = "riscv64") {
+            return Self::inline_mul(*self, *self);
+        }
         Self(Self::sqr_raw(self.0))
     }
 }
 
 impl<const P: u128> Field for Fp128<P> {
+    #[inline]
+    fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        <Self as MulBaseUnreduced<Self>>::dot_base(a, b)
+    }
+
+    #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+    #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        if !Self::inline_accumulators() {
+            return crate::algebra::signed_sum_fold(terms);
+        }
+        Self::from_inline_limbs(crate::field_inline::signed_sum(
+            terms
+                .into_iter()
+                .map(|(term, negative)| (&term.0, negative)),
+        ))
+    }
+
+    #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+    #[inline]
+    fn sum_of_products<const K: usize>(terms: &[[Self; K]]) -> Self {
+        if !Self::inline_accumulators() {
+            return crate::algebra::sum_of_products_fold(terms);
+        }
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
+        let terms: &[[[u64; 2]; K]] =
+            unsafe { core::slice::from_raw_parts(terms.as_ptr().cast(), terms.len()) };
+        Self::from_inline_limbs(crate::field_inline::sum_of_products(terms))
+    }
+
     #[inline(always)]
     fn inverse(&self) -> Option<Self> {
-        let inv = self.inv_or_zero();
-        if num_traits::Zero::is_zero(self) {
-            None
-        } else {
-            Some(inv)
-        }
+        Self::inline_inverse(*self)
     }
 
     /// Fermat inversion with branchless zero-masking.
@@ -1182,6 +1218,98 @@ impl<const P: u128> WithAccumulator for Fp128<P> {
 
 impl<const P: u128> PseudoMersenne for Fp128<P> {
     const OFFSET: u128 = Self::C;
+
+    #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+    fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
+        Self::inline_accumulators().then(|| Self::inline_dot_kernel(a, b))
+    }
+
+    #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+    fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
+        Self::inline_accumulators().then(|| Self::inline_weighted_dot_kernel(rows, weights, pows))
+    }
+
+    #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+    fn inline_dot_rows(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) -> bool {
+        let inline = Self::inline_accumulators();
+        if inline {
+            Self::inline_dot_rows_kernel(rows, shared, out);
+        }
+        inline
+    }
+}
+
+impl<const P: u128> Fp128<P> {
+    /// Whether this field is the one the field-inline unit computes in: the
+    /// guest selected `field-inline-guest-fp128` and `P` is its modulus.
+    /// Routing any other `Fp128` through the unit would reduce modulo the
+    /// wrong prime.
+    const FIELD_INLINE: bool =
+        cfg!(feature = "field-inline-guest-fp128") && P == FIELD_INLINE_FP128_MODULUS;
+}
+
+#[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
+impl<const P: u128> Fp128<P> {
+    #[inline(always)]
+    #[expect(
+        clippy::expect_used,
+        reason = "invalid limb advice must abort the guest"
+    )]
+    fn from_inline_limbs(limbs: [u64; 2]) -> Self {
+        // Advice limbs determine only a residue until the integer is range checked.
+        Self::from_u128_checked(join(limbs)).expect("noncanonical field-inline result")
+    }
+}
+
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+impl<const P: u128> Fp128<P> {
+    /// Whether the accumulating field-inline kernels serve this call: the
+    /// unit computes in this field and no `signed_sum` iterator holds them.
+    #[inline(always)]
+    fn inline_accumulators() -> bool {
+        Self::FIELD_INLINE && crate::field_inline::accumulators_free()
+    }
+
+    fn inline_dot_kernel(a: &[Self], b: &[Self]) -> Self {
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
+        let (a, b): (&[[u64; 2]], &[[u64; 2]]) = unsafe {
+            (
+                core::slice::from_raw_parts(a.as_ptr().cast(), a.len()),
+                core::slice::from_raw_parts(b.as_ptr().cast(), b.len()),
+            )
+        };
+        Self::from_inline_limbs(crate::field_inline::dot(a, b))
+    }
+
+    fn inline_dot_rows_kernel(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) {
+        assert_eq!(rows.len(), out.len(), "one output per row");
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`, so a slice
+        // of it, and a slice of such slices, have the limb slices' layout.
+        let rows: &[&[[u64; 2]]] =
+            unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
+        let shared: &[[u64; 2]] =
+            unsafe { core::slice::from_raw_parts(shared.as_ptr().cast(), shared.len()) };
+        let mut limbs = vec![[0u64; 2]; out.len()];
+        crate::field_inline::dot_rows(rows, shared, &mut limbs);
+        for (slot, limbs) in out.iter_mut().zip(limbs) {
+            *slot = Self::from_inline_limbs(limbs);
+        }
+    }
+
+    fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`, so a slice
+        // of it, and a slice of such slices, have the limb slices' layout.
+        let cast = |slice: &[Self]| -> &[[u64; 2]] {
+            unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
+        };
+        let rows: &[&[[u64; 2]]] =
+            unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
+        Self::from_inline_limbs(crate::field_inline::weighted_dot_rows(
+            rows,
+            cast(weights),
+            cast(pows),
+        ))
+    }
 }
 
 // Byte views for device buffers (`jolt-metal`). Upload is a byte copy;
@@ -1305,13 +1433,56 @@ mod tests {
     }
 }
 
+/// Multiplication and inversion: native Solinas arithmetic, or the
+/// field-inline path on a RISC-V guest that routes this field (see
+/// [`Self::FIELD_INLINE`]). Addition stays in software, where a two-limb add
+/// costs about what a field-inline round trip does.
+impl<const P: u128> Fp128<P> {
+    #[inline(always)]
+    fn inline_mul(a: Self, b: Self) -> Self {
+        #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+        if Self::FIELD_INLINE {
+            return Self::from_inline_limbs(crate::field_inline::mul(&a.0, &b.0, false));
+        }
+        Fp128(Self::mul_raw(a.0, b.0))
+    }
+    #[inline(always)]
+    fn inline_inverse(a: Self) -> Option<Self> {
+        use num_traits::Zero;
+        if Zero::is_zero(&a) {
+            return None;
+        }
+        #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+        if Self::FIELD_INLINE {
+            return Some(Self::from_inline_limbs(crate::field_inline::inv(
+                &a.0, false,
+            )));
+        }
+        Some(a.inv_or_zero())
+    }
+}
+
 #[cfg(test)]
 mod wide_tests {
     use super::*;
-    use crate::solinas::Prime128Offset275;
+    use crate::solinas::{Prime128Offset275, FIELD_INLINE_FP128_MODULUS as P};
     use rand_chacha::ChaCha20Rng;
     use rand_core::RngCore;
     use rand_core::SeedableRng;
+
+    #[test]
+    fn inline_readout_accepts_canonical_boundaries() {
+        type F = Fp128<P>;
+        assert_eq!(F::from_inline_limbs([0; 2]).0, [0; 2]);
+        let largest = split(P - 1);
+        assert_eq!(F::from_inline_limbs(largest).0, largest);
+    }
+
+    #[test]
+    #[should_panic(expected = "noncanonical field-inline result")]
+    fn inline_readout_rejects_modulus_as_zero() {
+        let _ = Fp128::<P>::from_inline_limbs(split(P));
+    }
 
     #[test]
     fn mul_wide_limbs_roundtrips_through_reduction() {

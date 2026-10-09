@@ -25,6 +25,41 @@ cfg_if::cfg_if! {
         pub fn exit(code: i32) -> ! {
             std::process::exit(code)
         }
+
+        /// Rust allocations on jolt-platform's size-class arena, which
+        /// `__platform_bootstrap` also registers as ZeroOS's kernel heap.
+        #[cfg(feature = "guest-size-class-alloc")]
+        struct SizeClassAllocator;
+
+        #[cfg(feature = "guest-size-class-alloc")]
+        use core::alloc::{GlobalAlloc, Layout};
+
+        #[cfg(feature = "guest-size-class-alloc")]
+        // SAFETY: the arena is initialized in `__platform_bootstrap` before
+        // any Rust allocation. Calls never overlap: the hart takes no
+        // interrupts, kernel allocations run only inside syscalls, the
+        // cooperative scheduler switches threads only inside syscalls, and the
+        // allocator itself never traps.
+        unsafe impl GlobalAlloc for SizeClassAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                jolt_platform::size_class_alloc::alloc(layout)
+            }
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                jolt_platform::size_class_alloc::dealloc(ptr, layout)
+            }
+            unsafe fn realloc(
+                &self,
+                ptr: *mut u8,
+                layout: Layout,
+                new_size: usize,
+            ) -> *mut u8 {
+                jolt_platform::size_class_alloc::realloc(ptr, layout, new_size)
+            }
+        }
+
+        #[cfg(feature = "guest-size-class-alloc")]
+        #[global_allocator]
+        static ALLOCATOR: SizeClassAllocator = SizeClassAllocator;
     } else if #[cfg(target_os = "none")] {
         pub use jolt_platform::putchar;
 
