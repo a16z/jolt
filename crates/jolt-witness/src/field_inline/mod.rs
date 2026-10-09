@@ -194,7 +194,8 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
     }
 
     fn fill_rd_increments(&self, start: usize, values: &mut [F]) -> Result<(), WitnessError> {
-        self.fill_cycle_values(start, values, |data, env| {
+        values.fill(F::zero());
+        self.scatter_cycle_values(start, values, |data, env| {
             FieldRdInc::<F>::extract(data, None, env).map(|value| value.0)
         })
     }
@@ -374,19 +375,22 @@ impl TraceBackedFieldInlineWitness {
         &self,
     ) -> Result<Vec<F>, WitnessError> {
         const CHUNK_SIZE: usize = 1 << 14;
-        let mut values = vec![F::zero(); self.rows];
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(self.rows);
         values
             .par_chunks_mut(CHUNK_SIZE)
             .enumerate()
             .try_for_each(|(chunk, values)| {
-                self.fill_cycle_values(chunk * CHUNK_SIZE, values, |data, env| {
+                self.scatter_cycle_values(chunk * CHUNK_SIZE, values, |data, env| {
                     W::extract(data, None, env).map(FieldValue::value)
                 })
             })?;
         Ok(values)
     }
 
-    fn fill_cycle_values<F: JoltField>(
+    /// Writes each field event's value into the window `start..start +
+    /// values.len()` and leaves every other slot untouched, so callers pass a
+    /// zeroed window.
+    fn scatter_cycle_values<F: JoltField>(
         &self,
         start: usize,
         values: &mut [F],
@@ -399,7 +403,6 @@ impl TraceBackedFieldInlineWitness {
                 label: FIELD_INLINE_LABEL,
                 reason: "increment range exceeds trace domain".to_owned(),
             })?;
-        values.fill(F::zero());
         let events = self.trace_data.field_events();
         let first = events.partition_point(|event| event.cycle < start);
         let env = WitnessEnv::new(&self.preprocessing);
@@ -414,7 +417,7 @@ impl TraceBackedFieldInlineWitness {
         id: FieldInlineVirtualPolynomial,
     ) -> Result<Vec<F>, WitnessError> {
         let register_count = field_register_count();
-        let mut values = vec![F::from_u64(0); self.rows * register_count];
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(self.rows * register_count);
 
         if id == FieldInlineVirtualPolynomial::FieldRegistersVal {
             values

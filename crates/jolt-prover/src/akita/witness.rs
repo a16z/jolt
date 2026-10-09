@@ -279,7 +279,7 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
     #[cfg(feature = "field-inline")]
     let increments = {
         const CHUNK_SIZE: usize = 1 << 14;
-        let mut increments = vec![F::zero(); num_rows];
+        let mut increments = jolt_utils::unsafe_allocate_zero_vec(num_rows);
         #[cfg(feature = "parallel")]
         let chunks = increments.par_chunks_mut(CHUNK_SIZE);
         #[cfg(not(feature = "parallel"))]
