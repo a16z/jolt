@@ -3,6 +3,8 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionCyclePhaseOutputClaims;
 use jolt_claims::protocols::jolt::{
     self as native,
     geometry::{
@@ -420,6 +422,23 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
     {
         return stage6a.bytecode_read_raf.val_stages.get_mut(stage);
     }
+    #[cfg(feature = "akita")]
+    if let Some(reduction) = stage6b.bytecode_reduction.as_mut() {
+        match reduction {
+            BytecodeReductionCyclePhaseOutputClaims::Intermediate(claim)
+                if id == bytecode_reduction::cycle_phase_intermediate_opening() =>
+            {
+                return Some(&mut claim.intermediate);
+            }
+            BytecodeReductionCyclePhaseOutputClaims::Final(claim)
+                if id == bytecode_reduction::final_program_bytecode_opening() =>
+            {
+                return Some(&mut claim.bytecode);
+            }
+            _ => {}
+        }
+    }
+    #[cfg(not(feature = "akita"))]
     if let Some(reduction) = stage6b.bytecode_reduction.as_mut() {
         if id == bytecode_reduction::cycle_phase_intermediate_opening() {
             if let Some(intermediate) = reduction.intermediate.as_mut() {
@@ -583,6 +602,13 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
         }
     }
 
+    #[cfg(feature = "akita")]
+    if let Some(address_phase) = claims.bytecode_address_phase.as_mut() {
+        if id == bytecode_reduction::final_program_bytecode_opening() {
+            return Some(&mut address_phase.bytecode);
+        }
+    }
+    #[cfg(not(feature = "akita"))]
     if let Some(address_phase) = claims.bytecode_address_phase.as_mut() {
         for (chunk, opening) in address_phase.chunks.iter_mut().enumerate() {
             if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {

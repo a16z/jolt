@@ -25,7 +25,9 @@ mod akita_tests {
     use jolt_akita::{
         AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
     };
-    use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltOneHotConfig, TracePolynomialOrder};
+    use jolt_claims::protocols::jolt::{
+        JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, TracePolynomialOrder,
+    };
     use jolt_field::Ring;
     use jolt_program::execution::OwnedTrace;
     use jolt_prover::akita::preprocessing::{
@@ -35,7 +37,7 @@ mod akita_tests {
     use jolt_prover::akita::{self, JoltAkitaBackend};
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
-    use jolt_verifier::VerifierError;
+    use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
     use crate::support::{self, GuestCase, PreparedGuest};
@@ -428,16 +430,31 @@ mod akita_tests {
         verify(&proved).expect("full-advice proof must verify");
     }
 
-    fn committed_e2e(bytecode_chunk_count: usize, profile: AkitaChunkProfile) {
+    fn committed_e2e(profile: AkitaChunkProfile) {
         let (run, mut config) = muldiv_run();
         config.akita_chunk_profile = profile;
         let preprocessing = preprocessing::preprocess_committed(
             &AkitaScheduleArtifacts::shared_from_default_directory(),
             run.preprocessing,
             &config,
-            bytecode_chunk_count,
         )
         .expect("committed Akita preprocessing");
+        let objects = &preprocessing
+            .committed_program
+            .as_ref()
+            .expect("retained objects")
+            .direct_program;
+        assert_eq!(objects.objects().count(), 2);
+        assert_eq!(
+            objects.bytecode.plan.packing().ids(),
+            [JoltCommittedPolynomial::ProgramBytecode]
+        );
+        assert!(
+            objects.bytecode.plan.packing().packed_num_vars()
+                > config.trace_length.ilog2() as usize
+                    + config.one_hot_config.committed_chunk_bits(),
+            "the regression must open whole bytecode larger than the native trace group"
+        );
         let program_preprocessing = preprocessing.program_arc().expect("retained full program");
         let public_io = run.trace.device.clone();
         let witness = TraceBackend::<OwnedTrace>::from_compact(
@@ -453,12 +470,22 @@ mod akita_tests {
             &public_io,
         )
         .expect("committed Akita proof");
+        let encoded =
+            bincode::serde::encode_to_vec(&preprocessing.verifier, bincode::config::standard())
+                .expect("serialize verifier preprocessing");
+        let (verifier, consumed): (JoltVerifierPreprocessing<AkitaScheme, AkitaVc>, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("transport verifier preprocessing");
+        assert_eq!(consumed, encoded.len());
+        let encoded = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+            .expect("serialize proof");
+        let (proof, consumed): (Proof, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("transport proof");
+        assert_eq!(consumed, encoded.len());
         let verify = |proof: &Proof| {
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
-                &preprocessing.verifier,
-                &public_io,
-                proof,
-                None,
+                &verifier, &public_io, proof, None,
             )
         };
         verify(&proof).expect("committed Akita proof must verify");
@@ -472,7 +499,7 @@ mod akita_tests {
             .bytecode_address_phase
             .as_mut()
             .expect("committed proofs carry the bytecode address phase")
-            .chunks[0] += AkitaField::from_u64(1);
+            .bytecode += AkitaField::from_u64(1);
         assert!(verify(&tampered).is_err());
     }
 
@@ -484,8 +511,7 @@ mod akita_tests {
             AkitaChunkProfile::Four,
             AkitaChunkProfile::Eight,
         ] {
-            committed_e2e(1, profile);
-            committed_e2e(2, profile);
+            committed_e2e(profile);
         }
     }
 
@@ -500,7 +526,6 @@ mod akita_tests {
             &AkitaScheduleArtifacts::shared_from_default_directory(),
             run.preprocessing,
             &config,
-            1,
             true,
             true,
         )

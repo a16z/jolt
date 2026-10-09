@@ -310,7 +310,16 @@ pub fn stage7_input_values_from_upstream<F: JoltField>(
                 cycle_phase
                     .bytecode_reduction
                     .as_ref()
-                    .and_then(|reduction| reduction.intermediate)
+                    .and_then(|reduction| {
+                        #[cfg(not(feature = "akita"))]
+                        {
+                            reduction.intermediate
+                        }
+                        #[cfg(feature = "akita")]
+                        {
+                            reduction.intermediate().copied()
+                        }
+                    })
                     .ok_or(VerifierError::MissingOpeningClaim {
                         id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
                     })

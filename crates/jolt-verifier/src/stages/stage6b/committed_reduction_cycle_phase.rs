@@ -1,11 +1,11 @@
 //! The stage 6b committed-program claim-reduction cycle phases.
 //!
-//! In committed-program mode the advice, program-image, and per-chunk bytecode
+//! In committed-program mode the advice, program-image, and bytecode
 //! polynomials are reduced over the shared precommitted schedule. Each reduction's
 //! cycle phase runs here (stage 6b); when the polynomial still has active
 //! address-phase rounds it stages an intermediate opening consumed by stage 7,
 //! otherwise it completes here, opening the committed polynomial under a
-//! `FinalScale` / `ChunkOutputWeight` public.
+//! final output weight.
 //!
 //! Because the produced opening point is the (reverse-ordered) cycle opening
 //! point while the scale is evaluated at the Dory-permuted point, each relation
@@ -25,6 +25,7 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
     TrustedAdviceCyclePhaseInputClaims, TrustedAdviceCyclePhaseOutputClaims,
     UntrustedAdviceCyclePhaseInputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase as BytecodeCyclePhase;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
     BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
     BytecodeReductionCyclePhaseOutputClaims,
@@ -372,9 +373,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
 
 #[derive(Clone)]
 pub struct BytecodeReductionCyclePhase<F: JoltField> {
-    symbolic: relations::claim_reductions::bytecode::CyclePhase,
+    symbolic: BytecodeCyclePhase,
     layout: BytecodeClaimReductionLayout,
     weights: BytecodeReductionWeights<F>,
+    #[cfg(not(feature = "akita"))]
     chunk_count: usize,
 }
 
@@ -384,12 +386,16 @@ impl<F: JoltField> BytecodeReductionCyclePhase<F> {
         weights: BytecodeReductionWeights<F>,
     ) -> Self {
         Self {
-            symbolic: relations::claim_reductions::bytecode::CyclePhase::new((
-                layout.dimensions(),
-                layout.chunk_count(),
-            )),
+            symbolic: BytecodeCyclePhase::new({
+                #[cfg(not(feature = "akita"))]
+                let shape = (layout.dimensions(), layout.chunk_count());
+                #[cfg(feature = "akita")]
+                let shape = layout.dimensions();
+                shape
+            }),
             layout: layout.clone(),
             weights,
+            #[cfg(not(feature = "akita"))]
             chunk_count: layout.chunk_count(),
         }
     }
@@ -424,6 +430,7 @@ pub fn bytecode_reduction_weights<F: JoltField>(
     let lane_weights = lane_weights(lane_inputs).map_err(bytecode_public_failed)?;
     Ok(BytecodeReductionWeights {
         r_bc: address_point.r_bc,
+        #[cfg(not(feature = "akita"))]
         chunk_rbc_weights: address_point.chunk_rbc_weights,
         lane_weights,
     })
@@ -437,7 +444,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
-    type Symbolic = relations::claim_reductions::bytecode::CyclePhase;
+    type Symbolic = BytecodeCyclePhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -458,17 +465,39 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
             .layout
             .cycle_phase_opening_point(sumcheck_point)
             .map_err(bytecode_public_failed)?;
-        Ok(if self.layout.dimensions().has_address_phase() {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: Some(opening_point),
-                chunks: Vec::new(),
-            }
-        } else {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: None,
-                chunks: vec![opening_point; self.chunk_count],
-            }
-        })
+        #[cfg(not(feature = "akita"))]
+        {
+            Ok(if self.layout.dimensions().has_address_phase() {
+                BytecodeReductionCyclePhaseOutputClaims {
+                    intermediate: Some(opening_point),
+                    chunks: Vec::new(),
+                }
+            } else {
+                BytecodeReductionCyclePhaseOutputClaims {
+                    intermediate: None,
+                    chunks: vec![opening_point; self.chunk_count],
+                }
+            })
+        }
+        #[cfg(feature = "akita")]
+        {
+            use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
+                BytecodeReductionAddressPhaseOutputClaims, BytecodeReductionIntermediateClaims,
+            };
+            Ok(if self.layout.dimensions().has_address_phase() {
+                BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                    BytecodeReductionIntermediateClaims {
+                        intermediate: opening_point,
+                    },
+                )
+            } else {
+                BytecodeReductionCyclePhaseOutputClaims::Final(
+                    BytecodeReductionAddressPhaseOutputClaims {
+                        bytecode: opening_point,
+                    },
+                )
+            })
+        }
     }
 
     fn expected_output(
@@ -478,38 +507,62 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
         output_points: &BytecodeReductionCyclePhaseOutputClaims<Vec<F>>,
         _challenges: &BytecodeReductionCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
-        if self.layout.dimensions().has_address_phase() {
-            let intermediate = output_values.intermediate.ok_or_else(|| {
-                bytecode_public_failed("bytecode reduction produced no intermediate")
-            })?;
-            return Ok(intermediate);
+        #[cfg(not(feature = "akita"))]
+        {
+            if self.layout.dimensions().has_address_phase() {
+                let intermediate = output_values.intermediate.ok_or_else(|| {
+                    bytecode_public_failed("bytecode reduction produced no intermediate")
+                })?;
+                return Ok(intermediate);
+            }
+            if output_values.chunks.len() != self.chunk_count {
+                return Err(bytecode_public_failed(format!(
+                    "bytecode chunk claim count mismatch: expected {}, got {}",
+                    self.chunk_count,
+                    output_values.chunks.len()
+                )));
+            }
+            let opening_point = output_points
+                .chunks()
+                .first()
+                .map(Vec::as_slice)
+                .ok_or_else(|| {
+                    bytecode_public_failed("bytecode reduction produced no chunk openings")
+                })?;
+            let weights = self
+                .layout
+                .cycle_phase_final_output_weights_at_opening_point(
+                    self.weights.as_inputs(),
+                    opening_point,
+                )
+                .map_err(bytecode_public_failed)?;
+            Ok(output_values
+                .chunks
+                .iter()
+                .zip(weights)
+                .map(|(chunk, weight)| *chunk * weight)
+                .sum())
         }
-        if output_values.chunks.len() != self.chunk_count {
-            return Err(bytecode_public_failed(format!(
-                "bytecode chunk claim count mismatch: expected {}, got {}",
-                self.chunk_count,
-                output_values.chunks.len()
-            )));
+        #[cfg(feature = "akita")]
+        {
+            if self.layout.dimensions().has_address_phase() {
+                return output_values
+                    .intermediate()
+                    .copied()
+                    .ok_or_else(|| bytecode_public_failed("expected bytecode intermediate"));
+            }
+            let value = output_values
+                .bytecode()
+                .copied()
+                .ok_or_else(|| bytecode_public_failed("expected final bytecode claim"))?;
+            let point = output_points
+                .bytecode()
+                .ok_or_else(|| bytecode_public_failed("expected final bytecode point"))?;
+            let weight = self
+                .layout
+                .cycle_phase_final_output_weights_at_opening_point(self.weights.as_inputs(), point)
+                .map_err(bytecode_public_failed)?;
+            Ok(value * weight)
         }
-        let opening_point = output_points
-            .chunks()
-            .first()
-            .map(Vec::as_slice)
-            .ok_or_else(|| {
-                bytecode_public_failed("bytecode reduction produced no chunk openings")
-            })?;
-        let weights = self
-            .layout
-            .cycle_phase_final_output_weights_at_opening_point(
-                self.weights.as_inputs(),
-                opening_point,
-            )
-            .map_err(bytecode_public_failed)?;
-        Ok(output_values
-            .chunks
-            .iter()
-            .zip(weights)
-            .map(|(chunk, weight)| *chunk * weight)
-            .sum())
     }
 }

@@ -4,7 +4,7 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-07-02 |
-| Updated | 2026-10-04 |
+| Updated | 2026-10-09 |
 | Status | implemented |
 | PR | [#1675](https://github.com/a16z/jolt/pull/1675) |
 
@@ -39,7 +39,7 @@ instead has two layers:
    the common `(cycle || address)` point; Stage 8 assembles these evaluations
    in canonical column order without a selector reduction.
 2. Independently committed dense objects—advice, field increments, direct
-   bytecode chunks, and the initial program image—join that trace in one
+   whole bytecode, and the initial program image—join that trace in one
    native grouped Akita opening, according to the selected protocol.
 
 This document defines the current Akita claim boundary, commitment layout, and
@@ -54,10 +54,10 @@ The Akita clear-mode protocol includes:
 - fused balanced-digit increment columns and their signed carry;
 - the lattice bytecode read-RAF and digit-zero claim-reduction chain;
 - dense word commitments for trusted and untrusted advice;
-- one bounded-dense `BytecodeChunk(i)` object per committed bytecode chunk;
+- one bounded-dense `ProgramBytecode` object for the whole bytecode;
 - one bounded-dense `ProgramImageInit` object;
 - one grouped opening ordered as
-  `[UntrustedAdvice?, TrustedAdvice?, BytecodeChunk(0..C), ProgramImageInit, OneHotTrace]`.
+  `[UntrustedAdvice?, TrustedAdvice?, ProgramBytecode, ProgramImageInit, OneHotTrace]`.
 
 Akita and `zk` remain mutually exclusive. The Dory protocol, including its
 clear and BlindFold modes, is unchanged.
@@ -101,7 +101,7 @@ BalancedIncDigit(usize)
 BalancedIncCarry
 TrustedAdvice
 UntrustedAdvice
-BytecodeChunk(usize)
+ProgramBytecode
 ProgramImageInit
 ```
 
@@ -154,25 +154,25 @@ in canonical role order.
 
 Committed-program preprocessing creates:
 
-- `C` singleton `BytecodeChunk(i)` objects, in increasing chunk index;
+- one singleton `ProgramBytecode` object;
 - one singleton `ProgramImageInit` object.
 
-A chunk is the shared canonical
-`build_committed_bytecode_chunk_coeffs` grid. Its lane capacity is 512, so
-with `R = log2(bytecode_len / C)` its logical arity is `9 + R`. The image
+The bytecode uses the shared canonical
+`build_committed_bytecode_coeffs` grid. Its lane capacity is 512, so
+with `R = log2(bytecode_len)` its logical arity is `9 + R`. The image
 logical arity is `log2(padded_image_words)`. Both use physical arity
 `max(14, logical_arity)` and reject arity above 34.
 
-Chunk coefficients are interleaved by the preprocessing
+Bytecode coefficients are interleaved by the preprocessing
 `TracePolynomialOrder`. That order is serialized, included in the
-preprocessing digest and chunk layout digest, and checked against the proof
+preprocessing digest and bytecode layout digest, and checked against the proof
 before any proving or verification stage. Program immediates are validated by
 the shared committed-bytecode helper: unsigned magnitude at most
 `u64::MAX` is accepted; larger values are rejected before
 `Field::from_i128`.
 
 There is no byte decomposition and no reconstruction claim. Stage 6b/7 final
-claims for `BytecodeChunk(i)` and `ProgramImageInit` are the claims Stage 8
+claims for `ProgramBytecode` and `ProgramImageInit` are the claims Stage 8
 opens directly.
 
 ## Fused Increment Relation Chain
@@ -210,7 +210,7 @@ Stage 8 first resolves one final evaluation for every semantic column:
 - OneHotTrace columns come from the relation DAG's final outputs;
 - advice claims come directly from the Stage 4 `RamValCheck` advice
   contributions;
-- bytecode chunk claims come from the bytecode claim reduction;
+- the whole-bytecode claim come from the bytecode claim reduction;
 - the program-image claim comes from the program-image claim reduction.
 
 Auxiliary singleton object plans zero-prefix-embed their logical claims to
@@ -224,17 +224,15 @@ The canonical group order is:
 ```text
 UntrustedAdvice?
 TrustedAdvice?
-BytecodeChunk(0)
-…
-BytecodeChunk(C - 1)
+ProgramBytecode
 ProgramImageInit
 OneHotTrace
 ```
 
-Roles are bound by label, and chunk roles also bind their index. Duplicate,
+Roles are bound by label. Duplicate,
 missing, or permuted roles are rejected before backend verification. The
-preamble separately absorbs the direct program commitments as indexed
-`bytecode_chunk_commitment` entries followed by
+preamble separately absorbs the direct program commitments as
+`program_bytecode_commitment` followed by
 `program_image_init_commitment`.
 
 Full-program mode has no direct-program suffix. If it also has no advice, the
@@ -249,11 +247,11 @@ longer participates in the shared precommitted claim-reduction scheduling
 reference for bytecode or program-image reductions. Direct objects are not
 power-set factors.
 
-For a program with `C` bytecode chunks, `A` advice kinds with nonzero capacity,
-and `M` native trace columns, setup covers `C + 2 + A` commitment groups and
-`C + 1 + A + M` polynomials: `C` singleton chunks, one singleton image, `A`
-singleton advice objects, and one `M`-polynomial trace group. The bounds
-`C <= 256`, `A <= 2`, and `M <= 64` allow at most 260 groups and 323 polynomials.
+For `A` advice kinds with nonzero capacity and `M` native trace columns,
+committed-program setup covers `3 + A` commitment groups and `2 + A + M`
+polynomials: one whole bytecode, one image, `A` singleton advice objects,
+and one `M`-polynomial trace group. The bounds `A <= 2` and `M <= 64`
+allow at most 5 groups and 68 polynomials.
 One setup plans only its final arity and column count, so at most four rows
 cover the reachable advice-presence cases. The 128-row bound applies to one
 provisioning request, not to the process cache.
@@ -266,20 +264,20 @@ provisioning request, not to the process cache.
   not a change to the semantic polynomial.
 - Prover and verifier derive identical object plans, role order, transcript
   labels, setup profiles, and trace order.
-- `BytecodeChunk(i)` and `ProgramImageInit` are opened directly. No
+- `ProgramBytecode` and `ProgramImageInit` are opened directly. No
   virtualized reconstruction exception or auxiliary proof path exists.
-- Modular and legacy Akita provers must remain byte-identical.
+- Akita preprocessing uses the versioned `akita-whole-bytecode/v1` digest
+  domain; regenerate older preprocessing and proofs. Dory formats remain unchanged.
 
 ## Testing Strategy
 
 Required gates include:
 
-- direct-object arity floor/ceiling and 256-chunk capacity tests;
+- whole-bytecode object identity, arity floor/ceiling, and capacity tests;
 - immediate boundary tests for both signs at `u64::MAX` and `2^64`;
-- committed-program e2e tests with one and two bytecode chunks;
-- modular/legacy byte-parity tests with one and two chunks;
+- committed-program e2e tests across internal Akita response profiles;
 - reordered direct-role and trace-order mismatch rejection;
-- 128-row provisioning and 260-group verifier shape tests;
+- grouped provisioning and backend group-capacity tests;
 - Akita catalog regeneration and Fiat-Shamir inventory checks;
 - standard and ZK Dory suites, confirming the protocol change is Akita-only.
 

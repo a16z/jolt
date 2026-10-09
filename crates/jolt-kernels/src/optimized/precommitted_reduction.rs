@@ -38,16 +38,19 @@
 //! built tables — and through the shared kernels the round polynomials and
 //! output claims — are byte-identical to the reference tier's.
 
+#[cfg(feature = "akita")]
+use crate::reference::bytecode_claim_reduction::bytecode_reduction_kernel;
 use std::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
 use jolt_claims::protocols::jolt::{
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind, JoltChallengeId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    AdviceClaimReductionLayout, JoltAdviceKind, JoltChallengeId, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout,
 };
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
+#[cfg(not(feature = "akita"))]
 use jolt_riscv::JoltInstructionRow;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
@@ -56,21 +59,26 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
 use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::support::eq_table;
-use crate::committed_program::{
-    build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle, program_image_words_padded,
-};
+use crate::committed_program::program_image_words_padded;
+#[cfg(not(feature = "akita"))]
+use crate::committed_program::{build_committed_bytecode_chunk_coeffs, bytecode_index_to_lane_row};
 use crate::opening::{evaluate_program_image, RamInitialOpening, RamInitialOpeningEvaluation};
+#[cfg(not(feature = "akita"))]
+use crate::precommitted_reduction::permute_tables;
 use crate::precommitted_reduction::{
-    lsb_permutation, permute_challenges, permute_coefficients, permute_tables,
-    AddressReductionKernel, CycleReductionKernel, PrecommittedReductionCarry,
+    lsb_permutation, permute_challenges, permute_coefficients, AddressReductionKernel,
+    CycleReductionKernel, PrecommittedReductionCarry,
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::BytecodeClaimReductionLayout;
 
 /// Tables at least this large build in parallel; below it rayon dispatch
 /// costs more than the work.
@@ -376,6 +384,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Optimize
     }
 }
 
+#[cfg(not(feature = "akita"))]
 fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
@@ -399,10 +408,11 @@ fn bytecode_reduction_kernel<F: JoltField>(
         });
     }
 
-    let chunk_cycle_len = 1usize << layout.log_bytecode_chunk_size();
+    let chunk_cycle_len = 1usize << layout.log_rows();
     let eq_cycle = eq_table(&weights.r_bc);
     let eq_entry = |index: usize| -> F {
-        let (lane, cycle) = chunk_index_to_lane_cycle(index, chunk_cycle_len, layout.trace_order());
+        let (lane, cycle) =
+            bytecode_index_to_lane_row(index, chunk_cycle_len, layout.trace_order());
         weights.lane_weights[lane] * eq_cycle[cycle]
     };
     let value_entry = |index: usize| -> F {
@@ -450,6 +460,7 @@ fn bytecode_reduction_kernel<F: JoltField>(
 /// parallel: each chunk's rows are a contiguous instruction slice and the
 /// grid indexing is chunk-local, so a single-chunk build over the slice is
 /// coefficient-identical to that chunk of the full build.
+#[cfg(not(feature = "akita"))]
 fn parallel_chunk_coeffs<F: JoltField>(
     bytecode: &[JoltInstructionRow],
     chunk_count: usize,
@@ -900,7 +911,7 @@ mod tests {
                 "fixture geometry must schedule a bytecode address phase"
             );
             let weights = BytecodeReductionWeights {
-                r_bc: synthetic_point(layout.log_bytecode_chunk_size(), 51),
+                r_bc: synthetic_point(layout.log_rows(), 51),
                 chunk_rbc_weights: synthetic_point(layout.chunk_count(), 53),
                 lane_weights: synthetic_point(
                     jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::COMMITTED_BYTECODE_LANE_CAPACITY,

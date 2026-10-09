@@ -23,7 +23,11 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeRed
 use jolt_witness::JoltWitnessPlane;
 
 use super::views::eq_table;
-use crate::committed_program::{build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle};
+#[cfg(not(feature = "akita"))]
+use crate::committed_program::build_committed_bytecode_chunk_coeffs;
+#[cfg(feature = "akita")]
+use crate::committed_program::build_committed_bytecode_coeffs;
+use crate::committed_program::bytecode_index_to_lane_row;
 use crate::precommitted_reduction::{permute_tables, CycleReductionKernel};
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
@@ -45,6 +49,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Referenc
     }
 }
 
+#[cfg(not(feature = "akita"))]
 fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
@@ -72,12 +77,12 @@ fn bytecode_reduction_kernel<F: JoltField>(
         });
     }
 
-    let chunk_cycle_len = 1usize << layout.log_bytecode_chunk_size();
+    let chunk_cycle_len = 1usize << layout.log_rows();
     let eq_cycle = eq_table(&weights.r_bc);
     let eq_template: Vec<F> = (0..chunk_len)
         .map(|index| {
             let (lane, cycle) =
-                chunk_index_to_lane_cycle(index, chunk_cycle_len, layout.trace_order());
+                bytecode_index_to_lane_row(index, chunk_cycle_len, layout.trace_order());
             weights.lane_weights[lane] * eq_cycle[cycle]
         })
         .collect();
@@ -105,4 +110,38 @@ fn bytecode_reduction_kernel<F: JoltField>(
         }
     };
     CycleReductionKernel::new(reduction, value, eq, permuted.collect())
+}
+
+#[cfg(feature = "akita")]
+pub(crate) fn bytecode_reduction_kernel<F: JoltField>(
+    layout: &BytecodeClaimReductionLayout,
+    weights: &BytecodeReductionWeights<F>,
+    bytecode: &[JoltInstructionRow],
+) -> Result<CycleReductionKernel<F, BytecodeReductionCyclePhase<F>>, KernelError<F>> {
+    let reduction = layout.precommitted().clone();
+    let value = build_committed_bytecode_coeffs(bytecode, layout.trace_order())?;
+    let eq_rows = eq_table(&weights.r_bc);
+    let rows = 1usize << layout.log_rows();
+    let entry = |index| {
+        let (lane, row) = bytecode_index_to_lane_row(index, rows, layout.trace_order());
+        weights.lane_weights[lane] * eq_rows[row]
+    };
+    #[cfg(feature = "parallel")]
+    let eq = {
+        use rayon::prelude::*;
+        if value.len() >= 1 << 10 {
+            (0..value.len()).into_par_iter().map(entry).collect()
+        } else {
+            (0..value.len()).map(entry).collect()
+        }
+    };
+    #[cfg(not(feature = "parallel"))]
+    let eq = (0..value.len()).map(entry).collect();
+    let mut tables = permute_tables(&reduction, vec![value, eq]).into_iter();
+    let (Some(value), Some(eq)) = (tables.next(), tables.next()) else {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode permutation lost the value/eq tables",
+        });
+    };
+    CycleReductionKernel::new(reduction, value, eq, Vec::new())
 }

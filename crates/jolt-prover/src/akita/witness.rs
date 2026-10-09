@@ -6,7 +6,6 @@
 use jolt_kernels::field_inline::FieldIncrementColumn;
 #[cfg(all(feature = "field-inline", feature = "parallel"))]
 use rayon::prelude::*;
-use std::collections::HashMap;
 #[cfg(not(feature = "field-inline"))]
 use std::marker::PhantomData;
 use std::sync::{Arc, OnceLock};
@@ -395,91 +394,86 @@ pub struct DirectProgramObject<PCS: CommitmentScheme> {
     pub hint: PCS::OpeningHint,
 }
 
-/// The precommitted direct program objects in canonical order: indexed
-/// bytecode chunks followed by the program image. Built once at preprocessing
+/// The precommitted direct program objects in canonical order: whole bytecode
+/// followed by the program image. Built once at preprocessing
 /// time and retained in
 /// [`crate::CommittedProgramProverData`], so proving consumes the objects
 /// directly.
 #[derive(Clone)]
 pub struct DirectProgramObjects<PCS: CommitmentScheme> {
-    pub objects: Vec<DirectProgramObject<PCS>>,
+    pub bytecode: DirectProgramObject<PCS>,
+    pub program_image: DirectProgramObject<PCS>,
 }
 
-/// Assembles and commits the direct bytecode chunks and program-image object.
+impl<PCS: CommitmentScheme> DirectProgramObjects<PCS> {
+    pub fn objects(&self) -> impl Iterator<Item = &DirectProgramObject<PCS>> {
+        [&self.bytecode, &self.program_image].into_iter()
+    }
+}
+
+/// Assembles and commits the whole bytecode and program-image object.
 pub fn commit_direct_program<PCS>(
     setup_context: &PCS::SetupContext,
     program: &JoltProgramPreprocessing,
-    bytecode_chunk_count: usize,
     trace_order: TracePolynomialOrder,
 ) -> Result<DirectProgramObjects<PCS>, ProverError<PCS::Field>>
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
-    let bytecode_len = program.bytecode.bytecode.len();
-    let image_words =
-        jolt_kernels::committed_program::program_image_words_padded(&program.ram.bytecode_words);
     let plan = committed_program_packing_plan(
-        bytecode_len,
-        bytecode_chunk_count,
+        program.bytecode.bytecode.len(),
         program.ram.bytecode_words.len(),
         trace_order,
     )
     .map_err(commit_failed)?;
-    let mut chunk_coeffs = jolt_kernels::committed_program::build_committed_bytecode_chunk_coeffs(
+    let bytecode_vars = plan.bytecode.packing().packed_num_vars();
+    let image_vars = plan.program_image.packing().packed_num_vars();
+    let bytecode_setup =
+        PCS::transparent_object_setup(setup_context, bytecode_vars, plan.bytecode.layout_digest())
+            .map_err(commit_failed)?
+            .0;
+    let image_setup = if image_vars == bytecode_vars {
+        PCS::retag_transparent_object_setup(&bytecode_setup, plan.program_image.layout_digest())
+    } else {
+        PCS::transparent_object_setup(
+            setup_context,
+            image_vars,
+            plan.program_image.layout_digest(),
+        )
+    }
+    .map_err(commit_failed)?
+    .0;
+    let commit = |object_plan: &PrefixPackedObjectPlan,
+                  setup: &PCS::ProverSetup,
+                  mut evaluations: Vec<PCS::Field>|
+     -> Result<DirectProgramObject<PCS>, ProverError<PCS::Field>> {
+        evaluations.resize(
+            1usize << object_plan.packing().packed_num_vars(),
+            PCS::Field::default(),
+        );
+        let witness = Polynomial::new(evaluations);
+        let (commitment, hint) = PCS::commit(&witness, setup).map_err(commit_failed)?;
+        Ok(DirectProgramObject {
+            plan: object_plan.clone(),
+            commitment,
+            hint,
+        })
+    };
+    let bytecode_coeffs = jolt_kernels::committed_program::build_committed_bytecode_coeffs(
         &program.bytecode.bytecode,
-        bytecode_chunk_count,
         trace_order,
     )
-    .map_err(commit_failed)?
-    .into_iter();
-    let mut setups = HashMap::<usize, PCS::ProverSetup>::new();
-    let objects = plan
-        .objects()
-        .map(|object_plan| {
-            let id = object_plan.packing().ids()[0];
-            let mut evaluations = match id {
-                JoltCommittedPolynomial::BytecodeChunk(_) => {
-                    chunk_coeffs.next().ok_or(ProverError::InvariantViolation {
-                        reason: "missing direct bytecode chunk witness",
-                    })?
-                }
-                JoltCommittedPolynomial::ProgramImageInit => image_words
-                    .iter()
-                    .map(|word| PCS::Field::from_u64(*word))
-                    .collect(),
-                _ => {
-                    return Err(ProverError::InvariantViolation {
-                        reason: "unexpected direct committed-program object",
-                    })
-                }
-            };
-            evaluations.resize(
-                1usize << object_plan.packing().packed_num_vars(),
-                PCS::Field::default(),
-            );
-            let witness = Polynomial::new(evaluations);
-            let physical_vars = object_plan.packing().packed_num_vars();
-            let setup = if let Some(setup) = setups.get(&physical_vars) {
-                PCS::retag_transparent_object_setup(setup, object_plan.layout_digest())
-                    .map_err(commit_failed)?
-                    .0
-            } else {
-                PCS::transparent_object_setup(
-                    setup_context,
-                    physical_vars,
-                    object_plan.layout_digest(),
-                )
-                .map_err(commit_failed)?
-                .0
-            };
-            let (commitment, hint) = PCS::commit(&witness, &setup).map_err(commit_failed)?;
-            let _ = setups.entry(physical_vars).or_insert_with(|| setup.clone());
-            Ok(DirectProgramObject {
-                plan: object_plan.clone(),
-                commitment,
-                hint,
-            })
-        })
-        .collect::<Result<Vec<_>, ProverError<PCS::Field>>>()?;
-    Ok(DirectProgramObjects { objects })
+    .map_err(commit_failed)?;
+    let bytecode = commit(&plan.bytecode, &bytecode_setup, bytecode_coeffs)?;
+    let image_words =
+        jolt_kernels::committed_program::program_image_words_padded(&program.ram.bytecode_words);
+    let program_image = commit(
+        &plan.program_image,
+        &image_setup,
+        image_words.into_iter().map(PCS::Field::from_u64).collect(),
+    )?;
+    Ok(DirectProgramObjects {
+        bytecode,
+        program_image,
+    })
 }

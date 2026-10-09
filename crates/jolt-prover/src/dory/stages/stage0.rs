@@ -145,7 +145,7 @@ where
             config.one_hot_config.committed_chunk_bits() + config.trace_length.ilog2() as usize;
         if let Some(candidates) = CommittedProgramCandidates::from_schedule(&checked.precommitted) {
             grid_without_advice = grid_without_advice
-                .max(candidates.bytecode_chunk_vars)
+                .max(candidates.bytecode_vars)
                 .max(candidates.program_image_vars);
         }
         let advice_dominates = |max_size: u64| advice_total_vars(max_size) > grid_without_advice;

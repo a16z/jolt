@@ -430,7 +430,8 @@ where
                     id,
                 )?,
                 JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry => {
+                | JoltCommittedPolynomial::BalancedIncCarry
+                | JoltCommittedPolynomial::ProgramBytecode => {
                     // Lattice-mode polynomials open through the fixed-prefix
                     // path in `stage8::akita`, never the homomorphic RLC batch.
                     return Err(VerifierError::FinalOpeningBatchFailed {
@@ -454,9 +455,10 @@ where
             | JoltCommittedPolynomial::BytecodeChunk(_)
             | JoltCommittedPolynomial::ProgramImageInit => CommitmentEmbedding::Precommitted,
             JoltCommittedPolynomial::BalancedIncDigit(_)
-            | JoltCommittedPolynomial::BalancedIncCarry => {
+            | JoltCommittedPolynomial::BalancedIncCarry
+            | JoltCommittedPolynomial::ProgramBytecode => {
                 return Err(VerifierError::FinalOpeningBatchFailed {
-                    reason: "Akita increments have no homomorphic embedding".to_string(),
+                    reason: "Akita objects have no homomorphic embedding".to_string(),
                 });
             }
         };

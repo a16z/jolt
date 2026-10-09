@@ -14,9 +14,10 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::{
 };
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{AdviceClaimReductionLayout, JoltAdviceKind};
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::{BytecodeClaimReductionLayout, JoltRelationId};
 use jolt_claims::protocols::jolt::{
-    BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltRelationId,
-    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+    JoltCommittedPolynomial, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_field::JoltField;
 
@@ -100,31 +101,67 @@ pub fn precommitted_final_openings<F: JoltField>(
         }
     }
     if let Some(layout) = schedule.bytecode.as_ref() {
-        let address_value = clear.and_then(|(stage7, _)| {
-            stage7
-                .bytecode_address_phase
-                .as_ref()
-                .map(|values| values.chunks.clone())
-        });
-        let address_phase = resolve_source(is_clear, stage7_points.bytecode_point(), address_value);
-        // The stage-6b cycle phase completes the reduction only when it produced the
-        // final chunk claims (no intermediate remained), so the clear source is Some
-        // only under that guard; the point-only ZK source is unguarded.
-        let cycle_value = clear.and_then(|(_, stage6)| {
-            stage6
-                .bytecode_reduction
-                .as_ref()
-                .filter(|reduction| {
-                    reduction.intermediate.is_none() && !reduction.chunks.is_empty()
-                })
-                .map(|reduction| reduction.chunks.clone())
-        });
-        let cycle_phase = resolve_source(
-            is_clear,
-            stage6_points.bytecode_reduction_opening_point(),
-            cycle_value,
-        );
-        openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
+        #[cfg(not(feature = "akita"))]
+        {
+            let address_value = clear.and_then(|(stage7, _)| {
+                stage7
+                    .bytecode_address_phase
+                    .as_ref()
+                    .map(|values| values.chunks.clone())
+            });
+            let address_phase =
+                resolve_source(is_clear, stage7_points.bytecode_point(), address_value);
+            // The stage-6b cycle phase completes the reduction only when it produced the
+            // final chunk claims (no intermediate remained), so the clear source is Some
+            // only under that guard; the point-only ZK source is unguarded.
+            let cycle_value = clear.and_then(|(_, stage6)| {
+                stage6
+                    .bytecode_reduction
+                    .as_ref()
+                    .filter(|reduction| {
+                        reduction.intermediate.is_none() && !reduction.chunks.is_empty()
+                    })
+                    .map(|reduction| reduction.chunks.clone())
+            });
+            let cycle_phase = resolve_source(
+                is_clear,
+                stage6_points.bytecode_reduction_opening_point(),
+                cycle_value,
+            );
+            openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
+        }
+        #[cfg(feature = "akita")]
+        {
+            let address_value = clear.and_then(|(stage7, _)| {
+                stage7
+                    .bytecode_address_phase
+                    .as_ref()
+                    .map(|claims| claims.bytecode)
+            });
+            let cycle_value = clear.and_then(|(_, stage6)| {
+                stage6
+                    .bytecode_reduction
+                    .as_ref()
+                    .and_then(|claims| claims.bytecode().copied())
+            });
+            let source = if layout.dimensions().has_address_phase() {
+                resolve_source(is_clear, stage7_points.bytecode_point(), address_value)
+            } else {
+                resolve_source(
+                    is_clear,
+                    stage6_points.bytecode_reduction_opening_point(),
+                    cycle_value,
+                )
+            }
+            .ok_or(VerifierError::MissingOpeningClaim {
+                id: bytecode_reduction::final_program_bytecode_opening().into(),
+            })?;
+            openings.push(PrecommittedFinalOpening {
+                polynomial: JoltCommittedPolynomial::ProgramBytecode,
+                point: source.point.to_vec(),
+                opening_claim: source.opening_claim,
+            });
+        }
     }
     if let Some(layout) = schedule.program_image.as_ref() {
         let address_value = clear.and_then(|(stage7, _)| {
@@ -213,6 +250,7 @@ fn advice_final_opening<F: JoltField>(
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn bytecode_final_openings<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     address_phase: Option<PrecommittedFinalSource<'_, F, Vec<F>>>,

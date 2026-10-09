@@ -196,6 +196,7 @@ pub enum BytecodeClaimReductionPublic {
     /// Final output coefficient of one committed bytecode chunk opening:
     /// `eq(r_bc_high)[chunk] * eq_combined * skip_scale`.
     ChunkOutputWeight(usize),
+    OutputWeight,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -341,6 +342,7 @@ pub enum JoltCommittedPolynomial {
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
+    ProgramBytecode,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

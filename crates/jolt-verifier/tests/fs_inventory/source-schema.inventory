@@ -43,8 +43,7 @@ jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
 jolt-verifier::config.rs::ZkConfig::Transparent
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_chunk_commitments
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_chunk_count
-jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.direct_program_commitments
+jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_commitment
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.max_padded_trace_length
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.memory_layout
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.meta

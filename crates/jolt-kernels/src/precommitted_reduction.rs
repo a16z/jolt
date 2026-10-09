@@ -211,6 +211,7 @@ impl<F: JoltField> PrecommittedTables<F> {
 
     /// The fully bound `aux` coefficients — the per-chunk `BytecodeChunk(i)`
     /// opening values. Errors while any variable remains unbound.
+    #[cfg(not(feature = "akita"))]
     fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.aux.iter().map(|table| table.evals()[0]).collect())
@@ -450,20 +451,43 @@ impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReducti
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        // The chunked counterpart of `scalar_claim`: an address phase stages
-        // the intermediate handoff claim (chunks come later, at stage 7); a
-        // cycle-only schedule ends here with the per-chunk openings.
-        Ok(if self.has_address_phase() {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: Some(self.tables.intermediate_claim()),
-                chunks: Vec::new(),
-            }
-        } else {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: None,
-                chunks: self.tables.final_aux_claims()?,
-            }
-        })
+        #[cfg(not(feature = "akita"))]
+        {
+            // The chunked counterpart of `scalar_claim`: an address phase stages
+            // the intermediate handoff claim (chunks come later, at stage 7); a
+            // cycle-only schedule ends here with the per-chunk openings.
+            Ok(if self.has_address_phase() {
+                BytecodeReductionCyclePhaseOutputClaims {
+                    intermediate: Some(self.tables.intermediate_claim()),
+                    chunks: Vec::new(),
+                }
+            } else {
+                BytecodeReductionCyclePhaseOutputClaims {
+                    intermediate: None,
+                    #[cfg(not(feature = "akita"))]
+                    chunks: self.tables.final_aux_claims()?,
+                    #[cfg(feature = "akita")]
+                    bytecode: self.tables.final_claim()?,
+                }
+            })
+        }
+        #[cfg(feature = "akita")]
+        {
+            use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
+            Ok(if self.has_address_phase() {
+                BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                    BytecodeReductionIntermediateClaims {
+                        intermediate: self.tables.intermediate_claim(),
+                    },
+                )
+            } else {
+                BytecodeReductionCyclePhaseOutputClaims::Final(
+                    BytecodeReductionAddressPhaseOutputClaims {
+                        bytecode: self.tables.final_claim()?,
+                    },
+                )
+            })
+        }
     }
 
     fn park_residue(self: Box<Self>, session: &mut ProofSession) {
@@ -526,7 +550,10 @@ impl<F: JoltField> SumcheckKernel<F>
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(BytecodeReductionAddressPhaseOutputClaims {
+            #[cfg(not(feature = "akita"))]
             chunks: self.tables.final_aux_claims()?,
+            #[cfg(feature = "akita")]
+            bytecode: self.tables.final_claim()?,
         })
     }
 }

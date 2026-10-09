@@ -1,11 +1,9 @@
 //! Two-phase committed-bytecode claim reduction (stage 6b cycle -> stage 7
 //! address).
 //!
-//! In committed program mode the bytecode value columns are committed as dense
-//! chunk polynomials instead of being evaluated directly by the verifier. The
-//! address phase of bytecode read-RAF stages five `BytecodeValClaim(i)` claims;
-//! this reduction batches them with powers of `eta` and reduces the batch into
-//! openings of `BytecodeChunk(i)` over the shared precommitted schedule.
+//! Committed bytecode uses one whole polynomial in Akita and row partitions
+//! in Dory. The staged `BytecodeValClaim(i)` claims are batched with powers of
+//! `eta` and reduced over the shared precommitted schedule.
 
 use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
@@ -56,6 +54,7 @@ pub const fn committed_lane_vars() -> usize {
 
 /// Maximum chunk count representable by the `u8` proof serialization of
 /// `BytecodeChunk(i)`.
+#[cfg(not(feature = "akita"))]
 pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
 
 pub const INVALID_COMMITTED_PROGRAM_IMMEDIATE: &str =
@@ -73,6 +72,7 @@ pub const fn is_valid_committed_program_immediate(immediate: i128) -> bool {
 /// `bytecode_len` unchecked because preprocessing pads it to a power of two,
 /// while the chunk-size log derivations here rely on that invariant
 /// explicitly.
+#[cfg(not(feature = "akita"))]
 #[inline(always)]
 pub fn is_valid_committed_bytecode_chunking_for_len(
     bytecode_len: usize,
@@ -83,6 +83,7 @@ pub fn is_valid_committed_bytecode_chunking_for_len(
         && bytecode_len.is_multiple_of(chunk_count)
 }
 
+#[cfg(not(feature = "akita"))]
 const fn is_valid_chunk_count(chunk_count: usize) -> bool {
     chunk_count > 0
         && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
@@ -143,24 +144,40 @@ pub const BYTECODE_LANE_LAYOUT: BytecodeLaneLayout = BytecodeLaneLayout::new();
 /// reduction's candidate in the shared precommitted scheduling reference.
 pub fn precommitted_candidate(
     bytecode_len: usize,
-    chunk_count: usize,
+    #[cfg(not(feature = "akita"))] chunk_count: usize,
 ) -> Result<usize, PointGeometryError> {
-    if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-        return Err(PointGeometryError::InvalidBytecodeChunking {
-            bytecode_len,
-            chunk_count,
-        });
+    #[cfg(not(feature = "akita"))]
+    {
+        if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
+            return Err(PointGeometryError::InvalidBytecodeChunking {
+                bytecode_len,
+                chunk_count,
+            });
+        }
+        bytecode_total_vars(bytecode_len / chunk_count)
     }
-    Ok(committed_lane_vars() + log2_power_of_two(bytecode_len / chunk_count))
+    #[cfg(feature = "akita")]
+    {
+        bytecode_total_vars(bytecode_len)
+    }
+}
+
+pub fn bytecode_total_vars(bytecode_len: usize) -> Result<usize, PointGeometryError> {
+    if !bytecode_len.is_power_of_two() {
+        return Err(PointGeometryError::InvalidBytecodeLength { bytecode_len });
+    }
+    Ok(committed_lane_vars() + log2_power_of_two(bytecode_len))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeClaimReductionLayout {
-    chunk_shape: CommitmentMatrixShape,
+    polynomial_shape: CommitmentMatrixShape,
     precommitted: PrecommittedClaimReduction,
     trace_order: TracePolynomialOrder,
+    #[cfg(not(feature = "akita"))]
     chunk_count: usize,
-    log_bytecode_chunk_size: usize,
+    log_rows: usize,
+    #[cfg(not(feature = "akita"))]
     dropped_address_bits: usize,
 }
 
@@ -170,82 +187,94 @@ impl BytecodeClaimReductionLayout {
         log_t: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         bytecode_len: usize,
-        chunk_count: usize,
+        #[cfg(not(feature = "akita"))] chunk_count: usize,
     ) -> Result<Self, PointGeometryError> {
+        #[cfg(not(feature = "akita"))]
         if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
             return Err(PointGeometryError::InvalidBytecodeChunking {
                 bytecode_len,
                 chunk_count,
             });
         }
-        let log_bytecode_chunk_size = log2_power_of_two(bytecode_len / chunk_count);
-        let dropped_address_bits = log2_power_of_two(bytecode_len) - log_bytecode_chunk_size;
-        // Bytecode chunks use their own balanced dimensions (independent from
-        // the main trace matrix); stage 8 embeds them as a top-left block in
-        // the joint opening.
-        let chunk_shape =
-            CommitmentMatrixShape::balanced(committed_lane_vars() + log_bytecode_chunk_size);
+        #[cfg(not(feature = "akita"))]
+        let log_rows = log2_power_of_two(bytecode_len / chunk_count);
+        #[cfg(feature = "akita")]
+        let log_rows = bytecode_total_vars(bytecode_len)? - committed_lane_vars();
+        #[cfg(not(feature = "akita"))]
+        let dropped_address_bits = log2_power_of_two(bytecode_len) - log_rows;
+        let polynomial_shape = CommitmentMatrixShape::balanced(committed_lane_vars() + log_rows);
         let precommitted = PrecommittedClaimReduction::new(
-            chunk_shape.row_vars(),
-            chunk_shape.column_vars(),
+            polynomial_shape.row_vars(),
+            polynomial_shape.column_vars(),
             scheduling_reference,
             trace_order,
             log_t,
         )?;
         Ok(Self {
-            chunk_shape,
+            polynomial_shape,
             precommitted,
             trace_order,
+            #[cfg(not(feature = "akita"))]
             chunk_count,
-            log_bytecode_chunk_size,
+            log_rows,
+            #[cfg(not(feature = "akita"))]
             dropped_address_bits,
         })
     }
 
-    pub const fn chunk_shape(&self) -> CommitmentMatrixShape {
-        self.chunk_shape
+    pub const fn polynomial_shape(&self) -> CommitmentMatrixShape {
+        self.polynomial_shape
     }
 
+    #[cfg(not(feature = "akita"))]
     pub const fn chunk_count(&self) -> usize {
         self.chunk_count
     }
 
-    pub const fn log_bytecode_chunk_size(&self) -> usize {
-        self.log_bytecode_chunk_size
+    pub const fn log_rows(&self) -> usize {
+        self.log_rows
     }
 
-    /// The trace order the chunk grids interleave `(lane, cycle)` by.
+    /// The trace order of the bytecode row/lane grid.
     pub const fn trace_order(&self) -> TracePolynomialOrder {
         self.trace_order
     }
 
-    /// Split the full bytecode address point (the `BytecodeReadRafAddrClaim`
-    /// opening point) into per-chunk eq weights over the dropped high bits and
-    /// the chunk-local cycle point shared by all chunks.
+    /// Preserve the full bytecode address point for Akita; split off Dory's
+    /// partition bits and their equality weights.
     pub fn split_address_point<F: JoltField>(
         &self,
         r_bc_full: &[F],
     ) -> Result<BytecodeAddressPoint<F>, PointGeometryError> {
-        let expected = self.dropped_address_bits + self.log_bytecode_chunk_size;
+        #[cfg(not(feature = "akita"))]
+        let expected = self.dropped_address_bits + self.log_rows;
+        #[cfg(feature = "akita")]
+        let expected = self.log_rows;
         if r_bc_full.len() != expected {
             return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected,
                 got: r_bc_full.len(),
             });
         }
+        #[cfg(not(feature = "akita"))]
         let chunk_rbc_weights = if self.dropped_address_bits == 0 {
             vec![F::one()]
         } else {
             EqPolynomial::<F>::evals(&r_bc_full[..self.dropped_address_bits], None)
         };
+        #[cfg(not(feature = "akita"))]
         debug_assert_eq!(chunk_rbc_weights.len(), self.chunk_count);
         Ok(BytecodeAddressPoint {
+            #[cfg(not(feature = "akita"))]
             chunk_rbc_weights,
+            #[cfg(not(feature = "akita"))]
             r_bc: r_bc_full[self.dropped_address_bits..].to_vec(),
+            #[cfg(feature = "akita")]
+            r_bc: r_bc_full.to_vec(),
         })
     }
 
-    /// `ChunkOutputWeight(i)` values from the reduction's already-derived
+    /// Final output weights from the reduction's already-derived
     /// cycle-phase opening point, rather than re-deriving it from the sumcheck
     /// challenges. Lets the cycle-phase relation object's `resolve_public`
     /// recover the weights from the opening point it produced in
@@ -254,30 +283,37 @@ impl BytecodeClaimReductionLayout {
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<Vec<F>, PointGeometryError> {
+    ) -> Result<BytecodeOutputWeights<F>, PointGeometryError> {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
         let scale =
             self.eq_combined(&inputs, &permuted)? * self.precommitted.cycle_phase_skip_scale::<F>();
-        self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
+        #[cfg(not(feature = "akita"))]
+        {
+            self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
+        }
+        #[cfg(feature = "akita")]
+        {
+            Ok(scale)
+        }
     }
 
-    /// `ChunkOutputWeight(i)` values when the reduction completes in the
+    /// Final output weights when the reduction completes in the
     /// address phase.
     pub fn address_phase_final_output_weights<F: JoltField>(
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<Vec<F>, PointGeometryError> {
+    ) -> Result<BytecodeOutputWeights<F>, PointGeometryError> {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
         self.address_phase_final_output_weights_at_opening_point(inputs, &opening_point)
     }
 
-    /// `ChunkOutputWeight(i)` values from the reduction's already-derived
+    /// Final output weights from the reduction's already-derived
     /// address-phase opening point, rather than re-deriving it from the
     /// cycle/sumcheck challenges. Lets the stage 7 relation object's
     /// `resolve_public` recover the weights from the opening point it produced in
@@ -286,10 +322,17 @@ impl BytecodeClaimReductionLayout {
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<Vec<F>, PointGeometryError> {
+    ) -> Result<BytecodeOutputWeights<F>, PointGeometryError> {
         let scale = self.eq_combined(&inputs, opening_point)?
             * precommitted_skip_round_scale::<F>(&self.precommitted);
-        self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
+        #[cfg(not(feature = "akita"))]
+        {
+            self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
+        }
+        #[cfg(feature = "akita")]
+        {
+            Ok(scale)
+        }
     }
 
     fn eq_combined<F: JoltField>(
@@ -298,16 +341,16 @@ impl BytecodeClaimReductionLayout {
         opening_point: &[F],
     ) -> Result<F, PointGeometryError> {
         let lane_vars = committed_lane_vars();
-        let expected = lane_vars + self.log_bytecode_chunk_size;
+        let expected = lane_vars + self.log_rows;
         if opening_point.len() != expected {
             return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected,
                 got: opening_point.len(),
             });
         }
-        if inputs.r_bc.len() != self.log_bytecode_chunk_size {
+        if inputs.r_bc.len() != self.log_rows {
             return Err(PointGeometryError::OpeningPointLengthMismatch {
-                expected: self.log_bytecode_chunk_size,
+                expected: self.log_rows,
                 got: inputs.r_bc.len(),
             });
         }
@@ -321,7 +364,7 @@ impl BytecodeClaimReductionLayout {
         let (lane_challenges, cycle_challenges) = match self.trace_order {
             TracePolynomialOrder::CycleMajor => opening_point.split_at(lane_vars),
             TracePolynomialOrder::AddressMajor => {
-                let (cycle, lane) = opening_point.split_at(self.log_bytecode_chunk_size);
+                let (cycle, lane) = opening_point.split_at(self.log_rows);
                 (lane, cycle)
             }
         };
@@ -338,6 +381,7 @@ impl BytecodeClaimReductionLayout {
         Ok(lane_weight_eval * eq_cycle)
     }
 
+    #[cfg(not(feature = "akita"))]
     fn chunk_output_weights<F: JoltField>(
         &self,
         chunk_rbc_weights: &[F],
@@ -363,15 +407,22 @@ impl PrecommittedReductionLayout for BytecodeClaimReductionLayout {
 }
 
 /// Per-chunk eq weights over the dropped high bytecode address bits, plus the
-/// chunk-local cycle point.
+/// local row point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BytecodeAddressPoint<F> {
+    #[cfg(not(feature = "akita"))]
     pub chunk_rbc_weights: Vec<F>,
     pub r_bc: Vec<F>,
 }
 
+#[cfg(not(feature = "akita"))]
+pub type BytecodeOutputWeights<F> = Vec<F>;
+#[cfg(feature = "akita")]
+pub type BytecodeOutputWeights<F> = F;
+
 pub struct BytecodeOutputWeightInputs<'a, F> {
     pub r_bc: &'a [F],
+    #[cfg(not(feature = "akita"))]
     pub chunk_rbc_weights: &'a [F],
     pub lane_weights: &'a [F],
 }
@@ -494,29 +545,46 @@ pub fn lane_weights<F: JoltField>(
     Ok(weights)
 }
 
-pub(crate) fn final_output_expr<F>(chunk_count: usize) -> JoltExpr<F>
+pub(crate) fn final_output_expr<F>(#[cfg(not(feature = "akita"))] chunk_count: usize) -> JoltExpr<F>
 where
     F: Ring,
 {
-    let mut output = JoltExpr::zero();
-    for chunk_idx in 0..chunk_count {
-        output = output
-            + derived(JoltDerivedId::from(
-                BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx),
-            )) * opening(final_bytecode_chunk_opening(chunk_idx));
-    }
-    output
+    #[cfg(not(feature = "akita"))]
+    let targets = (0..chunk_count).map(|index| {
+        (
+            BytecodeClaimReductionPublic::ChunkOutputWeight(index),
+            final_bytecode_chunk_opening(index),
+        )
+    });
+    #[cfg(feature = "akita")]
+    let targets = [(
+        BytecodeClaimReductionPublic::OutputWeight,
+        final_program_bytecode_opening(),
+    )];
+    targets
+        .into_iter()
+        .fold(JoltExpr::zero(), |output, (weight, target)| {
+            output + derived(JoltDerivedId::from(weight)) * opening(target)
+        })
 }
 
 pub fn cycle_phase_output_openings(
     dimensions: PrecommittedReductionDimensions,
-    chunk_count: usize,
+    #[cfg(not(feature = "akita"))] chunk_count: usize,
 ) -> Vec<JoltOpeningId> {
+    #[cfg(not(feature = "akita"))]
     assert_valid_chunk_count(chunk_count);
     if dimensions.has_address_phase() {
         vec![cycle_phase_intermediate_opening()]
     } else {
-        (0..chunk_count).map(final_bytecode_chunk_opening).collect()
+        #[cfg(not(feature = "akita"))]
+        {
+            (0..chunk_count).map(final_bytecode_chunk_opening).collect()
+        }
+        #[cfg(feature = "akita")]
+        {
+            vec![final_program_bytecode_opening()]
+        }
     }
 }
 
@@ -534,6 +602,14 @@ pub fn cycle_phase_intermediate_opening() -> JoltOpeningId {
     )
 }
 
+pub fn final_program_bytecode_opening() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::ProgramBytecode,
+        JoltRelationId::BytecodeClaimReduction,
+    )
+}
+
+#[cfg(not(feature = "akita"))]
 pub fn final_bytecode_chunk_opening(chunk_idx: usize) -> JoltOpeningId {
     JoltOpeningId::committed(
         JoltCommittedPolynomial::BytecodeChunk(chunk_idx),
@@ -544,6 +620,7 @@ pub fn final_bytecode_chunk_opening(chunk_idx: usize) -> JoltOpeningId {
 /// Backstop for the formula constructors that take a raw chunk count without
 /// the bytecode length needed for full chunking validation; layouts are the
 /// validated source of this value.
+#[cfg(not(feature = "akita"))]
 pub(crate) fn assert_valid_chunk_count(chunk_count: usize) {
     assert!(
         is_valid_chunk_count(chunk_count),
@@ -688,6 +765,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "akita"))]
     fn chunking_validation_rules() {
         assert!(is_valid_committed_bytecode_chunking_for_len(1024, 1));
         assert!(is_valid_committed_bytecode_chunking_for_len(1024, 4));
@@ -809,12 +887,16 @@ mod tests {
     fn bytecode_layout(
         trace_order: TracePolynomialOrder,
         bytecode_len: usize,
-        chunk_count: usize,
+        #[cfg(not(feature = "akita"))] chunk_count: usize,
     ) -> BytecodeClaimReductionLayout {
         let log_t = 8;
         let log_k_chunk = 4;
-        let candidate = precommitted_candidate(bytecode_len, chunk_count)
-            .unwrap_or_else(|error| panic!("chunking should be valid: {error}"));
+        let candidate = precommitted_candidate(
+            bytecode_len,
+            #[cfg(not(feature = "akita"))]
+            chunk_count,
+        )
+        .unwrap_or_else(|error| panic!("chunking should be valid: {error}"));
         let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
             log_t + log_k_chunk,
             &[candidate],
@@ -825,12 +907,14 @@ mod tests {
             log_t,
             scheduling_reference,
             bytecode_len,
+            #[cfg(not(feature = "akita"))]
             chunk_count,
         )
         .unwrap_or_else(|error| panic!("layout should build: {error}"))
     }
 
     #[test]
+    #[cfg(not(feature = "akita"))]
     fn split_address_point_weights_dropped_high_bits() {
         let layout = bytecode_layout(TracePolynomialOrder::CycleMajor, 8, 4);
         let r_bc_full: Vec<Fr> = (1..=3).map(fr).collect();
@@ -859,7 +943,12 @@ mod tests {
             TracePolynomialOrder::CycleMajor,
             TracePolynomialOrder::AddressMajor,
         ] {
-            let layout = bytecode_layout(trace_order, 2, 1);
+            let layout = bytecode_layout(
+                trace_order,
+                2,
+                #[cfg(not(feature = "akita"))]
+                1,
+            );
             let precommitted = layout.precommitted();
             assert!(precommitted.num_address_phase_rounds() > 0);
 
@@ -905,6 +994,7 @@ mod tests {
                 .address_phase_final_output_weights(
                     BytecodeOutputWeightInputs {
                         r_bc: &r_bc,
+                        #[cfg(not(feature = "akita"))]
                         chunk_rbc_weights: &[fr(1)],
                         lane_weights: &lane_weight_values,
                     },
@@ -913,9 +1003,15 @@ mod tests {
                 )
                 .unwrap_or_else(|error| panic!("output weights should evaluate: {error}"));
 
+            #[cfg(not(feature = "akita"))]
             assert_eq!(
                 weights,
                 vec![naive * precommitted_skip_round_scale::<Fr>(precommitted)]
+            );
+            #[cfg(feature = "akita")]
+            assert_eq!(
+                weights,
+                naive * precommitted_skip_round_scale::<Fr>(precommitted)
             );
         }
     }

@@ -46,7 +46,7 @@ pub struct Stage7Sumchecks<F: JoltField> {
     /// phase; present only when that phase runs.
     #[cfg(not(feature = "akita"))]
     pub untrusted_advice: Option<UntrustedAdviceAddressPhase<F>>,
-    /// Final `BytecodeChunk(i)` claims from the committed-bytecode reduction's
+    /// Final committed-bytecode claims from the committed-bytecode reduction's
     /// address phase; present only when that phase runs.
     pub bytecode_address_phase: Option<BytecodeReductionAddressPhase<F>>,
     /// Final `ProgramImageInit` claim from the program-image reduction's address
@@ -83,9 +83,18 @@ impl<F: JoltField> Stage7OutputPoints<F> {
     /// The committed-bytecode address-phase final opening point (shared by every
     /// chunk), present only when that address phase ran.
     pub fn bytecode_point(&self) -> Option<&[F]> {
-        self.bytecode_address_phase
-            .as_ref()
-            .and_then(|points| points.chunks().first().map(Vec::as_slice))
+        #[cfg(not(feature = "akita"))]
+        {
+            self.bytecode_address_phase
+                .as_ref()
+                .and_then(|points| points.chunks().first().map(Vec::as_slice))
+        }
+        #[cfg(feature = "akita")]
+        {
+            self.bytecode_address_phase
+                .as_ref()
+                .map(|points| points.bytecode())
+        }
     }
 
     /// The program-image address-phase final opening point, present only when that
@@ -203,6 +212,7 @@ mod tests {
             Some(64),
             Some(CommittedProgramSchedule {
                 bytecode_len: 8,
+                #[cfg(not(feature = "akita"))]
                 bytecode_chunk_count: 2,
                 program_image_len_words: 8,
                 program_image_start_index: 0,
@@ -338,9 +348,14 @@ mod tests {
             assert_eq!(untrusted_advice.expected_output_openings::<Fr>().len(), 1);
         }
 
-        let chunk_count = 4;
-        let bytecode = BytecodeAddressPhase::new((reduction_dimensions, chunk_count));
-        assert_eq!(bytecode.expected_output_openings::<Fr>().len(), chunk_count);
+        #[cfg(not(feature = "akita"))]
+        let bytecode = BytecodeAddressPhase::new((reduction_dimensions, 4));
+        #[cfg(feature = "akita")]
+        let bytecode = BytecodeAddressPhase::new(reduction_dimensions);
+        #[cfg(not(feature = "akita"))]
+        assert_eq!(bytecode.expected_output_openings::<Fr>().len(), 4);
+        #[cfg(feature = "akita")]
+        assert_eq!(bytecode.expected_output_openings::<Fr>().len(), 1);
 
         let program_image = ProgramImageAddressPhase::new(reduction_dimensions);
         assert_eq!(program_image.expected_output_openings::<Fr>().len(), 1);

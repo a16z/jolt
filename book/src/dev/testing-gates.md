@@ -92,9 +92,9 @@ Never regenerate it merely to make CI pass.
 ## Akita committed-program batching
 
 Committed-program Akita preprocessing must provision one native grouped
-opening for every direct bytecode chunk, the program image, optional advice,
-and the main trace. The largest admitted statement has 256 chunks plus the
-image, two advice objects, and the trace: 260 groups/polynomials. The schedule
+opening for one whole-bytecode object, the program image, optional advice,
+and the main trace. Committed-program statements have at most 5 groups and
+68 polynomials (including up to 64 trace columns). The schedule
 registry plans only the setup's final arity, with at most four rows for the
 reachable advice-presence combinations. Its 128-row bound applies to one
 provisioning request, not to the process cache.
@@ -112,6 +112,7 @@ Run the schedule and catalog gates with:
 cargo nextest run -p jolt-akita --cargo-quiet
 ```
 
-Failures at the 128-row or 260-group shape limit are protocol-capacity
-failures. Do not work around them by lowering the public 256-chunk limit or
-selecting a different committed-program encoding.
+The generic backend still tests larger group-capacity limits independently.
+Akita bytecode-table chunking is absent; response chunk profiles and
+address-bit chunking remain active. A whole-bytecode arity above 34 or an
+unsupported schedule must fail preprocessing before dense allocation.

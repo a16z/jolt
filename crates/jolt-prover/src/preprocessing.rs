@@ -145,9 +145,9 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub bytecode_chunk_hints: Vec<PCS::OpeningHint>,
     #[cfg(not(feature = "akita"))]
     pub program_image_hint: PCS::OpeningHint,
-    /// Direct program objects in canonical order (bytecode chunks, then
+    /// Direct program objects in canonical order (whole bytecode, then
     /// program image); their commitments must match the verifier
-    /// preprocessing's `direct_program_commitments` (stage 0 checks
+    /// preprocessing's named commitments (stage 0 checks
     /// fail-closed).
     #[cfg(feature = "akita")]
     pub direct_program: DirectProgramObjects<PCS>,

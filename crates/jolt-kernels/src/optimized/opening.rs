@@ -147,6 +147,7 @@ const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
         JoltCommittedPolynomial::TrustedAdvice
             | JoltCommittedPolynomial::UntrustedAdvice
             | JoltCommittedPolynomial::BytecodeChunk(_)
+            | JoltCommittedPolynomial::ProgramBytecode
             | JoltCommittedPolynomial::ProgramImageInit
     )
 }

@@ -82,7 +82,7 @@ impl<T: TraceSource> TraceBackend<T> {
                         Compact,
                     ))
                 }
-                C::BytecodeChunk(_) | C::ProgramImageInit => {
+                C::BytecodeChunk(_) | C::ProgramBytecode | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
                 C::BalancedIncDigit(index) => {
@@ -190,7 +190,7 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                 ),
                 C::TrustedAdvice => self.materialize_trusted_advice(),
                 C::UntrustedAdvice => self.materialize_untrusted_advice(),
-                C::BytecodeChunk(_) | C::ProgramImageInit => {
+                C::BytecodeChunk(_) | C::ProgramBytecode | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
                 C::BalancedIncDigit(index) => self.materialize_balanced_inc_one_hot(

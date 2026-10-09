@@ -16,7 +16,7 @@ The RISC-V execution model and sumcheck-based approach remain shared with Dory, 
 
 This object contains the instruction, bytecode, and RAM address columns, together with balanced-digit increment columns and a signed carry. The increment columns encode a fused increment value derived by the sumcheck relations; Akita does not separately commit the `RdInc` and `RamInc` polynomials used by Dory. Production Akita traces use four-bit address chunks (K=16). Eight-bit chunks (K=256) are supported by the shipped catalogs only for explicit fixture and benchmark shapes listed in the [schedule policy](../../../crates/jolt-akita/schedules/README.md). Other K=256 shapes require a deployment-owned catalog containing the exact shape. The prover supplies selected row indices to Akita's native one-hot commitment path.
 
-Advice and committed-program data have their own commitments. Trusted and untrusted advice use dense word polynomials. In committed-program mode, bytecode chunks and the initial program image are committed as bounded dense objects and opened directly. These objects are separate from `OneHotTrace` because they have their own sizes, layouts, and commitment lifetimes.
+Advice and committed-program data have their own commitments. Trusted and untrusted advice use dense word polynomials. In committed-program mode, the whole bytecode and the initial program image are committed as bounded dense objects and opened directly. These objects are separate from `OneHotTrace` because they have their own sizes, layouts, and commitment lifetimes.
 
 ## Native batching and opening
 
@@ -50,8 +50,11 @@ and shape. The canonical order is:
 
 1. Untrusted advice, when present.
 2. Trusted advice, when present.
-3. Bytecode chunks in index order, followed by the initial program image, in committed-program mode.
+3. One whole-bytecode object (`ProgramBytecode`), followed by the initial program image, in committed-program mode.
+
 4. `OneHotTrace`.
+
+The bytecode group has `9 + log2(padded_bytecode_rows)` logical variables and a physical arity of at least 14, independent of the trace size. Each native group keeps its own opening point, so a short execution does not require splitting bytecode. Dory retains its bytecode-table chunking. This is separate from Akita response chunk profiles and the address-bit chunks of `BytecodeRa`. Akita preprocessing and proof encodings have changed; regenerate existing Akita preprocessing and proofs, including full-program mode.
 
 The verifier derives the expected layouts and roles from preprocessing and protocol configuration. It checks the assembled statement before invoking Akita verification. This replaces Dory's commitment-level linear combination with a grouped proof over the original commitments.
 

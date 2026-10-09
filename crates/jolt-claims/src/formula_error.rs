@@ -54,4 +54,6 @@ pub enum PointGeometryError {
     },
     #[error("evaluation domain size overflow for {num_vars} variables")]
     EvaluationDomainSizeOverflow { num_vars: usize },
+    #[error("bytecode length ({bytecode_len}) must be a nonzero power of two")]
+    InvalidBytecodeLength { bytecode_len: usize },
 }

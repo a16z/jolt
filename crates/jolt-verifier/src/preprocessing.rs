@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::VerifierError;
 
-/// Committed-program verifier inputs: trusted bytecode-chunk and program-image
+/// Committed-program verifier inputs: trusted bytecode and program-image
 /// commitments plus the program metadata they bind to.
 /// For Dory, the chunk count is implied by `bytecode_chunk_commitments.len()`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -26,28 +26,17 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub max_padded_trace_length: usize,
     #[cfg(not(feature = "akita"))]
     pub bytecode_chunk_commitments: Vec<PCS::Output>,
-    #[cfg(not(feature = "akita"))]
     pub program_image_commitment: PCS::Output,
-    /// Direct bounded-dense program objects in canonical order: indexed
-    /// bytecode chunks, then the program image.
     #[cfg(feature = "akita")]
-    pub direct_program_commitments: Vec<PCS::Output>,
-    #[cfg(feature = "akita")]
-    pub bytecode_chunk_count: usize,
+    pub bytecode_commitment: PCS::Output,
     #[cfg(feature = "akita")]
     pub trace_order: TracePolynomialOrder,
 }
 
+#[cfg(not(feature = "akita"))]
 impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
     pub fn bytecode_chunk_count(&self) -> usize {
-        #[cfg(not(feature = "akita"))]
-        {
-            self.bytecode_chunk_commitments.len()
-        }
-        #[cfg(feature = "akita")]
-        {
-            self.bytecode_chunk_count
-        }
+        self.bytecode_chunk_commitments.len()
     }
 }
 
@@ -165,11 +154,18 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// Domain separator for [`ProgramPreprocessing::digest`]. Bump the version
 /// whenever the digest input changes: it is the only compatibility switch a
 /// deployed verifier sees.
-#[cfg(not(feature = "field-inline"))]
+#[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v2";
 // Field flags use the common circuit columns; preprocessing has no side table.
-#[cfg(feature = "field-inline")]
+#[cfg(all(not(feature = "akita"), feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v5";
+
+#[cfg(all(feature = "akita", not(feature = "field-inline")))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/akita-whole-bytecode/v1";
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
+    b"jolt/program-preprocessing/akita-whole-bytecode/field-inline/v1";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -311,15 +307,25 @@ mod tests {
     /// in the PR. Pinned separately with and without `jolt-program/field-inline`:
     /// the bytecode row schema is shared, while field-inline selects its own
     /// digest domain for the extended instruction and proof profile.
-    #[cfg(not(feature = "field-inline"))]
+    #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         42, 63, 50, 98, 242, 124, 42, 171, 43, 223, 155, 146, 108, 130, 235, 136, 177, 93, 248,
         227, 104, 23, 145, 35, 121, 150, 138, 9, 19, 215, 204, 12,
     ];
-    #[cfg(feature = "field-inline")]
+    #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         102, 54, 187, 66, 54, 228, 103, 28, 102, 88, 129, 135, 250, 47, 104, 215, 38, 203, 135,
         219, 16, 41, 198, 24, 13, 89, 213, 127, 111, 139, 110, 231,
+    ];
+    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        10, 241, 10, 25, 152, 236, 113, 66, 234, 148, 180, 8, 19, 181, 13, 175, 248, 211, 234, 243,
+        37, 208, 9, 65, 14, 159, 55, 184, 173, 177, 237, 213,
+    ];
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        15, 187, 25, 179, 115, 141, 121, 127, 18, 224, 184, 85, 46, 153, 30, 31, 49, 77, 174, 174,
+        246, 42, 254, 70, 82, 144, 107, 4, 129, 86, 83, 51,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -328,8 +334,8 @@ mod tests {
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        251, 63, 111, 254, 167, 21, 41, 185, 193, 117, 188, 112, 255, 206, 156, 249, 230, 201, 4,
-        155, 92, 191, 65, 14, 2, 241, 131, 79, 154, 216, 42, 71,
+        46, 218, 61, 222, 109, 82, 229, 196, 36, 71, 22, 191, 255, 174, 216, 201, 97, 149, 220, 63,
+        57, 1, 117, 198, 80, 239, 126, 253, 235, 189, 178, 98,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -338,8 +344,8 @@ mod tests {
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        16, 130, 0, 92, 223, 42, 224, 227, 251, 42, 100, 166, 128, 182, 254, 77, 20, 144, 95, 108,
-        190, 25, 90, 127, 205, 145, 75, 51, 132, 226, 123, 67,
+        137, 52, 205, 208, 140, 177, 124, 190, 165, 69, 252, 53, 193, 68, 174, 237, 91, 43, 197,
+        129, 25, 27, 4, 20, 124, 93, 228, 56, 33, 25, 6, 75,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout
@@ -373,12 +379,9 @@ mod tests {
             max_padded_trace_length: full.max_padded_trace_length,
             #[cfg(not(feature = "akita"))]
             bytecode_chunk_commitments: vec![Commitment::default(), Commitment::default()],
-            #[cfg(not(feature = "akita"))]
             program_image_commitment: Commitment::default(),
             #[cfg(feature = "akita")]
-            direct_program_commitments: vec![Commitment::default(), Commitment::default()],
-            #[cfg(feature = "akita")]
-            bytecode_chunk_count: 1,
+            bytecode_commitment: Commitment::default(),
             #[cfg(feature = "akita")]
             trace_order: TracePolynomialOrder::CycleMajor,
         }
