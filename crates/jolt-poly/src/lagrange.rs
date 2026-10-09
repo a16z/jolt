@@ -1,12 +1,144 @@
-//! Lagrange interpolation utilities over integer domains.
+//! Lagrange evaluation and interpolation over integer domains and distinct nodes.
 //!
 //! Provides building blocks for the univariate skip optimization in sumcheck
-//! protocols. All functions are generic over [`Field`] and operate on
-//! integer-indexed domains (symmetric or arbitrary).
+//! protocols. The `binary` feature adds raw-ordered embedded `F8` domains.
 
 use std::fmt;
 
 use jolt_field::Field;
+#[cfg(feature = "binary")]
+use jolt_field::F8;
+use thiserror::Error;
+
+/// Invalid nodes or values supplied to node-generic interpolation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum LagrangeNodesError {
+    /// At least one node is required.
+    #[error("Lagrange node list must be non-empty")]
+    EmptyNodes,
+    /// The lexicographically first pair of equal nodes, with `first < second`.
+    #[error("Lagrange nodes at positions {first} and {second} are equal")]
+    RepeatedNode { first: usize, second: usize },
+    /// There must be exactly one value per node.
+    #[error("expected {nodes} Lagrange values, got {values}")]
+    LengthMismatch { nodes: usize, values: usize },
+}
+
+fn validate_nodes<F: Field>(nodes: &[F]) -> Result<(), LagrangeNodesError> {
+    if nodes.is_empty() {
+        return Err(LagrangeNodesError::EmptyNodes);
+    }
+    for (first, x) in nodes.iter().enumerate() {
+        for (second, y) in nodes.iter().enumerate().skip(first + 1) {
+            if x == y {
+                return Err(LagrangeNodesError::RepeatedNode { first, second });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Evaluates the Lagrange basis at `r` over arbitrary distinct `nodes`.
+///
+/// Returns the node indicator when `r` is a node. Validates the node list
+/// before examining `r`, rejecting emptiness or the first repeated pair.
+/// Uses O(N²) multiplications and N inversions.
+pub fn lagrange_evals_at_nodes<F: Field>(nodes: &[F], r: F) -> Result<Vec<F>, LagrangeNodesError> {
+    validate_nodes(nodes)?;
+    Ok(nodes
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| {
+            let mut numerator = F::one();
+            let mut denominator = F::one();
+            for (j, &y) in nodes.iter().enumerate() {
+                if i != j {
+                    numerator *= r - y;
+                    denominator *= x - y;
+                }
+            }
+            // Distinct nodes make the denominator nonzero.
+            numerator * denominator.inv_or_zero()
+        })
+        .collect())
+}
+
+/// Interpolates `values` at arbitrary distinct `nodes`, with O(N²)
+/// multiplications and N inversions.
+///
+/// Returns exactly `nodes.len()` monomial coefficients, low degree first,
+/// retaining trailing zeros. Rejects an empty or repeated node list before
+/// checking that the value count matches the node count.
+pub fn interpolate_nodes_to_coeffs<F: Field>(
+    nodes: &[F],
+    values: &[F],
+) -> Result<Vec<F>, LagrangeNodesError> {
+    validate_nodes(nodes)?;
+    if nodes.len() != values.len() {
+        return Err(LagrangeNodesError::LengthMismatch {
+            nodes: nodes.len(),
+            values: values.len(),
+        });
+    }
+
+    // vanishing = prod_j (X - x_j), low degree first.
+    let mut vanishing = Vec::with_capacity(nodes.len() + 1);
+    vanishing.push(F::one());
+    for &x in nodes {
+        vanishing.push(F::zero());
+        let mut lower = F::zero();
+        for coefficient in &mut vanishing {
+            let old = *coefficient;
+            *coefficient = lower - x * old;
+            lower = old;
+        }
+    }
+
+    // p = sum_i values_i * q_i / q_i(x_i), with q_i = vanishing / (X - x_i).
+    let mut coefficients = vec![F::zero(); nodes.len()];
+    let mut quotient = vec![F::zero(); nodes.len()];
+    for (&x, &value) in nodes.iter().zip(values) {
+        let mut higher = F::zero();
+        for (q, &v) in quotient.iter_mut().rev().zip(vanishing.iter().rev()) {
+            higher = v + x * higher;
+            *q = higher;
+        }
+        let denominator = quotient.iter().rev().fold(F::zero(), |acc, &q| acc * x + q);
+        // Distinct nodes make the denominator nonzero.
+        let scale = value * denominator.inv_or_zero();
+        for (coefficient, &q) in coefficients.iter_mut().zip(&quotient) {
+            *coefficient += scale * q;
+        }
+    }
+    Ok(coefficients)
+}
+
+/// Maximum number of distinct points in an embedded `F8` domain.
+#[cfg(feature = "binary")]
+pub const F8_DOMAIN_MAX_SIZE: usize = 256;
+
+/// An embedded `F8` domain size outside `1..=F8_DOMAIN_MAX_SIZE`.
+#[cfg(feature = "binary")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error("F8 domain size must be between 1 and {F8_DOMAIN_MAX_SIZE}, got {size}")]
+pub struct F8DomainSizeError {
+    /// Requested number of domain points.
+    pub size: usize,
+}
+
+/// Returns the first `size` images of `F8` elements in raw-byte order.
+///
+/// `From<F8>` must be a field embedding; the implementations for `F64`,
+/// `F128`, and `F192` satisfy this requirement. It makes the points distinct
+/// and each smaller domain a prefix of every larger domain.
+/// Returns [`F8DomainSizeError`] unless `1 <= size <= 256`.
+#[cfg(feature = "binary")]
+pub fn f8_domain_nodes<F: Field + From<F8>>(size: usize) -> Result<Vec<F>, F8DomainSizeError> {
+    if !(1..=F8_DOMAIN_MAX_SIZE).contains(&size) {
+        return Err(F8DomainSizeError { size });
+    }
+    Ok((0..size).map(|i| F::from(F8::from_raw(i as u8))).collect())
+}
 
 /// Evaluates all Lagrange basis polynomials $L_0(r), \ldots, L_{N-1}(r)$ over
 /// the domain $\{s, s+1, \ldots, s+N-1\}$ where $s$ = `domain_start`.
