@@ -139,7 +139,7 @@ One commit for the padding rule and `member_output_scale`, one for the integer-d
   - Binius64 `4428e759`: `crates/ip-prover/src/sumcheck/padded.rs`, `crates/ip/src/sumcheck/common.rs`, `crates/verifier/src/protocols/bitand.rs`
   - Binius `47675e19`: `crates/core/src/protocols/sumcheck/{verify_sumcheck,front_loaded,verify_zerocheck}.rs`
   - Plonky3 `3152b14a`: `sumcheck/src/layout`, `sumcheck/src/strategy.rs`, `multi-stark/src/zerocheck.rs`
-  - leanMultisig `c7b1daa5`: `crates/leanvm_core/src/constraints.rs`, `crates/fiat_shamir/src/transcript.rs`, `crates/flock/src/zerocheck.rs`
+  - leanMultisig `c7b1daa5b1fdd61cfc000a54ec30b22acb174a9b`: `crates/leanvm_core/src/constraints.rs`, `crates/fiat_shamir/src/transcript.rs`, `crates/flock/src/zerocheck.rs`
   - flock `b684b125`: `flock-core/src/zerocheck.rs`
   - WHIR `afec1fac`: `src/protocols/sumcheck.rs`
   - Expander `096581e1`: `sumcheck/src/sumcheck_generic/prover.rs`, `sumcheck/src/prover_helper/product_gate.rs`
