@@ -40,7 +40,7 @@ pub const F8_DOMAIN_MAX_SIZE: usize = 256;
 pub struct F8DomainSizeError { pub size: usize }
 pub fn f8_domain_nodes<F: Field + From<F8>>(size: usize) -> Result<Vec<F>, F8DomainSizeError>;
 
-// jolt_sumcheck::domain, feature `binary`
+// jolt_sumcheck::domain, feature `binary`, re-exported at the crate root as `CenteredIntegerDomain` is
 pub struct F8Domain { /* size */ }
 impl F8Domain { pub const fn new(size: usize) -> Self; pub const fn size(self) -> usize; }
 impl<F: Field + From<F8>> SumcheckDomain<F> for F8Domain { /* invariant 4 */ }
@@ -105,7 +105,7 @@ None claimed and none at risk. No existing function body changes, so no path of 
 
 `jolt_poly::lagrange` already separates the rule that fixes the domain (`centered_domain_start`) from the algebra over it, and `jolt-sumcheck`'s `CenteredIntegerDomain` wraps the first. The `F8` domain follows the same layering: the node rule in `jolt-poly`, the `SumcheckDomain` in `jolt-sumcheck`. The node-generic algebra needs no feature because it never names `F8`. Errors stay in the layer that raises them: `jolt-poly` has its own two error types, which implement `Display` and `std::error::Error` as `CenteredIntegerDomainError` does, and does not depend on `jolt-sumcheck`; `F8Domain` maps `F8DomainSizeError` to `SumcheckError::InvalidF8Domain`.
 
-Both node-generic functions do $O(N^2)$ field operations, including the pairwise check for repeated nodes, which compares elements because a field has no order to sort by. The algorithm inside each is not fixed by this spec.
+Both node-generic functions do $O(N^2)$ multiplications and $N$ inversions, plus the pairwise check for repeated nodes, which compares elements because a field has no order to sort by. The basis is evaluated from the product formula, which gives the indicator at a node without a special case. Interpolation forms the vanishing polynomial of the nodes once and adds, for each node, its quotient by that node's linear factor, scaled.
 
 The points are taken in raw order for three reasons. The order is a rule that a reader can state in a line. Extended domains are prefixes, which the centered integer domain does not give. And at powers of two the domain is the subspace-and-coset pair that an additive NTT would need, should a larger skip ever call for one.
 

@@ -224,4 +224,8 @@ pub enum SumcheckError<F: Field> {
     /// Consecutive integer domain points have colliding images in the field.
     #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
     IntegerDomainNotDistinct { domain_size: usize },
+
+    /// An embedded F8 domain size is outside its supported range.
+    #[error("F8 sumcheck domain size must be between 1 and 256, got {size}")]
+    InvalidF8Domain { size: usize },
 }

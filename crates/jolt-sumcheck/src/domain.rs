@@ -2,6 +2,10 @@ use crate::error::SumcheckError;
 use crate::round_proof::ClearRound;
 use core::ops::Range;
 use jolt_field::Field;
+#[cfg(feature = "binary")]
+use jolt_field::F8;
+#[cfg(feature = "binary")]
+use jolt_poly::lagrange::f8_domain_nodes;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
 
 pub trait SumcheckDomain<F: Field> {
@@ -68,6 +72,50 @@ where
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BooleanHypercube;
+
+/// The first `size` elements of `F8` in raw order, embedded in the proof field.
+///
+/// The field's `From<F8>` must be a field embedding, as it is for `F64`, `F128`,
+/// and `F192`. Round-sum coefficients validate the size before the degree and
+/// sum powers in the proof field. Valid sizes are 1 through 256.
+#[cfg(feature = "binary")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct F8Domain {
+    size: usize,
+}
+
+#[cfg(feature = "binary")]
+impl F8Domain {
+    /// Records a size; validation is deferred to the round-sum computation.
+    pub const fn new(size: usize) -> Self {
+        Self { size }
+    }
+
+    /// Returns the requested number of points, even if the size is invalid.
+    pub const fn size(self) -> usize {
+        self.size
+    }
+}
+
+#[cfg(feature = "binary")]
+impl<F: Field + From<F8>> SumcheckDomain<F> for F8Domain {
+    fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
+        let nodes = f8_domain_nodes::<F>(self.size)
+            .map_err(|error| SumcheckError::InvalidF8Domain { size: error.size })?;
+        let count = degree
+            .checked_add(1)
+            .ok_or(SumcheckError::DegreeOverflow { degree })?;
+        let mut sums = vec![F::zero(); count];
+        for node in nodes {
+            let mut power = F::one();
+            for sum in &mut sums {
+                *sum += power;
+                power *= node;
+            }
+        }
+        Ok(sums)
+    }
+}
 
 impl<F> SumcheckDomain<F> for BooleanHypercube
 where
