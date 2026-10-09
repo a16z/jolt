@@ -1,5 +1,6 @@
 use crate::error::SumcheckError;
 use crate::round_proof::ClearRound;
+use core::ops::Range;
 use jolt_field::Field;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
 
@@ -79,8 +80,14 @@ where
     }
 }
 
+/// Collisions among this many leading offsets are reported before the power
+/// sums are computed, so a small characteristic is named even when the power
+/// sums would overflow. The remaining offsets are scanned only once the power
+/// sums exist, which bounds the scan by work already done.
+const EAGER_COLLISION_SCAN: usize = 1 << 16;
+
 /// Consecutive centered integers, whose images must be distinct in the field.
-/// Round-sum checks reject collisions before computing integer power sums.
+/// Round-sum checks reject collisions before mapping power sums into the field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CenteredIntegerDomain {
     domain_size: usize,
@@ -114,15 +121,23 @@ where
             .map_err(|_| SumcheckError::InvalidIntegerDomain {
                 domain_size: self.domain_size,
             })?;
-        if (1..self.domain_size).any(|k| F::from_u64(k as u64).is_zero()) {
-            return Err(SumcheckError::IntegerDomainNotDistinct {
-                domain_size: self.domain_size,
-            });
+        let collides =
+            |offsets: Range<usize>| offsets.into_iter().any(|k| F::from_u64(k as u64).is_zero());
+        let not_distinct = SumcheckError::IntegerDomainNotDistinct {
+            domain_size: self.domain_size,
+        };
+        let eager = self.domain_size.min(EAGER_COLLISION_SCAN);
+        if collides(1..eager) {
+            return Err(not_distinct);
         }
-        self.power_sums(degree + 1)
-            .map_err(|_| SumcheckError::InvalidIntegerDomain {
-                domain_size: self.domain_size,
-            })
-            .map(|power_sums| power_sums.into_iter().map(F::from_i128).collect())
+        let power_sums =
+            self.power_sums(degree + 1)
+                .map_err(|_| SumcheckError::InvalidIntegerDomain {
+                    domain_size: self.domain_size,
+                })?;
+        if collides(eager..self.domain_size) {
+            return Err(not_distinct);
+        }
+        Ok(power_sums.into_iter().map(F::from_i128).collect())
     }
 }
