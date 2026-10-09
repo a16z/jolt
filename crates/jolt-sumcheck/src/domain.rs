@@ -79,6 +79,8 @@ where
     }
 }
 
+/// Consecutive centered integers, whose images must be distinct in the field.
+/// Round-sum checks reject collisions before computing integer power sums.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CenteredIntegerDomain {
     domain_size: usize,
@@ -107,6 +109,16 @@ where
     F: Field,
 {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
+        let _ = self
+            .start()
+            .map_err(|_| SumcheckError::InvalidIntegerDomain {
+                domain_size: self.domain_size,
+            })?;
+        if (1..self.domain_size).any(|k| F::from_u64(k as u64).is_zero()) {
+            return Err(SumcheckError::IntegerDomainNotDistinct {
+                domain_size: self.domain_size,
+            });
+        }
         self.power_sums(degree + 1)
             .map_err(|_| SumcheckError::InvalidIntegerDomain {
                 domain_size: self.domain_size,
