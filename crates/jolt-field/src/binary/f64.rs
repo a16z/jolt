@@ -1,5 +1,6 @@
+use super::accumulator::F64Accumulator;
 use super::{arithmetic, inverse};
-use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{CanonicalBytes, CanonicalEncoding, Field, Ring, WithAccumulator};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use rand_core::RngCore;
@@ -121,9 +122,9 @@ impl CanonicalEncoding for F64 {
 }
 
 impl WithAccumulator for F64 {
-    type Accumulator = NaiveAccumulator<Self>;
-    type SmallScalarAccumulator = NaiveAccumulator<Self>;
-    type SignedProductAccumulator = NaiveAccumulator<Self>;
+    type Accumulator = F64Accumulator;
+    type SmallScalarAccumulator = F64Accumulator;
+    type SignedProductAccumulator = F64Accumulator;
 }
 
 crate::impl_serde_bytes!(impl[] F64, 8);
