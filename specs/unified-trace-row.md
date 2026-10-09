@@ -246,14 +246,16 @@ FieldEvent { cycle: usize, data: FieldInlineTraceData }
 
 Each event stores its `Copy` payload inline. `Arc<TraceData>` is the only
 sharing handle, so payloads carry no reference count or separate allocation.
-A transient `TraceEvent` contains a core row and, in field-enabled builds, an
-optional payload. `TraceData::push` appends them together. `from_parts`
-transfers parallel producer buffers and rejects unsorted, duplicate, or
-out-of-range field events. Payload semantics remain the responsibility of
-field witness validation. There is no per-cycle payload slot in retained
-rows, and absent payloads consume no event entries. Products and inverse
-products are derived from decoded field register values rather than stored
-as extra payload fields.
+`TraceData` has two constructors, and both take ownership of producer buffers
+without copying them: `new` takes the row vector, and, in field-enabled
+builds, `from_parts` takes the row vector with its sparse field events and
+rejects unsorted, duplicate, or out-of-range events. There is no per-row
+append path, so every producer goes through the same proof-length and
+event-order rules. Payload semantics remain the responsibility of field
+witness validation. There is no per-cycle payload slot in retained rows, and
+absent payloads consume no event entries. Products and inverse products are
+derived from decoded field register values rather than stored as extra payload
+fields.
 
 `ExecutionBackend::trace` returns a non-generic `TraceOutput`; backends have no
 trace-source associated type and there is no row cursor or trace-source trait.
@@ -279,25 +281,26 @@ chunk consumers an efficient path: the trace-backed implementation
 locates the first event once and merges the rest sequentially. Akita uses
 this method; it does not binary-search the sparse table once per cycle.
 
-Interpreter parallel collection writes one final core vector. Field-enabled
-collection fills that vector by indexed chunks and combines sparse event
-batches in order, without a full intermediate `(row, optional_payload)`
-vector. The combined event vector is allocated once from the summed batch
-lengths, so combining copies each payload once instead of regrowing; the
-per-batch vectors still grow by push, and they coexist with the combined
-vector while batches are moved in. The interpreter's raw `Vec<Cycle>` and
-x86 observation buffer remain.
+Interpreter collection writes one final core vector. Traces longer than 2^14
+rows convert in parallel; shorter traces convert serially as a single batch,
+and both paths finish through `new` or `from_parts`. Field-enabled collection
+fills that vector by indexed chunks and combines sparse event batches in
+order, without a full intermediate `(row, optional_payload)` vector. The
+combined event vector is allocated once from the summed batch lengths, so
+combining copies each payload once instead of regrowing; the per-batch vectors
+still grow by push, and they coexist with the combined vector while batches
+are moved in. The interpreter's raw `Vec<Cycle>` and x86 observation buffer
+remain.
 
 ### Execution length and proof length
 
 Analysis and replay retain all produced rows. `TraceData::proof_len()` and
 `proof_rows()` exclude only canonical trailing padding, without truncating or
 copying the row allocation. Interior no-ops, noncanonical no-ops, and rows
-with field payloads are retained. `push` tracks the bound while emitting;
-`TraceData::new` finds it by scanning backward over the canonical trailing
-suffix of an already collected vector. `from_parts` uses that same suffix
-scan and also retains the final field event's cycle. There is no full trace
-conversion or normalization copy.
+with field payloads are retained. `TraceData::new` finds the bound by scanning
+backward over the canonical trailing suffix of the collected vector.
+`from_parts` uses that same suffix scan and also retains the final field
+event's cycle. There is no full trace conversion or normalization copy.
 
 `ProverConfig::derive` now consumes `&[JoltTraceRow]`; callers supply
 `proof_rows()`. Its existing minimum domain and final-no-op sizing law are
@@ -319,8 +322,8 @@ Sources: [aggregate](../crates/jolt-program/src/execution/trace/data.rs),
 Rows and `TraceData` implement `Serialize` only. Core row serialization uses a
 logical wire shim containing instruction, captured registers, RAM access, and
 bytecode PC; packed storage is not a serialized API. The aggregate wire is a
-sequence of logical `TraceEvent` values, joining each payload with its row, so
-`field-inline` builds emit an optional payload on every event. The physical
+sequence of per-cycle records, each joining a row with its payload, so
+`field-inline` builds emit an optional payload on every record. The physical
 sparse event vector is not serialized. Serialization borrows rows/payloads and
 emits them incrementally.
 

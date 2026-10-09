@@ -803,7 +803,7 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_field::{Fr, Ring};
     use jolt_program::{
-        execution::{JoltProgram, TraceEvent, TraceOutput},
+        execution::{JoltProgram, TraceOutput},
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
     };
     use jolt_riscv::FieldInlineOp;
@@ -876,21 +876,20 @@ mod tests {
     fn witness(
         program: &Arc<JoltProgram>,
         preprocessing: &Arc<JoltProgramPreprocessing>,
-        rows: Vec<TraceEvent>,
+        rows: Vec<JoltTraceRow>,
+        field_events: Vec<FieldEvent>,
         log_t: usize,
     ) -> TraceBackend {
-        let data = rows
+        let rows = rows
             .into_iter()
-            .map(|mut event| {
-                let row = event.row;
+            .map(|row| {
                 let instruction = row.instruction();
                 let pc =
                     u32::try_from(preprocessing.bytecode.get_pc(&instruction).unwrap()).unwrap();
-                event.row =
-                    JoltTraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap();
-                event
+                JoltTraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap()
             })
             .collect();
+        let data = TraceData::from_parts(rows, field_events).unwrap();
         TraceBackend::new(
             config(log_t),
             JoltVmWitnessInputs::new(
@@ -909,22 +908,11 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
-        row_with_registers(instruction, RegisterState::default(), data)
+    fn row(instruction: JoltInstructionRow, registers: RegisterState) -> JoltTraceRow {
+        JoltTraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap()
     }
 
-    fn row_with_registers(
-        instruction: JoltInstructionRow,
-        registers: RegisterState,
-        data: FieldInlineTraceData,
-    ) -> TraceEvent {
-        TraceEvent {
-            row: JoltTraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap(),
-            field_inline: Some(data),
-        }
-    }
-
-    fn load_imm(offset: usize, rd: u8, value: u64) -> (JoltInstructionRow, TraceEvent) {
+    fn load_imm(offset: usize, rd: u8, value: u64) -> (JoltInstructionRow, FieldInlineTraceData) {
         let instruction = instruction(
             JoltInstructionKind::FIELD_LOAD_IMM,
             offset,
@@ -933,24 +921,21 @@ mod tests {
             None,
             i128::from(value),
         );
-        let trace_row = row(
-            instruction,
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
-                rd: Some(FieldRegisterWrite {
-                    register: rd,
-                    pre_value: enc(0),
-                    post_value: enc(value),
-                }),
-                ..FieldInlineTraceData::default()
-            },
-        );
-        (instruction, trace_row)
+        let data = FieldInlineTraceData {
+            op: Some(FieldInlineOp::LoadImm),
+            rd: Some(FieldRegisterWrite {
+                register: rd,
+                pre_value: enc(0),
+                post_value: enc(value),
+            }),
+            ..FieldInlineTraceData::default()
+        };
+        (instruction, data)
     }
 
-    fn arithmetic_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceEvent>) {
-        let (load_rs1, row0) = load_imm(0, 2, 5);
-        let (load_rs2, row1) = load_imm(1, 3, 7);
+    fn arithmetic_fixture() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEvent>) {
+        let (load_rs1, load_rs1_data) = load_imm(0, 2, 5);
+        let (load_rs2, load_rs2_data) = load_imm(1, 3, 7);
         let mul = instruction(
             JoltInstructionKind::FIELD_MUL,
             2,
@@ -959,26 +944,23 @@ mod tests {
             Some(3),
             0,
         );
-        let row2 = row(
-            mul,
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::Mul),
-                rs1: Some(FieldRegisterRead {
-                    register: 2,
-                    value: enc(5),
-                }),
-                rs2: Some(FieldRegisterRead {
-                    register: 3,
-                    value: enc(7),
-                }),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(35),
-                }),
-                ..FieldInlineTraceData::default()
-            },
-        );
+        let mul_data = FieldInlineTraceData {
+            op: Some(FieldInlineOp::Mul),
+            rs1: Some(FieldRegisterRead {
+                register: 2,
+                value: enc(5),
+            }),
+            rs2: Some(FieldRegisterRead {
+                register: 3,
+                value: enc(7),
+            }),
+            rd: Some(FieldRegisterWrite {
+                register: 1,
+                pre_value: enc(0),
+                post_value: enc(35),
+            }),
+            ..FieldInlineTraceData::default()
+        };
         let advice = instruction(
             JoltInstructionKind::FIELD_ADVICE_LIMB,
             3,
@@ -987,50 +969,59 @@ mod tests {
             Some(0),
             0,
         );
-        let row3 = row_with_registers(
-            advice,
-            RegisterState {
-                rd: Some(RegisterWrite {
-                    register: 10,
-                    pre_value: 0,
-                    post_value: 35,
-                }),
-                ..RegisterState::default()
-            },
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::AdviceLimb),
-                rs1: Some(FieldRegisterRead {
-                    register: 1,
-                    value: enc(35),
-                }),
-                rd: Some(FieldRegisterWrite {
-                    register: 0,
-                    pre_value: enc(0),
-                    post_value: enc(0),
-                }),
-                bridge: Some(FieldInlineBridge::AdviceLimb {
-                    field_register: 1,
-                    field_value: enc(35),
-                    x_register: 10,
-                    x_value: 35,
-                }),
-                ..FieldInlineTraceData::default()
-            },
-        );
+        let advice_registers = RegisterState {
+            rd: Some(RegisterWrite {
+                register: 10,
+                pre_value: 0,
+                post_value: 35,
+            }),
+            ..RegisterState::default()
+        };
+        let advice_data = FieldInlineTraceData {
+            op: Some(FieldInlineOp::AdviceLimb),
+            rs1: Some(FieldRegisterRead {
+                register: 1,
+                value: enc(35),
+            }),
+            rd: Some(FieldRegisterWrite {
+                register: 0,
+                pre_value: enc(0),
+                post_value: enc(0),
+            }),
+            bridge: Some(FieldInlineBridge::AdviceLimb {
+                field_register: 1,
+                field_value: enc(35),
+                x_register: 10,
+                x_value: 35,
+            }),
+            ..FieldInlineTraceData::default()
+        };
+        let field_events = [load_rs1_data, load_rs2_data, mul_data, advice_data]
+            .into_iter()
+            .enumerate()
+            .map(|(cycle, data)| FieldEvent { cycle, data })
+            .collect();
         (
             vec![load_rs1, load_rs2, mul, advice],
-            vec![row0, row1, row2, row3],
+            vec![
+                row(load_rs1, RegisterState::default()),
+                row(load_rs2, RegisterState::default()),
+                row(mul, RegisterState::default()),
+                row(advice, advice_registers),
+            ],
+            field_events,
         )
     }
 
     fn build_field_provider(
         bytecode: Vec<JoltInstructionRow>,
-        rows: Vec<TraceEvent>,
+        rows: Vec<JoltTraceRow>,
+        field_events: Vec<FieldEvent>,
         log_t: usize,
     ) -> TraceBackedFieldInlineWitness {
         let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
         let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-        let witness = witness(&program, &preprocessing, rows, log_t);
+        let witness = witness(&program, &preprocessing, rows, field_events, log_t);
         witness.field_inline_witness().unwrap()
     }
 
@@ -1053,26 +1044,14 @@ mod tests {
         )];
         let program = program(bytecode.clone(), RV64IMAC_JOLT);
         let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
-        let field_row = row(
-            instruction(
-                JoltInstructionKind::FIELD_LOAD_IMM,
-                0,
-                Some(1),
-                None,
-                None,
-                3,
-            ),
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(3),
-                }),
-                ..FieldInlineTraceData::default()
-            },
+        let (field_instruction, data) = load_imm(0, 1, 3);
+        let witness = witness(
+            &program,
+            &preprocessing,
+            vec![row(field_instruction, RegisterState::default())],
+            vec![FieldEvent { cycle: 0, data }],
+            2,
         );
-        let witness = witness(&program, &preprocessing, vec![field_row], 2);
 
         assert!(matches!(
             witness.field_inline_witness(),
@@ -1082,8 +1061,8 @@ mod tests {
 
     #[test]
     fn committed_order_and_requirements_are_blindfold_retained() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
+        let (bytecode, rows, field_events) = arithmetic_fixture();
+        let provider = build_field_provider(bytecode, rows, field_events, 3);
 
         let order = provider.committed_order();
         assert_eq!(order, vec![FieldInlineCommittedPolynomial::FieldRdInc]);
@@ -1099,9 +1078,12 @@ mod tests {
 
     #[test]
     fn field_rd_inc_materializes_field_deltas_and_padding() {
-        let (bytecode, mut rows) = arithmetic_fixture();
-        rows.insert(1, JoltTraceRow::default().into());
-        let provider = build_field_provider(bytecode, rows, 3);
+        let (bytecode, mut rows, mut field_events) = arithmetic_fixture();
+        rows.insert(1, JoltTraceRow::default());
+        for event in &mut field_events[1..] {
+            event.cycle += 1;
+        }
+        let provider = build_field_provider(bytecode, rows, field_events, 3);
         assert_eq!(
             owned_view(
                 &provider,
@@ -1131,8 +1113,8 @@ mod tests {
 
     #[test]
     fn trace_domain_virtual_views_decode_values_and_products() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
+        let (bytecode, rows, field_events) = arithmetic_fixture();
+        let provider = build_field_provider(bytecode, rows, field_events, 3);
 
         let rd_values = owned_view(
             &provider,
@@ -1155,8 +1137,8 @@ mod tests {
 
     #[test]
     fn register_domain_virtual_views_are_address_major() {
-        let (bytecode, rows) = arithmetic_fixture();
-        let provider = build_field_provider(bytecode, rows, 3);
+        let (bytecode, rows, field_events) = arithmetic_fixture();
+        let provider = build_field_provider(bytecode, rows, field_events, 3);
 
         let registers_val = owned_view(
             &provider,
@@ -1200,7 +1182,7 @@ mod tests {
             ),
         ] {
             let memory_load = op == FieldInlineOp::LoadAccumulateFromMemory;
-            let (seed, seed_row) = load_imm(0, 1, 3);
+            let (seed, seed_data) = load_imm(0, 1, 3);
             let load = instruction(
                 kind,
                 1,
@@ -1250,28 +1232,41 @@ mod tests {
                 1,
             )
             .unwrap();
-            let load_row = TraceEvent {
-                row: load_row,
-                field_inline: Some(FieldInlineTraceData {
-                    op: Some(op),
-                    rs1: Some(FieldRegisterRead {
-                        register: 1,
-                        value: enc(3),
-                    }),
-                    rd: Some(FieldRegisterWrite {
-                        register: 1,
-                        pre_value: enc(3),
-                        post_value: accumulated,
-                    }),
-                    bridge: Some(bridge),
-                    ..FieldInlineTraceData::default()
+            let load_data = FieldInlineTraceData {
+                op: Some(op),
+                rs1: Some(FieldRegisterRead {
+                    register: 1,
+                    value: enc(3),
                 }),
+                rd: Some(FieldRegisterWrite {
+                    register: 1,
+                    pre_value: enc(3),
+                    post_value: accumulated,
+                }),
+                bridge: Some(bridge),
+                ..FieldInlineTraceData::default()
             };
             let bytecode = vec![seed, load];
             let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
             let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-            let rows = vec![seed_row, load_row];
-            let backend = witness(&program, &preprocessing, rows.clone(), 2);
+            let rows = vec![row(seed, RegisterState::default()), load_row];
+            let field_events = vec![
+                FieldEvent {
+                    cycle: 0,
+                    data: seed_data,
+                },
+                FieldEvent {
+                    cycle: 1,
+                    data: load_data,
+                },
+            ];
+            let backend = witness(
+                &program,
+                &preprocessing,
+                rows.clone(),
+                field_events.clone(),
+                2,
+            );
             let provider = backend.field_inline_witness().unwrap();
             assert!(Arc::ptr_eq(&provider.trace_data, &backend.trace.trace));
             let registers: Vec<(usize, FieldInlineRegisterReadWriteRow<Fr>)> =
@@ -1289,10 +1284,11 @@ mod tests {
                     value: enc(0),
                 }),
             ] {
-                let mut tampered = rows.clone();
-                tampered[1].field_inline.as_mut().unwrap().rs1 = read;
+                let mut tampered = field_events.clone();
+                tampered[1].data.rs1 = read;
                 assert!(matches!(
-                    witness(&program, &preprocessing, tampered, 2).field_inline_witness(),
+                    witness(&program, &preprocessing, rows.clone(), tampered, 2)
+                        .field_inline_witness(),
                     Err(WitnessError::InvalidWitnessData { .. })
                 ));
             }
@@ -1301,25 +1297,22 @@ mod tests {
 
     #[test]
     fn validation_rejects_missing_payload_and_inconsistent_state() {
-        let (bytecode, mut rows) = arithmetic_fixture();
-        rows[2].field_inline = None;
+        let (bytecode, rows, mut field_events) = arithmetic_fixture();
+        field_events.retain(|event| event.cycle != 2);
         let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
         let preprocessing = preprocessing(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
-        let missing_payload_witness = witness(&program, &preprocessing, rows, 3);
+        let missing_payload_witness = witness(&program, &preprocessing, rows, field_events, 3);
         assert!(matches!(
             missing_payload_witness.field_inline_witness(),
             Err(WitnessError::InvalidWitnessData { .. })
         ));
 
-        let (_, mut bad_rows) = arithmetic_fixture();
-        let Some(data) = bad_rows[2].field_inline.as_mut() else {
-            return;
-        };
-        data.rs1 = Some(FieldRegisterRead {
+        let (_, rows, mut field_events) = arithmetic_fixture();
+        field_events[2].data.rs1 = Some(FieldRegisterRead {
             register: 2,
             value: enc(6),
         });
-        let inconsistent_state_witness = witness(&program, &preprocessing, bad_rows, 3);
+        let inconsistent_state_witness = witness(&program, &preprocessing, rows, field_events, 3);
         assert!(matches!(
             inconsistent_state_witness.field_inline_witness(),
             Err(WitnessError::InvalidWitnessData { .. })

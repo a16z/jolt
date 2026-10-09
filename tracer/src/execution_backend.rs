@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    TraceData, TraceError, TraceEvent, TraceInputs, TraceOutput,
+    TraceData, TraceError, TraceInputs, TraceOutput,
 };
 use jolt_program::preprocess::BytecodePCMapper;
 #[cfg(feature = "field-inline")]
@@ -106,20 +106,16 @@ fn collect_rows(cycles: &[Cycle], bytecode: &BytecodePCMapper) -> Result<TraceDa
         }
     )
     .entered();
-    if !parallel {
-        let mut data = TraceData::with_capacity(cycles.len());
-        for cycle in cycles {
-            data.push(TraceEvent {
-                row: cycle_to_trace_row(cycle, bytecode)?,
-                #[cfg(feature = "field-inline")]
-                field_inline: cycle.field_inline_trace(),
-            });
-        }
-        return Ok(data);
-    }
 
     #[cfg(not(feature = "field-inline"))]
     {
+        if !parallel {
+            let mut rows = Vec::with_capacity(cycles.len());
+            for cycle in cycles {
+                rows.push(cycle_to_trace_row(cycle, bytecode)?);
+            }
+            return Ok(TraceData::new(rows));
+        }
         // Keep indexed collection in one allocation; the fallible collector
         // would allocate intermediate row shards.
         let error = OnceLock::new();

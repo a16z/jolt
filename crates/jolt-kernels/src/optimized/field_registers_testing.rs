@@ -22,7 +22,7 @@ use std::sync::Arc;
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_field::{CanonicalBytes, Fr, Ring};
-use jolt_program::execution::{JoltProgram, TraceEvent, TraceOutput};
+use jolt_program::execution::{FieldEvent, JoltProgram, TraceData, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
@@ -45,23 +45,18 @@ fn encode(value: Fr) -> FieldEncodedValue {
 /// A register-consistent field-inline trace builder over the 16-slot field register
 /// file.
 pub(crate) struct FieldRegisterTraceFixture {
-    rows: Vec<TraceEvent>,
+    rows: Vec<TraceRow>,
+    field_events: Vec<FieldEvent>,
     bytecode: Vec<JoltInstructionRow>,
     state: [Fr; 16],
     counter: u64,
-}
-
-fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
-    TraceEvent {
-        row: TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),
-        field_inline: Some(data),
-    }
 }
 
 impl FieldRegisterTraceFixture {
     pub(crate) fn new() -> Self {
         Self {
             rows: Vec::new(),
+            field_events: Vec::new(),
             bytecode: Vec::new(),
             state: [Fr::from_u64(0); 16],
             counter: 0x0DDF_00D5_EED0_25EC,
@@ -116,14 +111,24 @@ impl FieldRegisterTraceFixture {
         }
     }
 
+    fn push_row(&mut self, instruction: JoltInstructionRow) {
+        self.rows.push(
+            TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),
+        );
+    }
+
+    fn push_field_row(&mut self, instruction: JoltInstructionRow, data: FieldInlineTraceData) {
+        self.field_events.push(FieldEvent {
+            cycle: self.rows.len(),
+            data,
+        });
+        self.push_row(instruction);
+    }
+
     /// An ordinary (inactive field-inline) row: an ADDI with no register traffic.
     pub(crate) fn noop(&mut self) {
         let instruction = self.instruction(JoltInstructionKind::ADDI, Some(1), Some(0), None, 0);
-        self.rows.push(
-            TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1)
-                .unwrap()
-                .into(),
-        );
+        self.push_row(instruction);
     }
 
     pub(crate) fn load_imm(&mut self, rd: u8, imm: u64) {
@@ -132,14 +137,14 @@ impl FieldRegisterTraceFixture {
                 imm as i128
             });
         let rd = self.write(rd, Fr::from_u64(imm));
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(FieldInlineOp::LoadImm),
                 rd: Some(rd),
                 ..FieldInlineTraceData::default()
             },
-        ));
+        );
     }
 
     /// One field-inline arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
@@ -156,7 +161,7 @@ impl FieldRegisterTraceFixture {
         let rs2 = self.read(rs2);
         let post = self.fresh_value();
         let rd = self.write(rd, post);
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(op),
@@ -165,7 +170,7 @@ impl FieldRegisterTraceFixture {
                 rd: Some(rd),
                 ..FieldInlineTraceData::default()
             },
-        ));
+        );
     }
 
     pub(crate) fn assert_eq_row(&mut self, rs1: u8, rs2: u8) {
@@ -178,7 +183,7 @@ impl FieldRegisterTraceFixture {
         );
         let rs1 = self.read(rs1);
         let rs2 = self.read(rs2);
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(FieldInlineOp::AssertEq),
@@ -186,7 +191,7 @@ impl FieldRegisterTraceFixture {
                 rs2: Some(rs2),
                 ..FieldInlineTraceData::default()
             },
-        ));
+        );
     }
 
     pub(crate) fn inv(&mut self, rd: u8, rs1: u8) {
@@ -195,7 +200,7 @@ impl FieldRegisterTraceFixture {
         let post = self.fresh_value();
         let rs1 = self.read(rs1);
         let rd = self.write(rd, post);
-        self.rows.push(field_row(
+        self.push_field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(FieldInlineOp::Inv),
@@ -203,7 +208,7 @@ impl FieldRegisterTraceFixture {
                 rd: Some(rd),
                 ..FieldInlineTraceData::default()
             },
-        ));
+        );
     }
 
     /// Run `f` against a field-inline trace backend padded to `2^log_t` cycles, with
@@ -237,11 +242,10 @@ impl FieldRegisterTraceFixture {
                 lookups_ra_virtual_log_k_chunk: 16,
             },
         );
-        let data = self
+        let rows = self
             .rows
             .into_iter()
-            .map(|mut event| {
-                let row = event.row;
+            .map(|row| {
                 let instruction = row.instruction();
                 let pc = preprocessing
                     .bytecode
@@ -249,11 +253,10 @@ impl FieldRegisterTraceFixture {
                     .unwrap()
                     .try_into()
                     .unwrap();
-                event.row =
-                    TraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap();
-                event
+                TraceRow::new(instruction, row.registers(), row.ram_access(), pc).unwrap()
             })
             .collect();
+        let data = TraceData::from_parts(rows, self.field_events).unwrap();
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,

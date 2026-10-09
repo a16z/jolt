@@ -7,25 +7,6 @@ use crate::execution::TraceError;
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldInlineTraceData;
 
-/// One emitted row and its associated execution payload. Retained traces
-/// separate these into compact core rows and sparse field events.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TraceEvent {
-    pub row: JoltTraceRow,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: Option<FieldInlineTraceData>,
-}
-
-impl From<JoltTraceRow> for TraceEvent {
-    fn from(row: JoltTraceRow) -> Self {
-        Self {
-            row,
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        }
-    }
-}
-
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug)]
 pub struct FieldEvent {
@@ -35,7 +16,7 @@ pub struct FieldEvent {
 
 /// Shared execution storage. The proof view omits canonical trailing padding
 /// without reallocating or changing the execution row count.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct TraceData {
     rows: Vec<JoltTraceRow>,
     proof_len: usize,
@@ -44,6 +25,8 @@ pub struct TraceData {
 }
 
 impl TraceData {
+    /// Takes ownership of collected rows. The proof prefix ends at the last
+    /// row that is not canonical padding.
     pub fn new(rows: Vec<JoltTraceRow>) -> Self {
         let proof_len = rows
             .iter()
@@ -57,14 +40,9 @@ impl TraceData {
         }
     }
 
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            rows: Vec::with_capacity(capacity),
-            ..Self::default()
-        }
-    }
-
-    /// Transfers indexed parallel producer buffers without copying their rows.
+    /// [`Self::new`] plus sparse field events, which must be strictly
+    /// increasing in cycle and index existing rows. The proof prefix also
+    /// covers the last event.
     #[cfg(feature = "field-inline")]
     pub fn from_parts(
         rows: Vec<JoltTraceRow>,
@@ -85,19 +63,6 @@ impl TraceData {
         Ok(data)
     }
 
-    pub fn push(&mut self, event: TraceEvent) {
-        let cycle = self.rows.len();
-        if event.row != JoltTraceRow::default() {
-            self.proof_len = cycle + 1;
-        }
-        self.rows.push(event.row);
-        #[cfg(feature = "field-inline")]
-        if let Some(data) = event.field_inline {
-            self.field_events.push(FieldEvent { cycle, data });
-            self.proof_len = cycle + 1;
-        }
-    }
-
     pub fn rows(&self) -> &[JoltTraceRow] {
         &self.rows
     }
@@ -116,7 +81,7 @@ impl TraceData {
 
     #[expect(
         clippy::indexing_slicing,
-        reason = "private proof_len is bounded by rows at construction and append"
+        reason = "private proof_len is bounded by rows at construction"
     )]
     #[inline]
     pub fn proof_rows(&self) -> &[JoltTraceRow] {
@@ -138,16 +103,6 @@ impl TraceData {
     }
 }
 
-impl FromIterator<TraceEvent> for TraceData {
-    fn from_iter<T: IntoIterator<Item = TraceEvent>>(iter: T) -> Self {
-        let mut data = Self::default();
-        for event in iter {
-            data.push(event);
-        }
-        data
-    }
-}
-
 #[cfg(feature = "serialization")]
 impl Serialize for TraceData {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -158,20 +113,54 @@ impl Serialize for TraceData {
             #[cfg(not(feature = "field-inline"))]
             let _ = cycle;
             #[derive(Serialize)]
-            struct EventRef<'a> {
+            struct CycleRecord<'a> {
                 row: &'a JoltTraceRow,
                 #[cfg(feature = "field-inline")]
                 field_inline: Option<&'a FieldInlineTraceData>,
             }
-            let event = EventRef {
+            let record = CycleRecord {
                 row,
                 #[cfg(feature = "field-inline")]
                 field_inline: events
                     .next_if(|event| event.cycle == cycle)
                     .map(|event| &event.data),
             };
-            sequence.serialize_element(&event)?;
+            sequence.serialize_element(&record)?;
         }
         sequence.end()
+    }
+}
+
+#[cfg(all(test, feature = "field-inline"))]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn event(cycle: usize) -> FieldEvent {
+        FieldEvent {
+            cycle,
+            data: FieldInlineTraceData::default(),
+        }
+    }
+
+    #[test]
+    fn from_parts_rejects_misplaced_events_and_proves_through_the_last_event() {
+        let padding = || vec![JoltTraceRow::default(); 4];
+        for (events, rejected) in [
+            (vec![event(2), event(1)], 1),
+            (vec![event(1), event(1)], 1),
+            (vec![event(4)], 4),
+        ] {
+            assert!(matches!(
+                TraceData::from_parts(padding(), events),
+                Err(TraceError::InvalidFieldEvent { cycle }) if cycle == rejected
+            ));
+        }
+
+        let data = TraceData::from_parts(padding(), vec![event(0), event(2)]).unwrap();
+        assert_eq!(data.len(), 4);
+        assert_eq!(data.proof_len(), 3);
+        assert!(data.field_inline(1).is_none());
+        assert!(data.field_inline(2).is_some());
     }
 }

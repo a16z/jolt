@@ -9,7 +9,7 @@ mod data;
 
 #[cfg(feature = "field-inline")]
 pub use data::FieldEvent;
-pub use data::{TraceData, TraceEvent};
+pub use data::TraceData;
 
 /// A Jolt-ready program built from an RV64 ELF image.
 ///

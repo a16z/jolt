@@ -66,7 +66,7 @@ fn config() -> JoltVmWitnessConfig {
 }
 
 fn trace_output() -> TraceOutput {
-    TraceOutput::new(TraceData::default(), Default::default(), None, None)
+    TraceOutput::new(TraceData::new(Vec::new()), Default::default(), None, None)
 }
 
 fn trace_output_with_rows(rows: Vec<JoltTraceRow>) -> TraceOutput {
@@ -84,14 +84,14 @@ fn checked_row(
 }
 
 fn trace_output_with_device(device: JoltDevice) -> TraceOutput {
-    TraceOutput::new(TraceData::default(), device, None, None)
+    TraceOutput::new(TraceData::new(Vec::new()), device, None, None)
 }
 
 fn trace_output_with_device_and_final_memory(
     device: JoltDevice,
     final_memory: MemoryImage,
 ) -> TraceOutput {
-    TraceOutput::new(TraceData::default(), device, Some(final_memory), None)
+    TraceOutput::new(TraceData::new(Vec::new()), device, Some(final_memory), None)
 }
 
 fn instruction(address: usize) -> JoltInstructionRow {
