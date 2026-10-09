@@ -9,7 +9,7 @@
 
 ## Summary
 
-The prover's inner loops have the shape `acc += a * b`, and every field-generic kernel reaches them through `WithAccumulator`. The binary fields of `specs/binary-field.md` currently use `NaiveAccumulator`, which reduces after every product. In characteristic 2 an unreduced product is a polynomial over $\mathbb F_2$ and addition is XOR, which never carries, so any number of unreduced products can be summed in a fixed-width accumulator and reduced once. This spec gives `F64`, `F128` and `F192` such accumulators. It is step 2 of the roadmap in `specs/binary-field.md`.
+The prover's inner loops have the shape `acc += a * b`, and the optimized kernels reach them through `WithAccumulator`. The binary fields of `specs/binary-field.md` currently use `NaiveAccumulator`, which reduces after every product. In characteristic 2 an unreduced product is a polynomial over $\mathbb F_2$ and addition is XOR, which never carries, so any number of unreduced products can be summed in a fixed-width accumulator and reduced once. This spec gives `F64`, `F128` and `F192` such accumulators. It is the accumulator part of step 2 of the roadmap in `specs/binary-field.md`. It also settles the contract question that step raised, by leaving the binary fields outside `Unreduced` and `MulBaseUnreduced`, and it defers a specialised extension-times-base product until something consumes one.
 
 ## Intent
 
@@ -22,8 +22,8 @@ The accumulator of each field holds the unreduced product polynomial:
 | Field | Accumulator state | One `fmadd` | `reduce` |
 |---|---|---|---|
 | `F64` | 127-bit polynomial, one `u128` | one 64-bit carry-less multiply, XOR | one reduction by $x^{64}+x^4+x^3+x+1$ |
-| `F128` | 255-bit polynomial, two `u128` | the carry-less multiplies of one 128-bit product, XOR | one reduction by $x^{128}+x^7+x^2+x+1$ |
-| `F192` | three unreduced `F64` coefficients, three `u128` | the carry-less multiplies of one product over `F64`, folded by $y^3 = y+1$ and $y^4 = y^2+y$, XOR | three `F64` reductions |
+| `F128` | 255-bit polynomial, two `u128` `[low, high]` for `low + x^128·high` | the carry-less multiplies of one 128-bit product, XOR | one reduction by $x^{128}+x^7+x^2+x+1$ |
+| `F192` | three unreduced `F64` coefficients `[C0, C1, C2]` in ascending degree of $y$, three `u128` | the carry-less multiplies of one product over `F64`, folded by $y^3 = y+1$ and $y^4 = y^2+y$, XOR | three `F64` reductions |
 
 For `F192` the reduction by $y^3+y+1$ is applied before accumulation and the `F64` reductions after. The two commute: the first only XORs coefficients, and `F64` reduction is $\mathbb F_2$-linear. The kernel multiply already orders them this way.
 
@@ -34,39 +34,45 @@ For `F192` the reduction by $y^3+y+1$ is applied before accumulation and the `F6
 3. **One accumulator type per field.** `Accumulator`, `SmallScalarAccumulator` and `SignedProductAccumulator` of a field are the same type. The three exist to give prime fields differently shaped integer slots, and a binary field has one shape.
 4. **`Mul` is unchanged.** Field multiplication and squaring return the same values as before, on the portable path and on each kernel path. On a kernel path the multiply is the composition of the unreduced product and the reduction that the accumulator uses, so the two cannot drift apart. The portable multiplies of `binary/portable.rs`, which reduce while they shift, are left as they are: they are the oracle of the kernel differential test and stay independent of the code under test.
 5. **Both arithmetic paths.** The accumulators work on every target: with a carry-less-multiply kernel where `binary/mod.rs` selects one, and with a portable unreduced multiply (shift and XOR into the double-width word) elsewhere. The two paths produce the same accumulator state bit for bit, not only the same reduced value. The reductions are plain shifts and XORs with no architecture dependence and are shared by both paths.
-6. **`Unreduced` and `MulBaseUnreduced` are not implemented.** Their contract is stated in terms of integer slots (`Self × u64` products, signed `i32` lanes, a documented headroom, `SUM_IS_EXACT`), none of which describes a polynomial over $\mathbb F_2$. Their only callers are concrete-field code paths for `Fp128` in `jolt-akita`. The module documentation of `unreduced.rs` says so, in one sentence, so that the absence reads as a decision.
+6. **`Unreduced` and `MulBaseUnreduced` are not implemented.** Their documented semantics are integer slots (`Self × u64` products, signed `i32` lanes, a headroom, `SUM_IS_EXACT`), and nothing consumes them for a binary field: the field-generic sum-check, polynomial and kernel layers require neither trait, and the current consumers of `Unreduced` are the `Fp128` accumulators in `jolt-field` and concrete `Fp128` commitment paths in `jolt-akita`. The module documentation of `unreduced.rs` says, in one sentence, that binary fields defer reduction through `WithAccumulator` instead.
 7. **No other change.** The spine traits, `NaiveAccumulator`, the other backends, and `F8` are untouched. `F8` keeps `NaiveAccumulator`: its multiplication is not on a hot path.
 
 ### Non-Goals
 
-- A deferred `F192 × F64` product. `Accumulator::fmadd` takes two elements of the same field, and no caller in this repository accumulates extension-times-base products over a binary field. When one exists, it gets a method on the same three-word state.
+- A specialised deferred `F192 × F64` product. `Accumulator::fmadd` takes two elements of the same field, and no caller in this repository accumulates extension-times-base products over a binary field. `ExtField::mul_base` and `fmadd` of a lifted base element remain available; the cheaper three-multiply path gets a method on the same three-word state when it has a caller.
 - Vectorised accumulation (`vpclmulqdq`, packed inputs). That is step 4 of the roadmap.
-- Changing any kernel in `jolt-kernels` or `jolt-sumcheck`. They are generic over `WithAccumulator` and pick the new accumulators up without a source change.
+- Changing any consumer. Code generic over `WithAccumulator`, which today is the optimized tier of `jolt-kernels`, picks the new accumulators up without a source change.
 - An accumulator for `F8`.
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- [ ] `<F64 as WithAccumulator>::Accumulator`, `SmallScalarAccumulator` and `SignedProductAccumulator` are one type, and likewise for `F128` and `F192`; none is `NaiveAccumulator`. Checked by a compile-time type-equality assertion in the tests.
-- [ ] Differential test against `NaiveAccumulator<F>` for each of the three fields: a seeded random script of at least 10,000 operations drawn from `add`, `fmadd`, every `fmadd_*` variant and `merge` of an independently built partial accumulator, applied to both; the reduced results agree after every 97th operation and at the end.
-- [ ] Fixed edge cases for each field, compared with the value computed by `Mul` and `Add`: the empty accumulator reduces to zero; one `fmadd` of two all-ones raw words; `fmadd(a, b)` twice reduces to zero; `fmadd(a, 0)` and `fmadd(0, b)`; `fmadd` of the two operands whose product has the highest possible degree.
-- [ ] No headroom: $2^{20}$ `fmadd` calls with all-ones operands for `F64`, reduced once, equal the expected value (zero, since the count is even), and $2^{20}+1$ calls equal one product.
-- [ ] Scalar parity, for each field and a nonzero `a`: `fmadd_u64(a, 2)`, `fmadd_i64(a, i64::MIN)`, `fmadd_u128(a, 1 << 100)`, `fmadd_bool(a, false)` leave the accumulator at zero; `fmadd_u64(a, 3)`, `fmadd_i64(a, -1)`, `fmadd_i128(a, -1)`, `fmadd_signed_u64(a, 5, false)`, `fmadd_s256` with a negative odd magnitude and with an odd magnitude whose upper limbs are nonzero, and `fmadd_bool(a, true)` each reduce to `a`.
-- [ ] `merge` is associative and commutative on three independently built accumulators, compared after `reduce`.
-- [ ] Path agreement, in the in-crate test module, for the three fields on the existing differential inputs: the portable unreduced product reduces to the portable multiply; and, on kernel targets, the kernel and portable unreduced products are equal word for word.
-- [ ] The existing vector and contract tests for `F64`, `F128`, `F192` pass unchanged, which covers invariant 4.
-- [ ] `benches/binary_kernels.rs` gains, per field, a group that times a 1024-term `fmadd` loop followed by one `reduce` for the new accumulator and for `NaiveAccumulator`.
-- [ ] `cargo clippy -p jolt-field --all-targets -- -D warnings` passes with `--no-default-features --features binary`, `--no-default-features --features binary,allocative` and `--features solinas,binary,allocative`; `cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet` passes; `cargo nextest run -p jolt-sumcheck --cargo-quiet` passes (its binary-field tests drive the accumulators through the generic prover); `cargo fmt --check` passes.
+- [ ] `<F64 as WithAccumulator>::Accumulator`, `SmallScalarAccumulator` and `SignedProductAccumulator` are one type, and likewise for `F128` and `F192`. The bound helper in `tests/binary_contract.rs`, which today requires `NaiveAccumulator`, is changed to require `JoltField` and equality of the three associated types; nothing else in that file's existing assertions changes. A unit test inside the backend asserts that each associated type is the intended concrete accumulator.
+- [ ] Frozen results, for each field, written out as raw words. The expected values come from the existing externally generated product fixtures of `tests/binary_vectors.rs` and from the moduli, never from calling `Mul` in the test:
+  - `fmadd` of a fixture's operands reduces to the fixture's product, for several asymmetric fixtures per field.
+  - A mixed sequence of several fixture `fmadd`s, reduced `add`s, and the `merge` of a separately built partial state reduces to one frozen word, equal to the XOR of the fixture products and addends.
+  - For `F128`: `fmadd(from_raw(1 << 127), from_raw(2))` reduces to raw `0x87`, and a following `add(from_raw(1))` gives `0x86`; `fmadd(from_raw(1 << 127), from_raw(1))` reduces to raw `1 << 127`; `fmadd` of `from_raw(1 << 127)` with itself reduces to `0xc0000000000000000000000000001067`. These separate the low and high words, the placement of `add`, and the second reduction fold.
+  - For `F64`: the same three shapes with `1 << 63`, expected `0x1b`, `0x1a`, `1 << 63`, and top square `0xc00000000000005a`.
+  - For `F192`: fixtures whose operands are supported on a single coefficient each, for every pair of coefficient positions, so that a swapped or misfolded coefficient changes the result.
+- [ ] Algebraic properties, each on states that also carry a nonzero frozen result so that an accumulator that discards everything fails: the empty accumulator reduces to zero; `fmadd(a, b)` twice cancels; `fmadd(a, 0)` and `fmadd(0, b)` are no-ops; `merge` is commutative and associative on three independently built states; splitting one operation sequence at any of several points and merging the halves gives the result of the unsplit sequence.
+- [ ] Persistence across many terms: after one `add` of a nonzero sentinel, $2^{16}$ identical `fmadd` calls reduce to the sentinel and one more reduces to the sentinel plus the frozen product. (A finite count does not prove invariant 1; the fixed state width does. The test guards against a counter or periodic reset.)
+- [ ] Scalar parity: the existing signed-accumulator test of `tests/binary_contract.rs`, which retargets to the new types through the associated type, is extended with the `u8`, `u64`, `u128`, `i64` and `bool` variants, including `i64::MIN` and `1 << 100`, each applied to an empty state and to a state already holding a nonzero value.
+- [ ] Path agreement, in the in-crate test module. On every target: the portable unreduced product, reduced, equals the portable interleaved multiply, for the three fields on the existing differential inputs. On kernel targets in addition: the kernel and portable unreduced products are equal word for word. The portable comparison is compiled under `cfg(test)` on all targets, with only the kernel half behind the hardware predicate, and the existing test name `binary::tests::kernel_matches_portable` is kept because the portability workflow checks for it.
+- [ ] The existing vector tests pass unchanged, and the existing contract tests pass with the one change named above. This covers invariant 4.
+- [ ] `benches/binary_kernels.rs` gains, per field, a group that times a 1024-term `fmadd` loop followed by one `reduce`, for the new accumulator and for `NaiveAccumulator`, over the same pre-generated varying operand pairs, with generation outside the timed region and inputs and output passed through `black_box`.
+- [ ] `cargo clippy -p jolt-field --all-targets -- -D warnings` passes with `--no-default-features --features binary`, `--no-default-features --features binary,allocative` and `--features solinas,binary,allocative`; `cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet` passes; `cargo nextest run -p jolt-sumcheck --cargo-quiet` passes as a regression check (its tests use `Add` and `Mul`, not the accumulators); `cargo fmt --check` passes.
 - [ ] The four binary configurations of `.github/workflows/field-portability.yml` run the new tests without a workflow change.
 
 ### Testing Strategy
 
-A new `crates/jolt-field/tests/binary_accumulators.rs`, gated on `binary`. Ground truth is `NaiveAccumulator`, which is built from `Mul` and `Add` alone, and those are pinned by the frozen vectors of `tests/binary_vectors.rs`. The accumulator under test shares only the unreduced multiply and the reduction with `Mul`, and the path-agreement test covers those.
+A new `crates/jolt-field/tests/binary_accumulators.rs`, gated on `binary`, plus the two edits to `tests/binary_contract.rs` and the in-crate path test. Ground truth is the externally generated product fixtures, values that follow from the moduli by hand, and algebraic laws of accumulation. The portable interleaved multiply is a second maintained arithmetic path, independent of the unreduced products and reductions under test, and the path-agreement test compares against it.
+
+`NaiveAccumulator` is not a permanent oracle here: comparing the replaced accumulator with its replacement is a transition check, and its `fmadd` calls the `Mul` that shares code with the accumulator on kernel targets. A randomised comparison against it is run once during implementation and reported in the PR; it is not committed.
 
 ### Performance
 
-Informational, not a merge gate. On a kernel target, the PR records the time per term of the 1024-term loop for both accumulators and the three fields. What is saved per term is the reduction, a chain of about ten shifts and XORs for `F64` and `F128` and three such chains for `F192`, against one, three and six carry-less multiplies for the product. The size of the gain is therefore an empirical question, and the spec does not predict it. If a field shows no gain, the PR says so and keeps the accumulator, because invariant 2 removes multiplies from the scalar paths in any case.
+Informational, not a merge gate. On a kernel target, the PR records the time per term of the 1024-term loop for both accumulators and the three fields, with the architecture and target features. The CI benchmark comment compares a benchmark with itself across base and head and lists new benchmarks without timings, so these numbers are recorded by hand. What is saved per term is the reduction, a chain of about ten shifts and XORs for `F64` and `F128` and three such chains for `F192`, against one, three and six carry-less multiplies for the product. The size of the gain is therefore an empirical question, and the spec does not predict it. If a field shows no gain, the PR says so and keeps the accumulator, because invariant 2 removes multiplies from the scalar paths in any case.
 
 No `jolt-eval` objective moves: no shipped configuration proves over a binary field.
 
@@ -74,17 +80,17 @@ No `jolt-eval` objective moves: no shipped configuration proves over a binary fi
 
 ### Architecture
 
-Each multiply in `binary/kernels.rs` already consists of an unreduced product followed by `reduce64` or `reduce128`. The products are given names, the multiplies become their composition with the reduction, and the accumulators call the two separately. For `F192` the unreduced product is the three words that the kernel passes to `reduce64` today. `binary/portable.rs` gains unreduced products with the same signatures, written as shift and XOR into the double-width word; its existing multiplies are not rewritten in terms of them. `reduce64` and `reduce128` move to where both paths can use them.
+Each multiply in `binary/kernels.rs` already consists of an unreduced product followed by `reduce64` or `reduce128`. The products are given names, the multiplies become their composition with the reduction, and the accumulators call the two separately. For `F192` the unreduced product is the three words that the kernel passes to `reduce64` today. `binary/portable.rs` gains unreduced products with the same signatures, written as shift and XOR into the double-width word; its existing multiplies are not rewritten in terms of them. `reduce64` and `reduce128` move out of the feature-gated `kernels` module into a private, unconditionally compiled `binary/reduction.rs`.
 
-The accumulator types live in `binary/accumulator.rs`. They are `Copy`, hold raw words, and are not exported from the crate root: callers name them only through `WithAccumulator`.
+The accumulator types live in `binary/accumulator.rs`. They are `pub`, as an associated type of a public trait impl must be, with private raw-word state; they derive `Default`, `Clone` and `Copy` and are not re-exported from the crate root, so callers name them only through `WithAccumulator`. The specialised squarings keep their two- and three-multiply schedules and are not routed through the full product.
 
-`add(value)` XORs the element into the low part of the state, which is its own unreduced representation. `merge` XORs two states. `reduce` runs the reduction half once.
+`add(value)` XORs the reduced element into the state as its own unreduced representation: into the `u128` for `F64`, into `low` for `F128`, and coefficient by coefficient into the low 64 bits of `C0`, `C1`, `C2` for `F192`. `merge` XORs two states. `reduce` runs the reduction half once.
 
 The reason one type serves all three associated types is invariant 2. For a prime field, `SmallScalarAccumulator` exists because a `field × u64` product fits a narrower integer slot than a `field × field` product. Here a `u64` scalar acts as its low bit, so the small-scalar path is a conditional XOR into the same state.
 
 ### Why `Unreduced` does not apply
 
-`Unreduced` (`crates/jolt-field/src/unreduced.rs`) describes three integer accumulators and the number of terms each can absorb before a slot overflows. A binary field needs none of that vocabulary: its unreduced product has one shape, its sum is exact for any number of terms, and "scale by a small integer" is a parity test. Implementing the trait would mean choosing associated types to satisfy a signature (`Wide: From<Self>` scaled by `i32`, `SmallProduct` for `Self × u64`) that no caller would use. `WithAccumulator` is the surface the generic kernels consume, and it expresses everything a binary field can defer.
+`Unreduced` (`crates/jolt-field/src/unreduced.rs`) describes three integer accumulators and the number of terms each can absorb before a slot overflows. A binary field needs none of that vocabulary: its unreduced product has one shape, its sum is exact for any number of terms, and "scale by a small integer" is a parity test. The signatures could be satisfied, but only by choosing associated types (`Wide: From<Self>` scaled by `i32`, `SmallProduct` for `Self × u64`) for semantics the trait documents in integer terms and that no caller would use. `WithAccumulator` is the surface the generic kernels consume, and it expresses everything a binary field can defer.
 
 ### Alternatives Considered
 
