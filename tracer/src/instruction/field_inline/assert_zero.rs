@@ -23,7 +23,7 @@ declare_riscv_instr!(
 );
 
 impl FIELD_ASSERT_ZERO {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_ASSERT_ZERO as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_ASSERT_ZERO as RISCVInstruction>::RamAccess) {
         let register = self.operands.rs1.unwrap_or(0);
         let value = cpu.field_registers.read(register);
         assert_eq!(

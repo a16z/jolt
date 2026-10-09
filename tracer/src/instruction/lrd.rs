@@ -19,7 +19,7 @@ declare_riscv_instr!(
 );
 
 impl LRD {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <LRD as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <LRD as RISCVInstruction>::RamAccess) {
         if cpu.is_reservation_set() {
             println!("LRD: Reservation is already set");
         }

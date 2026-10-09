@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualXORROTL1 {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualXORROTL1 as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualXORROTL1 as RISCVInstruction>::RamAccess) {
         let result =
             cpu.x[self.operands.rs1 as usize] ^ cpu.x[self.operands.rs2 as usize].rotate_left(1);
         cpu.write_register(self.operands.rd as usize, result);

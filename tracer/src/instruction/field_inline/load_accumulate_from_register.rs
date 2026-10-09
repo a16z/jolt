@@ -25,7 +25,7 @@ impl FIELD_LOAD_ACCUMULATE_FROM_REGISTER {
     fn exec(
         &self,
         cpu: &mut Cpu,
-        _: &mut <FIELD_LOAD_ACCUMULATE_FROM_REGISTER as RISCVInstruction>::RAMAccess,
+        _: &mut <FIELD_LOAD_ACCUMULATE_FROM_REGISTER as RISCVInstruction>::RamAccess,
     ) {
         let x_register = self.operands.rs1.unwrap_or(0);
         let rd_register = self.operands.rd.unwrap_or(0);

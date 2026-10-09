@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl ADDI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <ADDI as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <ADDI as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             cpu.sign_extend(

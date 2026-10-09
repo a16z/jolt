@@ -14,7 +14,10 @@ pub mod emitter;
 use std::collections::BTreeMap;
 
 use dynasmrt::{x64::Assembler, AssemblyOffset, DynamicLabel, DynasmApi, DynasmLabelApi};
-use jolt_program::execution::{JoltProgram, TraceError};
+use jolt_program::{
+    execution::{JoltProgram, TraceError},
+    preprocess::BytecodePCMapper,
+};
 use jolt_riscv::SourceInstructionKind;
 
 use super::state::{AdviceCompute, AdviceJob, GuestState};
@@ -44,6 +47,7 @@ pub struct CompiledProgram {
     /// passes indices into this table. Identical for both bodies (same rows,
     /// same order), so it is collected once.
     advice_jobs: Vec<AdviceJob>,
+    pc_map: BytecodePCMapper,
 }
 
 impl CompiledProgram {
@@ -82,6 +86,8 @@ impl CompiledProgram {
             ));
         }
 
+        let pc_map = BytecodePCMapper::try_new(rows)?;
+
         // Source rows keyed by address: the expanded bytecode erases the source
         // kind and inline key, which the per-group advice computations need.
         let sources = Self::source_rows(program)?;
@@ -103,7 +109,12 @@ impl CompiledProgram {
             fast_pausable,
             record_pausable,
             advice_jobs,
+            pc_map,
         })
+    }
+
+    pub(super) fn pc_map(&self) -> &BytecodePCMapper {
+        &self.pc_map
     }
 
     pub fn advice_jobs_ptr(&self) -> *const AdviceJob {

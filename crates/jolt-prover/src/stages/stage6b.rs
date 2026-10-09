@@ -231,7 +231,6 @@ mod field_inline_round_trip {
     use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
-    use jolt_program::execution::OwnedTrace;
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
@@ -264,7 +263,7 @@ mod field_inline_round_trip {
     }
 
     fn stage6b_round_trips(
-        trace_backend: TraceBackend<OwnedTrace>,
+        trace_backend: TraceBackend,
         preprocessing: FixturePreprocessing,
         label: &'static [u8],
     ) {

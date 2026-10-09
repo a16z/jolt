@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualMovsign {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMovsign as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMovsign as RISCVInstruction>::RamAccess) {
         let val = cpu.x[self.operands.rs1 as usize] as u64;
         cpu.write_register(
             self.operands.rd as usize,

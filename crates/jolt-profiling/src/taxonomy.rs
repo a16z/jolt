@@ -1,5 +1,5 @@
 //! The versioned span taxonomy for the modular prover — **the normative
-//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 3).
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 4).
 //!
 //! One instrumentation layer, two renderings: the same `tracing` span stream
 //! becomes both the Perfetto-viewable chrome trace and the machine-queryable
@@ -77,7 +77,12 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-pub const TAXONOMY_VERSION: u32 = 3;
+pub const TAXONOMY_VERSION: u32 = 4;
+
+/// Proof configuration derived by the SDK and profile harness before entering
+/// [`ROOT_SPAN`]. Callers may supply their own configuration, so this is outside
+/// [`always_present_spans`]' per-prove presence contract.
+pub const CONFIG_DERIVATION_SPAN: &str = "ProverConfig::derive";
 
 /// The whole-run root span emitted by the Dory and Akita provers. Named
 /// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an

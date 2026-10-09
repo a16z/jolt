@@ -902,14 +902,15 @@ pub(crate) mod testing {
         JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
     };
     use jolt_field::Fr;
-    use jolt_program::execution::{
-        JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
-        RegisterWrite, TraceOutput, TraceRow,
-    };
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+    use jolt_riscv::{
+        JoltTraceRow as TraceRow, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
+        RegisterWrite,
+    };
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
 
     const LOAD: JoltInstructionRow = JoltInstructionRow {
@@ -964,6 +965,7 @@ pub(crate) mod testing {
                 ..Default::default()
             },
             RamAccess::Read(RamRead { address, value: 8 }),
+            1,
         )
         .unwrap()
     }
@@ -987,6 +989,7 @@ pub(crate) mod testing {
                 pre_value: 7,
                 post_value: 11,
             }),
+            2,
         )
         .unwrap()
     }
@@ -996,6 +999,7 @@ pub(crate) mod testing {
             JoltInstructionRow::default(),
             RegisterState::default(),
             RamAccess::NoOp,
+            0,
         )
         .unwrap()
     }
@@ -1003,7 +1007,7 @@ pub(crate) mod testing {
     pub(crate) fn with_booleanity_backend<R>(
         log_t: usize,
         log_k_chunk: u8,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
+        f: impl FnOnce(&TraceBackend, BooleanityDimensions) -> R,
     ) -> R {
         let alu = TraceRow::new(
             ALU,
@@ -1020,6 +1024,7 @@ pub(crate) mod testing {
                 ..Default::default()
             },
             RamAccess::NoOp,
+            3,
         )
         .unwrap();
         let mut rows = vec![
@@ -1040,7 +1045,7 @@ pub(crate) mod testing {
         log_t: usize,
         log_k_chunk: u8,
         rows: Vec<TraceRow>,
-        f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
+        f: impl FnOnce(&TraceBackend, BooleanityDimensions) -> R,
     ) -> R {
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
@@ -1067,7 +1072,7 @@ pub(crate) mod testing {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+            TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
 

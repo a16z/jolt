@@ -18,12 +18,13 @@ use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
-use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
-    RegisterWrite, TraceOutput, TraceRow,
-};
+use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
+use jolt_riscv::{
+    JoltTraceRow as TraceRow, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState,
+    RegisterWrite,
+};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
@@ -217,7 +218,18 @@ pub(crate) fn with_ram_fixture_init<R>(
                     RamAccess::NoOp,
                 ),
             };
-            TraceRow::new(instruction, registers, ram_access).unwrap()
+            TraceRow::new(
+                instruction,
+                registers,
+                ram_access,
+                preprocessing
+                    .bytecode
+                    .get_pc(&instruction)
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+            )
+            .unwrap()
         })
         .collect();
 
@@ -237,7 +249,7 @@ pub(crate) fn with_ram_fixture_init<R>(
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), device, None, None),
+        TraceOutput::new(TraceData::new(rows), device, None, None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)

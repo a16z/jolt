@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
-use common::jolt_device::MemoryConfig;
+use common::jolt_device::{MemoryConfig, MemoryLayout};
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
 #[cfg(not(feature = "akita"))]
@@ -61,18 +61,10 @@ use jolt_profiling::{
     format_memory_size, report_stage_memory, setup_tracing_with_trace_path, PeakMemory,
     TracingFormat, BYTES_PER_GIB,
 };
-#[cfg(feature = "field-inline")]
-use jolt_program::execution::ExecutionBackend;
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
-use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing};
-#[cfg(not(feature = "field-inline"))]
-use jolt_riscv::JoltTraceRow;
+use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
+use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
-#[cfg(not(feature = "field-inline"))]
-type ProfileTrace = Arc<Vec<JoltTraceRow>>;
-#[cfg(feature = "field-inline")]
-type ProfileTrace = OwnedTrace;
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 type FieldInlineField = Fr;
 #[cfg(all(feature = "field-inline", feature = "akita"))]
@@ -731,16 +723,8 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     )
     .expect("program preprocessing");
 
-    let trace_output = trace_modular(
-        &jolt_program,
-        &memory_layout,
-        &program_preprocessing.bytecode,
-        &input,
-    );
-    #[cfg(not(feature = "field-inline"))]
-    let trace_length = trace_output.trace.len();
-    #[cfg(feature = "field-inline")]
-    let trace_length = trace_output.trace.rows().len();
+    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    let trace_length = trace_output.trace.proof_len();
 
     let run = prove_workload(
         &jolt_program,
@@ -835,24 +819,14 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
 fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
-    trace_output: TraceOutput<ProfileTrace>,
+    trace_output: TraceOutput,
     backend: BackendKind,
 ) -> ProvenRun {
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
-    #[cfg(not(feature = "field-inline"))]
-    let config = ProverConfig::derive_compact::<Fr>(
-        trace_output.trace.as_slice(),
-        &memory_layout,
-        program_preprocessing.ram.min_bytecode_address,
-        program_preprocessing.ram.bytecode_words.len(),
-        max_trace_length,
-    )
-    .expect("derive config");
-    #[cfg(feature = "field-inline")]
     let config = ProverConfig::derive::<Fr>(
-        trace_output.trace.rows(),
+        trace_output.trace.proof_rows(),
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
         program_preprocessing.ram.bytecode_words.len(),
@@ -944,7 +918,7 @@ fn prove_workload(
 fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
-    trace_output: TraceOutput<ProfileTrace>,
+    trace_output: TraceOutput,
     backend: BackendKind,
     chunk_profile: AkitaChunkProfile,
 ) -> ProvenRun {
@@ -962,18 +936,8 @@ fn prove_workload(
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
-    #[cfg(not(feature = "field-inline"))]
-    let mut config = ProverConfig::derive_compact::<AkitaField>(
-        trace_output.trace.as_slice(),
-        &memory_layout,
-        program_preprocessing.ram.min_bytecode_address,
-        program_preprocessing.ram.bytecode_words.len(),
-        max_trace_length,
-    )
-    .expect("derive config");
-    #[cfg(feature = "field-inline")]
     let mut config = ProverConfig::derive::<AkitaField>(
-        trace_output.trace.rows(),
+        trace_output.trace.proof_rows(),
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
         program_preprocessing.ram.bytecode_words.len(),
@@ -1080,10 +1044,9 @@ fn prove_workload(
 
 fn trace_modular(
     program: &JoltProgram,
-    memory_layout: &common::jolt_device::MemoryLayout,
-    bytecode: &BytecodePreprocessing,
+    memory_layout: &MemoryLayout,
     inputs: &[u8],
-) -> TraceOutput<ProfileTrace> {
+) -> TraceOutput {
     let memory_config = MemoryConfig {
         max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
         max_trusted_advice_size: memory_layout.max_trusted_advice_size,
@@ -1094,35 +1057,16 @@ fn trace_modular(
         program_size: Some(memory_layout.program_size),
     };
     let trace_inputs = TraceInputs::new(inputs.to_vec(), Vec::new(), Vec::new(), memory_config);
-    #[cfg(not(feature = "field-inline"))]
-    {
-        TracerBackend::new()
-            .trace_compact(program, trace_inputs, bytecode)
-            .expect("modular trace")
-    }
-    #[cfg(feature = "field-inline")]
-    {
-        let _ = bytecode;
-        TracerBackend::new()
-            .trace(program, trace_inputs)
-            .expect("modular field trace")
-    }
+    TracerBackend::new()
+        .trace(program, trace_inputs)
+        .expect("modular trace")
 }
 
-fn profile_witness(
-    config: JoltVmWitnessConfig,
-    inputs: JoltVmWitnessInputs<ProfileTrace>,
-) -> TraceBackend<OwnedTrace> {
-    #[cfg(not(feature = "field-inline"))]
-    {
-        TraceBackend::<OwnedTrace>::from_compact(config, inputs)
-    }
+fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> TraceBackend {
+    let witness = TraceBackend::try_new(config, inputs).expect("trace witness");
     #[cfg(feature = "field-inline")]
-    {
-        TraceBackend::new(config, inputs)
-            .with_field_inline()
-            .expect("field-inline witness")
-    }
+    let witness = witness.with_field_inline().expect("field-inline witness");
+    witness
 }
 
 #[cfg(all(test, feature = "akita"))]

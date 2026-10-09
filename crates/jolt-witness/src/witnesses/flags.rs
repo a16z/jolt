@@ -179,7 +179,7 @@ impl ExtractIndexed<usize> for LookupTableFlag {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let instruction = decode_instruction(row)?;
+        let instruction = decode_instruction(row);
         let table_index =
             <JoltInstruction as InstructionLookupTable<RV64_XLEN>>::lookup_table(&instruction)
                 .map(|kind| kind.index());

@@ -128,45 +128,18 @@ pub struct FieldRegisterWrite {
     pub post_value: FieldEncodedValue,
 }
 
+/// Field-register effects of one field-inline cycle. The row's instruction
+/// kind names the op; integer-register effects of bridge ops live in the row's
+/// captures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
     derive(serde::Serialize, serde::Deserialize)
 )]
-pub enum FieldInlineBridge {
-    LoadAccumulateFromRegister {
-        x_register: u8,
-        x_value: u64,
-        field_value: FieldEncodedValue,
-    },
-    AdviceLimb {
-        field_register: u8,
-        field_value: FieldEncodedValue,
-        x_register: u8,
-        x_value: u64,
-    },
-    /// The word at `x[x_base] + offset` is written to integer register
-    /// `x_register` and accumulated into the field destination. The integer
-    /// write lets the ordinary RV64 load constraints bind the memory value.
-    LoadAccumulateFromMemory {
-        x_base: u8,
-        x_register: u8,
-        word: u64,
-        field_value: FieldEncodedValue,
-    },
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 pub struct FieldInlineTraceData {
-    pub op: Option<FieldInlineOp>,
     pub rs1: Option<FieldRegisterRead>,
     pub rs2: Option<FieldRegisterRead>,
     pub rd: Option<FieldRegisterWrite>,
-    pub bridge: Option<FieldInlineBridge>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

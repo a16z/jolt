@@ -42,7 +42,7 @@ pub fn prove<D>(
     let memory_layout = trace_output.device.memory_layout.clone();
     let public_io = trace_output.device.clone();
     let config = ProverConfig::derive::<AkitaField>(
-        trace_output.trace.rows(),
+        trace_output.trace.proof_rows(),
         &memory_layout,
         program_preprocessing.ram.min_bytecode_address,
         program_preprocessing.ram.bytecode_words.len(),

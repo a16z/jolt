@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl SRA {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SRA as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRA as RISCVInstruction>::RamAccess) {
         let mask = 0x3f;
         cpu.write_register(
             self.operands.rd as usize,

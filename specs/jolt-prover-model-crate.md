@@ -452,7 +452,7 @@ program/Jolt-trace boundary, not through tracer internals:
 guest Rust / SDK
   -> jolt-program image, expansion, profile checks, preprocessing
   -> execution backend
-  -> Jolt trace: TraceOutput<TraceSource>
+  -> Jolt trace: TraceOutput (Arc<TraceData>)
   -> jolt-witness
   -> jolt-prover stages
 ```
@@ -481,7 +481,6 @@ field-inline row data, when enabled:
   field op kind / selector flags
   field register operands and destination
   field register read/write values
-  bridge payloads for x-register <-> field-register movement
 ```
 
 Pure field operations should not create incidental ordinary x-register effects.

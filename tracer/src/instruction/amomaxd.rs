@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::Instruction;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{format::format_amo::FormatAMO, Cycle, RAMWrite, RISCVInstruction, RISCVTrace};
+use super::{format::format_amo::FormatAMO, Cycle, RISCVInstruction, RISCVTrace, RamWrite};
 
 declare_riscv_instr!(
     name   = AMOMAXD,
@@ -12,11 +12,11 @@ declare_riscv_instr!(
     match  = 0xa000302f,
     format = FormatAMO,
     registers = RegisterStateAMO,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl AMOMAXD {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOMAXD as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOMAXD as RISCVInstruction>::RamAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let compare_value = cpu.x[self.operands.rs2 as usize];
 

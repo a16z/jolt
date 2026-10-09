@@ -830,7 +830,7 @@ mod tests {
         FieldRegistersReadWriteChallenges, FieldRegistersReadWriteInputClaims,
     };
     use jolt_field::{Fr, Ring};
-    use jolt_riscv::FieldInlineOp;
+    use jolt_riscv::JoltInstructionKind;
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 
@@ -953,7 +953,7 @@ mod tests {
     fn parity_single_cycle_round() {
         let mut fixture = FieldRegisterTraceFixture::new();
         fixture.load_imm(2, 99);
-        fixture.arithmetic(FieldInlineOp::Mul, 2, 2, 2);
+        fixture.arithmetic(JoltInstructionKind::FIELD_MUL, 2, 2, 2);
         run_parity(fixture, 1, 109, true);
     }
 

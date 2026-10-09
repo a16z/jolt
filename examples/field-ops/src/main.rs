@@ -12,11 +12,11 @@ mod pipeline {
     use jolt::host::JoltProgramSource;
     use jolt::{
         JoltProgramPreprocessing, JoltProverPreprocessing, JoltSharedPreprocessing, MemoryConfig,
-        OwnedTrace, TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS,
-        VerifierTranscript, VerifierVC,
+        TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS, VerifierTranscript,
+        VerifierVC,
     };
     use jolt_field::{CanonicalBytes, Ring};
-    use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceRow};
+    use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceData};
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
@@ -62,7 +62,7 @@ mod pipeline {
 
     pub struct TracedGuest {
         pub preprocessing: JoltProverPreprocessing,
-        pub trace_output: TraceOutput<OwnedTrace>,
+        pub trace_output: TraceOutput,
         pub program: Arc<JoltProgram>,
     }
 
@@ -122,8 +122,8 @@ mod pipeline {
         }
     }
 
-    pub fn field_inline_rows(rows: &[TraceRow]) -> usize {
-        rows.iter().filter(|row| row.field_inline.is_some()).count()
+    pub fn field_inline_rows(trace: &TraceData) -> usize {
+        trace.field_events().len()
     }
 
     /// Prove with the modular prover and verify through the full verifier
@@ -137,22 +137,13 @@ mod pipeline {
         let memory_layout = trace_output.device.memory_layout.clone();
         let public_io = trace_output.device.clone();
         let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.rows(),
+            trace_output.trace.proof_rows(),
             &memory_layout,
             preprocessing.verifier.program.min_bytecode_address(),
             preprocessing.verifier.program.program_image_len_words(),
             MAX_PADDED_TRACE_LENGTH,
         )
         .expect("derive config");
-
-        let mut rows = trace_output.trace.rows().to_vec();
-        rows.resize(config.trace_length, TraceRow::default());
-        let witness_output = TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-            trace_output.advice_tape,
-        );
 
         let program_preprocessing = preprocessing
             .program_arc()
@@ -163,7 +154,7 @@ mod pipeline {
                 config.ram_K,
                 config.one_hot_config,
             ),
-            JoltVmWitnessInputs::new(&program, &program_preprocessing, witness_output),
+            JoltVmWitnessInputs::new(&program, &program_preprocessing, trace_output),
         )
         // field-inline proving needs the field-inline witness view; classic-profile
         // guests are refused rather than silently proven without field-inline columns.
@@ -211,7 +202,7 @@ fn main() {
     println!(
         "trace: {} cycles, {} field-inline",
         rows.len(),
-        field_inline_rows(rows)
+        field_inline_rows(&traced.trace_output.trace)
     );
 
     let output = prove_and_verify(traced);
@@ -252,7 +243,7 @@ mod tests {
     fn guest_traces_field_inline_active() {
         let traced = compile_and_trace(&guest_inputs(&PAIRS));
         let rows = traced.trace_output.trace.rows();
-        let field_rows = field_inline_rows(rows);
+        let field_rows = field_inline_rows(&traced.trace_output.trace);
         assert_eq!(field_rows, EXPECTED_FIELD_INLINE_CYCLES);
         assert!(
             field_rows < rows.len(),

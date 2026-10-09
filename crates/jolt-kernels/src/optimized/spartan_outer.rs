@@ -1543,7 +1543,6 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::signed::S128;
     use jolt_field::{Fr, Ring};
-    use jolt_program::execution::OwnedTrace;
     use jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
@@ -2014,7 +2013,7 @@ mod tests {
     /// uni-skip reduction at r0 need not equal the joint-domain sum here; the
     /// remainder runs on the true sum, which is what the naive reference
     /// self-checks against.
-    fn sample_case(backend: &TraceBackend<OwnedTrace>, log_t: usize) {
+    fn sample_case(backend: &TraceBackend, log_t: usize) {
         let tau: Vec<Fr> = (0..log_t + 2)
             .map(|i| Fr::from_u64(29 + 13 * i as u64))
             .collect();

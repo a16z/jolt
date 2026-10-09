@@ -182,7 +182,7 @@ fn final_rows_to_instructions(
                     row.instruction_kind,
                 ));
             }
-            JoltInstruction::try_from(row).map_err(ExpansionError::IllegalTargetInstruction)
+            Ok(JoltInstruction::from(row))
         })
         .collect()
 }

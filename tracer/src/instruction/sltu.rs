@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl SLTU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLTU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLTU as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             match cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])

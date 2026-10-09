@@ -22,7 +22,7 @@ declare_riscv_instr!(
 );
 
 impl FIELD_MUL {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_MUL as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_MUL as RISCVInstruction>::RamAccess) {
         let rs1_register = self.operands.rs1.unwrap_or(0);
         let rs2_register = self.operands.rs2.unwrap_or(0);
         let rd_register = self.operands.rd.unwrap_or(0);

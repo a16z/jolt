@@ -24,7 +24,8 @@
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
 use jolt_profiling::summary::ProfileSummary;
-use jolt_profiling::taxonomy::{self, TAXONOMY_VERSION};
+use jolt_profiling::taxonomy;
+use jolt_profiling::taxonomy::{CONFIG_DERIVATION_SPAN, ROOT_SPAN, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
 use serde_json::Value;
 
@@ -109,8 +110,27 @@ fn profile_run_emits_conformant_artifacts() {
         TAXONOMY_VERSION
     );
 
+    // Configuration belongs to this harness's prelude, outside the prove span.
+    let span_time = |label: &str, phase: &str| {
+        trace
+            .iter()
+            .find(|event| {
+                event.get("name").and_then(Value::as_str) == Some(label)
+                    && event.get("ph").and_then(Value::as_str) == Some(phase)
+            })
+            .and_then(|event| event.get("ts").and_then(Value::as_f64))
+            .expect("profile prelude and prove spans have begin/end timestamps")
+    };
+    let config_start = span_time(CONFIG_DERIVATION_SPAN, "B");
+    let config_end = span_time(CONFIG_DERIVATION_SPAN, "E");
+    assert!(config_start <= config_end);
+    assert!(config_end <= span_time(ROOT_SPAN, "B"));
+    assert!(summary.spans.contains_key(CONFIG_DERIVATION_SPAN));
+    assert!(!emitted.contains("ProverConfig::derive_compact"));
+    assert_eq!(summary.taxonomy_version, TAXONOMY_VERSION);
+
     let root = summary.root.expect("root summary");
-    assert_eq!(root.label, taxonomy::ROOT_SPAN);
+    assert_eq!(root.label, ROOT_SPAN);
     assert!(root.wall_time_ns > 0);
     assert!(root.dark_time_fraction >= 0.0 && root.dark_time_fraction <= 1.0);
     assert_eq!(summary.stages.len(), taxonomy::STAGE_SPANS.len());

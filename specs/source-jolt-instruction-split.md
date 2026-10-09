@@ -936,12 +936,13 @@ pub struct ProofTraceRow {
 }
 ```
 
-`crates/jolt-program` already has the equivalent `TraceRow` / `OwnedTrace`
-shape. A future cleanup should make `jolt-prover-legacy` prover inputs consume that
-normalized proof trace instead of `Arc<Vec<Cycle>>`. In that end state, tracer
-execution still owns concrete `Cycle` construction and CPU/RAM side effects,
-but proving code never sees source-only cycle variants and no longer needs to
-adapt each cycle repeatedly with `JoltTraceCycle::try_new`.
+`jolt_riscv::JoltTraceRow` and `jolt_program::execution::TraceData` already
+have the equivalent shape. A future cleanup should make `jolt-prover-legacy`
+prover inputs consume that normalized proof trace instead of
+`Arc<Vec<Cycle>>`. In that end state, tracer execution still owns concrete
+`Cycle` construction and CPU/RAM side effects, but proving code never sees
+source-only cycle variants and no longer needs to adapt each cycle repeatedly
+with `JoltTraceCycle::try_new`.
 
 Expansion bodies are also not moved into `jolt-riscv`, because `jolt-riscv`
 must remain below `jolt-program` in the dependency graph. `jolt-riscv` can expose

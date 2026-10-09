@@ -58,7 +58,7 @@ declare_riscv_instr!(
 
         #[cfg(any(feature = "test-utils", test))]
         fn initialize_test_cpu(cycle: &RISCVCycle<Self>, cpu: &mut Cpu) {
-            let trace = cycle.register_state.to_field_inline_trace(FieldInlineOp::AdviceLimb);
+            let trace = cycle.register_state.to_field_inline_trace();
             if let Some(write) = trace.rd {
                 cpu.field_registers.write(write.register, write.pre_value);
             }
@@ -72,7 +72,7 @@ declare_riscv_instr!(
 impl FIELD_ADVICE_LIMB {
     /// Honest advice generation chooses the canonical low limb and quotient.
     /// Constraints permit other choices; the guest validates the full readout.
-    fn exec(&self, cpu: &mut Cpu, _: &mut <Self as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <Self as RISCVInstruction>::RamAccess) {
         let field_register = self.operands.rs1.unwrap_or(0);
         let quotient_register = self.operands.rs2.unwrap_or(0);
         let x_register = self.operands.rd.unwrap_or(0);
@@ -117,10 +117,7 @@ mod tests {
             let cycle = FIELD_ADVICE_LIMB::random_cycle(&mut rng);
             let operands = cycle.instruction.operands();
             assert!((1..RISCV_REGISTER_COUNT).contains(&operands.rd.unwrap()));
-            let trace = cycle
-                .register_state
-                .to_field_inline_trace(FieldInlineOp::AdviceLimb);
-            assert_eq!(trace.op, Some(FieldInlineOp::AdviceLimb));
+            let trace = cycle.register_state.to_field_inline_trace();
             let source = trace.rs1.unwrap();
             assert_eq!(operands.rs1, Some(source.register));
             assert!(source.register < FIELD_REGISTER_COUNT);

@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualWindowMaskW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualWindowMaskW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualWindowMaskW as RISCVInstruction>::RamAccess) {
         // Byte mask of the word at the effective address's offset within its
         // containing doubleword. Only bit 2 is read; bits 0-1 are zero on the
         // word-aligned addresses the surrounding sequence asserts. The

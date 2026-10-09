@@ -1,4 +1,4 @@
-use super::{RISCVInstruction, RISCVTrace};
+use super::{RISCVInstruction, RISCVTrace, RamRead};
 use crate::instruction::registers::load::RegisterStateLoad;
 use crate::{
     declare_riscv_instr, emulator::cpu::Cpu, instruction::format::format_load::FormatLoad,
@@ -11,11 +11,11 @@ declare_riscv_instr!(
     match  = 0x00003003,
     format = FormatLoad,
     registers = RegisterStateLoad,
-    ram    = super::RAMRead
+    ram    = RamRead
 );
 
 impl LD {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LD as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LD as RISCVInstruction>::RamAccess) {
         let address = (cpu.x[self.operands.rs1 as usize] as u64)
             .wrapping_add(self.operands.imm as i32 as u64);
         let value = cpu.get_mut_mmu().load_doubleword(address);

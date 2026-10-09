@@ -327,7 +327,7 @@ impl Program {
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> Result<TraceOutput<B::Trace>, TraceError> {
+    ) -> Result<TraceOutput, TraceError> {
         let program = self.jolt_program()?;
         let memory_config =
             self.memory_config_with_program_size(program.program_end - RAM_START_ADDRESS);
@@ -449,7 +449,7 @@ impl Program {
             .expect("failed to trace program with default tracer backend");
 
         ProgramSummary {
-            trace: trace_output.trace.into_rows(),
+            trace: trace_output.trace,
             bytecode,
             memory_init: init_memory_state,
             io_device: trace_output.device,

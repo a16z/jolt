@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl LUI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <LUI as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <LUI as RISCVInstruction>::RamAccess) {
         cpu.write_register(self.operands.rd as usize, normalize_imm(self.operands.imm));
     }
 }

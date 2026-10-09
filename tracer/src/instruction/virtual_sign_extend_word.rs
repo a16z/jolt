@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualSignExtendWord {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSignExtendWord as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSignExtendWord as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             (cpu.x[self.operands.rs1 as usize] << 32) >> 32,

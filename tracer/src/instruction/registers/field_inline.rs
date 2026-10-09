@@ -1,11 +1,7 @@
-use jolt_program::{
-    execution::{RegisterRead, RegisterWrite},
-    field_inline::{
-        FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
-        FieldRegisterWrite,
-    },
+use jolt_program::field_inline::{
+    FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
-use jolt_riscv::{FieldInlineOp, NormalizedOperands};
+use jolt_riscv::{NormalizedOperands, RegisterRead, RegisterWrite};
 #[cfg(any(feature = "test-utils", test))]
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
@@ -221,62 +217,12 @@ impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
 }
 
 impl RegisterStateFieldInline {
-    #[expect(
-        clippy::expect_used,
-        reason = "The field instruction's completed capture supplies every required bridge operand"
-    )]
-    pub(crate) fn to_field_inline_trace(self, op: FieldInlineOp) -> FieldInlineTraceData {
+    pub(crate) fn to_field_inline_trace(self) -> FieldInlineTraceData {
         let (rs1, rs2) = self.field.reads();
-        let rd = self.field.write();
-        let bridge = match op {
-            FieldInlineOp::LoadAccumulateFromRegister => {
-                let x_read = self.integer.read().expect("ingress reads an x-register");
-                Some(FieldInlineBridge::LoadAccumulateFromRegister {
-                    x_register: x_read.register,
-                    x_value: x_read.value,
-                    field_value: rd.expect("ingress writes a field register").post_value,
-                })
-            }
-            FieldInlineOp::LoadAccumulateFromMemory => {
-                let x_read = self.integer.read().expect("memory ingress reads a base");
-                let x_write = self
-                    .integer
-                    .write()
-                    .expect("memory ingress writes an x-register");
-                Some(FieldInlineBridge::LoadAccumulateFromMemory {
-                    x_base: x_read.register,
-                    x_register: x_write.register,
-                    word: x_write.post_value,
-                    field_value: rd.expect("ingress writes a field register").post_value,
-                })
-            }
-            FieldInlineOp::AdviceLimb => {
-                let field_read = rs1.expect("limb advice reads a field register");
-                let x_write = self
-                    .integer
-                    .write()
-                    .expect("limb advice writes an x-register");
-                Some(FieldInlineBridge::AdviceLimb {
-                    field_register: field_read.register,
-                    field_value: field_read.value,
-                    x_register: x_write.register,
-                    x_value: x_write.post_value,
-                })
-            }
-            FieldInlineOp::Add
-            | FieldInlineOp::Sub
-            | FieldInlineOp::Mul
-            | FieldInlineOp::Inv
-            | FieldInlineOp::AssertEq
-            | FieldInlineOp::AssertZero
-            | FieldInlineOp::LoadImm => None,
-        };
         FieldInlineTraceData {
-            op: Some(op),
             rs1,
             rs2,
-            rd,
-            bridge,
+            rd: self.field.write(),
         }
     }
 }

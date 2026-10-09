@@ -6,6 +6,7 @@ use jolt_program::execution::ExecutionBackend;
 // Link inline registrations for the inline-bearing guests.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
+use jolt_program::preprocess::BytecodePreprocessing;
 use jolt_tracer_x86::X86TracerBackend;
 use tracer::TracerBackend;
 
@@ -51,7 +52,7 @@ fn assert_fast_run_matches(package: &str, func: &str, input: Vec<u8>) {
     );
 }
 
-/// Record mode: the full `TraceRow` stream must be identical to the
+/// Record mode: the full `JoltTraceRow` stream must be identical to the
 /// reference interpreter's, row for row. This is the strongest equivalence
 /// statement the backend can make (spec invariant 1) and what proof
 /// byte-equality rests on.
@@ -71,12 +72,23 @@ fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
         .trace(&program, inputs)
         .expect("x86 record trace failed");
     let actual = actual_output.trace.rows();
+    let bytecode = BytecodePreprocessing::preprocess(
+        program.expanded_bytecode.clone(),
+        program.entry_address,
+        program.profile,
+    )
+    .expect("preprocess trace bytecode");
 
     assert_eq!(actual.len(), expected.len(), "{package}: row count");
     for (index, (got, want)) in actual.iter().zip(expected.iter()).enumerate() {
         assert_eq!(
             got, want,
             "{package}: row {index} diverged\n  got:  {got:?}\n  want: {want:?}"
+        );
+        assert_eq!(
+            bytecode.bytecode.get(usize::try_from(got.pc()).unwrap()),
+            Some(&got.instruction()),
+            "{package}: row {index} has the wrong bytecode PC",
         );
     }
     assert_eq!(

@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualSRAW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRAW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRAW as RISCVInstruction>::RamAccess) {
         let shift = cpu.x[self.operands.rs2 as usize].trailing_zeros();
         let result = (cpu.x[self.operands.rs1 as usize] as i32) >> shift;
         cpu.write_register(self.operands.rd as usize, result as i64);

@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualZeroExtendWord {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualZeroExtendWord as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualZeroExtendWord as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             cpu.x[self.operands.rs1 as usize] & 0xFFFFFFFF,

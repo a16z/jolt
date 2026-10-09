@@ -783,7 +783,6 @@ mod tests {
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_claims::NoChallenges;
     use jolt_field::{CanonicalBytes, Fr, Ring};
-    use jolt_program::execution::OwnedTrace;
     use jolt_verifier::stages::stage2::product_remainder::product_remainder_input_values_from_uniskip_output;
     use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
     use jolt_witness::testing::with_sample_backend;
@@ -1254,7 +1253,7 @@ mod tests {
     /// The trait-path parity body over a real trace backend, with the
     /// remainder driven by the true joint-domain sum (the trace fixtures are
     /// not constraint-satisfying; see the outer module's twin test).
-    fn sample_case(backend: &TraceBackend<OwnedTrace>, log_t: usize) {
+    fn sample_case(backend: &TraceBackend, log_t: usize) {
         {
             let tau_low: Vec<Fr> = (0..log_t)
                 .map(|i| Fr::from_u64(41 + 19 * i as u64))

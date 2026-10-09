@@ -1,45 +1,21 @@
 use common::jolt_device::JoltDevice;
-use std::sync::Arc;
 
-use super::{MemoryImage, TraceError, TraceInputs, TraceOutput, TraceRow};
+use super::{MemoryImage, TraceData, TraceError, TraceInputs, TraceOutput};
 
 pub trait ExecutionBackend {
-    type Trace: TraceSource;
-
     fn trace(
         &mut self,
         program: &super::JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput<Self::Trace>, TraceError>;
-}
-
-pub trait TraceSource {
-    fn next_row(&mut self) -> Option<TraceRow>;
-
-    /// The full row sequence as one slice, if this source can serve it.
-    ///
-    /// Contract: the slice must equal exactly what the remaining `next_row`
-    /// calls would yield — a partially consumed source must return `None`
-    /// rather than a slice that includes already-consumed rows.
-    fn rows(&self) -> Option<&[TraceRow]> {
-        None
-    }
-
-    /// The full row sequence as a shared allocation, under the same contract
-    /// as [`Self::rows`]. Consumers that must retain the raw rows (the
-    /// field-inline witness view) hold this instead of copying the trace.
-    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
-        None
-    }
+    ) -> Result<TraceOutput, TraceError>;
 }
 
 /// Two-pass chunked execution: a fast checkpointing pass over the whole
 /// program, then parallel per-chunk replay.
 ///
 /// This is the producer-side contract for streaming consumers. Proof adapters
-/// that require retained random access must emit their compact row format at
-/// this boundary instead of draining a replaying source into another full
-/// trace allocation.
+/// that require retained random access must retain each replayed
+/// [`TraceData`] instead of copying chunks into another full trace allocation.
 pub trait ChunkedExecutionBackend: ExecutionBackend {
     /// Everything needed to deterministically re-execute one chunk,
     /// independent of every other chunk.
@@ -64,7 +40,7 @@ pub trait ChunkedExecutionBackend: ExecutionBackend {
     /// padding rows; padding stays the consumer's job, as in the existing
     /// `RowSource` contract). Takes `&self` so disjoint chunks can be
     /// replayed in parallel, in any order.
-    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError>;
+    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<TraceData, TraceError>;
 }
 
 pub struct ExecutionSummary<C> {

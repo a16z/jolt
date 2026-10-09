@@ -7,7 +7,7 @@ use crate::{
 };
 
 use super::format::format_r::FormatR;
-use super::{Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace};
+use super::{Cycle, Instruction, RISCVInstruction, RISCVTrace, RamWrite};
 
 declare_riscv_instr!(
     name   = SCW,
@@ -15,11 +15,11 @@ declare_riscv_instr!(
     match  = 0x1800202f,
     format = FormatR,
     registers = RegisterStateR,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl SCW {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SCW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <SCW as RISCVInstruction>::RamAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let value = cpu.x[self.operands.rs2 as usize] as u32;
 
