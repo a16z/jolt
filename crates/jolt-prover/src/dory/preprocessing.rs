@@ -102,7 +102,7 @@ pub fn preprocess_committed_with_order(
             reason: "entry address is absent from bytecode preprocessing".to_owned(),
         })?;
     let bytecode_candidate =
-        bytecode::precommitted_candidate(full.bytecode.code_size).map_err(|error| {
+        bytecode::bytecode_total_vars(full.bytecode.code_size).map_err(|error| {
             PreprocessingError::InvalidCommittedProgram {
                 reason: error.to_string(),
             }
@@ -240,7 +240,7 @@ fn commit_bytecode(
     ),
     PreprocessingError,
 > {
-    let candidate = bytecode::precommitted_candidate(full.bytecode.code_size).map_err(|error| {
+    let candidate = bytecode::bytecode_total_vars(full.bytecode.code_size).map_err(|error| {
         PreprocessingError::InvalidCommittedProgram {
             reason: error.to_string(),
         }

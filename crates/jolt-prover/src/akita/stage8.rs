@@ -105,7 +105,8 @@ where
     // or the direct committed-program objects, then OneHotTrace. The suffixes
     // are exclusive: field-inline rejects committed-program preprocessing.
     let mut auxiliary_groups = Vec::with_capacity(
-        2 + usize::from(cfg!(feature = "field-inline")) + program.map_or(0, |_| 2),
+        2 + usize::from(cfg!(feature = "field-inline"))
+            + program.map_or(0, |objects| objects.objects().count()),
     );
     for (object, claim) in [
         (untrusted_advice, untrusted_physical.as_ref()),

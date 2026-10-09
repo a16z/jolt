@@ -1844,7 +1844,6 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     BytecodeReductionIntermediateClaims { intermediate: zero },
                 ),
             ),
-
             program_image_reduction: fill_optionals.then_some(
                 stage6b::outputs::ProgramImageReductionCyclePhaseOutputClaims {
                     program_image: zero,

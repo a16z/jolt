@@ -1,13 +1,13 @@
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
-use super::BytecodeReductionShape;
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     cycle_phase_intermediate_opening, final_output_expr,
 };
 use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::{
     JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
+    PrecommittedReductionDimensions,
 };
 use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
@@ -35,7 +35,7 @@ pub struct BytecodeReductionAddressPhaseInputClaims<C> {
 /// intermediate opening to weighted committed-bytecode claims.
 #[derive(Clone)]
 pub struct AddressPhase {
-    shape: BytecodeReductionShape,
+    shape: PrecommittedReductionDimensions,
 }
 
 impl SymbolicSumcheck for AddressPhase {
@@ -43,12 +43,12 @@ impl SymbolicSumcheck for AddressPhase {
     type OpeningId = JoltOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
-    type Shape = BytecodeReductionShape;
+    type Shape = PrecommittedReductionDimensions;
     type Challenges<F> = crate::NoChallenges<F>;
     type Inputs<C> = BytecodeReductionAddressPhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionAddressPhaseOutputClaims<C>;
 
-    fn new(shape: BytecodeReductionShape) -> Self {
+    fn new(shape: PrecommittedReductionDimensions) -> Self {
         Self { shape }
     }
 
@@ -57,8 +57,7 @@ impl SymbolicSumcheck for AddressPhase {
     }
 
     fn rounds(&self) -> usize {
-        let dimensions = self.shape;
-        dimensions.address_phase_total_rounds()
+        self.shape.address_phase_total_rounds()
     }
 
     fn degree(&self) -> usize {

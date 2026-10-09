@@ -436,7 +436,6 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
             _ => {}
         }
     }
-
     if let Some(reduction) = stage6b.program_image_reduction.as_mut() {
         if id == program_image_reduction::cycle_phase_program_image_opening()
             || id == program_image_reduction::final_program_image_opening()
@@ -592,7 +591,6 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
             return Some(&mut address_phase.bytecode);
         }
     }
-
     if let Some(address_phase) = claims.program_image_address_phase.as_mut() {
         if id == program_image_reduction::final_program_image_opening() {
             return Some(&mut address_phase.program_image);

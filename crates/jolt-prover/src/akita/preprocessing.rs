@@ -160,6 +160,11 @@ pub fn preprocess_committed_with_advice(
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     crate::preprocessing::validate_committed_mode()?;
     validate_trace_order(config)?;
+    if program.bytecode.code_size != program.bytecode.bytecode.len() {
+        return Err(PreprocessingError::InvalidCommittedProgram {
+            reason: "declared bytecode size differs from padded rows".to_owned(),
+        });
+    }
     let metadata =
         program
             .metadata()
@@ -188,11 +193,10 @@ pub fn preprocess_committed_with_advice(
         &physical_vars,
     )?;
     let direct_program =
-        commit_direct_program::<AkitaScheme>(schedule_artifacts, &program, trace_order).map_err(
-            |error| PreprocessingError::InvalidCommittedProgram {
+        commit_direct_program::<AkitaScheme>(schedule_artifacts, &program, trace_order, &plan)
+            .map_err(|error| PreprocessingError::InvalidCommittedProgram {
                 reason: error.to_string(),
-            },
-        )?;
+            })?;
     let committed_program = CommittedProgramPreprocessing {
         meta: metadata,
         memory_layout: program.memory_layout.clone(),

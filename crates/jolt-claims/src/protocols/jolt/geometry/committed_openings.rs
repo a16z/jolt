@@ -74,8 +74,8 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         JoltCommittedPolynomial::ProgramBytecode => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
 
-        JoltCommittedPolynomial::Reserved4(_)
-        | JoltCommittedPolynomial::BalancedIncDigit(_)
+        JoltCommittedPolynomial::Reserved4(retired) => match retired {},
+        JoltCommittedPolynomial::BalancedIncDigit(_)
         | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
     }
 }

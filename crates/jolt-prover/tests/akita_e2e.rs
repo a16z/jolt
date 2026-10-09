@@ -430,6 +430,24 @@ mod akita_tests {
         verify(&proved).expect("full-advice proof must verify");
     }
 
+    #[test]
+    fn committed_program_rejects_mismatched_bytecode_size() {
+        let (mut run, config) = muldiv_run();
+        assert!(run.preprocessing.bytecode.bytecode.len() > 2);
+        run.preprocessing.bytecode.code_size = 2;
+        let error = preprocessing::preprocess_committed(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            run.preprocessing,
+            &config,
+        )
+        .err()
+        .expect("mismatched bytecode size must be rejected before commitment");
+        assert!(matches!(
+            error,
+            PreprocessingError::InvalidCommittedProgram { .. }
+        ));
+    }
+
     fn committed_e2e(profile: AkitaChunkProfile) {
         let (run, mut config) = muldiv_run();
         config.akita_chunk_profile = profile;

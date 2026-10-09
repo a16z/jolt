@@ -1,7 +1,3 @@
-use crate::protocols::jolt::PrecommittedReductionDimensions;
-
-pub type BytecodeReductionShape = PrecommittedReductionDimensions;
-
 mod address_phase;
 mod cycle_phase;
 

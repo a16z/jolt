@@ -161,9 +161,15 @@ In the final $\log T$ rounds, cycle variables are bound, also in **low-to-high**
 
 The sumcheck univariate in this phase has degree $d + 1$.
 
-The chunking parameter $d$ is chosen based on the bytecode size to balance prover time and proof size. Larger $d$ reduces the number of committed RA polynomials but increases the degree (and thus the cost per round) of the sumcheck.
+The address decomposition has $d$ committed RA polynomials, and the cycle-phase sumcheck has degree $d + 1$. This address-bit chunking remains in both backends; it does not partition the committed bytecode table.
 
 ## One-hot checks
 
 Jolt enforces that the $\widetilde{\textsf{ra}}_i$ polynomials used for bytecode Shout are [one-hot](../twist-shout.md#one-hot-polynomials), using a Booleanity and Hamming weight sumcheck as described in the paper.
 These implementations follow the Twist and Shout paper closely, with no notable deviations.
+
+## Committed-program bytecode
+
+In committed-program mode, Dory and Akita each commit one whole-bytecode polynomial (`ProgramBytecode`), with nine lane variables and one variable per bit of the padded bytecode row index. Neither backend exposes a bytecode-table chunk count.
+
+Dory embeds the balanced bytecode matrix into the joint opening grid. If that matrix exceeds the trace grid, the bytecode enlarges the joint grid and the precommitted reduction schedule, potentially increasing proving time and memory. A trace smaller than the bytecode remains supported. Akita gives bytecode its own polynomial group and opening point, so its bytecode arity is independent of the trace group.

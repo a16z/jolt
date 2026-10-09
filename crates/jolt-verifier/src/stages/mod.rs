@@ -146,7 +146,7 @@ impl PrecommittedSchedule {
         #[cfg(feature = "akita")]
         let mut candidates = Vec::new();
         if let Some(committed) = committed_program {
-            candidates.push(bytecode::precommitted_candidate(committed.bytecode_len)?);
+            candidates.push(bytecode::bytecode_total_vars(committed.bytecode_len)?);
             candidates.push(program_image::precommitted_candidate(
                 committed.program_image_len_words,
             ));

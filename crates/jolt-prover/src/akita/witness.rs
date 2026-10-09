@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 use jolt_akita::{no_selected_row, TraceOneHotRows};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::packing::{
-    advice_packing_plan, committed_program_packing_plan, PrefixPackedObjectPlan,
+    advice_packing_plan, PrecommittedPackingPlan, PrefixPackedObjectPlan,
 };
 use jolt_claims::protocols::jolt::lattice::strategy::OneHotTraceLayoutPlan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
@@ -412,20 +412,15 @@ impl<PCS: CommitmentScheme> DirectProgramObjects<PCS> {
 }
 
 /// Assembles and commits the whole bytecode and program-image object.
-pub fn commit_direct_program<PCS>(
+pub(super) fn commit_direct_program<PCS>(
     setup_context: &PCS::SetupContext,
     program: &JoltProgramPreprocessing,
     trace_order: TracePolynomialOrder,
+    plan: &PrecommittedPackingPlan,
 ) -> Result<DirectProgramObjects<PCS>, ProverError<PCS::Field>>
 where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
-    let plan = committed_program_packing_plan(
-        program.bytecode.bytecode.len(),
-        program.ram.bytecode_words.len(),
-        trace_order,
-    )
-    .map_err(commit_failed)?;
     let bytecode_vars = plan.bytecode.packing().packed_num_vars();
     let image_vars = plan.program_image.packing().packed_num_vars();
     let bytecode_setup =

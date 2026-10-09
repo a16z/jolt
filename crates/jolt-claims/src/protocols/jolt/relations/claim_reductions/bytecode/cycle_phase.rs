@@ -1,10 +1,7 @@
-use crate::MissingOpeningValue;
-use jolt_field::JoltField;
-use jolt_field::Ring;
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use super::BytecodeReductionAddressPhaseOutputClaims;
-use super::BytecodeReductionShape;
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
     bytecode_val_stage_opening, cycle_phase_intermediate_opening, final_output_expr,
     NUM_BYTECODE_VAL_STAGES,
@@ -12,9 +9,12 @@ use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
 use crate::protocols::jolt::geometry::claim_reductions::precommitted::TWO_PHASE_DEGREE_BOUND;
 use crate::protocols::jolt::{
     BytecodeClaimReductionChallenge, JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId,
-    JoltRelationId,
+    JoltRelationId, PrecommittedReductionDimensions,
 };
-use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+use crate::{
+    challenge, opening, InputClaims, MissingOpeningValue, OutputClaims, SumcheckChallenges,
+    SymbolicSumcheck,
+};
 
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,7 +103,7 @@ pub struct BytecodeReductionCyclePhaseChallenges<F> {
 /// committed `ProgramBytecode` opening weighted by `OutputWeight`.
 #[derive(Clone)]
 pub struct CyclePhase {
-    shape: BytecodeReductionShape,
+    shape: PrecommittedReductionDimensions,
 }
 
 impl SymbolicSumcheck for CyclePhase {
@@ -111,12 +111,12 @@ impl SymbolicSumcheck for CyclePhase {
     type OpeningId = JoltOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
-    type Shape = BytecodeReductionShape;
+    type Shape = PrecommittedReductionDimensions;
     type Challenges<F> = BytecodeReductionCyclePhaseChallenges<F>;
     type Inputs<C> = BytecodeReductionCyclePhaseInputClaims<C>;
     type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 
-    fn new(shape: BytecodeReductionShape) -> Self {
+    fn new(shape: PrecommittedReductionDimensions) -> Self {
         Self { shape }
     }
 
@@ -125,8 +125,7 @@ impl SymbolicSumcheck for CyclePhase {
     }
 
     fn rounds(&self) -> usize {
-        let dimensions = self.shape;
-        dimensions.cycle_phase_total_rounds()
+        self.shape.cycle_phase_total_rounds()
     }
 
     fn degree(&self) -> usize {
@@ -143,8 +142,7 @@ impl SymbolicSumcheck for CyclePhase {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let dimensions = self.shape;
-        if dimensions.has_address_phase() {
+        if self.shape.has_address_phase() {
             opening(cycle_phase_intermediate_opening())
         } else {
             final_output_expr()

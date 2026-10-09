@@ -10,8 +10,8 @@
 //! the phase kernels are generic over the relation, and each kind contributes
 //! one `SumcheckKernel` impl per phase (the typed wire-claim assembly plus,
 //! on the cycle side, the carry parking under the paired address relation's
-//! key). The table BUILDERS live with the backends (the reference ones in
-//! the per-kind `reference::*_claim_reduction` modules), as do the stage-7
+//! key). The whole-bytecode builder lives here; other table builders live
+//! with the backends (the reference ones in the per-kind `reference::*_claim_reduction` modules), as do the stage-7
 //! `PrepareKernel` impls reclaiming the carries
 //! ([`reference::precommitted_reduction`](crate::reference::precommitted_reduction)).
 //! The scalar kinds resolve intermediate-vs-final through
@@ -36,16 +36,22 @@
 
 use std::marker::PhantomData;
 
-use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
+use jolt_claims::protocols::jolt::{
+    BytecodeClaimReductionLayout, PrecommittedClaimReduction, PrecommittedReductionLayout,
+};
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, BytecodeReductionCyclePhaseOutputClaims,
     ProgramImageReductionCyclePhase, ProgramImageReductionCyclePhaseOutputClaims,
     TrustedAdviceCyclePhase, TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhaseOutputClaims,
 };
+use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 use jolt_verifier::stages::stage7::advice_address_phase::{
     TrustedAdviceAddressPhase, TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhase,
     UntrustedAdviceAddressPhaseOutputClaims,
@@ -57,11 +63,10 @@ use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use jolt_verifier::stages::relations::SumcheckInputClaims;
-
+use crate::committed_program::{build_committed_bytecode_coeffs, bytecode_index_to_lane_row};
 use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 
-/// Tables at least this large run their round loops in parallel; below it
+/// Tables at least this large run their construction and round loops in parallel; below it
 /// rayon dispatch costs more than the work (the naive tier drives these
 /// kernels at harness scale, where the tables are tiny).
 #[cfg(feature = "parallel")]
@@ -430,7 +435,6 @@ impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReducti
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
         Ok(if self.has_address_phase() {
             BytecodeReductionCyclePhaseOutputClaims::Intermediate(
                 BytecodeReductionIntermediateClaims {
@@ -601,4 +605,36 @@ pub(crate) fn permute_tables<F: Copy + Send + Sync>(
             .collect(),
         None => tables,
     }
+}
+
+pub(crate) fn bytecode_reduction_kernel<F: JoltField>(
+    layout: &BytecodeClaimReductionLayout,
+    weights: &BytecodeReductionWeights<F>,
+    bytecode: &[JoltInstructionRow],
+) -> Result<CycleReductionKernel<F, BytecodeReductionCyclePhase<F>>, KernelError<F>> {
+    let reduction = layout.precommitted().clone();
+    let value = build_committed_bytecode_coeffs(bytecode, layout.trace_order())?;
+    let eq_rows: Vec<F> = EqPolynomial::evals(&weights.r_bc, None);
+    let rows = 1usize << layout.log_rows();
+    let entry = |index| {
+        let (lane, row) = bytecode_index_to_lane_row(index, rows, layout.trace_order());
+        weights.lane_weights[lane] * eq_rows[row]
+    };
+    #[cfg(feature = "parallel")]
+    let eq = {
+        if value.len() >= PAR_THRESHOLD {
+            (0..value.len()).into_par_iter().map(entry).collect()
+        } else {
+            (0..value.len()).map(entry).collect()
+        }
+    };
+    #[cfg(not(feature = "parallel"))]
+    let eq = (0..value.len()).map(entry).collect();
+    let mut tables = permute_tables(&reduction, vec![value, eq]).into_iter();
+    let (Some(value), Some(eq)) = (tables.next(), tables.next()) else {
+        return Err(KernelError::InvariantViolation {
+            reason: "bytecode permutation lost the value/eq tables",
+        });
+    };
+    CycleReductionKernel::new(reduction, value, eq)
 }

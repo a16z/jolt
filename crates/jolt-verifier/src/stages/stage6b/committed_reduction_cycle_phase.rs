@@ -25,7 +25,10 @@ pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
     TrustedAdviceCyclePhaseInputClaims, TrustedAdviceCyclePhaseOutputClaims,
     UntrustedAdviceCyclePhaseInputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
-use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase as BytecodeCyclePhase;
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
+    BytecodeReductionAddressPhaseOutputClaims, BytecodeReductionIntermediateClaims,
+    CyclePhase as BytecodeCyclePhase,
+};
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
     BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
     BytecodeReductionCyclePhaseOutputClaims,
@@ -420,7 +423,6 @@ pub fn bytecode_reduction_weights<F: JoltField>(
     let lane_weights = lane_weights(lane_inputs).map_err(bytecode_public_failed)?;
     Ok(BytecodeReductionWeights {
         r_bc: address_point,
-
         lane_weights,
     })
 }
@@ -455,9 +457,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
             .cycle_phase_opening_point(sumcheck_point)
             .map_err(bytecode_public_failed)?;
 
-        use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
-            BytecodeReductionAddressPhaseOutputClaims, BytecodeReductionIntermediateClaims,
-        };
         Ok(if self.layout.dimensions().has_address_phase() {
             BytecodeReductionCyclePhaseOutputClaims::Intermediate(
                 BytecodeReductionIntermediateClaims {
@@ -498,5 +497,86 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
             .cycle_phase_final_output_weight_at_opening_point(self.weights.as_inputs(), point)
             .map_err(bytecode_public_failed)?;
         Ok(value * weight)
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "contract assertions fail loudly")]
+mod tests {
+    use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
+        cycle_phase_output_openings, COMMITTED_BYTECODE_LANE_CAPACITY,
+    };
+    use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
+    use jolt_claims::protocols::jolt::{
+        JoltCommittedPolynomial, PrecommittedClaimReduction, TracePolynomialOrder,
+    };
+    use jolt_claims::OutputClaims;
+    use jolt_field::{Fr, Ring};
+
+    use super::*;
+
+    #[test]
+    fn cycle_only_bytecode_final_opening_contract() {
+        let reference = PrecommittedClaimReduction::scheduling_reference(20, &[10], 4);
+        let layout = BytecodeClaimReductionLayout::balanced(
+            TracePolynomialOrder::CycleMajor,
+            16,
+            reference,
+            2,
+        )
+        .unwrap();
+        assert!(!layout.dimensions().has_address_phase());
+        let weights = BytecodeReductionWeights {
+            r_bc: vec![Fr::from_u64(3)],
+            lane_weights: vec![Fr::from_u64(7); COMMITTED_BYTECODE_LANE_CAPACITY],
+        };
+        let relation = BytecodeReductionCyclePhase::new(&layout, weights.clone());
+        let challenges = BytecodeReductionCyclePhaseChallenges {
+            eta: Fr::from_u64(11),
+        };
+        let points = relation
+            .derive_opening_points(
+                &vec![Fr::from_u64(5); layout.dimensions().cycle_phase_total_rounds()],
+                &Default::default(),
+            )
+            .unwrap();
+        assert!(matches!(
+            points,
+            BytecodeReductionCyclePhaseOutputClaims::Final(_)
+        ));
+        let value = Fr::from_u64(13);
+        let values = BytecodeReductionCyclePhaseOutputClaims::Final(
+            BytecodeReductionAddressPhaseOutputClaims { bytecode: value },
+        );
+        let ids = values.canonical_order();
+        assert_eq!(ids, cycle_phase_output_openings(layout.dimensions()));
+        assert_eq!(
+            ids,
+            vec![final_opening_id(JoltCommittedPolynomial::ProgramBytecode)]
+        );
+        let weight = layout
+            .cycle_phase_final_output_weight_at_opening_point(
+                weights.as_inputs(),
+                points.bytecode().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            relation
+                .expected_output(&Default::default(), &values, &points, &challenges)
+                .unwrap(),
+            value * weight
+        );
+        assert!(relation
+            .expected_output(
+                &Default::default(),
+                &BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                    BytecodeReductionIntermediateClaims {
+                        intermediate: value
+                    },
+                ),
+                &points,
+                &challenges,
+            )
+            .is_err());
     }
 }

@@ -111,10 +111,6 @@ pub const BYTECODE_LANE_LAYOUT: BytecodeLaneLayout = BytecodeLaneLayout::new();
 
 /// Total-var count of the whole committed bytecode polynomial, used as this
 /// reduction's candidate in the shared precommitted scheduling reference.
-pub fn precommitted_candidate(bytecode_len: usize) -> Result<usize, PointGeometryError> {
-    bytecode_total_vars(bytecode_len)
-}
-
 pub fn bytecode_total_vars(bytecode_len: usize) -> Result<usize, PointGeometryError> {
     if !bytecode_len.is_power_of_two() {
         return Err(PointGeometryError::InvalidBytecodeLength { bytecode_len });
@@ -137,9 +133,10 @@ impl BytecodeClaimReductionLayout {
         scheduling_reference: PrecommittedSchedulingReference,
         bytecode_len: usize,
     ) -> Result<Self, PointGeometryError> {
-        let log_rows = bytecode_total_vars(bytecode_len)? - committed_lane_vars();
+        let total_vars = bytecode_total_vars(bytecode_len)?;
+        let log_rows = total_vars - committed_lane_vars();
 
-        let polynomial_shape = CommitmentMatrixShape::balanced(committed_lane_vars() + log_rows);
+        let polynomial_shape = CommitmentMatrixShape::balanced(total_vars);
         let precommitted = PrecommittedClaimReduction::new(
             polynomial_shape.row_vars(),
             polynomial_shape.column_vars(),
@@ -686,7 +683,7 @@ mod tests {
     ) -> BytecodeClaimReductionLayout {
         let log_t = 8;
         let log_k_chunk = 4;
-        let candidate = precommitted_candidate(bytecode_len)
+        let candidate = bytecode_total_vars(bytecode_len)
             .unwrap_or_else(|error| panic!("bytecode length should be valid: {error}"));
         let scheduling_reference = PrecommittedClaimReduction::scheduling_reference(
             log_t + log_k_chunk,

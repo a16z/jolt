@@ -503,6 +503,7 @@ pub enum JoltDerivedId {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "wire regression tests fail loudly")]
 mod tests {
     use super::*;
 
@@ -515,12 +516,6 @@ mod tests {
         assert_eq!(untrusted.transcript_label(), b"untrusted_advice");
         assert_eq!(trusted.transcript_label(), b"trusted_advice");
     }
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "wire regression tests fail loudly")]
-mod committed_identifier_wire_tests {
-    use super::{BytecodeClaimReductionPublic, JoltCommittedPolynomial};
 
     #[test]
     fn retired_bytecode_identifiers_are_rejected_without_shifting_live_tags() {

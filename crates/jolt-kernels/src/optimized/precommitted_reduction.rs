@@ -28,13 +28,12 @@
 //!   The word vector permutes as raw `u64`s and converts to field elements
 //!   in one parallel pass.
 //! - **Bytecode** shares the whole-table reduction kernel with the reference
-//!   tier, including its parallel equality-grid construction.
+//!   tier through the shared precommitted layer, including parallel equality-grid construction.
 //!
 //! Every construction is a rearrangement of exact field operations, so the
 //! built tables — and through the shared kernels the round polynomials and
 //! output claims — are byte-identical to the reference tier's.
 
-use crate::reference::bytecode_claim_reduction::bytecode_reduction_kernel;
 use std::marker::PhantomData;
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::ram_val_check_advice_opening;
@@ -61,8 +60,8 @@ use crate::committed_program::program_image_words_padded;
 
 use crate::opening::{evaluate_program_image, RamInitialOpening, RamInitialOpeningEvaluation};
 use crate::precommitted_reduction::{
-    lsb_permutation, permute_challenges, permute_coefficients, AddressReductionKernel,
-    CycleReductionKernel, PrecommittedReductionCarry,
+    bytecode_reduction_kernel, lsb_permutation, permute_challenges, permute_coefficients,
+    AddressReductionKernel, CycleReductionKernel, PrecommittedReductionCarry,
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
@@ -380,12 +379,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Optimize
 /// so the mixed-tier composition promise — either tier's stage 6b feeds
 /// either tier's stage 7 — is the very thing the address-phase parity pins.
 #[cfg(all(test, not(feature = "akita")))]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test module"
-)]
+#[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests {
     use common::jolt_device::{JoltDevice, MemoryLayout};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
@@ -396,13 +390,10 @@ mod tests {
     };
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     use jolt_verifier::stages::relations::SumcheckInputPoints;
-    use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::BytecodeReductionCyclePhaseChallenges;
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
     };
-    use jolt_verifier::stages::stage7::committed_reduction_address_phase::{
-        BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
-    };
+    use jolt_verifier::stages::stage7::committed_reduction_address_phase::ProgramImageReductionAddressPhase;
     use jolt_verifier::stages::{CommittedProgramSchedule, PrecommittedSchedule};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, ProgramSource, TraceBackend};
 
@@ -410,7 +401,6 @@ mod tests {
     use crate::optimized::parity::{run_lockstep, synthetic_point};
     use crate::reference::precommitted_reduction::ReferencePrecommittedAddress;
     use crate::ReferenceBackend;
-    use jolt_verifier::stages::stage6b::outputs::BytecodeReductionWeights;
 
     const LOG_T: usize = 2;
     const LOG_K_CHUNK: usize = 5;
@@ -423,8 +413,6 @@ mod tests {
         "stage 6b parked no trusted-advice reduction state for the scheduled address phase";
     const MISSING_UNTRUSTED: &str =
         "stage 6b parked no untrusted-advice reduction state for the scheduled address phase";
-    const MISSING_BYTECODE: &str =
-        "stage 6b parked no bytecode reduction state for the scheduled address phase";
     const MISSING_PROGRAM_IMAGE: &str =
         "stage 6b parked no program-image reduction state for the scheduled address phase";
 
@@ -775,66 +763,6 @@ mod tests {
             TracePolynomialOrder::AddressMajor,
             JoltAdviceKind::Untrusted,
         );
-    }
-
-    fn bytecode_pair(trace_order: TracePolynomialOrder) {
-        with_fixture(trace_order, |backend, schedule| {
-            let layout = schedule.bytecode.as_ref().unwrap().clone();
-            let dimensions = layout.dimensions();
-            assert!(
-                dimensions.has_address_phase(),
-                "fixture geometry must schedule a bytecode address phase"
-            );
-            let weights = BytecodeReductionWeights {
-                r_bc: synthetic_point(layout.log_rows(), 51),
-                lane_weights: synthetic_point(
-                    jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::COMMITTED_BYTECODE_LANE_CAPACITY,
-                    57,
-                ),
-            };
-            let cycle_relation = BytecodeReductionCyclePhase::new(&layout, weights.clone());
-            let cycle_rounds = dimensions.cycle_phase_total_rounds();
-            let address_rounds = dimensions.address_phase_total_rounds();
-            let cycle_challenges = synthetic_point(cycle_rounds, 13);
-            let cycle_vars = layout
-                .cycle_phase_variable_challenges(&cycle_challenges)
-                .unwrap();
-            let address_relation =
-                BytecodeReductionAddressPhase::new(&layout, Some(weights), cycle_vars);
-            let pair = PhasePair {
-                backend,
-                cycle_relation: &cycle_relation,
-                cycle_claims: &Default::default(),
-                cycle_points: &Default::default(),
-                cycle_challenges_struct: &BytecodeReductionCyclePhaseChallenges { eta: fr(29) },
-                address_relation: &address_relation,
-                address_claims: &Default::default(),
-                address_points: &Default::default(),
-                address_challenges_struct: &Default::default(),
-                missing_carry: MISSING_BYTECODE,
-            };
-            let _ = pair.run(
-                cycle_rounds,
-                address_rounds,
-                |claims| {
-                    claims
-                        .intermediate()
-                        .copied()
-                        .expect("cycle phase staged no intermediate")
-                },
-                13,
-            );
-        });
-    }
-
-    #[test]
-    fn bytecode_reduction_phases_match_reference_cycle_major() {
-        bytecode_pair(TracePolynomialOrder::CycleMajor);
-    }
-
-    #[test]
-    fn bytecode_reduction_phases_match_reference_address_major() {
-        bytecode_pair(TracePolynomialOrder::AddressMajor);
     }
 
     fn program_image_pair(trace_order: TracePolynomialOrder) {

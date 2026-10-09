@@ -290,20 +290,34 @@ where
         None
     };
 
-    let committed = preprocessing.program.committed();
-    let program_plan = committed
+    let program = preprocessing
+        .program
+        .committed()
         .map(|committed| {
             committed_program_packing_plan(
                 preprocessing.program.bytecode_len(),
                 preprocessing.program.program_image_len_words(),
                 committed.trace_order,
             )
+            .map(|plan| (committed, plan))
             .map_err(batch_failed)
         })
         .transpose()?;
-    let capacity = 2usize
-        .checked_add(if program_plan.is_some() { 2 } else { 0 })
-        .ok_or_else(|| batch_failed("auxiliary group capacity overflows"))?;
+    let capacity = [
+        untrusted.is_some(),
+        trusted.is_some(),
+        cfg!(feature = "field-inline"),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .map(|_| ())
+    .chain(
+        program
+            .iter()
+            .flat_map(|(_, plan)| plan.objects())
+            .map(|_| ()),
+    )
+    .count();
     let mut auxiliary_groups = Vec::with_capacity(capacity);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),
@@ -330,7 +344,7 @@ where
         auxiliary_groups.push(field_inc_claim(commitment, stage6b)?);
     }
 
-    if let (Some(committed), Some(plan)) = (committed, program_plan) {
+    if let Some((committed, plan)) = program {
         for (plan, commitment) in [
             (plan.bytecode, &committed.bytecode_commitment),
             (plan.program_image, &committed.program_image_commitment),

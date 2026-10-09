@@ -257,7 +257,6 @@ fn stage6_cycle_output_openings_and_aliases<F: JoltField>(
 )]
 mod tests {
     use super::*;
-
     use crate::stages::stage6b::booleanity::BooleanityOutputClaims;
     use crate::stages::stage6b::bytecode_read_raf::BytecodeReadRafOutputClaims;
     use crate::stages::stage6b::inc_claim_reduction::IncClaimReductionOutputClaims;
@@ -401,7 +400,6 @@ mod tests {
 )]
 mod field_inline_tests {
     use super::*;
-
     use crate::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use crate::stages::relations::ConcreteSumcheck as _;
     use crate::stages::stage6b::bytecode_read_raf::{
