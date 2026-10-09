@@ -36,7 +36,7 @@ use crate::{
     NormalizedOperands, NUM_CIRCUIT_FLAGS, NUM_INSTRUCTION_FLAGS,
 };
 #[cfg(feature = "serialization")]
-use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 /// Largest register id storable in a register-id byte. `0xFF` is reserved as the
 /// `None` sentinel, so ids must be `<= 254`. Jolt's register file
@@ -264,7 +264,7 @@ pub struct JoltTraceRow {
 }
 
 #[cfg(feature = "serialization")]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 struct TraceRowWire {
     instruction: JoltInstructionRow,
     registers: RegisterState,
@@ -282,20 +282,6 @@ impl Serialize for JoltTraceRow {
             bytecode_pc: self.bytecode_pc,
         }
         .serialize(serializer)
-    }
-}
-
-#[cfg(feature = "serialization")]
-impl<'de> Deserialize<'de> for JoltTraceRow {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let wire = TraceRowWire::deserialize(deserializer)?;
-        Self::new(
-            wire.instruction,
-            wire.registers,
-            wire.ram_access,
-            wire.bytecode_pc,
-        )
-        .map_err(Error::custom)
     }
 }
 
@@ -1245,37 +1231,5 @@ mod tests {
                 ..
             })
         ));
-    }
-
-    #[cfg(feature = "serialization")]
-    #[test]
-    fn semantic_wire_round_trips_and_rechecks_observations() {
-        let source = instruction(
-            JoltInstructionKind::ADDI,
-            NormalizedOperands {
-                rs1: Some(2),
-                rd: Some(1),
-                imm: -17,
-                ..Default::default()
-            },
-        );
-        let registers = RegisterState {
-            rs1: Some(RegisterRead {
-                register: 2,
-                value: 9,
-            }),
-            ..Default::default()
-        };
-        let row = JoltTraceRow::new(source, registers, RamAccess::NoOp, 5).unwrap();
-        let mut wire = serde_json::to_value(row).unwrap();
-        assert_eq!(
-            serde_json::from_value::<JoltTraceRow>(wire.clone()).unwrap(),
-            row
-        );
-        *wire.pointer_mut("/registers/rs1/register").unwrap() = serde_json::json!(3);
-        assert!(serde_json::from_value::<JoltTraceRow>(wire).is_err());
-        let mut wire = serde_json::to_value(row).unwrap();
-        *wire.pointer_mut("/bytecode_pc").unwrap() = serde_json::json!(0);
-        assert!(serde_json::from_value::<JoltTraceRow>(wire).is_err());
     }
 }

@@ -9,8 +9,6 @@ mod data;
 
 #[cfg(feature = "field-inline")]
 pub use data::FieldEvent;
-#[cfg(feature = "serialization")]
-pub use data::TraceDataSeed;
 pub use data::{TraceData, TraceEvent};
 
 /// A Jolt-ready program built from an RV64 ELF image.

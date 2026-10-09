@@ -27,6 +27,4 @@ pub enum TraceError {
     PartiallyConsumed,
     #[error("field event at cycle {cycle} is out of range or not strictly ordered")]
     InvalidFieldEvent { cycle: usize },
-    #[error("trace row {cycle} does not match its bytecode instruction")]
-    BytecodeMismatch { cycle: usize },
 }

@@ -1,27 +1,18 @@
-#[cfg(feature = "serialization")]
-use std::fmt::{Formatter, Result as FmtResult};
 #[cfg(feature = "field-inline")]
 use std::sync::Arc;
 
 use jolt_riscv::JoltTraceRow;
 #[cfg(feature = "serialization")]
-use serde::{
-    de::{DeserializeSeed, Error, SeqAccess, Visitor},
-    ser::SerializeSeq,
-    Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::{ser::SerializeSeq, Serialize, Serializer};
 
-#[cfg(any(feature = "serialization", feature = "field-inline"))]
+#[cfg(feature = "field-inline")]
 use crate::execution::TraceError;
 #[cfg(feature = "field-inline")]
 use crate::field_inline::FieldInlineTraceData;
-#[cfg(feature = "serialization")]
-use crate::preprocess::BytecodePreprocessing;
 
 /// One emitted row and its associated execution payload. Retained traces
 /// separate these into compact core rows and sparse field events.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
 pub struct TraceEvent {
     pub row: JoltTraceRow,
     #[cfg(feature = "field-inline")]
@@ -39,7 +30,7 @@ impl From<JoltTraceRow> for TraceEvent {
 }
 
 #[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct FieldEvent {
     pub cycle: usize,
     pub data: Arc<FieldInlineTraceData>,
@@ -47,7 +38,7 @@ pub struct FieldEvent {
 
 /// Shared execution storage. The proof view omits canonical trailing padding
 /// without reallocating or changing the execution row count.
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Default, Debug)]
 pub struct TraceData {
     rows: Vec<JoltTraceRow>,
     proof_len: usize,
@@ -185,64 +176,5 @@ impl Serialize for TraceData {
             sequence.serialize_element(&event)?;
         }
         sequence.end()
-    }
-}
-
-/// Contextual import checks each decoded row before adding it to the retained
-/// allocation. The ordinary row wire validates only local representation.
-#[cfg(feature = "serialization")]
-pub struct TraceDataSeed<'a> {
-    pub bytecode: &'a BytecodePreprocessing,
-}
-
-#[cfg(feature = "serialization")]
-impl<'de> DeserializeSeed<'de> for TraceDataSeed<'_> {
-    type Value = TraceData;
-
-    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<TraceData, D::Error> {
-        deserializer.deserialize_seq(TraceVisitor {
-            bytecode: Some(self.bytecode),
-        })
-    }
-}
-
-#[cfg(feature = "serialization")]
-impl<'de> Deserialize<'de> for TraceData {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_seq(TraceVisitor { bytecode: None })
-    }
-}
-
-#[cfg(feature = "serialization")]
-struct TraceVisitor<'a> {
-    bytecode: Option<&'a BytecodePreprocessing>,
-}
-
-#[cfg(feature = "serialization")]
-impl<'de> Visitor<'de> for TraceVisitor<'_> {
-    type Value = TraceData;
-
-    fn expecting(&self, formatter: &mut Formatter) -> FmtResult {
-        formatter.write_str("a sequence of trace events")
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
-        let mut data = TraceData::default();
-        while let Some(event) = sequence.next_element::<TraceEvent>()? {
-            if let Some(bytecode) = self.bytecode {
-                let row = &event.row;
-                let instruction = row.instruction();
-                let pc = row.pc() as usize;
-                if bytecode.get_pc(&instruction) != Some(pc)
-                    || (!row.is_noop() && bytecode.bytecode.get(pc) != Some(&instruction))
-                {
-                    return Err(A::Error::custom(TraceError::BytecodeMismatch {
-                        cycle: data.len(),
-                    }));
-                }
-            }
-            data.push(event);
-        }
-        Ok(data)
     }
 }

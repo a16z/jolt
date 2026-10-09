@@ -161,7 +161,7 @@ its existing proof columns.
 Both execution producers derive captured IDs from integer operands. The
 [baseline mismatched-ID test](https://github.com/a16z/jolt/blob/47130f3dc9a51a7ac2754a98ff0aa31981a6b810/crates/jolt-program/src/execution/trace/row.rs#L702)
 deliberately recorded register 200 for operand 2. Rejecting that discrepancy
-is an intentional constructor/deserializer change. Fixtures now use the
+is an intentional constructor change. Fixtures now use the
 checked constructor with valid observations instead of value-only shortcuts.
 
 Capture and operand presence differ for field memory operations.
@@ -214,16 +214,14 @@ APIs remain available. SDK and host execution already prepare expanded
 bytecode.
 
 The constructor's `u32` PC type and no-op check enforce local representation.
-Program mapping establishes PC identity for normal producers. Contextual
-imports use `TraceDataSeed`: each non-noop must have both the mapped PC and
-an exact reconstructed instruction match in preprocessed bytecode. An
-address/sequence match alone would not validate kind, operands, or flags.
-No-ops use slot zero independently of source address, satisfy the local
-no-effects/boolean contract, and need not equal canonical padding.
+Program mapping establishes PC identity: producers resolve each PC through
+`BytecodePCMapper::get_instruction_pc` before calling the public
+`JoltTraceRow::new`, which does not check program membership. No-ops use slot
+zero independently of source address, satisfy the local no-effects/boolean
+contract, and need not equal canonical padding.
 
 Sources: [PC mapper](../crates/jolt-program/src/preprocess/bytecode.rs),
-[interpreter and replay](../tracer/src/execution_backend.rs),
-[contextual import](../crates/jolt-program/src/execution/trace/data.rs).
+[interpreter and replay](../tracer/src/execution_backend.rs).
 
 ## One owner of rows and field payloads
 
@@ -311,18 +309,13 @@ Sources: [aggregate](../crates/jolt-program/src/execution/trace/data.rs),
 
 ## Serialization and public API
 
-Core row serde uses a logical wire shim containing instruction, captured
-registers, RAM access, and bytecode PC. Deserialization calls `JoltTraceRow::new`
-and rejects the same invalid observations, including `NoOpMetadata`.
-Packed storage is not a serialized API. Standalone row and `TraceData`
-deserialization check local representation; they do not establish membership
-in an arbitrary program. `TraceDataSeed` supplies that contextual check.
-
-The aggregate wire is a sequence of logical `TraceEvent` values, joining each
-payload with its row. The physical sparse event vector and cursors are not
-serialized. Serialization borrows rows/payloads and emits them incrementally;
-deserialization appends directly to one retained aggregate, without a second
-wire-row vector.
+Rows and `TraceData` implement `Serialize` only. Core row serialization uses a
+logical wire shim containing instruction, captured registers, RAM access, and
+bytecode PC; packed storage is not a serialized API. The aggregate wire is a
+sequence of logical `TraceEvent` values, joining each payload with its row, so
+`field-inline` builds emit an optional payload on every event. The physical
+sparse event vector and cursors are not serialized. Serialization borrows
+rows/payloads and emits them incrementally.
 
 `ProgramSummary.trace` is `Arc<TraceData>` and retains the full trace, including
 padding and field payloads. Common access is `summary.trace.len()`,
@@ -330,31 +323,17 @@ padding and field payloads. Common access is `summary.trace.len()`,
 field-enabled builds. `Program::trace_analyze` transfers the fresh execution
 trace with `into_data()`.
 
-The public `ProgramSummary` serde format is a seven-element tuple:
-
-| Position | Value |
-| --- | --- |
-| 0 | Magic `[u8; 8]`, `JOLTTRCE` |
-| 1 | Schema version `u16`, currently `1` |
-| 2 | Field-payload format `bool`, equal to `cfg!(feature = "field-inline")` |
-| 3 | Expanded bytecode |
-| 4 | Trace-event sequence |
-| 5 | Initial memory |
-| 6 | Public I/O device |
-
-The field-format boolean is required even when the trace has no field events:
-feature selection changes the event wire shape. Magic, version, and feature
-format are checked before rows are read. Bytecode precedes rows so the reader
-can preprocess it with the build's supported instruction profile and stream
-rows through `TraceDataSeed`. The temporary preprocessing allocation is
-program-sized. Direct serde callers receive the same checks as file users.
-`write_to_file` streams this representation through a buffered writer.
-Old unversioned summaries and incompatible versions/field formats are
-rejected; there is no legacy reader or compatibility alias.
+`ProgramSummary` is a debugging and analysis output, and it derives
+`Serialize` only. `write_to_file` streams its bincode encoding through a
+buffered writer. Nothing reads a summary back, so the file carries no format
+header. A future summary reader must define its own format contract alongside
+its first caller.
 
 This is a source and analysis-wire breaking change: imports, constructors,
 streaming items, summary iteration, and direct `row.field_inline` access need
-migration. The deployed proof and preprocessing formats are unchanged.
+migration. Neither `ProgramSummary` nor the trace row (formerly
+`jolt_program::TraceRow`) implements `Deserialize`. The deployed proof and
+preprocessing formats are unchanged.
 `Program::trace_to_file` still writes raw `Cycle` records and is outside this
 wire migration. See [summary implementation](../crates/jolt-host/src/analyze.rs).
 
@@ -362,8 +341,7 @@ The accompanying telemetry change advances the span taxonomy to version 4.
 `ProverConfig::derive_compact` is removed; every feature mode emits
 `ProverConfig::derive`. This configuration span belongs to the SDK/profile
 prelude, outside the root proving span. Telemetry consumers must account for
-the removed label. This schema version is separate from the analysis archive's
-version 1; proof and preprocessing serialization are unaffected.
+the removed label. Proof and preprocessing serialization are unaffected.
 
 ## Structural memory effect and scope
 
@@ -398,12 +376,12 @@ emulator execution have not been redesigned.
 | --- | --- |
 | Canonical row and logical captures | `crates/jolt-riscv/src/trace_row.rs` |
 | PC numbering and contextual lookup | `crates/jolt-program/src/preprocess/bytecode.rs` |
-| Shared aggregate, sparse events, import | `crates/jolt-program/src/execution/trace/data.rs` |
+| Shared aggregate and sparse events | `crates/jolt-program/src/execution/trace/data.rs` |
 | Retained cursor and streaming interface | `crates/jolt-program/src/execution/{trace,backend}.rs` |
 | Interpreter, replay, and x86 production | `tracer/src/execution_backend.rs`, `crates/jolt-tracer-x86/src/` |
 | Witness ownership and sparse field consumers | `crates/jolt-witness/src/backend/trace/`, `crates/jolt-witness/src/field_inline/` |
 | Configuration, SDK, profiling, and kernels | Callers consume the same row and aggregate; compact-only entrypoints are removed |
-| Full analysis and versioned archives | `crates/jolt-host/src/{analyze,program}.rs` |
+| Full analysis and summary files | `crates/jolt-host/src/{analyze,program}.rs` |
 
 ## Validation and acceptance
 
@@ -469,11 +447,9 @@ row storage from process peak memory and row production from proving time.
 Permanent tests cover independent layout and semantic properties: 64-byte
 `Copy` rows, metadata/control bounds, exact accepted instruction reconstruction,
 field operand projection, capture absence versus observed zero, memory
-aliasing, malformed identity/RAM rejection, no-op PC/boolean rules, and
-semantic wire roundtrips. Archive coverage includes magic/version/field-format
-rejection, full padding retention, field payload roundtrips, and same-PC
-instruction mismatch. Tests use independent properties or live production
-paths rather than a copy of removed row conversion code.
+aliasing, malformed identity/RAM rejection, and no-op PC/boolean rules. Tests
+use independent properties or live production paths rather than a copy of
+removed row conversion code.
 
 Existing interpreter/x86 differential and chunk-composition tests check rows,
 PCs, sparse payload association, and execution outputs. Guest-dependent
@@ -487,7 +463,7 @@ rs2 and binding its RAM read to integer rd's value.
 Ownership tests check that witness construction retains the producer's
 allocation when another `Arc` owner exists. Partial consumption, shared proof
 bounds, padding/lookahead, and lengths around powers of two have distinct
-failure signals. Contextual import must reject PC/program mismatches.
+failure signals.
 
 The acceptance matrix covers affected-crate suites (`jolt-riscv`,
 `jolt-program`, `jolt-host`, `tracer`, `jolt-tracer-x86`, `jolt-witness`, and
@@ -616,5 +592,5 @@ RAYON_NUM_THREADS=4 cargo run --profile ci -p jolt-prover --features profiling,f
 The main risks remain changed acceptance of malformed observations, field
 versus integer capture semantics, padding-induced proof-shape changes,
 analysis-wire compatibility, and accidental copying during handoff. The
-construction, ownership, import, and acceptance contracts above make those
-boundaries explicit.
+construction, ownership, serialization, and acceptance contracts above make
+those boundaries explicit.

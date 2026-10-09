@@ -20,8 +20,6 @@ pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, T
 pub use error::TraceError;
 #[cfg(feature = "field-inline")]
 pub use trace::FieldEvent;
-#[cfg(feature = "serialization")]
-pub use trace::TraceDataSeed;
 pub use trace::{
     JoltProgram, MemoryImage, OwnedTrace, TraceData, TraceEvent, TraceInputs, TraceOutput,
 };
