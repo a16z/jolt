@@ -736,6 +736,52 @@ mod p256_tests {
         );
     }
 
+    /// R2 = (p, √B) is a non-canonical encoding of the on-curve point
+    /// P = (0, √B). With Q = P/2 and u2 = 2 it passes the on-curve, GLV and
+    /// Shamir checks, and the final `r1.add(&r2)` yields G + P, so only the
+    /// advice canonicality guard rejects it.
+    #[test]
+    #[should_panic(expected = "proof spoiled")]
+    fn test_non_canonical_advice_limbs_rejected() {
+        use crate::sdk::{verify_ecdsa_inner, P256Fq, P256Fr, P256Point};
+        use ark_ec::{AffineRepr, CurveGroup};
+        use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField};
+        use ark_secp256r1::{Affine, Fq, Fr};
+
+        let to_fq = |f: Fq| P256Fq::from_u64_arr(&f.into_bigint().0).unwrap();
+        let to_point = |a: Affine| P256Point::new(to_fq(a.x), to_fq(a.y)).unwrap();
+
+        let sqrt_b = Fq::new(BigInt(P256_CURVE_B)).sqrt().unwrap();
+        let p = Affine::new(Fq::ZERO, sqrt_b);
+        let q = (p * Fr::from(2u64).inverse().unwrap()).into_affine();
+        let g_plus_p = (Affine::generator() + p).into_affine();
+
+        let n = limbs_to_biguint(&P256_ORDER);
+        let r_big = limbs_to_biguint(&g_plus_p.x.into_bigint().0) % n;
+        let r_fr = P256Fr::from_u64_arr(&biguint_to_limbs(&r_big)).unwrap();
+        let one = P256Fr::from_u64_arr(&[1, 0, 0, 0]).unwrap();
+        let two = P256Fr::from_u64_arr(&[2, 0, 0, 0]).unwrap();
+
+        let dirty_r2 =
+            P256Point::new_unchecked(P256Fq::from_u64_arr_unchecked(&P256_MODULUS), to_fq(sqrt_b));
+        let _ = verify_ecdsa_inner(
+            &one,
+            &two,
+            &r_fr,
+            &to_point(q),
+            P256Point::generator(),
+            1,
+            false,
+            1,
+            false,
+            dirty_r2,
+            2,
+            false,
+            1,
+            false,
+        );
+    }
+
     /// Verify that a zero GLV decomposition (a=0, b=0) is rejected.
     ///
     /// A malicious prover could supply a=0, b=0 as the Fake GLV decomposition,
