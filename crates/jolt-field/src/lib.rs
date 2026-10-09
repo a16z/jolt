@@ -60,6 +60,10 @@
 //!   memory profiling, and [`JoltField`] gains it as a supertrait so
 //!   field-generic containers render through the native impls.
 //!
+//! The `binary` backend also provides `F8`, the AES polynomial field.
+//! `From<F8>` embeds it into `F64` and `F128` by sending x to the smallest
+//! raw root of x^8 + x^4 + x^3 + x + 1, and into `F192` through `F64`.
+//!
 //! # Byte compatibility (hard invariants)
 //!
 //! Wire and transcript encodings are byte-identical to `jolt-field` at the
@@ -116,7 +120,7 @@ pub use algebra::{
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "binary")]
-pub use binary::{F128, F192, F64};
+pub use binary::{F128, F192, F64, F8};
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};

@@ -3,10 +3,16 @@
 //! Raw words and canonical bytes are polynomial coefficients; integer ring
 //! maps retain only parity. Challenges require a full field-width squeeze for
 //! uniform sampling, in particular 24 bytes for `F192`.
+//!
+//! `F8`, `F64`, `F128`, and `F192` implement the field spine. `From<F8>`
+//! embeds into `F64` and `F128` by sending x to the smallest raw root of
+//! x^8 + x^4 + x^3 + x + 1; the `F192` embedding lifts through `F64`.
 
+mod embed;
 mod f128;
 mod f192;
 mod f64;
+mod f8;
 
 #[cfg(any(
     all(target_arch = "aarch64", target_feature = "aes"),
@@ -43,6 +49,7 @@ use portable as arithmetic;
 pub use f128::F128;
 pub use f192::F192;
 pub use f64::F64;
+pub use f8::F8;
 
 use crate::{CanonicalEncoding, Field};
 
