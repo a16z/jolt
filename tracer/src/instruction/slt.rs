@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl SLT {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLT as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLT as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             match cpu.x[self.operands.rs1 as usize] < cpu.x[self.operands.rs2 as usize] {

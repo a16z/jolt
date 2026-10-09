@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::format::format_load::FormatLoad;
-use super::{Instruction, RAMRead};
+use super::{Instruction, RamRead};
 
 use super::{Cycle, RISCVInstruction, RISCVTrace};
 
@@ -14,11 +14,11 @@ declare_riscv_instr!(
     match  = 0x00004003,
     format = FormatLoad,
     registers = RegisterStateLoad,
-    ram    = RAMRead
+    ram    = RamRead
 );
 
 impl LBU {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LBU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LBU as RISCVInstruction>::RamAccess) {
         let value = match cpu
             .mmu
             .load(cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64)

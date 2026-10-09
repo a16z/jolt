@@ -128,6 +128,24 @@ pub enum RamAccess {
     NoOp,
 }
 
+impl From<RamRead> for RamAccess {
+    fn from(read: RamRead) -> Self {
+        Self::Read(read)
+    }
+}
+
+impl From<RamWrite> for RamAccess {
+    fn from(write: RamWrite) -> Self {
+        Self::Write(write)
+    }
+}
+
+impl From<()> for RamAccess {
+    fn from((): ()) -> Self {
+        Self::NoOp
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NonMemoryState {
     pub rs1_value: u64,

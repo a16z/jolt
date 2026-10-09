@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
 use super::{
-    format::format_amo::FormatAMO, Cycle, Instruction, RAMWrite, RISCVInstruction, RISCVTrace,
+    format::format_amo::FormatAMO, Cycle, Instruction, RISCVInstruction, RISCVTrace, RamWrite,
 };
 
 declare_riscv_instr!(
@@ -13,11 +13,11 @@ declare_riscv_instr!(
     match  = 0x4000302f,
     format = FormatAMO,
     registers = RegisterStateAMO,
-    ram    = RAMWrite
+    ram    = RamWrite
 );
 
 impl AMOORD {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOORD as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <AMOORD as RISCVInstruction>::RamAccess) {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let or_value = cpu.x[self.operands.rs2 as usize] as u64;
 

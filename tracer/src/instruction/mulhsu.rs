@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl MULHSU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <MULHSU as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             ((cpu.x[self.operands.rs1 as usize] as i128 as u128)

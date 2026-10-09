@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualROTRIW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRIW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualROTRIW as RISCVInstruction>::RamAccess) {
         let shift = self.operands.imm.trailing_zeros().min(XLEN as u32 / 2);
 
         let val = cpu.x[self.operands.rs1 as usize] as u64 as u32;

@@ -4,9 +4,9 @@ pub const DRAM_BASE: u64 = RAM_START_ADDRESS;
 
 use crate::emulator::decode_cache::DecodeCache;
 use crate::emulator::memory::Memory;
-use crate::instruction::{RAMRead, RAMWrite};
 use common::constants::{RAM_START_ADDRESS, STACK_CANARY_SIZE};
 use common::jolt_device::JoltDevice;
+use jolt_riscv::{RamRead, RamWrite};
 
 use super::cpu::{get_privilege_mode, PrivilegeMode, Trap, TrapType};
 use super::terminal::Terminal;
@@ -226,7 +226,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load(&mut self, v_address: u64) -> Result<(u8, RAMRead), Trap> {
+    pub fn load(&mut self, v_address: u64) -> Result<(u8, RamRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         let memory_read = self.trace_load(effective_address);
         match self.translate_address(effective_address, &MemoryAccessType::Read) {
@@ -285,7 +285,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_halfword(&mut self, v_address: u64) -> Result<(u16, RAMRead), Trap> {
+    pub fn load_halfword(&mut self, v_address: u64) -> Result<(u16, RamRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert!(
             effective_address.is_multiple_of(2),
@@ -303,7 +303,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_word(&mut self, v_address: u64) -> Result<(u32, RAMRead), Trap> {
+    pub fn load_word(&mut self, v_address: u64) -> Result<(u32, RamRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 4, 0, "Unaligned load_word");
         let memory_read = self.trace_load(effective_address);
@@ -318,7 +318,7 @@ impl Mmu {
     ///
     /// # Arguments
     /// * `v_address` Virtual address
-    pub fn load_doubleword(&mut self, v_address: u64) -> Result<(u64, RAMRead), Trap> {
+    pub fn load_doubleword(&mut self, v_address: u64) -> Result<(u64, RamRead), Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned load_doubleword");
         let memory_read = self.trace_load(effective_address);
@@ -334,7 +334,7 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value`
-    pub fn store(&mut self, v_address: u64, value: u8) -> Result<RAMWrite, Trap> {
+    pub fn store(&mut self, v_address: u64, value: u8) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         let memory_write = self.trace_store_byte(effective_address, value as u64);
         match self.translate_address(v_address, &MemoryAccessType::Write) {
@@ -398,7 +398,7 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<RAMWrite, Trap> {
+    pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 2, 0, "Unaligned store_halfword");
         let memory_write = self.trace_store_halfword(effective_address, value as u64);
@@ -412,7 +412,7 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<RAMWrite, Trap> {
+    pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 4, 0, "Unaligned store_word");
         let memory_write = self.trace_store(effective_address, value as u64);
@@ -426,7 +426,7 @@ impl Mmu {
     /// # Arguments
     /// * `v_address` Virtual address
     /// * `value` data written
-    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<RAMWrite, Trap> {
+    pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned store_doubleword");
         let memory_write = self.trace_store(effective_address, value);
@@ -469,15 +469,15 @@ impl Mmu {
         }
     }
 
-    fn trace_load(&mut self, effective_address: u64) -> RAMRead {
+    fn trace_load(&mut self, effective_address: u64) -> RamRead {
         let word_address = (effective_address >> 2) << 2;
         if word_address < DRAM_BASE {
-            RAMRead {
+            RamRead {
                 address: word_address,
                 value: self.device_doubleword(word_address),
             }
         } else {
-            RAMRead {
+            RamRead {
                 address: word_address,
                 value: self.memory.read_doubleword(word_address),
             }
@@ -495,7 +495,7 @@ impl Mmu {
         u64::from_le_bytes(value_bytes)
     }
 
-    fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RAMWrite {
+    fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RamWrite {
         self.assert_effective_store_address(effective_address);
         let word_address = (effective_address >> 2) << 2;
 
@@ -513,14 +513,14 @@ impl Mmu {
             _ => unreachable!(),
         };
 
-        RAMWrite {
+        RamWrite {
             address: word_address,
             pre_value,
             post_value,
         }
     }
 
-    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RAMWrite {
+    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RamWrite {
         self.assert_effective_store_address(effective_address);
         let word_address = (effective_address >> 2) << 2;
 
@@ -538,14 +538,14 @@ impl Mmu {
             panic!("Unaligned store {effective_address:x}");
         };
 
-        RAMWrite {
+        RamWrite {
             address: word_address,
             pre_value,
             post_value,
         }
     }
 
-    fn trace_store(&mut self, effective_address: u64, value: u64) -> RAMWrite {
+    fn trace_store(&mut self, effective_address: u64, value: u64) -> RamWrite {
         self.assert_effective_store_address(effective_address);
 
         let pre_value = if effective_address < DRAM_BASE {
@@ -553,7 +553,7 @@ impl Mmu {
         } else {
             self.memory.read_doubleword(effective_address)
         };
-        RAMWrite {
+        RamWrite {
             address: effective_address,
             pre_value,
             post_value: value,

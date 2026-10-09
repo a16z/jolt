@@ -40,7 +40,7 @@ Two key traits form the backbone of the RISC-V emulator:
   - Defines core instruction behavior required by the tracer.
   - Includes two associated constants, `MASK` and `MATCH`, used for decoding instructions from raw bytes.
   - Has an associated type `Format`, indicating the RISC-V instruction format (e.g., R-type or I-type).
-  - The associated type `RAMAccess` specifies memory access (read/write) required by the instruction, guiding the tracer in capturing memory state before and after execution.
+  - The associated type `RamAccess` specifies memory access (read/write) required by the instruction, guiding the tracer in capturing memory state before and after execution.
   - Its critical method, `execute`, emulates instruction execution by modifying CPU state and populating memory state changes as needed.
 
 - `RISCVTrace` (extends `RISCVInstruction`)

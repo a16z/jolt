@@ -72,7 +72,7 @@ declare_riscv_instr!(
 impl FIELD_ADVICE_LIMB {
     /// Honest advice generation chooses the canonical low limb and quotient.
     /// Constraints permit other choices; the guest validates the full readout.
-    fn exec(&self, cpu: &mut Cpu, _: &mut <Self as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <Self as RISCVInstruction>::RamAccess) {
         let field_register = self.operands.rs1.unwrap_or(0);
         let quotient_register = self.operands.rs2.unwrap_or(0);
         let x_register = self.operands.rd.unwrap_or(0);

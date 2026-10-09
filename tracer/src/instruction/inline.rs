@@ -237,7 +237,7 @@ impl RISCVInstruction for INLINE {
 
     type Format = FormatInline;
     type RegisterState = RegisterStateInline;
-    type RAMAccess = ();
+    type RamAccess = ();
 
     fn operands(&self) -> &Self::Format {
         &self.operands
@@ -276,7 +276,7 @@ impl RISCVInstruction for INLINE {
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, ram: &mut Self::RAMAccess) {
+    fn execute(&self, cpu: &mut Cpu, ram: &mut Self::RamAccess) {
         self.exec(cpu, ram)
     }
 }
@@ -286,7 +286,7 @@ impl INLINE {
     ///
     /// Callers must use `trace`, which expands the source row into ordinary
     /// final instructions and executes those rows instead.
-    pub fn exec(&self, _cpu: &mut Cpu, _: &mut <INLINE as RISCVInstruction>::RAMAccess) {
+    pub fn exec(&self, _cpu: &mut Cpu, _: &mut <INLINE as RISCVInstruction>::RamAccess) {
         panic!("Inline instructions must use trace(), not exec()");
     }
 

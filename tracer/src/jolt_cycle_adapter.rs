@@ -1,8 +1,6 @@
-use jolt_riscv::{JoltCycle, JoltInstructionRowData};
+use jolt_riscv::{JoltCycle, JoltInstructionRowData, RamAccess};
 
-use crate::instruction::{
-    registers::InstructionRegisterState, RAMAccess, RISCVCycle, RISCVInstruction,
-};
+use crate::instruction::{registers::InstructionRegisterState, RISCVCycle, RISCVInstruction};
 
 impl<T: RISCVInstruction + JoltInstructionRowData> JoltCycle for RISCVCycle<T> {
     type Instruction = T;
@@ -24,29 +22,29 @@ impl<T: RISCVInstruction + JoltInstructionRowData> JoltCycle for RISCVCycle<T> {
     }
 
     fn ram_access_address(&self) -> Option<u64> {
-        let ram_access: RAMAccess = self.ram_access.into();
+        let ram_access: RamAccess = self.ram_access.into();
         match ram_access {
-            RAMAccess::Read(r) => Some(r.address),
-            RAMAccess::Write(w) => Some(w.address),
-            RAMAccess::NoOp => None,
+            RamAccess::Read(r) => Some(r.address),
+            RamAccess::Write(w) => Some(w.address),
+            RamAccess::NoOp => None,
         }
     }
 
     fn ram_read_value(&self) -> Option<u64> {
-        let ram_access: RAMAccess = self.ram_access.into();
+        let ram_access: RamAccess = self.ram_access.into();
         match ram_access {
-            RAMAccess::Read(r) => Some(r.value),
-            RAMAccess::Write(w) => Some(w.pre_value),
-            RAMAccess::NoOp => None,
+            RamAccess::Read(r) => Some(r.value),
+            RamAccess::Write(w) => Some(w.pre_value),
+            RamAccess::NoOp => None,
         }
     }
 
     fn ram_write_value(&self) -> Option<u64> {
-        let ram_access: RAMAccess = self.ram_access.into();
+        let ram_access: RamAccess = self.ram_access.into();
         match ram_access {
-            RAMAccess::Read(r) => Some(r.value),
-            RAMAccess::Write(w) => Some(w.post_value),
-            RAMAccess::NoOp => None,
+            RamAccess::Read(r) => Some(r.value),
+            RamAccess::Write(w) => Some(w.post_value),
+            RamAccess::NoOp => None,
         }
     }
 }

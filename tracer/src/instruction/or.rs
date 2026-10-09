@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl OR {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <OR as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <OR as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             cpu.sign_extend(cpu.x[self.operands.rs1 as usize] | cpu.x[self.operands.rs2 as usize]),

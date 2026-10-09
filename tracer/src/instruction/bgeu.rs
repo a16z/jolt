@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl BGEU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <BGEU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <BGEU as RISCVInstruction>::RamAccess) {
         if cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
             >= cpu.unsigned_data(cpu.x[self.operands.rs2 as usize])
         {

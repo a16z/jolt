@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl SLLW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLLW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLLW as RISCVInstruction>::RamAccess) {
         // SLLW, SRLW, and SRAW are RV64I-only instructions that are analogously defined but operate
         // on 32-bit values and sign-extend their 32-bit results to 64 bits. The shift amount is
         // given by rs2[4:0].

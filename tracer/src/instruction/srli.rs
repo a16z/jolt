@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl SRLI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SRLI as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SRLI as RISCVInstruction>::RamAccess) {
         let mask = 0x3f;
         cpu.write_register(
             self.operands.rd as usize,

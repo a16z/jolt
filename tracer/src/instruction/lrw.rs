@@ -7,7 +7,7 @@ use crate::{
 };
 
 use super::format::format_r::FormatR;
-use super::{Cycle, Instruction, RAMRead, RISCVInstruction, RISCVTrace};
+use super::{Cycle, Instruction, RISCVInstruction, RISCVTrace, RamRead};
 
 declare_riscv_instr!(
     name   = LRW,
@@ -15,11 +15,11 @@ declare_riscv_instr!(
     match  = 0x1000202f,
     format = FormatR,
     registers = RegisterStateR,
-    ram    = RAMRead
+    ram    = RamRead
 );
 
 impl LRW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <LRW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <LRW as RISCVInstruction>::RamAccess) {
         if cpu.is_reservation_set() {
             println!("LRW: Reservation is already set");
         }

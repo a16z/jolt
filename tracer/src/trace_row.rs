@@ -4,11 +4,9 @@
 //! constructor owns validation and packing after source expansion.
 
 use jolt_program::{execution::TraceError, preprocess::BytecodePCMapper};
-use jolt_riscv::{
-    JoltTraceRow, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-};
+use jolt_riscv::{JoltTraceRow, RegisterRead, RegisterState, RegisterWrite};
 
-use crate::instruction::{Cycle, RAMAccess};
+use crate::instruction::Cycle;
 
 /// Converts a completed final cycle, rejecting source-only instructions and
 /// cycles absent from the program's expanded bytecode.
@@ -45,26 +43,9 @@ pub fn cycle_to_trace_row(
     Ok(JoltTraceRow::new(
         instruction,
         registers,
-        cycle.ram_access().into(),
+        cycle.ram_access(),
         bytecode_pc,
     )?)
-}
-
-impl From<RAMAccess> for RamAccess {
-    fn from(access: RAMAccess) -> Self {
-        match access {
-            RAMAccess::Read(read) => Self::Read(RamRead {
-                address: read.address,
-                value: read.value,
-            }),
-            RAMAccess::Write(write) => Self::Write(RamWrite {
-                address: write.address,
-                pre_value: write.pre_value,
-                post_value: write.post_value,
-            }),
-            RAMAccess::NoOp => Self::NoOp,
-        }
-    }
 }
 
 #[cfg(test)]

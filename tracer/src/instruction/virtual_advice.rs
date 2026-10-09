@@ -29,7 +29,7 @@ impl RISCVInstruction for VirtualAdvice {
 
     type Format = FormatJ;
     type RegisterState = RegisterStateJ;
-    type RAMAccess = ();
+    type RamAccess = ();
 
     fn operands(&self) -> &Self::Format {
         &self.operands
@@ -59,7 +59,7 @@ impl RISCVInstruction for VirtualAdvice {
         }
     }
 
-    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RAMAccess) {
+    fn execute(&self, cpu: &mut Cpu, _: &mut Self::RamAccess) {
         cpu.write_register(self.operands.rd as usize, self.advice as i64);
     }
 }

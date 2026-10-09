@@ -19,7 +19,7 @@ declare_riscv_instr!(
 impl JAL {
     // cpu.pc is pre-incremented by 4 (or 2 for compressed) in tick_operate() before execution,
     // self.address is the instruction address.
-    fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <JAL as RISCVInstruction>::RamAccess) {
         if self.operands.rd != 0 {
             if self.operands.rd == 1 {
                 cpu.track_call(self.address);
