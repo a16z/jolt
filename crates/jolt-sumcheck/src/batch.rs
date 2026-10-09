@@ -7,6 +7,7 @@
 //! clear verify tail and the prove-side round loop. [`BatchPrelude`] is that
 //! head's output in engine form: plain positional data with no per-stage
 //! types, so this crate's provers can consume it without naming any stage.
+//! Its field-dependent padding contract is documented on [`BatchPrelude`].
 
 use jolt_field::Field;
 
@@ -18,7 +19,8 @@ use crate::SumcheckError;
 /// absorb/draw order.
 ///
 /// A member is active for rounds `[offset, offset + rounds)` and contributes
-/// the constant `claim / 2` polynomial outside that window. Most members are
+/// the padding polynomial specified by [`BatchPrelude`] outside that window.
+/// Most members are
 /// tail-aligned (`offset = max_num_vars - rounds`, the relation's default
 /// `instance_point_offset`); the precommitted claim-reduction cycle phases
 /// are head-aligned (`offset = 0`), binding the batch's leading challenges.
@@ -32,26 +34,51 @@ pub struct BatchMember<F> {
 
 /// The computed head of a batched sumcheck: the present members (declaration
 /// order), the combined claim, and the batch dimensions.
+///
+/// # Padding rules
+///
+/// Write `n = max_num_vars` and `W = [offset, offset + rounds)` for a member's
+/// active window. The field selects the rule: invertible `F::from_u64(2)` gives
+/// constant extension; otherwise the summand is zero-extended.
+///
+/// Under constant extension the input claim is multiplied by `2^(n - rounds)`.
+/// Each inactive round contributes the constant `claim / 2` and halves the
+/// running member claim. Active members receive that running claim and must
+/// return polynomials at its scale, including any remaining padding. The
+/// output multiplier is one.
+///
+/// Under zero extension the summand is multiplied by `∏_{j ∉ W} (1 - x_j)`,
+/// so the input claim has multiplier one. The engine keeps a native claim `m`
+/// (initially the input claim) and a padding factor `p` (initially one).
+/// An inactive round contributes `p * m * (1 - X)` and updates only
+/// `p *= 1 - r_j`. An active round passes `m` to the member, folds its native
+/// polynomial `s` with multiplier `p`, and updates only `m = s(r_j)`.
+/// Neither value is recovered by division: both may be zero. The returned
+/// member claim is `p * m`.
+///
+/// [`Self::member_output_scale`] exposes the output multiplier to verifiers.
+/// Its `challenges` are in temporal batch-round order: `challenges[j] = r_j`,
+/// with a member opening at the slice for `W`. The multiplier can be zero.
+/// It rejects invalid batch dimensions, an out-of-range member index, or a
+/// challenge count different from `n` with a typed [`SumcheckError`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchPrelude<F> {
     pub members: Vec<BatchMember<F>>,
     /// The padded random linear combination of the members' input claims —
-    /// the batch's initial running claim:
-    /// `Σ coefficient · input_claim · 2^(max_num_vars − rounds)`.
+    /// the batch's initial running claim, under the padding rule above.
     pub claimed_sum: F,
     pub max_num_vars: usize,
     pub max_degree: usize,
 }
 
+impl<F> BatchMember<F> {
+    pub(crate) fn is_active(&self, round: usize) -> bool {
+        round >= self.offset && round < self.offset + self.rounds
+    }
+}
+
 impl<F: Field> BatchPrelude<F> {
-    /// Combine `members` into the batch's initial running claim. The
-    /// `2^(max_num_vars − rounds)` scale is each shorter member's dummy-round
-    /// padding — its summand extended constantly over the batch's extra
-    /// variables — and is independent of where the member's window sits. A
-    /// tail-aligned member halves through its inactive rounds and enters its
-    /// window at the unscaled input claim; a head-aligned member is active
-    /// immediately at the padded scale, so its kernel must emit round
-    /// polynomials carrying that scale.
+    /// Combine `members` into the initial claim using the [padding rule](Self).
     ///
     /// # Panics
     ///
@@ -72,10 +99,12 @@ impl<F: Field> BatchPrelude<F> {
         max_degree: usize,
     ) -> Result<Self, SumcheckError<F>> {
         validate_batch_dimensions(&members, max_num_vars, max_degree)?;
+        let padding = PaddingRule::for_field();
         let claimed_sum = members
             .iter()
             .map(|member| {
-                member.coefficient * member.input_claim.mul_pow_2(max_num_vars - member.rounds)
+                member.coefficient
+                    * padding.pad_input_claim(member.input_claim, max_num_vars - member.rounds)
             })
             .sum();
         Ok(Self {
@@ -86,8 +115,71 @@ impl<F: Field> BatchPrelude<F> {
         })
     }
 
+    /// Returns `λ` such that an honest member's final claim is `λ * g(r_W)`.
+    /// A verifier must check its reduced value against
+    /// `Σ_i coefficient_i * member_output_scale(i, r) * g_i(r_W)` using the
+    /// challenges returned by its own round verification. See the
+    /// [padding contract](Self) for the rule and challenge order.
+    ///
+    /// # Errors
+    ///
+    /// Validates dimensions as [`crate::prove_batch`] does, including the
+    /// padding-exponent limit. Then returns
+    /// [`SumcheckError::RoundMemberIndexOutOfRange`] for an absent member or
+    /// [`SumcheckError::WrongNumberOfRounds`] for an incorrect challenge count.
+    pub fn member_output_scale(
+        &self,
+        member: usize,
+        challenges: &[F],
+    ) -> Result<F, SumcheckError<F>> {
+        self.validate()?;
+        let described =
+            self.members
+                .get(member)
+                .ok_or(SumcheckError::RoundMemberIndexOutOfRange {
+                    member,
+                    members: self.members.len(),
+                })?;
+        if challenges.len() != self.max_num_vars {
+            return Err(SumcheckError::WrongNumberOfRounds {
+                expected: self.max_num_vars,
+                got: challenges.len(),
+            });
+        }
+        Ok(match PaddingRule::<F>::for_field() {
+            PaddingRule::ConstantExtension { .. } => F::one(),
+            PaddingRule::ZeroExtension => challenges
+                .iter()
+                .enumerate()
+                .filter(|(round, _)| !described.is_active(*round))
+                .map(|(_, challenge)| F::one() - challenge)
+                .product(),
+        })
+    }
+
     pub(crate) fn validate(&self) -> Result<(), SumcheckError<F>> {
         validate_batch_dimensions(&self.members, self.max_num_vars, self.max_degree)
+    }
+}
+
+pub(crate) enum PaddingRule<F> {
+    ConstantExtension { two_inv: F },
+    ZeroExtension,
+}
+
+impl<F: Field> PaddingRule<F> {
+    pub(crate) fn for_field() -> Self {
+        match F::from_u64(2).inverse() {
+            Some(two_inv) => Self::ConstantExtension { two_inv },
+            None => Self::ZeroExtension,
+        }
+    }
+
+    pub(crate) fn pad_input_claim(&self, claim: F, exponent: usize) -> F {
+        match self {
+            Self::ConstantExtension { .. } => claim.mul_pow_2(exponent),
+            Self::ZeroExtension => claim,
+        }
     }
 }
 

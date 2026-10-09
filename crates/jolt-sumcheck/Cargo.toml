@@ -35,7 +35,7 @@ thiserror.workspace = true
 [dev-dependencies]
 bincode = { workspace = true }
 jolt-crypto = { workspace = true, features = ["bn254"] }
-jolt-field = { workspace = true, features = ["bn254", "solinas"] }
+jolt-field = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",
