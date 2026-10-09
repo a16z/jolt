@@ -1,12 +1,5 @@
 use crate::protocols::jolt::PrecommittedReductionDimensions;
 
-/// `(two-phase dimensions, chunk count)` shape shared by the committed-bytecode
-/// cycle- and address-phase reductions. The staged-val count its eta fold spans
-/// (five base, six akita) is the active `NUM_BYTECODE_VAL_STAGES` const, not a
-/// runtime field.
-#[cfg(not(feature = "akita"))]
-pub type BytecodeReductionShape = (PrecommittedReductionDimensions, usize);
-#[cfg(feature = "akita")]
 pub type BytecodeReductionShape = PrecommittedReductionDimensions;
 
 mod address_phase;

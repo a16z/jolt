@@ -1,9 +1,7 @@
 //! Committed-program bytecode row/lane grids and padded image words.
-//! Akita commits the whole grid; Dory commits contiguous row partitions.
+//! Both commitment backends use one whole bytecode grid.
 //! Each row uses the shared lane layout, interleaved by the trace order.
 
-#[cfg(not(feature = "akita"))]
-use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::is_valid_committed_bytecode_chunking_for_len;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     bytecode_total_vars, is_valid_committed_program_immediate, BYTECODE_LANE_LAYOUT,
     COMMITTED_BYTECODE_LANE_CAPACITY, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
@@ -76,34 +74,8 @@ fn for_each_active_lane_value<F: JoltField>(
     }
 }
 
-/// Build the per-chunk committed bytecode coefficient grids, interleaved by
-/// the proof's trace order.
-#[cfg(not(feature = "akita"))]
-#[tracing::instrument(skip_all, name = "build_committed_bytecode_chunk_coeffs")]
-pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
-    instructions: &[JoltInstructionRow],
-    chunk_count: usize,
-    order: TracePolynomialOrder,
-) -> Result<Vec<Vec<F>>, KernelError<F>> {
-    if !is_valid_committed_bytecode_chunking_for_len(instructions.len(), chunk_count) {
-        return Err(KernelError::InvalidGeometry {
-            reason: format!(
-                "invalid committed bytecode chunking: {chunk_count} chunks over {} rows",
-                instructions.len()
-            ),
-        });
-    }
-    instructions
-        .chunks(instructions.len() / chunk_count)
-        .map(|rows| build_committed_bytecode_coeffs(rows, order))
-        .collect()
-}
-
 /// Materialize one complete bytecode row/lane grid, independent of trace length.
-#[cfg_attr(
-    feature = "akita",
-    tracing::instrument(skip_all, name = "build_committed_bytecode_chunk_coeffs")
-)]
+#[tracing::instrument(skip_all, name = "build_committed_bytecode_coeffs")]
 pub fn build_committed_bytecode_coeffs<F: JoltField>(
     instructions: &[JoltInstructionRow],
     order: TracePolynomialOrder,

@@ -56,7 +56,7 @@ Since Dory is an additively homomorphic commitment scheme, the verifier is able 
 
 ### Precommitted polynomials and final opening layout
 
-Most Stage 8 polynomials are **trace-domain** polynomials: their shape is determined by the padded execution trace and the address domain. Some committed polynomials, however, are fixed independently of the trace. Examples include Dory bytecode chunks, Akita whole bytecode, the program image, and trusted or untrusted advice. In the implementation these independently committed objects are called **precommitted** polynomials.
+Most Stage 8 polynomials are **trace-domain** polynomials: their shape is determined by the padded execution trace and the address domain. Some committed polynomials, however, are fixed independently of the trace. Examples include whole bytecode in Dory and Akita, the program image, and trusted or untrusted advice. In the implementation these independently committed objects are called **precommitted** polynomials.
 
 The goal of Stage 8 is still the same: every committed polynomial should be opened at one batched Dory proof. The subtlety is that a precommitted polynomial keeps the Dory matrix shape it had when it was committed, while the trace-domain polynomials use Jolt's native trace layout.
 

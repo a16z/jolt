@@ -3,7 +3,6 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
-#[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionCyclePhaseOutputClaims;
 use jolt_claims::protocols::jolt::{
     self as native,
@@ -422,7 +421,6 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
     {
         return stage6a.bytecode_read_raf.val_stages.get_mut(stage);
     }
-    #[cfg(feature = "akita")]
     if let Some(reduction) = stage6b.bytecode_reduction.as_mut() {
         match reduction {
             BytecodeReductionCyclePhaseOutputClaims::Intermediate(claim)
@@ -438,20 +436,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
             _ => {}
         }
     }
-    #[cfg(not(feature = "akita"))]
-    if let Some(reduction) = stage6b.bytecode_reduction.as_mut() {
-        if id == bytecode_reduction::cycle_phase_intermediate_opening() {
-            if let Some(intermediate) = reduction.intermediate.as_mut() {
-                return Some(intermediate);
-            }
-        }
-        // cycle-phase-only shapes emit the final chunk claims here
-        for (chunk, opening_claim) in reduction.chunks.iter_mut().enumerate() {
-            if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {
-                return Some(opening_claim);
-            }
-        }
-    }
+
     if let Some(reduction) = stage6b.program_image_reduction.as_mut() {
         if id == program_image_reduction::cycle_phase_program_image_opening()
             || id == program_image_reduction::final_program_image_opening()
@@ -602,20 +587,12 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
         }
     }
 
-    #[cfg(feature = "akita")]
     if let Some(address_phase) = claims.bytecode_address_phase.as_mut() {
         if id == bytecode_reduction::final_program_bytecode_opening() {
             return Some(&mut address_phase.bytecode);
         }
     }
-    #[cfg(not(feature = "akita"))]
-    if let Some(address_phase) = claims.bytecode_address_phase.as_mut() {
-        for (chunk, opening) in address_phase.chunks.iter_mut().enumerate() {
-            if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {
-                return Some(opening);
-            }
-        }
-    }
+
     if let Some(address_phase) = claims.program_image_address_phase.as_mut() {
         if id == program_image_reduction::final_program_image_opening() {
             return Some(&mut address_phase.program_image);

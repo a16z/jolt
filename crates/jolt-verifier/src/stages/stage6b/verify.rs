@@ -349,20 +349,6 @@ fn validate_cycle_phase_claim_shape<F: JoltField>(
         claims.bytecode_reduction.as_ref(),
     ) {
         let has_address_phase = layout.dimensions().has_address_phase();
-        // The wire shape must match the reduction mode: an `intermediate` (no
-        // chunks) when an address phase follows, else exactly `chunk_count`
-        // chunks (no intermediate).
-        #[cfg(not(feature = "akita"))]
-        let shape_ok = match (
-            &output_claims.intermediate,
-            output_claims.chunks.is_empty(),
-            has_address_phase,
-        ) {
-            (Some(_), true, true) => true,
-            (None, false, false) => output_claims.chunks.len() == layout.chunk_count(),
-            _ => false,
-        };
-        #[cfg(feature = "akita")]
         let shape_ok = output_claims.intermediate().is_some() == has_address_phase;
         if !shape_ok {
             return Err(VerifierError::StageClaimPublicInputFailed {

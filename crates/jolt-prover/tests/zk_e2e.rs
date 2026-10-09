@@ -156,7 +156,7 @@ mod zk {
         with_zk_stack(|| {
             let run = support::prepare(&muldiv_case());
             let config = derive_config(&run);
-            let preprocessing = jolt_prover::dory::preprocess_committed(run.preprocessing, 2)
+            let preprocessing = jolt_prover::dory::preprocess_committed(run.preprocessing)
                 .expect("committed preprocessing");
             let program_preprocessing = preprocessing.program_arc().expect("retained full program");
             let public_io = run.trace.device.clone();

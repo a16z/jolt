@@ -1,5 +1,7 @@
 use super::*;
 
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase as BytecodeCyclePhase;
+
 use jolt_claims::protocols::jolt::relations::claim_reductions::increments::IncClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::relations::ram::{
     RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
@@ -43,12 +45,9 @@ where
     let untrusted_claims = untrusted_layout.as_ref().map(|layout| {
         relations::claim_reductions::advice::UntrustedCyclePhase::new(layout.dimensions())
     });
-    let bytecode_reduction_claims = bytecode_reduction_layout.as_ref().map(|layout| {
-        relations::claim_reductions::bytecode::CyclePhase::new((
-            layout.dimensions(),
-            layout.chunk_count(),
-        ))
-    });
+    let bytecode_reduction_claims = bytecode_reduction_layout
+        .as_ref()
+        .map(|layout| BytecodeCyclePhase::new(layout.dimensions()));
     let program_image_reduction_claims = program_image_reduction_layout.as_ref().map(|layout| {
         relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions())
     });
@@ -196,12 +195,9 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
     }
     if let Some(layout) = bytecode_reduction_layout {
         output_ids.extend(
-            bytecode_reduction::cycle_phase_output_openings(
-                layout.dimensions(),
-                layout.chunk_count(),
-            )
-            .into_iter()
-            .map(ComposedOpeningId::from),
+            bytecode_reduction::cycle_phase_output_openings(layout.dimensions())
+                .into_iter()
+                .map(ComposedOpeningId::from),
         );
     }
     if let Some(layout) = program_image_reduction_layout {
@@ -261,6 +257,7 @@ fn stage6_cycle_output_openings_and_aliases<F: JoltField>(
 )]
 mod tests {
     use super::*;
+
     use crate::stages::stage6b::booleanity::BooleanityOutputClaims;
     use crate::stages::stage6b::bytecode_read_raf::BytecodeReadRafOutputClaims;
     use crate::stages::stage6b::inc_claim_reduction::IncClaimReductionOutputClaims;
@@ -404,6 +401,7 @@ mod tests {
 )]
 mod field_inline_tests {
     use super::*;
+
     use crate::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use crate::stages::relations::ConcreteSumcheck as _;
     use crate::stages::stage6b::bytecode_read_raf::{

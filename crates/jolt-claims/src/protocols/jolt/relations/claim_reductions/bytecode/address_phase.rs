@@ -20,10 +20,6 @@ use crate::{opening, InputClaims, OutputClaims, SymbolicSumcheck};
 ))]
 #[relation(BytecodeClaimReduction)]
 pub struct BytecodeReductionAddressPhaseOutputClaims<C> {
-    #[cfg(not(feature = "akita"))]
-    #[opening(committed = BytecodeChunk)]
-    pub chunks: Vec<C>,
-    #[cfg(feature = "akita")]
     #[opening(committed = ProgramBytecode)]
     pub bytecode: C,
 }
@@ -53,10 +49,6 @@ impl SymbolicSumcheck for AddressPhase {
     type Outputs<C> = BytecodeReductionAddressPhaseOutputClaims<C>;
 
     fn new(shape: BytecodeReductionShape) -> Self {
-        #[cfg(not(feature = "akita"))]
-        crate::protocols::jolt::geometry::claim_reductions::bytecode::assert_valid_chunk_count(
-            shape.1,
-        );
         Self { shape }
     }
 
@@ -65,13 +57,8 @@ impl SymbolicSumcheck for AddressPhase {
     }
 
     fn rounds(&self) -> usize {
-        {
-            #[cfg(not(feature = "akita"))]
-            let dimensions = self.shape.0;
-            #[cfg(feature = "akita")]
-            let dimensions = self.shape;
-            dimensions.address_phase_total_rounds()
-        }
+        let dimensions = self.shape;
+        dimensions.address_phase_total_rounds()
     }
 
     fn degree(&self) -> usize {
@@ -83,9 +70,6 @@ impl SymbolicSumcheck for AddressPhase {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        final_output_expr(
-            #[cfg(not(feature = "akita"))]
-            self.shape.1,
-        )
+        final_output_expr()
     }
 }

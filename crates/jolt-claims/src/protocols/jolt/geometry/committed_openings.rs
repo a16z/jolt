@@ -17,20 +17,18 @@ pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommitt
     polynomials
 }
 
-/// `committed_program_chunks` is `Some(bytecode_chunk_count)` in committed
-/// program mode, which appends the trusted bytecode chunk and program-image
-/// commitments to the batch.
+/// Committed mode appends the whole-bytecode and program-image commitments.
 pub fn final_opening_polynomial_order(
     layout: JoltRaPolynomialLayout,
     include_trusted_advice: bool,
     include_untrusted_advice: bool,
-    committed_program_chunks: Option<usize>,
+    committed_program: bool,
 ) -> Vec<JoltCommittedPolynomial> {
     let mut polynomials = Vec::with_capacity(
         2 + layout.total()
             + usize::from(include_trusted_advice)
             + usize::from(include_untrusted_advice)
-            + committed_program_chunks.map_or(0, |chunk_count| chunk_count + 1),
+            + 2 * usize::from(committed_program),
     );
     polynomials.push(JoltCommittedPolynomial::RamInc);
     polynomials.push(JoltCommittedPolynomial::RdInc);
@@ -43,8 +41,8 @@ pub fn final_opening_polynomial_order(
     if include_untrusted_advice {
         polynomials.push(JoltCommittedPolynomial::UntrustedAdvice);
     }
-    if let Some(chunk_count) = committed_program_chunks {
-        polynomials.extend((0..chunk_count).map(JoltCommittedPolynomial::BytecodeChunk));
+    if committed_program {
+        polynomials.push(JoltCommittedPolynomial::ProgramBytecode);
         polynomials.push(JoltCommittedPolynomial::ProgramImageInit);
     }
     polynomials
@@ -73,12 +71,11 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
         JoltCommittedPolynomial::TrustedAdvice | JoltCommittedPolynomial::UntrustedAdvice => {
             JoltRelationId::AdviceClaimReduction
         }
-        JoltCommittedPolynomial::BytecodeChunk(_) | JoltCommittedPolynomial::ProgramBytecode => {
-            JoltRelationId::BytecodeClaimReduction
-        }
+        JoltCommittedPolynomial::ProgramBytecode => JoltRelationId::BytecodeClaimReduction,
         JoltCommittedPolynomial::ProgramImageInit => JoltRelationId::ProgramImageClaimReduction,
 
-        JoltCommittedPolynomial::BalancedIncDigit(_)
+        JoltCommittedPolynomial::Reserved4(_)
+        | JoltCommittedPolynomial::BalancedIncDigit(_)
         | JoltCommittedPolynomial::BalancedIncCarry => JoltRelationId::HammingWeightClaimReduction,
     }
 }

@@ -291,7 +291,7 @@ Stage 8 binds the common point and ordered evaluations, then passes those claims
 to Akita's native batch opening.
 
 Advice objects retain singleton dense prefix layouts. Committed programs use one
-direct bounded-dense `BytecodeChunk(i)` object per chunk plus one direct
+direct bounded-dense `ProgramBytecode` object for the whole table plus one direct
 `ProgramImageInit` object. Each auxiliary logical polynomial is zero-prefix
 embedded only to Akita's physical arity floor. These objects join the native trace
 group in one role-bound opening. Field-inline additionally contributes one

@@ -177,22 +177,13 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     }
 
     /// The bytecode claim-reduction cycle-phase opening point, present only in
-    /// committed-program mode. Every produced chunk (or the intermediate) shares
-    /// the single cycle opening point, so the first cell is canonical.
+    /// committed-program mode, for either the intermediate or final claim.
     pub fn bytecode_reduction_opening_point(&self) -> Option<&[F]> {
         let reduction = self.bytecode_reduction.as_ref()?;
-        #[cfg(not(feature = "akita"))]
-        match &reduction.intermediate {
-            Some(point) => Some(point.as_slice()),
-            None => reduction.chunks.first().map(Vec::as_slice),
-        }
-        #[cfg(feature = "akita")]
-        {
-            reduction
-                .intermediate()
-                .or_else(|| reduction.bytecode())
-                .map(Vec::as_slice)
-        }
+        reduction
+            .intermediate()
+            .or_else(|| reduction.bytecode())
+            .map(Vec::as_slice)
     }
 
     /// The advice cycle-phase `cycle_phase_variables` for `kind`: the raw active
@@ -242,17 +233,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
             + usize::from(cfg!(feature = "field-inline"))
             + usize::from(self.trusted_advice.is_some())
             + usize::from(self.untrusted_advice.is_some())
-            + self.bytecode_reduction.as_ref().map_or(0, |reduction| {
-                #[cfg(not(feature = "akita"))]
-                {
-                    usize::from(reduction.intermediate.is_some()) + reduction.chunks.len()
-                }
-                #[cfg(feature = "akita")]
-                {
-                    let _ = reduction;
-                    1
-                }
-            })
+            + usize::from(self.bytecode_reduction.is_some())
             + usize::from(self.program_image_reduction.is_some())
     }
 }
@@ -373,7 +354,7 @@ pub struct Stage6bClearOutput<F: JoltField> {
     /// `Stage6bOutputPoints<F>` accessors).
     pub output_points: Stage6bOutputPoints<F>,
     /// Committed-program mode only: the bytecode claim-reduction's address
-    /// point and gamma-folded lane weights (plus Dory partition weights). These are
+    /// point and gamma-folded lane weights. These are
     /// public derived data (not openings), so stage 7's bytecode address phase
     /// reads them here rather than recomputing them.
     pub bytecode_reduction_weights: Option<BytecodeReductionWeights<F>>,
@@ -425,14 +406,11 @@ impl<F: JoltField, C> Stage6bOutput<F, C> {
 }
 
 /// Public bytecode claim-reduction state shared by the cycle and address
-/// phases: optional Dory partition weights and the local
-/// cycle point, and the gamma-folded lane weights.
+/// phases: the full bytecode point and gamma-folded lane weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct BytecodeReductionWeights<F: JoltField> {
     pub r_bc: Vec<F>,
-    #[cfg(not(feature = "akita"))]
-    pub chunk_rbc_weights: Vec<F>,
     pub lane_weights: Vec<F>,
 }
 
@@ -442,8 +420,6 @@ impl<F: JoltField> BytecodeReductionWeights<F> {
     pub(crate) fn as_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {
         BytecodeOutputWeightInputs {
             r_bc: &self.r_bc,
-            #[cfg(not(feature = "akita"))]
-            chunk_rbc_weights: &self.chunk_rbc_weights,
             lane_weights: &self.lane_weights,
         }
     }

@@ -4,7 +4,7 @@
 //! program image are committed polynomials. Their two-phase reductions begin in
 //! stage 6b (cycle phase) and, when active address-phase rounds remain, finish
 //! here in stage 7. Each is a self-contained relation object: the bytecode
-//! reduction opens whole bytecode in Akita and row partitions in Dory under
+//! reduction opens whole bytecode in both backends under
 //! the canonical output weights, and the program-image reduction opens
 //! `ProgramImageInit` under a single `FinalScale` public.
 //!
@@ -39,7 +39,7 @@ pub struct BytecodeReductionAddressPhase<F: JoltField> {
     layout: BytecodeClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
     /// The stage-6b bytecode cycle-phase output weights, consumed only by the
-    /// clear-only `derive_output_term` (`ChunkOutputWeight`). `None` in ZK (BlindFold
+    /// clear-only `derive_output_term` (`OutputWeight`). `None` in ZK (BlindFold
     /// recomputes the weights), where this relation's `derive_output_term` never runs.
     weights: Option<BytecodeReductionWeights<F>>,
 }
@@ -55,13 +55,7 @@ impl<F: JoltField> BytecodeReductionAddressPhase<F> {
         cycle_phase_variables: Vec<F>,
     ) -> Self {
         Self {
-            symbolic: BytecodeAddressPhase::new({
-                #[cfg(not(feature = "akita"))]
-                let shape = (layout.dimensions(), layout.chunk_count());
-                #[cfg(feature = "akita")]
-                let shape = layout.dimensions();
-                shape
-            }),
+            symbolic: BytecodeAddressPhase::new(layout.dimensions()),
             layout: layout.clone(),
             cycle_phase_variables,
             weights,
@@ -111,9 +105,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
             .address_phase_opening_point(&self.cycle_phase_variables, sumcheck_point)
             .map_err(bytecode_public_failed)?;
         Ok(BytecodeReductionAddressPhaseOutputClaims {
-            #[cfg(not(feature = "akita"))]
-            chunks: vec![opening_point; self.layout.chunk_count()],
-            #[cfg(feature = "akita")]
             bytecode: opening_point,
         })
     }
@@ -125,47 +116,16 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         output_points: &BytecodeReductionAddressPhaseOutputClaims<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
-        #[cfg(not(feature = "akita"))]
+        if *id != JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::OutputWeight)
         {
-            let JoltDerivedId::BytecodeClaimReduction(
-                BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx),
-            ) = id
-            else {
-                return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
-            };
-            let opening_point = output_points
-                .chunks()
-                .first()
-                .map(Vec::as_slice)
-                .ok_or_else(|| {
-                    bytecode_public_failed("bytecode reduction produced no chunk openings")
-                })?;
-            let weights = self
-                .layout
-                .address_phase_final_output_weights_at_opening_point(
-                    self.output_weight_inputs()?,
-                    opening_point,
-                )
-                .map_err(bytecode_public_failed)?;
-            weights
-                .get(*chunk_idx)
-                .copied()
-                .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         }
-        #[cfg(feature = "akita")]
-        {
-            if *id
-                != JoltDerivedId::BytecodeClaimReduction(BytecodeClaimReductionPublic::OutputWeight)
-            {
-                return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
-            }
-            self.layout
-                .address_phase_final_output_weights_at_opening_point(
-                    self.output_weight_inputs()?,
-                    output_points.bytecode(),
-                )
-                .map_err(bytecode_public_failed)
-        }
+        self.layout
+            .address_phase_final_output_weight_at_opening_point(
+                self.output_weight_inputs()?,
+                output_points.bytecode(),
+            )
+            .map_err(bytecode_public_failed)
     }
 }
 

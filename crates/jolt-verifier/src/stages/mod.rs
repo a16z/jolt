@@ -108,8 +108,6 @@ pub(crate) fn stage6_checked_split<'a, F: JoltField>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommittedProgramSchedule {
     pub bytecode_len: usize,
-    #[cfg(not(feature = "akita"))]
-    pub bytecode_chunk_count: usize,
     pub program_image_len_words: usize,
     /// Remapped RAM word address of the first program-image word
     /// (`remap(min_bytecode_address)`).
@@ -148,11 +146,7 @@ impl PrecommittedSchedule {
         #[cfg(feature = "akita")]
         let mut candidates = Vec::new();
         if let Some(committed) = committed_program {
-            candidates.push(bytecode::precommitted_candidate(
-                committed.bytecode_len,
-                #[cfg(not(feature = "akita"))]
-                committed.bytecode_chunk_count,
-            )?);
+            candidates.push(bytecode::precommitted_candidate(committed.bytecode_len)?);
             candidates.push(program_image::precommitted_candidate(
                 committed.program_image_len_words,
             ));
@@ -186,8 +180,6 @@ impl PrecommittedSchedule {
                     log_t,
                     scheduling_reference,
                     committed.bytecode_len,
-                    #[cfg(not(feature = "akita"))]
-                    committed.bytecode_chunk_count,
                 )
             })
             .transpose()?;

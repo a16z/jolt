@@ -63,10 +63,7 @@ fn stage8_final_opening_ids(base: &verifier_fixtures::VerifierFixtureCase) -> Ve
         dimensions.ra_layout,
         base.trusted_advice_commitment.is_some(),
         base.proof.untrusted_advice_commitment.is_some(),
-        base.preprocessing
-            .program
-            .committed()
-            .map(|committed| committed.bytecode_chunk_count()),
+        base.preprocessing.program.committed().is_some(),
     )
     .into_iter()
     .map(final_opening_id)

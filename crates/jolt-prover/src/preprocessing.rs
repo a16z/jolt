@@ -126,7 +126,7 @@ use crate::akita::witness::DirectProgramObjects;
 /// commitments' opening material (the stage-8 openings). Mirrors legacy's
 /// `CommittedProgramProverData`.
 ///
-/// On the Akita (`akita`) build the per-chunk/image plans and hints are
+/// On the Akita (`akita`) build the bytecode/image plans and hints are
 /// retained in direct bounded-dense program objects built at preprocessing
 /// time, so proving consumes them directly instead of re-deriving them.
 #[derive(Clone)]
@@ -140,9 +140,9 @@ use crate::akita::witness::DirectProgramObjects;
 )]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     pub full: Arc<JoltProgramPreprocessing>,
-    /// One opening hint per committed bytecode chunk, in chunk order.
+    /// Opening hint for the whole committed bytecode table.
     #[cfg(not(feature = "akita"))]
-    pub bytecode_chunk_hints: Vec<PCS::OpeningHint>,
+    pub bytecode_hint: PCS::OpeningHint,
     #[cfg(not(feature = "akita"))]
     pub program_image_hint: PCS::OpeningHint,
     /// Direct program objects in canonical order (whole bytecode, then
@@ -151,7 +151,7 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
     /// fail-closed).
     #[cfg(feature = "akita")]
     pub direct_program: DirectProgramObjects<PCS>,
-    /// The trace order the chunk commitments' coefficient grids were built
+    /// The trace order the bytecode commitment's coefficient grid was built
     /// under at preprocessing time. Stage 0 rejects a proof config whose
     /// order disagrees because the reduction point would address the
     /// committed grid in the wrong order.

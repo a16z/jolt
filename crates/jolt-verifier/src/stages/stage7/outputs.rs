@@ -80,21 +80,12 @@ impl<F: JoltField> Stage7OutputPoints<F> {
         }
     }
 
-    /// The committed-bytecode address-phase final opening point (shared by every
-    /// chunk), present only when that address phase ran.
+    /// The whole-bytecode final opening point, present only when its
+    /// address phase ran.
     pub fn bytecode_point(&self) -> Option<&[F]> {
-        #[cfg(not(feature = "akita"))]
-        {
-            self.bytecode_address_phase
-                .as_ref()
-                .and_then(|points| points.chunks().first().map(Vec::as_slice))
-        }
-        #[cfg(feature = "akita")]
-        {
-            self.bytecode_address_phase
-                .as_ref()
-                .map(|points| points.bytecode())
-        }
+        self.bytecode_address_phase
+            .as_ref()
+            .map(|points| points.bytecode())
     }
 
     /// The program-image address-phase final opening point, present only when that
@@ -212,8 +203,6 @@ mod tests {
             Some(64),
             Some(CommittedProgramSchedule {
                 bytecode_len: 8,
-                #[cfg(not(feature = "akita"))]
-                bytecode_chunk_count: 2,
                 program_image_len_words: 8,
                 program_image_start_index: 0,
             }),
@@ -242,8 +231,7 @@ mod tests {
             )
         };
 
-        let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
-            (5, 6, 7, 8, 9, 6, 9);
+        let (trusted, untrusted, bytecode, image, plain_last, committed_last) = (5, 6, 7, 8, 6, 8);
         let hamming = HammingWeightClaimReductionOutputClaims {
             instruction_ra: vec![fr(1), fr(2)],
             bytecode_ra: vec![fr(3)],
@@ -295,7 +283,7 @@ mod tests {
             trusted_advice: Some(trusted_advice),
             untrusted_advice: Some(untrusted_advice),
             bytecode_address_phase: Some(BytecodeReductionAddressPhaseOutputClaims {
-                chunks: vec![fr(chunk1), fr(chunk2)],
+                bytecode: fr(bytecode),
             }),
             program_image_address_phase: Some(ProgramImageReductionAddressPhaseOutputClaims {
                 program_image: fr(image),
@@ -348,13 +336,7 @@ mod tests {
             assert_eq!(untrusted_advice.expected_output_openings::<Fr>().len(), 1);
         }
 
-        #[cfg(not(feature = "akita"))]
-        let bytecode = BytecodeAddressPhase::new((reduction_dimensions, 4));
-        #[cfg(feature = "akita")]
         let bytecode = BytecodeAddressPhase::new(reduction_dimensions);
-        #[cfg(not(feature = "akita"))]
-        assert_eq!(bytecode.expected_output_openings::<Fr>().len(), 4);
-        #[cfg(feature = "akita")]
         assert_eq!(bytecode.expected_output_openings::<Fr>().len(), 1);
 
         let program_image = ProgramImageAddressPhase::new(reduction_dimensions);

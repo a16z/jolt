@@ -54,7 +54,7 @@ and shape. The canonical order is:
 
 4. `OneHotTrace`.
 
-The bytecode group has `9 + log2(padded_bytecode_rows)` logical variables and a physical arity of at least 14, independent of the trace size. Each native group keeps its own opening point, so a short execution does not require splitting bytecode. Dory retains its bytecode-table chunking. This is separate from Akita response chunk profiles and the address-bit chunks of `BytecodeRa`. Akita preprocessing and proof encodings have changed; regenerate existing Akita preprocessing and proofs, including full-program mode.
+The bytecode group has `9 + log2(padded_bytecode_rows)` logical variables and a physical arity of at least 14, independent of the trace size. Each native group keeps its own opening point, so a short execution does not require splitting bytecode. Dory also commits one whole-bytecode table and embeds its balanced matrix into the joint opening grid. This is separate from Akita response chunk profiles and the address-bit chunks of `BytecodeRa`. Akita preprocessing and proof encodings have changed; regenerate existing Akita preprocessing and proofs, including full-program mode.
 
 The verifier derives the expected layouts and roles from preprocessing and protocol configuration. It checks the assembled statement before invoking Akita verification. This replaces Dory's commitment-level linear combination with a grouped proof over the original commitments.
 

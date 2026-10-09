@@ -474,8 +474,6 @@ where
                     })?;
                 Ok(CommittedProgramSchedule {
                     bytecode_len: meta.bytecode_len,
-                    #[cfg(not(feature = "akita"))]
-                    bytecode_chunk_count: committed.bytecode_chunk_count(),
                     program_image_len_words: meta.program_image_len_words,
                     program_image_start_index,
                 })
@@ -734,7 +732,7 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         );
         if let Some(committed) = preprocessing.program.committed() {
             absorb_committed_program_commitments(
-                &committed.bytecode_chunk_commitments,
+                &committed.bytecode_commitment,
                 &committed.program_image_commitment,
                 transcript,
             );
@@ -798,21 +796,19 @@ where
     append_length_prefixed(transcript, b"program_image_init_commitment", image);
 }
 
-/// Absorbs the preprocessing-held committed-program commitments (per-chunk
+/// Absorbs the preprocessing-held committed-program commitments (whole
 /// bytecode, then the program image), immediately after the proof-carried
 /// commitments. Shared verbatim by the prover's stage 0.
 pub fn absorb_committed_program_commitments<C, T>(
-    bytecode_chunk_commitments: &[C],
+    bytecode_commitment: &C,
     program_image_commitment: &C,
     transcript: &mut T,
 ) where
     C: AppendToTranscript,
     T: Transcript,
 {
-    for commitment in bytecode_chunk_commitments {
-        append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-        transcript.append(commitment);
-    }
+    append_payload_label(transcript, b"program_bytecode_commit", bytecode_commitment);
+    transcript.append(bytecode_commitment);
     append_payload_label(
         transcript,
         b"program_image_commitment",
@@ -1122,8 +1118,6 @@ where
                     })?;
                 Ok(CommittedProgramSchedule {
                     bytecode_len: committed.meta.bytecode_len,
-                    #[cfg(not(feature = "akita"))]
-                    bytecode_chunk_count: committed.bytecode_chunk_count(),
                     program_image_len_words: committed.meta.program_image_len_words,
                     program_image_start_index,
                 })

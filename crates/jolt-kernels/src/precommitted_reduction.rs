@@ -15,14 +15,12 @@
 //! `PrepareKernel` impls reclaiming the carries
 //! ([`reference::precommitted_reduction`](crate::reference::precommitted_reduction)).
 //! The scalar kinds resolve intermediate-vs-final through
-//! `CycleReductionKernel::scalar_claim`; the bytecode kind's chunked shape
-//! spells its resolution out in its own impl.
+//! `CycleReductionKernel::scalar_claim`; bytecode encodes the exclusive
+//! phase state in its output carrier.
 //!
 //! The summand in both phases is `Σ_j value(j) · eq(j)` over tables permuted
-//! into Dory opening-round order, bound low-to-high; `aux` tables (the
-//! per-chunk bytecode polynomials) bind alongside without joining the summand
-//! — their fully bound coefficients are the reduction's final per-chunk
-//! openings. The member is head-aligned (batch offset 0) and participates
+//! into Dory opening-round order, bound low-to-high. The member is head-aligned
+//! (batch offset 0) and participates
 //! only in its schedule's active rounds; on an inactive round inside the
 //! window it emits the constant `claim/2` polynomial and halves its running
 //! `scale`.
@@ -70,14 +68,13 @@ use crate::{KernelError, ProofSession, SumcheckKernel, SumcheckKernelError};
 const PAR_THRESHOLD: usize = 1 << 10;
 
 /// The bound-table state both phase kernels drive: the summand tables, the
-/// aux tables riding alongside, and the running inactive-round scale.
+/// equality table and running inactive-round scale.
 /// `Polynomial`-backed so binds take the library's threshold-gated parallel
 /// path (byte-identical fold: `lo + r·(hi − lo)` pairwise, exact field ops).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct PrecommittedTables<F> {
     value: Polynomial<F>,
     eq: Polynomial<F>,
-    aux: Vec<Polynomial<F>>,
     /// `(1/2)^k` over the `k` inactive rounds ingested so far — the factor the
     /// running claim accumulated relative to the true bound product.
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -167,9 +164,6 @@ impl<F: JoltField> PrecommittedTables<F> {
         self.value
             .bind_with_order(challenge, BindingOrder::LowToHigh);
         self.eq.bind_with_order(challenge, BindingOrder::LowToHigh);
-        for table in &mut self.aux {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
     }
 
     fn intermediate_claim(&self) -> F {
@@ -202,19 +196,11 @@ impl<F: JoltField> PrecommittedTables<F> {
 
     /// The fully bound value coefficient — the reduction's final opening
     /// value (the advice/program-image polynomial's own opening; for the
-    /// bytecode reduction, the chunk-weighted fold the per-chunk claims sum
-    /// to). Errors while any variable remains unbound.
+    /// bytecode reduction, the whole-bytecode opening). Errors while any
+    /// variable remains unbound.
     fn final_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         self.require_fully_bound()?;
         Ok(self.value.evals()[0])
-    }
-
-    /// The fully bound `aux` coefficients — the per-chunk `BytecodeChunk(i)`
-    /// opening values. Errors while any variable remains unbound.
-    #[cfg(not(feature = "akita"))]
-    fn final_aux_claims(&self) -> Result<Vec<F>, SumcheckKernelError<F>> {
-        self.require_fully_bound()?;
-        Ok(self.aux.iter().map(|table| table.evals()[0]).collect())
     }
 }
 
@@ -260,13 +246,9 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
         reduction: PrecommittedClaimReduction,
         value: Vec<F>,
         eq: Vec<F>,
-        aux: Vec<Vec<F>>,
     ) -> Result<Self, KernelError<F>> {
         let expected = 1usize << reduction.poly_opening_round_permutation_be().len();
-        for (name, len) in std::iter::once(("value", value.len()))
-            .chain(std::iter::once(("eq", eq.len())))
-            .chain(aux.iter().map(|table| ("aux", table.len())))
-        {
+        for (name, len) in [("value", value.len()), ("eq", eq.len())] {
             if len != expected {
                 return Err(KernelError::TableSizeMismatch {
                     table: format!("precommitted reduction {name}"),
@@ -285,7 +267,6 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
             tables: PrecommittedTables {
                 value: Polynomial::new(value),
                 eq: Polynomial::new(eq),
-                aux: aux.into_iter().map(Polynomial::new).collect(),
                 scale: F::one(),
                 scale_inv: F::one(),
                 two_inv,
@@ -301,9 +282,7 @@ impl<F: JoltField, R> CycleReductionKernel<F, R> {
     /// The schedule-resolved scalar wire claim: the intermediate handoff
     /// claim when the address phase continues, else the final opening. The
     /// single source of the intermediate-vs-final resolution for the
-    /// scalar-shaped kinds (advice, program image); the bytecode kind's
-    /// chunked wire shape spells the same resolution out in its own
-    /// `output_claims`.
+    /// scalar-shaped kinds (advice and program image).
     fn scalar_claim(&self) -> Result<F, SumcheckKernelError<F>> {
         if self.has_address_phase() {
             Ok(self.tables.intermediate_claim())
@@ -451,43 +430,20 @@ impl<F: JoltField> SumcheckKernel<F> for CycleReductionKernel<F, BytecodeReducti
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionCyclePhaseOutputClaims<F>, SumcheckKernelError<F>> {
-        #[cfg(not(feature = "akita"))]
-        {
-            // The chunked counterpart of `scalar_claim`: an address phase stages
-            // the intermediate handoff claim (chunks come later, at stage 7); a
-            // cycle-only schedule ends here with the per-chunk openings.
-            Ok(if self.has_address_phase() {
-                BytecodeReductionCyclePhaseOutputClaims {
-                    intermediate: Some(self.tables.intermediate_claim()),
-                    chunks: Vec::new(),
-                }
-            } else {
-                BytecodeReductionCyclePhaseOutputClaims {
-                    intermediate: None,
-                    #[cfg(not(feature = "akita"))]
-                    chunks: self.tables.final_aux_claims()?,
-                    #[cfg(feature = "akita")]
+        use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
+        Ok(if self.has_address_phase() {
+            BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                BytecodeReductionIntermediateClaims {
+                    intermediate: self.tables.intermediate_claim(),
+                },
+            )
+        } else {
+            BytecodeReductionCyclePhaseOutputClaims::Final(
+                BytecodeReductionAddressPhaseOutputClaims {
                     bytecode: self.tables.final_claim()?,
-                }
-            })
-        }
-        #[cfg(feature = "akita")]
-        {
-            use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
-            Ok(if self.has_address_phase() {
-                BytecodeReductionCyclePhaseOutputClaims::Intermediate(
-                    BytecodeReductionIntermediateClaims {
-                        intermediate: self.tables.intermediate_claim(),
-                    },
-                )
-            } else {
-                BytecodeReductionCyclePhaseOutputClaims::Final(
-                    BytecodeReductionAddressPhaseOutputClaims {
-                        bytecode: self.tables.final_claim()?,
-                    },
-                )
-            })
-        }
+                },
+            )
+        })
     }
 
     fn park_residue(self: Box<Self>, session: &mut ProofSession) {
@@ -550,9 +506,6 @@ impl<F: JoltField> SumcheckKernel<F>
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<BytecodeReductionAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
         Ok(BytecodeReductionAddressPhaseOutputClaims {
-            #[cfg(not(feature = "akita"))]
-            chunks: self.tables.final_aux_claims()?,
-            #[cfg(feature = "akita")]
             bytecode: self.tables.final_claim()?,
         })
     }

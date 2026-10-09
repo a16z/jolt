@@ -113,6 +113,6 @@ cargo nextest run -p jolt-akita --cargo-quiet
 ```
 
 The generic backend still tests larger group-capacity limits independently.
-Akita bytecode-table chunking is absent; response chunk profiles and
+Bytecode-table chunking is absent in both backends; response chunk profiles and
 address-bit chunking remain active. A whole-bytecode arity above 34 or an
 unsupported schedule must fail preprocessing before dense allocation.

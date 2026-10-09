@@ -32,7 +32,7 @@ use jolt_kernels::{field_inline::FieldIncrementColumn, optimized::opening::Dense
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{
-    build_committed_bytecode_chunk_coeffs, program_image_words_padded,
+    build_committed_bytecode_coeffs, program_image_words_padded,
 };
 use jolt_kernels::opening::PrecommittedOpeningTables;
 use jolt_kernels::{CommitmentGrid, JoltBackend, KernelError, ProofSession};
@@ -199,12 +199,12 @@ where
     // reordered from stage 0's proof-commitment order.
     let include_trusted = precommitted.trusted_advice.is_some();
     let include_untrusted = precommitted.untrusted_advice.is_some();
-    let chunk_count = precommitted
-        .bytecode
-        .as_ref()
-        .map(|layout| layout.chunk_count());
-    let order =
-        final_opening_polynomial_order(layout, include_trusted, include_untrusted, chunk_count);
+    let order = final_opening_polynomial_order(
+        layout,
+        include_trusted,
+        include_untrusted,
+        precommitted.bytecode.is_some(),
+    );
     let grid = CommitmentGrid {
         total_vars: config.commitment_total_vars(
             preprocessing.verifier.program.memory_layout(),
@@ -231,15 +231,11 @@ where
                 .ok_or(KernelError::InvariantViolation {
                     reason: "full program preprocessing is unavailable",
                 })?;
-            let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
+            let coeffs = build_committed_bytecode_coeffs::<F>(
                 &program.bytecode.bytecode,
-                bytecode_layout.chunk_count(),
                 bytecode_layout.trace_order(),
             )?;
-            for (index, coeffs) in chunk_coeffs.into_iter().enumerate() {
-                let _ = precommitted_tables
-                    .insert(JoltCommittedPolynomial::BytecodeChunk(index), coeffs);
-            }
+            let _ = precommitted_tables.insert(JoltCommittedPolynomial::ProgramBytecode, coeffs);
             let image_words = program_image_words_padded(&program.ram.bytecode_words);
             let _ = precommitted_tables.insert(
                 JoltCommittedPolynomial::ProgramImageInit,

@@ -66,7 +66,7 @@ where
 /// Validate inputs, seed the transcript, commit the witness (the untrusted
 /// advice polynomial in its own balanced grid), and absorb the commitments
 /// (main, untrusted advice, trusted advice, then the preprocessing-held
-/// committed-program chunk/image commitments — the verifier's own absorb
+/// committed-program bytecode/image commitments — the verifier's own absorb
 /// order).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
@@ -95,8 +95,8 @@ where
             reason: "committed-program prover data presence disagrees with the preprocessing mode",
         });
     }
-    // The chunk commitments bake their trace order in at preprocessing time;
-    // a disagreeing proof config would transpose the rebuilt chunk tables
+    // The bytecode commitments bake their trace order in at preprocessing time;
+    // a disagreeing proof config would transpose the rebuilt bytecode table
     // against the absorbed commitments and fail only at verification.
     if preprocessing
         .committed_program
@@ -270,22 +270,13 @@ where
     if let Some(trusted) = trusted_advice {
         hints.push((JoltCommittedPolynomial::TrustedAdvice, trusted.hint.clone()));
     }
-    // The committed-program hints ride from preprocessing (the chunk/image
+    // The committed-program hints ride from preprocessing (the bytecode/image
     // commitments were produced there, before any proving).
     if let Some(committed) = &preprocessing.committed_program {
-        let expected_chunks = checked
-            .precommitted
-            .bytecode
-            .as_ref()
-            .map_or(0, |layout| layout.chunk_count());
-        if committed.bytecode_chunk_hints.len() != expected_chunks {
-            return Err(ProverError::Unsupported {
-                reason: "committed-program chunk hint count disagrees with the bytecode schedule",
-            });
-        }
-        for (index, hint) in committed.bytecode_chunk_hints.iter().enumerate() {
-            hints.push((JoltCommittedPolynomial::BytecodeChunk(index), hint.clone()));
-        }
+        hints.push((
+            JoltCommittedPolynomial::ProgramBytecode,
+            committed.bytecode_hint.clone(),
+        ));
         hints.push((
             JoltCommittedPolynomial::ProgramImageInit,
             committed.program_image_hint.clone(),
@@ -300,7 +291,7 @@ where
     );
     if let Some(committed) = preprocessing.verifier.program.committed() {
         absorb_committed_program_commitments(
-            &committed.bytecode_chunk_commitments,
+            &committed.bytecode_commitment,
             &committed.program_image_commitment,
             &mut transcript,
         );

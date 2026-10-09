@@ -749,30 +749,30 @@ mod tests {
     struct CommittedLeaf<C> {
         #[opening(committed = RamInc)]
         ram_inc: C,
-        #[opening(committed = BytecodeChunk)]
-        bytecode_chunks: Vec<C>,
+        #[opening(committed = ProgramBytecode)]
+        bytecode: C,
     }
 
     #[test]
     fn output_leaf_resolves_committed_ids() {
         let claims = CommittedLeaf {
             ram_inc: fr(7),
-            bytecode_chunks: vec![fr(8), fr(9)],
+            bytecode: fr(8),
         };
         let relation = JoltRelationId::RamReadWriteChecking;
 
-        assert_eq!(claims.opening_values().len(), 3);
-        assert_eq!(claims.opening_values(), vec![fr(7), fr(8), fr(9)]);
+        assert_eq!(claims.opening_values().len(), 2);
+        assert_eq!(claims.opening_values(), vec![fr(7), fr(8)]);
         assert_eq!(
             claims.resolve_output(&committed(JoltCommittedPolynomial::RamInc, relation)),
             Some(fr(7)),
         );
         assert_eq!(
             claims.resolve_output(&committed(
-                JoltCommittedPolynomial::BytecodeChunk(1),
+                JoltCommittedPolynomial::ProgramBytecode,
                 relation
             )),
-            Some(fr(9)),
+            Some(fr(8)),
         );
         assert_append_matches_values(&claims);
     }

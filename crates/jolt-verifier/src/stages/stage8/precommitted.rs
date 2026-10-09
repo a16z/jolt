@@ -14,8 +14,6 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::{
 };
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{AdviceClaimReductionLayout, JoltAdviceKind};
-#[cfg(not(feature = "akita"))]
-use jolt_claims::protocols::jolt::{BytecodeClaimReductionLayout, JoltRelationId};
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
@@ -101,67 +99,35 @@ pub fn precommitted_final_openings<F: JoltField>(
         }
     }
     if let Some(layout) = schedule.bytecode.as_ref() {
-        #[cfg(not(feature = "akita"))]
-        {
-            let address_value = clear.and_then(|(stage7, _)| {
-                stage7
-                    .bytecode_address_phase
-                    .as_ref()
-                    .map(|values| values.chunks.clone())
-            });
-            let address_phase =
-                resolve_source(is_clear, stage7_points.bytecode_point(), address_value);
-            // The stage-6b cycle phase completes the reduction only when it produced the
-            // final chunk claims (no intermediate remained), so the clear source is Some
-            // only under that guard; the point-only ZK source is unguarded.
-            let cycle_value = clear.and_then(|(_, stage6)| {
-                stage6
-                    .bytecode_reduction
-                    .as_ref()
-                    .filter(|reduction| {
-                        reduction.intermediate.is_none() && !reduction.chunks.is_empty()
-                    })
-                    .map(|reduction| reduction.chunks.clone())
-            });
-            let cycle_phase = resolve_source(
+        let address_value = clear.and_then(|(stage7, _)| {
+            stage7
+                .bytecode_address_phase
+                .as_ref()
+                .map(|claims| claims.bytecode)
+        });
+        let cycle_value = clear.and_then(|(_, stage6)| {
+            stage6
+                .bytecode_reduction
+                .as_ref()
+                .and_then(|claims| claims.bytecode().copied())
+        });
+        let source = if layout.dimensions().has_address_phase() {
+            resolve_source(is_clear, stage7_points.bytecode_point(), address_value)
+        } else {
+            resolve_source(
                 is_clear,
                 stage6_points.bytecode_reduction_opening_point(),
                 cycle_value,
-            );
-            openings.extend(bytecode_final_openings(layout, address_phase, cycle_phase)?);
+            )
         }
-        #[cfg(feature = "akita")]
-        {
-            let address_value = clear.and_then(|(stage7, _)| {
-                stage7
-                    .bytecode_address_phase
-                    .as_ref()
-                    .map(|claims| claims.bytecode)
-            });
-            let cycle_value = clear.and_then(|(_, stage6)| {
-                stage6
-                    .bytecode_reduction
-                    .as_ref()
-                    .and_then(|claims| claims.bytecode().copied())
-            });
-            let source = if layout.dimensions().has_address_phase() {
-                resolve_source(is_clear, stage7_points.bytecode_point(), address_value)
-            } else {
-                resolve_source(
-                    is_clear,
-                    stage6_points.bytecode_reduction_opening_point(),
-                    cycle_value,
-                )
-            }
-            .ok_or(VerifierError::MissingOpeningClaim {
-                id: bytecode_reduction::final_program_bytecode_opening().into(),
-            })?;
-            openings.push(PrecommittedFinalOpening {
-                polynomial: JoltCommittedPolynomial::ProgramBytecode,
-                point: source.point.to_vec(),
-                opening_claim: source.opening_claim,
-            });
-        }
+        .ok_or(VerifierError::MissingOpeningClaim {
+            id: bytecode_reduction::final_program_bytecode_opening().into(),
+        })?;
+        openings.push(PrecommittedFinalOpening {
+            polynomial: JoltCommittedPolynomial::ProgramBytecode,
+            point: source.point.to_vec(),
+            opening_claim: source.opening_claim,
+        });
     }
     if let Some(layout) = schedule.program_image.as_ref() {
         let address_value = clear.and_then(|(stage7, _)| {
@@ -248,46 +214,6 @@ fn advice_final_opening<F: JoltField>(
         point: source.point.to_vec(),
         opening_claim: source.opening_claim,
     })
-}
-
-#[cfg(not(feature = "akita"))]
-fn bytecode_final_openings<F: JoltField>(
-    layout: &BytecodeClaimReductionLayout,
-    address_phase: Option<PrecommittedFinalSource<'_, F, Vec<F>>>,
-    cycle_phase: Option<PrecommittedFinalSource<'_, F, Vec<F>>>,
-) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
-    let source = if layout.dimensions().has_address_phase() {
-        address_phase
-    } else {
-        cycle_phase
-    };
-    let source = source.ok_or(VerifierError::MissingOpeningClaim {
-        id: bytecode_reduction::final_bytecode_chunk_opening(0).into(),
-    })?;
-    if let Some(chunk_claims) = &source.opening_claim {
-        if chunk_claims.len() != layout.chunk_count() {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeClaimReduction,
-                reason: format!(
-                    "final bytecode chunk claim count mismatch: expected {}, got {}",
-                    layout.chunk_count(),
-                    chunk_claims.len()
-                ),
-            });
-        }
-    }
-    Ok((0..layout.chunk_count())
-        .map(|chunk_idx| PrecommittedFinalOpening {
-            polynomial: JoltCommittedPolynomial::BytecodeChunk(chunk_idx),
-            point: source.point.to_vec(),
-            // In range whenever the claims are present: the count was checked
-            // against `layout.chunk_count()` above.
-            opening_claim: source
-                .opening_claim
-                .as_ref()
-                .and_then(|chunk_claims| chunk_claims.get(chunk_idx).copied()),
-        })
-        .collect())
 }
 
 fn program_image_final_opening<F: JoltField>(

@@ -49,7 +49,7 @@ impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
                 let embedded = match polynomial {
                     JoltCommittedPolynomial::TrustedAdvice
                     | JoltCommittedPolynomial::UntrustedAdvice
-                    | JoltCommittedPolynomial::BytecodeChunk(_)
+                    | JoltCommittedPolynomial::Reserved4(_)
                     | JoltCommittedPolynomial::ProgramBytecode
                     | JoltCommittedPolynomial::ProgramImageInit => {
                         block_embed(&table, grid, polynomial)?

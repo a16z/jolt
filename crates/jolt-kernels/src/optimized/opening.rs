@@ -146,7 +146,6 @@ const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
         polynomial,
         JoltCommittedPolynomial::TrustedAdvice
             | JoltCommittedPolynomial::UntrustedAdvice
-            | JoltCommittedPolynomial::BytecodeChunk(_)
             | JoltCommittedPolynomial::ProgramBytecode
             | JoltCommittedPolynomial::ProgramImageInit
     )
@@ -699,11 +698,11 @@ mod tests {
         Vec<Box<dyn MultilinearPoly<Fr>>>,
     ) {
         let mut order = witness.committed_order().unwrap();
-        order.push(JoltCommittedPolynomial::BytecodeChunk(0));
+        order.push(JoltCommittedPolynomial::ProgramBytecode);
         order.push(JoltCommittedPolynomial::ProgramImageInit);
         let mut precommitted_tables = BTreeMap::new();
         let _ = precommitted_tables.insert(
-            JoltCommittedPolynomial::BytecodeChunk(0),
+            JoltCommittedPolynomial::ProgramBytecode,
             random_scalars(1 << 3, 17),
         );
         let _ = precommitted_tables.insert(

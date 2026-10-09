@@ -134,7 +134,7 @@ fuzz_target!(|data: &[u8]| {
         JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
             JoltAdviceKind::Untrusted,
         )),
-        JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
+        JoltDerivedId::from(BytecodeClaimReductionPublic::OutputWeight),
         JoltDerivedId::from(ProgramImageClaimReductionPublic::FinalScale),
         JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
         JoltDerivedId::from(SpartanProductVirtualizationPublic::TauKernel),

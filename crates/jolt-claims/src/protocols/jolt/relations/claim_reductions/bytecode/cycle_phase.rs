@@ -1,11 +1,8 @@
-#[cfg(feature = "akita")]
 use crate::MissingOpeningValue;
-#[cfg(feature = "akita")]
 use jolt_field::JoltField;
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "akita")]
 use super::BytecodeReductionAddressPhaseOutputClaims;
 use super::BytecodeReductionShape;
 use crate::protocols::jolt::geometry::claim_reductions::bytecode::{
@@ -19,24 +16,6 @@ use crate::protocols::jolt::{
 };
 use crate::{challenge, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
-/// The produced bytecode-reduction openings: the intermediate when an address
-/// phase follows, else the per-chunk final `BytecodeChunk` openings.
-#[cfg(not(feature = "akita"))]
-#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
-#[serde(bound(
-    serialize = "C: serde::Serialize",
-    deserialize = "C: serde::Deserialize<'de>"
-))]
-#[relation(BytecodeClaimReductionCyclePhase)]
-pub struct BytecodeReductionCyclePhaseOutputClaims<C> {
-    #[opening(BytecodeClaimReductionIntermediate)]
-    pub intermediate: Option<C>,
-    #[opening(committed = BytecodeChunk)]
-    pub chunks: Vec<C>,
-}
-
-#[cfg(feature = "akita")]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
@@ -48,7 +27,6 @@ pub enum BytecodeReductionCyclePhaseOutputClaims<C> {
     Final(BytecodeReductionAddressPhaseOutputClaims<C>),
 }
 
-#[cfg(feature = "akita")]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -61,7 +39,6 @@ pub struct BytecodeReductionIntermediateClaims<C> {
     pub intermediate: C,
 }
 
-#[cfg(feature = "akita")]
 impl<C> BytecodeReductionCyclePhaseOutputClaims<C> {
     pub fn intermediate(&self) -> Option<&C> {
         match self {
@@ -79,7 +56,6 @@ impl<C> BytecodeReductionCyclePhaseOutputClaims<C> {
 
 // OutputClaims derives support structs; the enum delegates each exclusive state
 // to its derived carrier so opening identities and order still have one owner.
-#[cfg(feature = "akita")]
 impl<F: JoltField> OutputClaims<F> for BytecodeReductionCyclePhaseOutputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         match self {
@@ -124,7 +100,7 @@ pub struct BytecodeReductionCyclePhaseChallenges<F> {
 /// Cycle phase of the committed-bytecode reduction: batches the staged
 /// `BytecodeValClaim(i)` openings by powers of `eta` and reduces them to either
 /// the cycle-phase intermediate opening (when an address phase follows) or the
-/// committed `BytecodeChunk(i)` openings weighted by `ChunkOutputWeight`.
+/// committed `ProgramBytecode` opening weighted by `OutputWeight`.
 #[derive(Clone)]
 pub struct CyclePhase {
     shape: BytecodeReductionShape,
@@ -141,10 +117,6 @@ impl SymbolicSumcheck for CyclePhase {
     type Outputs<C> = BytecodeReductionCyclePhaseOutputClaims<C>;
 
     fn new(shape: BytecodeReductionShape) -> Self {
-        #[cfg(not(feature = "akita"))]
-        crate::protocols::jolt::geometry::claim_reductions::bytecode::assert_valid_chunk_count(
-            shape.1,
-        );
         Self { shape }
     }
 
@@ -153,13 +125,8 @@ impl SymbolicSumcheck for CyclePhase {
     }
 
     fn rounds(&self) -> usize {
-        {
-            #[cfg(not(feature = "akita"))]
-            let dimensions = self.shape.0;
-            #[cfg(feature = "akita")]
-            let dimensions = self.shape;
-            dimensions.cycle_phase_total_rounds()
-        }
+        let dimensions = self.shape;
+        dimensions.cycle_phase_total_rounds()
     }
 
     fn degree(&self) -> usize {
@@ -176,17 +143,11 @@ impl SymbolicSumcheck for CyclePhase {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        #[cfg(not(feature = "akita"))]
-        let (dimensions, chunk_count) = self.shape;
-        #[cfg(feature = "akita")]
         let dimensions = self.shape;
         if dimensions.has_address_phase() {
             opening(cycle_phase_intermediate_opening())
         } else {
-            final_output_expr(
-                #[cfg(not(feature = "akita"))]
-                chunk_count,
-            )
+            final_output_expr()
         }
     }
 }
