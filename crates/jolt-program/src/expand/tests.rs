@@ -174,7 +174,7 @@ fn lr_sc_expansions_restrict_address_to_ram() -> Result<(), ExpansionError> {
 }
 
 #[test]
-fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
+fn sc_expansions_do_not_use_advice() -> Result<(), ExpansionError> {
     for instruction_kind in [SourceInstructionKind::SCW, SourceInstructionKind::SCD] {
         let mut allocator = ExpansionAllocator::new();
         let expanded = rows(expand_instruction(
@@ -182,14 +182,11 @@ fn sc_success_advice_is_not_position_dependent() -> Result<(), ExpansionError> {
             &mut allocator,
             RV64IMAC_JOLT,
         )?);
-        let advice_position = expanded.iter().position(|instruction| {
-            instruction.instruction_kind
-                == JoltInstructionKind::VirtualAdvice(jolt_riscv::instructions::VirtualAdvice(()))
-        });
-
         assert!(
-            matches!(advice_position, Some(position) if position > 1),
-            "RAM-region prelude should precede success advice, got {advice_position:?}"
+            expanded
+                .iter()
+                .all(|row| !matches!(row.instruction_kind, Kind::VirtualAdvice(_))),
+            "SC success must be determined by constrained reservation state"
         );
     }
     Ok(())
@@ -512,7 +509,8 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // 0x0091-0x0099 (kinds serialize as tags, so renumbering shifts hashes).
     // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
     // narrow stores moved to the window-mask + ANDN + shift-data sequences
-    // at tags 0x009e-0x00a0.
+    // at tags 0x009e-0x00a0. The six SCW/SCD cases were re-baselined when
+    // success advice was replaced by a deterministic reservation comparison.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a

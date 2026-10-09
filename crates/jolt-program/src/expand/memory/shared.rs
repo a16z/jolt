@@ -1,30 +1,27 @@
 use common::constants::RAM_START_ADDRESS;
+use jolt_riscv::instructions::{VirtualAdviceLoad, VirtualSignExtendWord, VirtualZeroExtendWord};
+use jolt_riscv::SourceInstructionKind as Kind;
 
 use super::*;
 use crate::jolt_asm;
 
-/// Emits the common LR/SC proof guard that rejects non-RAM reservation targets.
+/// Computes SC success from the selected width's reservation register.
 ///
-/// Jolt models LR/SC reservations only for ordinary RAM. This assertion keeps
-/// synthesized failure-path stores from touching memory-mapped I/O addresses.
-pub(in crate::expand) fn expand_ram_region_assertion(
+/// The RAM guard prevents failure-path stores from touching I/O and excludes
+/// the cleared reservation value zero. LR.W sets only the word reservation;
+/// LR.D sets both. Equality therefore enforces the tracer's deterministic
+/// policy, including the width check, without permitting spurious failure.
+pub(in crate::expand) fn expand_sc_success(
     asm: &mut ExpansionBuilder,
-    address_register: RegisterOperand,
-    ram_start: TempId,
-) -> Result<(), ExpansionError> {
-    asm.emit_u(
-        SourceInstructionKind::LUI,
-        ram_start.operand(),
-        RAM_START_ADDRESS as i128,
-    );
-    asm.emit_b(
-        SourceInstructionKind::VirtualAssertLTE,
-        ram_start.operand(),
-        address_register,
-        0,
-    );
-    asm.release(ram_start);
-    Ok(())
+    address: RegisterOperand,
+    reservation: RegisterOperand,
+) -> Result<TempId, ExpansionError> {
+    let success = asm.allocate()?;
+    asm.emit_u(Kind::LUI, success.operand(), RAM_START_ADDRESS as i128);
+    asm.emit_b(Kind::VirtualAssertLTE, success.operand(), address, 0);
+    asm.emit_r(Kind::XOR, success.operand(), reservation, address);
+    asm.emit_i(Kind::SLTIU, success.operand(), success.operand(), 1);
+    Ok(success)
 }
 
 /// Lowers `LB`/`LBU` by loading the containing doubleword and extracting a byte.
@@ -149,20 +146,20 @@ pub(in crate::expand) fn expand_advice_load(
     let mut asm = ExpansionBuilder::new(*instruction);
 
     asm.emit_j(
-        SourceInstructionKind::VirtualAdviceLoad(jolt_riscv::instructions::VirtualAdviceLoad(())),
+        Kind::VirtualAdviceLoad(VirtualAdviceLoad(())),
         reg(rd(instruction)?),
         byte_len,
     );
     if byte_len < 8 {
         let shift = 64 - byte_len * 8;
         asm.emit_i(
-            SourceInstructionKind::SLLI,
+            Kind::SLLI,
             reg(rd(instruction)?),
             reg(rd(instruction)?),
             shift,
         );
         asm.emit_i(
-            SourceInstructionKind::SRAI,
+            Kind::SRAI,
             reg(rd(instruction)?),
             reg(rd(instruction)?),
             shift,
@@ -186,25 +183,10 @@ pub(in crate::expand) fn expand_amo_d(
     let v_rs2 = asm.allocate()?;
     let v_rd = asm.allocate()?;
 
-    asm.emit_i(
-        SourceInstructionKind::LD,
-        v_rd.operand(),
-        reg(rs1(instruction)?),
-        0,
-    );
+    asm.emit_i(Kind::LD, v_rd.operand(), reg(rs1(instruction)?), 0);
     asm.emit_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?));
-    asm.emit_s(
-        SourceInstructionKind::SD,
-        reg(rs1(instruction)?),
-        v_rs2.operand(),
-        0,
-    );
-    asm.emit_i(
-        SourceInstructionKind::ADDI,
-        reg(rd(instruction)?),
-        v_rd.operand(),
-        0,
-    );
+    asm.emit_s(Kind::SD, reg(rs1(instruction)?), v_rs2.operand(), 0);
+    asm.emit_i(Kind::ADDI, reg(rd(instruction)?), v_rd.operand(), 0);
     asm.release_many([v_rs2, v_rd]);
 
     asm.finalize()
@@ -231,43 +213,18 @@ pub(in crate::expand) fn expand_amo_minmax_d(
         (v0.operand(), reg(rs2(instruction)?))
     };
 
-    asm.emit_i(
-        SourceInstructionKind::LD,
-        v0.operand(),
-        reg(rs1(instruction)?),
-        0,
-    );
+    asm.emit_i(Kind::LD, v0.operand(), reg(rs1(instruction)?), 0);
     asm.emit_r(compare_op, v1.operand(), cmp_rs1, cmp_rs2);
     asm.emit_r(
-        SourceInstructionKind::SUB,
+        Kind::SUB,
         v2.operand(),
         reg(rs2(instruction)?),
         v0.operand(),
     );
-    asm.emit_r(
-        SourceInstructionKind::MUL,
-        v2.operand(),
-        v2.operand(),
-        v1.operand(),
-    );
-    asm.emit_r(
-        SourceInstructionKind::ADD,
-        v1.operand(),
-        v0.operand(),
-        v2.operand(),
-    );
-    asm.emit_s(
-        SourceInstructionKind::SD,
-        reg(rs1(instruction)?),
-        v1.operand(),
-        0,
-    );
-    asm.emit_i(
-        SourceInstructionKind::ADDI,
-        reg(rd(instruction)?),
-        v0.operand(),
-        0,
-    );
+    asm.emit_r(Kind::MUL, v2.operand(), v2.operand(), v1.operand());
+    asm.emit_r(Kind::ADD, v1.operand(), v0.operand(), v2.operand());
+    asm.emit_s(Kind::SD, reg(rs1(instruction)?), v1.operand(), 0);
+    asm.emit_i(Kind::ADDI, reg(rd(instruction)?), v0.operand(), 0);
     asm.release_many([v0, v1, v2]);
 
     asm.finalize()
@@ -342,13 +299,9 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     let v_rs2 = asm.allocate()?;
     let v0 = asm.allocate()?;
     let extend_op = if signed {
-        SourceInstructionKind::VirtualSignExtendWord(
-            jolt_riscv::instructions::VirtualSignExtendWord(()),
-        )
+        Kind::VirtualSignExtendWord(VirtualSignExtendWord(()))
     } else {
-        SourceInstructionKind::VirtualZeroExtendWord(
-            jolt_riscv::instructions::VirtualZeroExtendWord(()),
-        )
+        Kind::VirtualZeroExtendWord(VirtualZeroExtendWord(()))
     };
     // Compare normalized word values, but keep the original low-word payload
     // for the value that will be merged back into memory.
@@ -361,23 +314,13 @@ pub(in crate::expand) fn expand_amo_minmax_w(
     };
     asm.emit_r(compare_op, v0.operand(), cmp_rs1, cmp_rs2);
     asm.emit_r(
-        SourceInstructionKind::SUB,
+        Kind::SUB,
         v_rs2.operand(),
         reg(rs2(instruction)?),
         v_rd.operand(),
     );
-    asm.emit_r(
-        SourceInstructionKind::MUL,
-        v_rs2.operand(),
-        v_rs2.operand(),
-        v0.operand(),
-    );
-    asm.emit_r(
-        SourceInstructionKind::ADD,
-        v_rs2.operand(),
-        v_rs2.operand(),
-        v_rd.operand(),
-    );
+    asm.emit_r(Kind::MUL, v_rs2.operand(), v_rs2.operand(), v0.operand());
+    asm.emit_r(Kind::ADD, v_rs2.operand(), v_rs2.operand(), v_rd.operand());
     expand_amo_post64(
         &mut asm,
         AmoPost64 {
@@ -407,11 +350,11 @@ pub(in crate::expand) fn expand_amo_pre64(
     v_dword: RegisterOperand,
     v_shift: RegisterOperand,
 ) -> Result<(), ExpansionError> {
-    asm.emit_address(SourceInstructionKind::VirtualAssertWordAlignment, rs1, 0);
-    asm.emit_i(SourceInstructionKind::ANDI, v_shift, rs1, format_i_imm(-8));
-    asm.emit_i(SourceInstructionKind::LD, v_dword, v_shift, 0);
-    asm.emit_i(SourceInstructionKind::SLLI, v_shift, rs1, 3);
-    asm.emit_r(SourceInstructionKind::SRL, v_rd, v_dword, v_shift);
+    asm.emit_address(Kind::VirtualAssertWordAlignment, rs1, 0);
+    asm.emit_i(Kind::ANDI, v_shift, rs1, format_i_imm(-8));
+    asm.emit_i(Kind::LD, v_dword, v_shift, 0);
+    asm.emit_i(Kind::SLLI, v_shift, rs1, 3);
+    asm.emit_r(Kind::SRL, v_rd, v_dword, v_shift);
     Ok(())
 }
 
@@ -452,19 +395,17 @@ pub(in crate::expand) fn expand_amo_post64(
 
     // Build a 32-bit lane mask, shift the new word into place, and use
     // masked-XOR replacement: new_dword = old ^ ((old ^ new) & mask).
-    asm.emit_i(SourceInstructionKind::ORI, v_mask, reg(0), format_i_imm(-1));
-    asm.emit_i(SourceInstructionKind::SRLI, v_mask, v_mask, 32);
-    asm.emit_r(SourceInstructionKind::SLL, v_mask, v_mask, v_shift);
-    asm.emit_r(SourceInstructionKind::SLL, v_shift, v_rs2, v_shift);
-    asm.emit_r(SourceInstructionKind::XOR, v_shift, v_dword, v_shift);
-    asm.emit_r(SourceInstructionKind::AND, v_shift, v_shift, v_mask);
-    asm.emit_r(SourceInstructionKind::XOR, v_dword, v_dword, v_shift);
-    asm.emit_i(SourceInstructionKind::ANDI, v_mask, rs1, format_i_imm(-8));
-    asm.emit_s(SourceInstructionKind::SD, v_mask, v_dword, 0);
+    asm.emit_i(Kind::ORI, v_mask, reg(0), format_i_imm(-1));
+    asm.emit_i(Kind::SRLI, v_mask, v_mask, 32);
+    asm.emit_r(Kind::SLL, v_mask, v_mask, v_shift);
+    asm.emit_r(Kind::SLL, v_shift, v_rs2, v_shift);
+    asm.emit_r(Kind::XOR, v_shift, v_dword, v_shift);
+    asm.emit_r(Kind::AND, v_shift, v_shift, v_mask);
+    asm.emit_r(Kind::XOR, v_dword, v_dword, v_shift);
+    asm.emit_i(Kind::ANDI, v_mask, rs1, format_i_imm(-8));
+    asm.emit_s(Kind::SD, v_mask, v_dword, 0);
     asm.emit_i(
-        SourceInstructionKind::VirtualSignExtendWord(
-            jolt_riscv::instructions::VirtualSignExtendWord(()),
-        ),
+        Kind::VirtualSignExtendWord(VirtualSignExtendWord(())),
         rd,
         v_rd,
         0,
