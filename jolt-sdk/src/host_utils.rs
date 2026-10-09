@@ -79,9 +79,7 @@ pub type ProtocolTranscript = LegacyBlake2bTranscript<Fr>;
 #[cfg(feature = "host")]
 pub type ProofTranscript = ProtocolTranscript;
 #[cfg(feature = "host")]
-pub use jolt_program::execution::{
-    ExecutionBackend, OwnedTrace, TraceError, TraceInputs, TraceOutput, TraceSource,
-};
+pub use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 #[cfg(feature = "host")]
 pub use tracer::TracerBackend;
 
@@ -312,7 +310,7 @@ pub fn prove_program(
     let trace = program.trace_with(&mut TracerBackend::new(), trace_inputs)?;
     let public_io = trace.device.clone();
     let config = ProverConfig::derive::<F>(
-        trace.trace.data().proof_rows(),
+        trace.trace.proof_rows(),
         memory_layout,
         preprocessing.verifier.program.min_bytecode_address(),
         preprocessing.verifier.program.program_image_len_words(),

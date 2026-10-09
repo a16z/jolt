@@ -45,7 +45,7 @@ Key abstractions:
       /// RowSource contract). Takes `&self` so disjoint chunks can be
       /// replayed in parallel, in any order.
       fn replay_chunk(&self, checkpoint: &Self::Checkpoint)
-          -> Result<Self::Trace, TraceError>;
+          -> Result<TraceData, TraceError>;
   }
 
   pub struct ExecutionSummary<C> {
@@ -61,7 +61,7 @@ Key abstractions:
 
 - **Advice-tape plumbing** (extension, `crates/jolt-program/src/execution/trace.rs`) — the modular seam cannot express the SDK's two-pass advice flow today (`jolt-sdk/macros/src/lib.rs:905-938`): `TracerBackend` neither seeds a tape (hardcodes `None`, `tracer/src/execution_backend.rs:48`) nor captures the populated tape that pass 1 must harvest (discarded as `_advice_tape`, `execution_backend.rs:41`). Add `pub advice_tape: Option<Vec<u8>>` to **both** `TraceInputs` (seeding; the tape is plain bytes plus a cursor that always starts at 0, `tracer/src/emulator/cpu.rs:22-25`) and `TraceOutput`/`ExecutionSummary` (capture), populated by both backends, so either backend can run either pass.
 
-- **`X86TracerBackend`** (new crate, `crates/jolt-tracer-x86`) — implements `ExecutionBackend` and `ChunkedExecutionBackend` with `Trace = OwnedTrace`. On first use for a given `JoltProgram`, compiles the program to native x86-64 via dynasm-rs and caches the artifact. Native codegen is gated to `cfg(all(target_arch = "x86_64", target_os = "linux"))` (the SP1/ZisK precedent). The crate additionally exports a cfg-selected alias `pub type NativeBackend` — `X86TracerBackend` on x86-64 Linux, `tracer::TracerBackend` elsewhere — re-exported by the SDK next to the existing `TracerBackend` re-export (`jolt-sdk/src/host_utils.rs:25`); existing call sites are already generic over `B: ExecutionBackend`, so the alias is the entire selection API.
+- **`X86TracerBackend`** (new crate, `crates/jolt-tracer-x86`) — implements `ExecutionBackend` and `ChunkedExecutionBackend`, returning rows as `TraceData`. On first use for a given `JoltProgram`, compiles the program to native x86-64 via dynasm-rs and caches the artifact. Native codegen is gated to `cfg(all(target_arch = "x86_64", target_os = "linux"))` (the SP1/ZisK precedent). The crate additionally exports a cfg-selected alias `pub type NativeBackend` — `X86TracerBackend` on x86-64 Linux, `tracer::TracerBackend` elsewhere — re-exported by the SDK next to the existing `TracerBackend` re-export (`jolt-sdk/src/host_utils.rs:25`); existing call sites are already generic over `B: ExecutionBackend`, so the alias is the entire selection API.
 
 - **Row templates** — the load-bearing codegen insight: the expansion of every source instruction is *static per PC*. Runtime tracing materializes inline sequences through the same `jolt_program::expand` pipeline used to build the committed bytecode (`tracer/src/instruction/mod.rs:750-771`, `tracer/src/instruction/inline.rs:239-258`), including the `rd = x0` rewrite applied at expansion level (`crates/jolt-program/src/expand/mod.rs:129-146`); recipes "may only expose advice row positions", never runtime-dependent shapes (`expand/mod.rs:106-113`); and the parity is mechanically tested by the `source_to_jolt_expansion_equivalence` invariant. So for each expanded bytecode row, the `instruction: JoltInstructionRow` field and row skeleton are compile-time constants; only register values, RAM values, and advice values are dynamic. Record mode copies a pre-built `TraceRow` template and patches the dynamic fields — no per-row construction logic at runtime. (The row *value-shape* contracts — e.g. load value equals rd post-value — are separately checked by `cycle_to_trace_row`, `tracer/src/trace_row.rs:53-118`, on the legacy path.)
 
@@ -160,7 +160,7 @@ The plug-and-play seam already exists; this spec extends it downward (chunked co
 
 ```text
                     crates/jolt-program (execution seam)
-        ExecutionBackend ── TraceSource ── TraceRow / TraceOutput
+        ExecutionBackend ── TraceOutput ── Arc<TraceData>
         ChunkedExecutionBackend (NEW) ── ExecutionSummary (NEW)
                  ▲ impl                          ▲ impl
    ┌─────────────┴─────────────┐   ┌─────────────┴──────────────┐
@@ -168,7 +168,7 @@ The plug-and-play seam already exists; this spec extends it downward (chunked co
    │ (reference interpreter,   │   │   X86TracerBackend (NEW)    │
    │  portable, default)       │   │ (AOT x86-64, linux-only)    │
    └───────────────────────────┘   └─────────────────────────────┘
-                 ▲ consumed via TraceSource / rows
+                 ▲ consumed via Arc<TraceData> / rows
         crates/jolt-witness  TraceBackend ── RowSource::visit_chunks
                  ▲
         crates/jolt-prover   prove(…, W: JoltWitnessPlane, …)

@@ -19,9 +19,9 @@ live in a sparse event vector beside the core rows in `TraceData`.
 Every emitted row already contains its bytecode PC. Execution receives a
 `JoltProgram` with expanded bytecode and builds the existing PC mapper before
 producing rows. There is no unbound-row state or later PC assignment pass.
-The producer's allocation passes through `OwnedTrace::into_data` into analysis
-or witness construction as an `Arc<TraceData>`; another live owner does not
-cause a row copy.
+Backends return the producer's allocation as `TraceOutput::trace`, an
+`Arc<TraceData>` that analysis and witness construction retain; another live
+owner does not cause a row copy.
 
 The separate `jolt_program::TraceRow` implementation and the alternate compact
 execution/witness entrypoints have been removed. Logical register/RAM input
@@ -225,14 +225,13 @@ Sources: [PC mapper](../crates/jolt-program/src/preprocess/bytecode.rs),
 
 ## One owner of rows and field payloads
 
-The retained storage in `jolt-program` has this shape; `OwnedTrace` and
-`TraceData` fields are private:
+The retained storage in `jolt-program` has this shape; `TraceData` fields are
+private:
 
 ```text
-OwnedTrace {
-    data: Arc<TraceData>,
-    next: usize,
-    next_field: usize,           // field-inline only
+TraceOutput {
+    trace: Arc<TraceData>,
+    device, final_memory, advice_tape,
 }
 TraceData {
     rows: Vec<JoltTraceRow>,
@@ -251,28 +250,27 @@ rows, and absent payloads consume no event entries. Products and inverse
 products are derived from decoded field register values rather than stored
 as extra payload fields.
 
-`TraceSource::next_row()` returns `Option<TraceEvent>`.
-`TraceSource::rows()` exposes an optional core slice; `shared_data()` exposes
-an optional shared aggregate, including field payloads. Both optional views
-are unavailable after partial consumption. `OwnedTrace::rows()` and `data()`
-provide explicit retained-storage access; `into_data()` transfers the same
-`Arc` and rejects a partially consumed cursor. There is no `into_rows` method
-that might clone a shared row vector.
+`ExecutionBackend::trace` returns a non-generic `TraceOutput`; backends have no
+trace-source associated type and there is no row cursor or trace-source trait.
+`TraceOutput::new` takes the freshly produced `TraceData` and becomes its first
+owner. `ChunkedExecutionBackend::replay_chunk` returns each replayed chunk as
+its own `TraceData`. There is no `into_rows` method that might clone a shared
+row vector.
 
-`TraceBackend::try_new` accepts `JoltVmWitnessInputs<OwnedTrace>`, consumes that
-handoff, and retains `TraceOutput<Arc<TraceData>>`. `TraceBackend` no longer
-has a trace-source type parameter or `PhantomData`. `RandomAccessRows` and
-field witnesses borrow or share the aggregate. `from_compact`,
-`compact_trace_row`, and `raw_trace_rows` have been removed. Streaming/replay
-sources stay on the execution interface rather than being silently drained
-by witness construction.
+`TraceBackend::try_new` accepts the non-generic `JoltVmWitnessInputs`, rejects
+a `proof_len` beyond the cycle domain, and retains the input `TraceOutput`
+with the producer's `Arc`. `TraceBackend` has no trace-source type parameter or
+`PhantomData`. `RandomAccessRows` and field witnesses borrow or share the
+aggregate. `from_compact`, `compact_trace_row`, and `raw_trace_rows` have been
+removed. Chunked replay stays on `ChunkedExecutionBackend`; witness
+construction accepts only a complete `TraceOutput`.
 
-Sequential consumers merge rows and sparse events. `OwnedTrace` tracks
-`next_field`; serialization and full field validation use sequential event
-cursors. Sparse Spartan and field-register witness scans iterate events
-directly. Isolated random access uses `TraceData::field_inline` and a binary
-search. `FieldInlineWitnessOracle::fill_rd_increments(start, values)` gives
-dense chunk consumers an efficient path: the trace-backed implementation
+Sequential consumers merge rows and sparse events: serialization and full
+field validation use sequential event cursors. Sparse Spartan and
+field-register witness scans iterate events directly. Isolated random access
+uses `TraceData::field_inline` and a binary search.
+`FieldInlineWitnessOracle::fill_rd_increments(start, values)` gives dense
+chunk consumers an efficient path: the trace-backed implementation
 locates the first event once and merges the rest sequentially. Akita uses
 this method; it does not binary-search the sparse table once per cycle.
 
@@ -302,7 +300,7 @@ that same prefix. This shared bound prevents padding from changing proof
 shape near a power-of-two boundary while keeping full analysis content.
 
 Sources: [aggregate](../crates/jolt-program/src/execution/trace/data.rs),
-[retained cursor](../crates/jolt-program/src/execution/trace.rs),
+[execution output](../crates/jolt-program/src/execution/trace.rs),
 [witness handoff](../crates/jolt-witness/src/backend/trace/mod.rs),
 [field consumers](../crates/jolt-witness/src/field_inline/mod.rs),
 [configuration](../crates/jolt-prover/src/config.rs).
@@ -314,14 +312,14 @@ logical wire shim containing instruction, captured registers, RAM access, and
 bytecode PC; packed storage is not a serialized API. The aggregate wire is a
 sequence of logical `TraceEvent` values, joining each payload with its row, so
 `field-inline` builds emit an optional payload on every event. The physical
-sparse event vector and cursors are not serialized. Serialization borrows
-rows/payloads and emits them incrementally.
+sparse event vector is not serialized. Serialization borrows rows/payloads and
+emits them incrementally.
 
 `ProgramSummary.trace` is `Arc<TraceData>` and retains the full trace, including
 padding and field payloads. Common access is `summary.trace.len()`,
 `summary.trace.rows().iter()`, or `summary.trace.field_inline(cycle)` in
-field-enabled builds. `Program::trace_analyze` transfers the fresh execution
-trace with `into_data()`.
+field-enabled builds. `Program::trace_analyze` moves the execution output's
+`Arc<TraceData>` into the summary.
 
 `ProgramSummary` is a debugging and analysis output, and it derives
 `Serialize` only. `write_to_file` streams its bincode encoding through a
@@ -330,10 +328,14 @@ header. A future summary reader must define its own format contract alongside
 its first caller.
 
 This is a source and analysis-wire breaking change: imports, constructors,
-streaming items, summary iteration, and direct `row.field_inline` access need
-migration. Neither `ProgramSummary` nor the trace row (formerly
-`jolt_program::TraceRow`) implements `Deserialize`. The deployed proof and
-preprocessing formats are unchanged.
+summary iteration, and direct `row.field_inline` access need migration.
+`OwnedTrace`, `TraceSource` (with its SDK re-exports `jolt::OwnedTrace` and
+`jolt::TraceSource`), `ExecutionBackend::Trace`, and the generic parameters on
+`TraceOutput` and `JoltVmWitnessInputs` are removed. Callers read
+`TraceOutput::trace` (`Arc<TraceData>`) directly, and generated `trace_*`
+functions return `jolt::TraceOutput`. Neither `ProgramSummary` nor the trace
+row (formerly `jolt_program::TraceRow`) implements `Deserialize`. The deployed
+proof and preprocessing formats are unchanged.
 `Program::trace_to_file` still writes raw `Cycle` records and is outside this
 wire migration. See [summary implementation](../crates/jolt-host/src/analyze.rs).
 
@@ -377,7 +379,7 @@ emulator execution have not been redesigned.
 | Canonical row and logical captures | `crates/jolt-riscv/src/trace_row.rs` |
 | PC numbering and contextual lookup | `crates/jolt-program/src/preprocess/bytecode.rs` |
 | Shared aggregate and sparse events | `crates/jolt-program/src/execution/trace/data.rs` |
-| Retained cursor and streaming interface | `crates/jolt-program/src/execution/{trace,backend}.rs` |
+| Execution output and chunked replay interface | `crates/jolt-program/src/execution/{trace,backend}.rs` |
 | Interpreter, replay, and x86 production | `tracer/src/execution_backend.rs`, `crates/jolt-tracer-x86/src/` |
 | Witness ownership and sparse field consumers | `crates/jolt-witness/src/backend/trace/`, `crates/jolt-witness/src/field_inline/` |
 | Configuration, SDK, profiling, and kernels | Callers consume the same row and aggregate; compact-only entrypoints are removed |
@@ -461,9 +463,9 @@ Memory accumulation must retain encoded field rs2 while exposing no integer
 rs2 and binding its RAM read to integer rd's value.
 
 Ownership tests check that witness construction retains the producer's
-allocation when another `Arc` owner exists. Partial consumption, shared proof
-bounds, padding/lookahead, and lengths around powers of two have distinct
-failure signals.
+allocation when another `Arc` owner exists. Shared proof bounds,
+padding/lookahead, and lengths around powers of two have distinct failure
+signals.
 
 The acceptance matrix covers affected-crate suites (`jolt-riscv`,
 `jolt-program`, `jolt-host`, `tracer`, `jolt-tracer-x86`, `jolt-witness`, and

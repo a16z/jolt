@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, JoltTraceRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 
-use super::{ExecutionBackend, TraceError, TraceSource};
+use super::{ExecutionBackend, TraceError};
 
 mod data;
 
@@ -135,7 +135,7 @@ impl JoltProgram {
         &self,
         backend: &mut B,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput<B::Trace>, TraceError> {
+    ) -> Result<TraceOutput, TraceError> {
         backend.trace(self, inputs)
     }
 }
@@ -184,8 +184,8 @@ pub struct MemoryImage {
 }
 
 #[derive(Debug, Clone)]
-pub struct TraceOutput<T> {
-    pub trace: T,
+pub struct TraceOutput {
+    pub trace: Arc<TraceData>,
     pub device: JoltDevice,
     pub final_memory: Option<MemoryImage>,
     /// The populated runtime advice tape captured at guest termination
@@ -193,95 +193,20 @@ pub struct TraceOutput<T> {
     pub advice_tape: Option<Vec<u8>>,
 }
 
-impl<T> TraceOutput<T> {
-    /// `advice_tape` is a required parameter so that a backend (or a
-    /// rebuild of an existing output) cannot silently discard a populated
-    /// tape — the seam this field exists to plug.
+impl TraceOutput {
+    /// `advice_tape` is a required parameter so that a backend cannot
+    /// silently discard a populated tape — the seam this field exists to plug.
     pub fn new(
-        trace: T,
+        trace: TraceData,
         device: JoltDevice,
         final_memory: Option<MemoryImage>,
         advice_tape: Option<Vec<u8>>,
     ) -> Self {
         Self {
-            trace,
+            trace: Arc::new(trace),
             device,
             final_memory,
             advice_tape,
         }
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct OwnedTrace {
-    data: Arc<TraceData>,
-    next: usize,
-    #[cfg(feature = "field-inline")]
-    next_field: usize,
-}
-
-impl OwnedTrace {
-    pub fn new(rows: Vec<JoltTraceRow>) -> Self {
-        Self::from_data(TraceData::new(rows))
-    }
-
-    pub fn from_data(data: TraceData) -> Self {
-        Self {
-            data: Arc::new(data),
-            next: 0,
-            #[cfg(feature = "field-inline")]
-            next_field: 0,
-        }
-    }
-
-    pub fn rows(&self) -> &[JoltTraceRow] {
-        self.data.rows()
-    }
-
-    pub fn data(&self) -> &Arc<TraceData> {
-        &self.data
-    }
-
-    pub fn into_data(self) -> Result<Arc<TraceData>, TraceError> {
-        if self.next != 0 {
-            return Err(TraceError::PartiallyConsumed);
-        }
-        Ok(self.data)
-    }
-}
-
-impl From<Vec<JoltTraceRow>> for OwnedTrace {
-    fn from(rows: Vec<JoltTraceRow>) -> Self {
-        Self::new(rows)
-    }
-}
-
-impl TraceSource for OwnedTrace {
-    fn next_row(&mut self) -> Option<TraceEvent> {
-        let row = *self.data.rows().get(self.next)?;
-        #[cfg(feature = "field-inline")]
-        let field_inline = self
-            .data
-            .field_events()
-            .get(self.next_field)
-            .filter(|event| event.cycle == self.next)
-            .map(|event| {
-                self.next_field += 1;
-                Arc::clone(&event.data)
-            });
-        self.next += 1;
-        Some(TraceEvent {
-            row,
-            #[cfg(feature = "field-inline")]
-            field_inline,
-        })
-    }
-
-    fn rows(&self) -> Option<&[JoltTraceRow]> {
-        (self.next == 0).then(|| self.data.rows())
-    }
-
-    fn shared_data(&self) -> Option<Arc<TraceData>> {
-        (self.next == 0).then(|| Arc::clone(&self.data))
     }
 }

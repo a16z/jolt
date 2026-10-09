@@ -4,7 +4,7 @@ use common::{
 };
 use jolt_field::{Fr, Ring};
 use jolt_program::{
-    execution::{JoltProgram, MemoryImage, OwnedTrace, TraceOutput, TraceSource},
+    execution::{JoltProgram, MemoryImage, TraceData, TraceOutput},
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{
@@ -65,12 +65,12 @@ fn config() -> JoltVmWitnessConfig {
     )
 }
 
-fn trace_output() -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), Default::default(), None, None)
+fn trace_output() -> TraceOutput {
+    TraceOutput::new(TraceData::default(), Default::default(), None, None)
 }
 
-fn trace_output_with_rows(rows: Vec<JoltTraceRow>) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None)
+fn trace_output_with_rows(rows: Vec<JoltTraceRow>) -> TraceOutput {
+    TraceOutput::new(TraceData::new(rows), Default::default(), None, None)
 }
 
 fn checked_row(
@@ -83,15 +83,15 @@ fn checked_row(
     JoltTraceRow::new(instruction, registers, ram_access, pc).unwrap()
 }
 
-fn trace_output_with_device(device: JoltDevice) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, None, None)
+fn trace_output_with_device(device: JoltDevice) -> TraceOutput {
+    TraceOutput::new(TraceData::default(), device, None, None)
 }
 
 fn trace_output_with_device_and_final_memory(
     device: JoltDevice,
     final_memory: MemoryImage,
-) -> TraceOutput<OwnedTrace> {
-    TraceOutput::new(OwnedTrace::default(), device, Some(final_memory), None)
+) -> TraceOutput {
+    TraceOutput::new(TraceData::default(), device, Some(final_memory), None)
 }
 
 fn instruction(address: usize) -> JoltInstructionRow {
@@ -1029,26 +1029,6 @@ fn excluded_ids_report_their_classification() {
 }
 
 #[test]
-fn backend_rejects_partially_consumed_traces() {
-    let program = Arc::new(JoltProgram::default());
-    let preprocessing = preprocessing();
-    let mut trace = OwnedTrace::new(vec![JoltTraceRow::default()]);
-    assert!(trace.next_row().is_some());
-    assert!(TraceSource::rows(&trace).is_none());
-    assert!(trace.shared_data().is_none());
-    let inputs = JoltVmWitnessInputs::new(
-        &program,
-        &preprocessing,
-        TraceOutput::new(trace, Default::default(), None, None),
-    );
-    assert!(matches!(
-        TraceBackend::try_new(config(), inputs),
-        Err(WitnessError::InvalidWitnessData { reason, .. })
-            if reason.contains("partially consumed")
-    ));
-}
-
-#[test]
 fn backend_shares_full_trace_allocation_and_bounds_the_proof_view() {
     let instruction_row = instruction(RAM_START_ADDRESS as usize);
     let bytecode =
@@ -1070,14 +1050,10 @@ fn backend_shares_full_trace_allocation_and_bounds_the_proof_view() {
         JoltTraceRow::default(),
     ];
     let row_buffer = rows.as_ptr();
-    let trace = OwnedTrace::new(rows);
-    let data = Arc::clone(trace.data());
+    let trace = trace_output_with_rows(rows);
+    let data = Arc::clone(&trace.trace);
     assert_eq!(data.rows().as_ptr(), row_buffer);
-    let inputs = JoltVmWitnessInputs::new(
-        &program,
-        &preprocessing,
-        TraceOutput::new(trace, Default::default(), None, None),
-    );
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace);
     let backend = TraceBackend::new(config().with_log_t(2), inputs);
 
     assert!(Arc::ptr_eq(&backend.trace.trace, &data));

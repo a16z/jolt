@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    OwnedTrace, TraceData, TraceError, TraceEvent, TraceInputs, TraceOutput,
+    TraceData, TraceError, TraceEvent, TraceInputs, TraceOutput,
 };
 use jolt_program::preprocess::BytecodePCMapper;
 #[cfg(feature = "field-inline")]
@@ -75,18 +75,16 @@ struct TraceExecution {
 }
 
 impl ExecutionBackend for TracerBackend {
-    type Trace = OwnedTrace;
-
     fn trace(
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+    ) -> Result<TraceOutput, TraceError> {
         let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
         let execution = self.trace_execution(program, inputs)?;
         let data = collect_rows(&execution.cycles, &bytecode)?;
         Ok(TraceOutput::new(
-            OwnedTrace::from_data(data),
+            data,
             execution.device,
             Some(execution.final_memory),
             Some(execution.advice_tape),
@@ -306,7 +304,7 @@ impl ChunkedExecutionBackend for TracerBackend {
         self.execute_chunked(program, inputs, chunk_size, MIN_BOUNDARY_SPACING_ROWS)
     }
 
-    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError> {
+    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<TraceData, TraceError> {
         let mut worker = ChunkWorker::from_seed(
             checkpoint.seed.device.clone(),
             checkpoint.seed.decode.clone(),
@@ -337,11 +335,10 @@ impl ChunkedExecutionBackend for TracerBackend {
             }
         }
 
-        let data = collect_rows(
+        collect_rows(
             &cycles[checkpoint.skip_rows..needed],
             &checkpoint.seed.bytecode,
-        )?;
-        Ok(OwnedTrace::from_data(data))
+        )
     }
 }
 
@@ -580,8 +577,6 @@ mod tests {
         ));
     }
     #[cfg(feature = "field-inline")]
-    use jolt_program::execution::TraceSource;
-    #[cfg(feature = "field-inline")]
     use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
@@ -663,22 +658,21 @@ mod tests {
             instruction.trace(&mut cpu, Some(&mut captured));
             trace[position] = captured[0];
         }
-        let mut retained = OwnedTrace::from_data(collect_rows(&trace, &bytecode).unwrap());
-        for (cycle, captured) in trace.iter().enumerate() {
-            let event = retained.next_row().unwrap();
-            assert_eq!(event.row, retained.rows()[cycle]);
-            assert_eq!(
-                event.field_inline.as_deref(),
-                retained.data().field_inline(cycle)
-            );
-            assert_eq!(event.field_inline.is_some(), positions.contains(&cycle));
-            if let Some(payload) = event.field_inline {
+        let data = collect_rows(&trace, &bytecode).unwrap();
+        assert_eq!(data.len(), trace.len());
+        let event_cycles: Vec<_> = data
+            .field_events()
+            .iter()
+            .map(|event| event.cycle)
+            .collect();
+        assert_eq!(event_cycles, positions);
+        for (cycle, (row, captured)) in data.rows().iter().zip(&trace).enumerate() {
+            if let Some(payload) = data.field_inline(cycle) {
                 assert_eq!(*payload, captured.field_inline_trace().unwrap());
-                assert_eq!(event.row.pc(), 1);
+                assert_eq!(row.pc(), 1);
             } else {
-                assert_eq!(event.row, JoltTraceRow::default());
+                assert_eq!(*row, JoltTraceRow::default());
             }
         }
-        assert!(retained.next_row().is_none());
     }
 }

@@ -23,8 +23,6 @@ pub enum TraceError {
     },
     #[error("bytecode PC {pc} does not fit u32")]
     BytecodePcTooWide { pc: usize },
-    #[error("a partially consumed trace cannot be transferred to a retained witness")]
-    PartiallyConsumed,
     #[error("field event at cycle {cycle} is out of range or not strictly ordered")]
     InvalidFieldEvent { cycle: usize },
 }

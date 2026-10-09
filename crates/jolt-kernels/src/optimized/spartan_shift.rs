@@ -483,7 +483,7 @@ mod tests {
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPlusOnePolynomial;
-    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
@@ -583,7 +583,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+            TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend)

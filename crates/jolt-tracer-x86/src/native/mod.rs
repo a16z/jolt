@@ -10,7 +10,7 @@ use std::sync::Arc;
 use common::jolt_device::JoltDevice;
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    OwnedTrace, TraceError, TraceInputs, TraceOutput,
+    TraceData, TraceError, TraceInputs, TraceOutput,
 };
 use jolt_program::preprocess::BytecodePCMapper;
 use jolt_riscv::{
@@ -252,8 +252,6 @@ impl X86TracerBackend {
 }
 
 impl ExecutionBackend for X86TracerBackend {
-    type Trace = OwnedTrace;
-
     /// Record mode: a fast pass sizes the observation buffer exactly, then the
     /// record body fills it and a Rust pass reassembles `JoltTraceRow`s.
     ///
@@ -266,7 +264,7 @@ impl ExecutionBackend for X86TracerBackend {
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+    ) -> Result<TraceOutput, TraceError> {
         let expected = self.fast_run(program, inputs.clone())?;
         let record = self.record_run(program, inputs, expected.trace_len)?;
 
@@ -281,7 +279,7 @@ impl ExecutionBackend for X86TracerBackend {
             &record.observations,
         )?;
         Ok(TraceOutput::new(
-            OwnedTrace::new(rows),
+            TraceData::new(rows),
             record.device,
             Some(record.final_memory),
             Some(record.advice_tape),
@@ -590,7 +588,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 
     /// Replay one chunk in record mode from its checkpoint, discarding the
     /// leading rows the boundary precedes and keeping exactly this chunk's.
-    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<Self::Trace, TraceError> {
+    fn replay_chunk(&self, checkpoint: &Self::Checkpoint) -> Result<TraceData, TraceError> {
         let boundary = &checkpoint.boundary;
         let device = boundary.restore_device();
 
@@ -647,7 +645,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             checkpoint.compiled.pc_map(),
             &observations[checkpoint.skip_rows..],
         )?;
-        Ok(OwnedTrace::new(rows))
+        Ok(TraceData::new(rows))
     }
 }
 

@@ -194,8 +194,8 @@ Key abstractions:
   jolt-sumcheck/jolt-kernels work. This spec delivers the substrate they call
   (`stream_witnesses` over ranges) and proves it live by using it for today's bundle
   materialization — nothing round-shaped lands here.
-- **Trace segmentation.** `TraceSource::segments()`, checkpoint-seeded state
-  (tracer's `LazyTraceIterator` snapshots), and segment-overlap windows are deferred with the
+- **Trace segmentation.** Consuming checkpoint-seeded segment replay
+  (`ChunkedExecutionBackend::replay_chunk`) and segment-overlap windows are deferred with the
   engine. The `CycleRange` parameter and the `StatefulWitness` init hook are the reserved
   seams; `[0, T)` is the only range exercised now.
 - **Performance work.** This is a re-plumbing with values pinned byte-identical; no witness
@@ -307,9 +307,10 @@ streaming consumer — states its data flow as named struct fields, compile-chec
 **Streaming, later, in full:** the engine adds a per-round phase to the batched prover —
 collect the round's consumer set, run `stream_witnesses` per segment (`rayon` across segments,
 one consumer-set instance per segment), aggregate digests kernel-side, then absorb/challenge as
-today — and jolt-program grows `TraceSource::segments()` returning checkpoint-seeded row
-iterators with one row of overlap for the lookahead window. Nothing in this crate changes shape
-for that: the range parameter narrows, `StatefulWitness::init` gains a checkpoint-seeded
+today — and segments come from jolt-program's checkpoint-seeded
+`ChunkedExecutionBackend::replay_chunk`; the consumer supplies the one-row overlap for the
+lookahead window, since replay emits disjoint chunks. Nothing in this crate changes shape for
+that: the range parameter narrows, `StatefulWitness::init` gains a checkpoint-seeded
 constructor, and the same bundles flow. The streaming prover is a `JoltBackend` value in
 jolt-kernels, per the backend seam.
 
@@ -388,10 +389,10 @@ that moves a byte is wrong by definition.
    jolt-claims ids, concrete backend; delete its namespace plumbing. Gate additionally on
    `--features field-inline` tests and clippy.
 
-Deferred, with named seams: `TraceSource::segments()` + checkpoint seeding (tracer/
-jolt-program), the engine's per-round pass hook (jolt-sumcheck), streaming kernels + digest
-aggregation (jolt-kernels), segment-overlap windows — all consumers of `stream_witnesses(range)`
-as specified here.
+Deferred, with named seams: consumption of `ChunkedExecutionBackend::replay_chunk` segment
+replay (tracer/jolt-program), the engine's per-round pass hook (jolt-sumcheck), streaming
+kernels + digest aggregation (jolt-kernels), segment-overlap windows — all consumers of
+`stream_witnesses(range)` as specified here.
 
 ### Relocation table
 

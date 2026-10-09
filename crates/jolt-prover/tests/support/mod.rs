@@ -9,8 +9,7 @@ use std::thread::Builder;
 
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_host::{JoltProgramSource, Program};
-use jolt_program::execution::{ExecutionBackend, OwnedTrace};
-use jolt_program::execution::{JoltProgram, TraceInputs, TraceOutput};
+use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use tracer::execution_backend::TracerBackend;
 
@@ -75,7 +74,7 @@ impl GuestCase {
 pub struct PreparedGuest {
     pub program: Arc<JoltProgram>,
     pub preprocessing: JoltProgramPreprocessing,
-    pub trace: TraceOutput<OwnedTrace>,
+    pub trace: TraceOutput,
 }
 
 fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
@@ -139,7 +138,7 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
     case.assert_output(&trace.device);
     #[cfg(feature = "field-inline")]
     assert_eq!(
-        !trace.trace.data().field_events().is_empty(),
+        !trace.trace.field_events().is_empty(),
         case.field_inline_active,
         "{}: unexpected field-register activity",
         case.name,

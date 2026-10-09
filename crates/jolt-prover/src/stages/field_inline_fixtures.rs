@@ -23,7 +23,7 @@ use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceEvent, TraceOutput};
+use jolt_program::execution::{JoltProgram, TraceEvent, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
@@ -119,7 +119,7 @@ pub(crate) fn field_inline_backend(
         JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::from_data(data), test_public_io(), None, None),
+            TraceOutput::new(data, test_public_io(), None, None),
         ),
     )
 }

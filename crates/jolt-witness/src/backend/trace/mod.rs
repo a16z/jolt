@@ -8,7 +8,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::JoltField;
 use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{
-    execution::{JoltProgram, OwnedTrace, TraceData, TraceOutput},
+    execution::{JoltProgram, TraceOutput},
     preprocess::JoltProgramPreprocessing,
 };
 
@@ -75,17 +75,17 @@ impl JoltVmWitnessConfig {
     }
 }
 
-pub struct JoltVmWitnessInputs<T> {
+pub struct JoltVmWitnessInputs {
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
-    pub trace: TraceOutput<T>,
+    pub trace: TraceOutput,
 }
 
-impl<T> JoltVmWitnessInputs<T> {
+impl JoltVmWitnessInputs {
     pub fn new(
         program: &Arc<JoltProgram>,
         preprocessing: &Arc<JoltProgramPreprocessing>,
-        trace: TraceOutput<T>,
+        trace: TraceOutput,
     ) -> Self {
         Self {
             program: Arc::clone(program),
@@ -100,7 +100,7 @@ pub struct TraceBackend {
     pub config: JoltVmWitnessConfig,
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
-    pub trace: TraceOutput<Arc<TraceData>>,
+    pub trace: TraceOutput,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness>,
 }
@@ -116,38 +116,24 @@ impl TraceBackend {
         clippy::panic,
         reason = "infallible convenience constructor for trusted fixtures"
     )]
-    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<OwnedTrace>) -> Self {
+    pub fn new(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> Self {
         match Self::try_new(config, inputs) {
             Ok(backend) => backend,
             Err(error) => panic!("invalid trace: {error}"),
         }
     }
 
-    /// Transfers a complete retained trace. Iterator-only sources must remain
-    /// on the streaming execution interface rather than being silently drained.
     pub fn try_new(
         config: JoltVmWitnessConfig,
-        inputs: JoltVmWitnessInputs<OwnedTrace>,
+        inputs: JoltVmWitnessInputs,
     ) -> Result<Self, WitnessError> {
         let cycles = checked_pow2(config.log_t)?;
-        let TraceOutput {
-            trace,
-            device,
-            final_memory,
-            advice_tape,
-        } = inputs.trace;
-        let trace = trace
-            .into_data()
-            .map_err(|error| WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: error.to_string(),
-            })?;
-        if trace.proof_len() > cycles {
+        let proof_len = inputs.trace.trace.proof_len();
+        if proof_len > cycles {
             return Err(WitnessError::InvalidWitnessData {
                 label: JOLT_VM_LABEL,
                 reason: format!(
-                    "physical trace has {} rows but the cycle domain has {cycles}",
-                    trace.proof_len()
+                    "physical trace has {proof_len} rows but the cycle domain has {cycles}"
                 ),
             });
         }
@@ -155,7 +141,7 @@ impl TraceBackend {
             config,
             program: inputs.program,
             preprocessing: inputs.preprocessing,
-            trace: TraceOutput::new(trace, device, final_memory, advice_tape),
+            trace: inputs.trace,
             #[cfg(feature = "field-inline")]
             field_inline: None,
         })

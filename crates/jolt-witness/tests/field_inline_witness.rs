@@ -12,7 +12,7 @@ use jolt_claims::protocols::{
 };
 use jolt_field::{Fr, Ring};
 use jolt_program::{
-    execution::{JoltProgram, OwnedTrace, TraceEvent, TraceOutput},
+    execution::{JoltProgram, TraceEvent, TraceOutput},
     field_inline::{
         FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
         FieldRegisterWrite,
@@ -105,7 +105,7 @@ fn witness(
         JoltVmWitnessInputs::new(
             program,
             preprocessing,
-            TraceOutput::new(OwnedTrace::from_data(data), Default::default(), None, None),
+            TraceOutput::new(data, Default::default(), None, None),
         ),
     )
 }

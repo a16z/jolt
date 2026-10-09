@@ -244,7 +244,7 @@ mod matrix {
         fn prove_case(case: &GuestCase) {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive::<Fr>(
-                prepared.trace.trace.data().proof_rows(),
+                prepared.trace.trace.proof_rows(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
                 prepared.preprocessing.ram.bytecode_words.len(),
@@ -307,7 +307,7 @@ mod matrix {
         pub fn prove_and_verify(case: &GuestCase) {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive::<AkitaField>(
-                prepared.trace.trace.data().proof_rows(),
+                prepared.trace.trace.proof_rows(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
                 prepared.preprocessing.ram.bytecode_words.len(),

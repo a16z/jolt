@@ -7,9 +7,7 @@ use std::sync::Arc;
 
 use common::jolt_device::MemoryConfig;
 use jolt_host::{JoltProgramSource, Program};
-use jolt_program::execution::{
-    ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput,
-};
+use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_prover::ProverConfig;
 #[cfg(feature = "field-inline")]
@@ -21,7 +19,7 @@ use tracer::execution_backend::TracerBackend;
 pub struct PreparedGuest {
     pub program: Arc<JoltProgram>,
     pub program_preprocessing: JoltProgramPreprocessing,
-    pub trace: TraceOutput<OwnedTrace>,
+    pub trace: TraceOutput,
 }
 
 pub fn prepare_guest(
@@ -73,7 +71,7 @@ pub fn prepare_guest(
 pub fn fixture_witness(
     program: &Arc<JoltProgram>,
     preprocessing: &Arc<JoltProgramPreprocessing>,
-    trace: TraceOutput<OwnedTrace>,
+    trace: TraceOutput,
     config: &ProverConfig,
     trusted_advice: bool,
 ) -> TraceBackend {

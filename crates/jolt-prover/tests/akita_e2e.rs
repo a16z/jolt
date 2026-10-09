@@ -64,7 +64,7 @@ mod akita_tests {
 
     fn derive_config(run: &PreparedGuest) -> ProverConfig {
         ProverConfig::derive::<AkitaField>(
-            run.trace.trace.data().proof_rows(),
+            run.trace.trace.proof_rows(),
             &run.preprocessing.memory_layout,
             run.preprocessing.ram.min_bytecode_address,
             run.preprocessing.ram.bytecode_words.len(),

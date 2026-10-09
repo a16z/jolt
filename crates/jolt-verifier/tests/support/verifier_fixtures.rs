@@ -20,7 +20,7 @@ use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 use jolt_host::Program;
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
+use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
 use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
@@ -705,7 +705,7 @@ fn generate_verifier_fixture_with_order(
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
     ProverConfig::derive::<Fr>(
-        run.trace.trace.data().proof_rows(),
+        run.trace.trace.proof_rows(),
         &run.program_preprocessing.memory_layout,
         run.program_preprocessing.ram.min_bytecode_address,
         run.program_preprocessing.ram.bytecode_words.len(),
@@ -716,7 +716,7 @@ fn derive_config(run: &PreparedGuest) -> ProverConfig {
 
 fn prove_prepared(
     program: Arc<JoltProgram>,
-    trace: TraceOutput<OwnedTrace>,
+    trace: TraceOutput,
     config: ProverConfig,
     preprocessing: DoryProverPreprocessing,
     trusted_advice: &[u8],
@@ -762,9 +762,7 @@ mod field_inline {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput,
-    };
+    use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -816,7 +814,7 @@ mod field_inline {
         let public_io = trace_output.device.clone();
 
         let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.data().proof_rows(),
+            trace_output.trace.proof_rows(),
             &memory_layout,
             program_preprocessing.ram.min_bytecode_address,
             program_preprocessing.ram.bytecode_words.len(),
@@ -866,7 +864,7 @@ mod field_inline {
         program: &JoltProgram,
         memory_layout: &MemoryLayout,
         inputs: &[u8],
-    ) -> TraceOutput<OwnedTrace> {
+    ) -> TraceOutput {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
             max_trusted_advice_size: memory_layout.max_trusted_advice_size,

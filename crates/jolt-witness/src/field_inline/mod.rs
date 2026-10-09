@@ -803,7 +803,7 @@ mod tests {
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_field::{Fr, Ring};
     use jolt_program::{
-        execution::{JoltProgram, OwnedTrace, TraceEvent, TraceOutput},
+        execution::{JoltProgram, TraceEvent, TraceOutput},
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
     };
     use jolt_riscv::FieldInlineOp;
@@ -896,7 +896,7 @@ mod tests {
             JoltVmWitnessInputs::new(
                 program,
                 preprocessing,
-                TraceOutput::new(OwnedTrace::from_data(data), Default::default(), None, None),
+                TraceOutput::new(data, Default::default(), None, None),
             ),
         )
     }

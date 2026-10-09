@@ -452,7 +452,7 @@ program/Jolt-trace boundary, not through tracer internals:
 guest Rust / SDK
   -> jolt-program image, expansion, profile checks, preprocessing
   -> execution backend
-  -> Jolt trace: TraceOutput<TraceSource>
+  -> Jolt trace: TraceOutput (Arc<TraceData>)
   -> jolt-witness
   -> jolt-prover stages
 ```

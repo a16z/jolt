@@ -22,7 +22,7 @@ use std::sync::Arc;
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_field::{CanonicalBytes, Fr, Ring};
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceEvent, TraceOutput};
+use jolt_program::execution::{JoltProgram, TraceEvent, TraceOutput};
 use jolt_program::field_inline::{
     FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
 };
@@ -257,7 +257,7 @@ impl FieldRegisterTraceFixture {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::from_data(data), Default::default(), None, None),
+            TraceOutput::new(data, Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs)
             .with_field_inline()

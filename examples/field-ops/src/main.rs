@@ -12,8 +12,8 @@ mod pipeline {
     use jolt::host::JoltProgramSource;
     use jolt::{
         JoltProgramPreprocessing, JoltProverPreprocessing, JoltSharedPreprocessing, MemoryConfig,
-        OwnedTrace, TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS,
-        VerifierTranscript, VerifierVC,
+        TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS, VerifierTranscript,
+        VerifierVC,
     };
     use jolt_field::{CanonicalBytes, Ring};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceData};
@@ -62,7 +62,7 @@ mod pipeline {
 
     pub struct TracedGuest {
         pub preprocessing: JoltProverPreprocessing,
-        pub trace_output: TraceOutput<OwnedTrace>,
+        pub trace_output: TraceOutput,
         pub program: Arc<JoltProgram>,
     }
 
@@ -137,7 +137,7 @@ mod pipeline {
         let memory_layout = trace_output.device.memory_layout.clone();
         let public_io = trace_output.device.clone();
         let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.data().proof_rows(),
+            trace_output.trace.proof_rows(),
             &memory_layout,
             preprocessing.verifier.program.min_bytecode_address(),
             preprocessing.verifier.program.program_image_len_words(),
@@ -202,7 +202,7 @@ fn main() {
     println!(
         "trace: {} cycles, {} field-inline",
         rows.len(),
-        field_inline_rows(traced.trace_output.trace.data())
+        field_inline_rows(&traced.trace_output.trace)
     );
 
     let output = prove_and_verify(traced);
@@ -243,7 +243,7 @@ mod tests {
     fn guest_traces_field_inline_active() {
         let traced = compile_and_trace(&guest_inputs(&PAIRS));
         let rows = traced.trace_output.trace.rows();
-        let field_rows = field_inline_rows(traced.trace_output.trace.data());
+        let field_rows = field_inline_rows(&traced.trace_output.trace);
         assert_eq!(field_rows, EXPECTED_FIELD_INLINE_CYCLES);
         assert!(
             field_rows < rows.len(),

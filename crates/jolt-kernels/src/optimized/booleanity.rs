@@ -902,7 +902,7 @@ pub(crate) mod testing {
         JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId,
     };
     use jolt_field::Fr;
-    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
+    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
     };
@@ -1072,7 +1072,7 @@ pub(crate) mod testing {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+            TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
 

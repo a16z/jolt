@@ -16,13 +16,11 @@ pub use crate::field_inline::{
     FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
     FieldRegisterWrite,
 };
-pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, TraceSource};
+pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary};
 pub use error::TraceError;
 #[cfg(feature = "field-inline")]
 pub use trace::FieldEvent;
-pub use trace::{
-    JoltProgram, MemoryImage, OwnedTrace, TraceData, TraceEvent, TraceInputs, TraceOutput,
-};
+pub use trace::{JoltProgram, MemoryImage, TraceData, TraceEvent, TraceInputs, TraceOutput};
 
 #[cfg(feature = "image")]
 pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError> {

@@ -3,7 +3,7 @@ use core::fmt::Debug;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, Ring};
-use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput};
+use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterRead, RegisterState, RegisterWrite};
@@ -138,7 +138,7 @@ impl TraceFixture {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+            TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend)

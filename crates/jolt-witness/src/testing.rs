@@ -1,7 +1,7 @@
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId};
 use jolt_field::Fr;
 use jolt_program::{
-    execution::{JoltProgram, OwnedTrace, TraceOutput},
+    execution::{JoltProgram, TraceData, TraceOutput},
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{
@@ -104,7 +104,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend) -> R) -> R {
     let inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+        TraceOutput::new(TraceData::new(rows), Default::default(), None, None),
     );
     let backend = TraceBackend::new(config, inputs);
     f(&backend)
