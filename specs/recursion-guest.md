@@ -56,6 +56,12 @@ field-inline instructions (`field_inline.rs`).
 - **Readout** emits one range-bound `FIELD_ADVICE_LIMB` per limb and closes with
   `FIELD_ASSERT_ZERO` on the final quotient. The wrapper then rejects an integer
   at or above the modulus.
+- **Modulus binding.** That range check assumes the unit computes modulo the
+  selected field. jolt-sdk's std runtime therefore calls
+  `jolt_field::bind_field_inline_modulus` once at boot: it accumulates the
+  field's modulus into a cleared register and asserts zero, so a guest built for
+  one field has no execution under a tracer for the other, instead of computing
+  wrong results that still read out canonically.
 - **Accumulation** stays register-resident. A 64-term dot costs about 520 rows,
   about 8 per element: two 3-row operand loads, one multiply, and one add.
 - **Shared operands** let the weighted-rows kernel load each power once per

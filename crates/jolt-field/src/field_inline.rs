@@ -15,11 +15,15 @@
 //! Montgomery constants stay in 1 and 2 for the whole run); guest code that
 //! also emits field-inline instructions must not write them.
 //!
-//! The unit's modulus is fixed by the tracer, not checked here: a guest whose
-//! selector names a different field than the tracer's unit computes wrong
-//! results that still read out canonically. The selectors are exclusive (a
-//! compile error otherwise), and the recursion host derives the guest selector
-//! and the tracer's unit from the same `akita` feature.
+//! The unit's modulus is fixed by the tracer. At boot, before any field
+//! arithmetic, a guest proves it is the selected field's modulus
+//! ([`crate::bind_field_inline_modulus`], which jolt-sdk's std runtime calls
+//! from `__platform_bootstrap`). A guest whose selector names a different field
+//! than the tracer's unit therefore fails at trace time instead of computing
+//! wrong results that still read out canonically. The selectors are exclusive
+//! (a compile error otherwise), so a guest binds one modulus. A guest booted
+//! without jolt-sdk's runtime must call the binding itself before its first
+//! field operation.
 //!
 //! `Fr` keeps its Montgomery representation: a raw limb vector `aR` loaded
 //! as a field element differs from `a` by the constant `R`, which
@@ -190,7 +194,8 @@ mod emit {
         }
     }
 
-    /// Close the limb decomposition by constraining the remaining quotient to zero.
+    /// Constrain a register to zero: a readout's remaining quotient, or the
+    /// modulus a run binds in `REG_A`.
     #[inline(always)]
     pub fn assert_zero(src: u32) {
         macro_rules! word {
@@ -205,9 +210,10 @@ mod emit {
             };
         }
         match src {
+            REG_A => word!(REG_A),
             REG_SCRATCH_A => word!(REG_SCRATCH_A),
             REG_SCRATCH_B => word!(REG_SCRATCH_B),
-            _ => unreachable!("readout quotient register"),
+            _ => unreachable!("zero-asserted register"),
         }
     }
 
@@ -311,6 +317,15 @@ mod guest {
     use super::*;
 
     static READY: AtomicBool = AtomicBool::new(false);
+
+    /// Prove that the unit computes modulo `modulus`. Accumulating the
+    /// modulus into a cleared register leaves `modulus mod p_unit`, and
+    /// asserting zero proves that `p_unit` divides it; both are prime, so they
+    /// are equal.
+    pub fn bind_modulus<const N: usize>(modulus: &[u64; N]) {
+        load(REG_A, modulus);
+        emit::assert_zero(REG_A);
+    }
 
     /// Horner ingress starts at zero, then accumulates limbs from most significant to least.
     #[inline(always)]
@@ -609,5 +624,6 @@ mod guest {
 }
 
 pub use guest::{
-    add, dot, dot_rows, inv, mul, neg, signed_sum, sub, sum_of_products, weighted_dot_rows,
+    add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub, sum_of_products,
+    weighted_dot_rows,
 };

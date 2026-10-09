@@ -123,6 +123,11 @@ pub extern "C" fn __platform_bootstrap() {
             }
         }
     }
+
+    // Before any field arithmetic, prove the field-inline unit computes in
+    // the field the guest selected; a no-op without a jolt-field selector.
+    #[cfg(feature = "guest-std")]
+    jolt_field::bind_field_inline_modulus();
 }
 
 #[cfg(feature = "zeroos-vfs-device-console")]

@@ -49,7 +49,7 @@ host = [
   "dep:common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
-  "dep:jolt-field",
+  "jolt-field/bn254",
   "dep:jolt-host",
   "dep:jolt-openings",
   "dep:jolt-program",
@@ -66,6 +66,8 @@ guest-nostd = ["zeroos-nostd"]
 
 # ZeroOS features
 guest-std = [
+  # Boot binds the field-inline unit's modulus (`bind_field_inline_modulus`).
+  "dep:jolt-field",
   "postcard/use-std",
   "jolt-platform/std",
   "jolt-sdk-macros/guest-std",
@@ -79,7 +81,7 @@ guest-verifier = [
   "dep:common",
   "dep:jolt-crypto",
   "dep:jolt-dory",
-  "dep:jolt-field",
+  "jolt-field/bn254",
   "dep:jolt-transcript",
   "dep:jolt-verifier",
 ]
@@ -126,7 +128,9 @@ bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-dory = { workspace = true, optional = true }
-jolt-field = { workspace = true, optional = true }
+# Not inherited: the workspace entry keeps jolt-field's default BN254 field,
+# which std guests booting through `guest-std` do not need.
+jolt-field = { path = "../crates/jolt-field", default-features = false, optional = true }
 jolt-host = { workspace = true, optional = true }
 jolt-openings = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }
