@@ -1084,7 +1084,7 @@ impl<const P: u128> Field for Fp128<P> {
     where
         Self: 'a,
     {
-        if !Self::FIELD_INLINE {
+        if !Self::inline_accumulators() {
             return crate::algebra::signed_sum_fold(terms);
         }
         Self::from_inline_limbs(crate::field_inline::signed_sum(
@@ -1097,7 +1097,7 @@ impl<const P: u128> Field for Fp128<P> {
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
     fn sum_of_products<const K: usize>(terms: &[[Self; K]]) -> Self {
-        if !Self::FIELD_INLINE {
+        if !Self::inline_accumulators() {
             return crate::algebra::sum_of_products_fold(terms);
         }
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
@@ -1221,20 +1221,21 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
 
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
-        Self::FIELD_INLINE.then(|| Self::inline_dot_kernel(a, b))
+        Self::inline_accumulators().then(|| Self::inline_dot_kernel(a, b))
     }
 
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
-        Self::FIELD_INLINE.then(|| Self::inline_weighted_dot_kernel(rows, weights, pows))
+        Self::inline_accumulators().then(|| Self::inline_weighted_dot_kernel(rows, weights, pows))
     }
 
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     fn inline_dot_rows(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) -> bool {
-        if Self::FIELD_INLINE {
+        let inline = Self::inline_accumulators();
+        if inline {
             Self::inline_dot_rows_kernel(rows, shared, out);
         }
-        Self::FIELD_INLINE
+        inline
     }
 }
 
@@ -1262,6 +1263,13 @@ impl<const P: u128> Fp128<P> {
 
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 impl<const P: u128> Fp128<P> {
+    /// Whether the accumulating field-inline kernels serve this call: the
+    /// unit computes in this field and no `signed_sum` iterator holds them.
+    #[inline(always)]
+    fn inline_accumulators() -> bool {
+        Self::FIELD_INLINE && crate::field_inline::accumulators_free()
+    }
+
     fn inline_dot_kernel(a: &[Self], b: &[Self]) -> Self {
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
         let (a, b): (&[[u64; 2]], &[[u64; 2]]) = unsafe {

@@ -35,7 +35,7 @@ pub fn sparse_mle_msb<F: JoltField>(start_index: u128, values: &[u64], point: &[
     let mut sum = F::zero();
     let mut index = start_index;
     let mut rest = values;
-    while !rest.is_empty() {
+    loop {
         let low_start = (index & mask) as usize;
         let (block, tail) = rest.split_at((low.len() - low_start).min(rest.len()));
         let partial = block
@@ -43,10 +43,14 @@ pub fn sparse_mle_msb<F: JoltField>(start_index: u128, values: &[u64], point: &[
             .zip(&low[low_start..])
             .fold(F::zero(), |acc, (value, eq)| acc + eq.mul_u64(*value));
         sum += eq_index_msb(high_point, index >> low_bits) * partial;
+        // Advance only past a block with a successor: a run may end at index
+        // `u128::MAX`.
+        if tail.is_empty() {
+            return sum;
+        }
         index += block.len() as u128;
         rest = tail;
     }
-    sum
 }
 
 pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
@@ -182,6 +186,16 @@ mod tests {
         assert_eq!(
             try_eq_mle::<Fr>(&[Fr::from_u64(1)], &[Fr::from_u64(1), Fr::from_u64(0)]),
             Err(MleError::EqualityArityMismatch { left: 1, right: 2 })
+        );
+    }
+
+    #[test]
+    fn sparse_mle_accepts_a_run_ending_at_the_last_u128_index() {
+        let point: Vec<Fr> = (0..128).map(|i| Fr::from_u64(i + 2)).collect();
+        let all_ones = point.iter().fold(Fr::one(), |acc, x| acc * x);
+        assert_eq!(
+            sparse_mle_msb(u128::MAX, &[7], &point),
+            all_ones * Fr::from_u64(7)
         );
     }
 

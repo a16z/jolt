@@ -327,6 +327,21 @@ mod guest {
         emit::assert_zero(REG_A);
     }
 
+    /// Set while [`signed_sum`] holds its partial sum in `REG_ACC` and runs
+    /// caller code (its iterator). The accumulating kernels share that
+    /// register, so field dispatch must not enter them meanwhile (see
+    /// [`accumulators_free`]).
+    static ACC_LENT: AtomicBool = AtomicBool::new(false);
+
+    /// Whether the accumulating kernels ([`dot`], [`dot_rows`],
+    /// [`weighted_dot_rows`], [`sum_of_products`], [`signed_sum`]) may run:
+    /// false inside a [`signed_sum`] iterator, where they would overwrite its
+    /// partial sum. Callers take their software path then.
+    #[inline(always)]
+    pub fn accumulators_free() -> bool {
+        !ACC_LENT.load(Ordering::Relaxed)
+    }
+
     /// Horner ingress starts at zero, then accumulates limbs from most significant to least.
     #[inline(always)]
     fn load<const N: usize>(dst: u32, limbs: &[u64; N]) {
@@ -434,11 +449,15 @@ mod guest {
 
     /// `Σ ±terms[i]` with the sum register-resident: each term costs its
     /// ingress and one add or subtract, and only the result is read out.
-    /// Canonical limbs only.
+    /// Canonical limbs only. The accumulators are lent out until the readout,
+    /// so the iterator, including its drop, may use field arithmetic, whose
+    /// accumulating kernels then run in software.
     #[inline(always)]
     pub fn signed_sum<'a, const N: usize>(
         terms: impl IntoIterator<Item = (&'a [u64; N], bool)>,
     ) -> [u64; N] {
+        debug_assert!(accumulators_free());
+        ACC_LENT.store(true, Ordering::Relaxed);
         emit::acc_zero();
         for (term, negative) in terms {
             load(REG_A, term);
@@ -448,7 +467,9 @@ mod guest {
                 emit::acc_add_a();
             }
         }
-        read_out(REG_ACC)
+        let sum = read_out(REG_ACC);
+        ACC_LENT.store(false, Ordering::Relaxed);
+        sum
     }
 
     /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]` with the row sums and the
@@ -624,6 +645,6 @@ mod guest {
 }
 
 pub use guest::{
-    add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub, sum_of_products,
-    weighted_dot_rows,
+    accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub,
+    sum_of_products, weighted_dot_rows,
 };
