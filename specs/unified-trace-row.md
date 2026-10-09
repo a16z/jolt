@@ -177,9 +177,16 @@ Canonical `integer_operands()` and `field_operands()` still own field-role
 projection, including implicit accumulator reads and destinations encoded in
 rs2. `validate_field_inline_instruction` owns program-level instruction shape
 checks, including the x0 restrictions for memory accumulation and advice-limb
-writes. Field witness installation retains payload shape, bridge, bytecode,
-profile, and register-continuity checks. Row-local construction does not
-replace these checks or proof constraints.
+writes. Field witness installation retains payload shape, bytecode, profile,
+and register-continuity checks. Row-local construction does not replace these
+checks or proof constraints.
+
+The field payload holds only field-register effects. Payload validation
+derives the operand shape from the row's instruction kind and checks
+read/write presence and register IDs against it. Bridge instructions' integer
+reads and writes are the row's own captures. As for ordinary rows, witness
+installation does not re-check those captures; register and bridge
+constraints bind the value slots the proof reads.
 
 Execution accessors (`instruction`, `virtual_sequence_remaining`, `rs1_read`,
 `rs2_read`, `rd_write`, `registers`, and `ram_access`) are implemented on the
@@ -242,6 +249,7 @@ TraceData {
     field_events: Vec<FieldEvent>, // field-inline only
 }
 FieldEvent { cycle: usize, data: FieldInlineTraceData }
+FieldInlineTraceData { rs1, rs2, rd } // optional field-register effects
 ```
 
 Each event stores its `Copy` payload inline. `Arc<TraceData>` is the only
@@ -350,7 +358,10 @@ functions return `jolt::TraceOutput`. `CapturedState` with its
 values are read through the row accessors. `JoltTraceRow::no_op()` is folded
 into `Default`. `JoltInstruction` converts from `JoltInstructionRow` through an
 infallible `From`, replacing a `TryFrom` whose match over the same kind enum
-could not fail. Neither `ProgramSummary` nor the trace row (formerly
+could not fail. `FieldInlineBridge` and the `op` and `bridge` fields (and the
+`Default` derive) of `FieldInlineTraceData` are removed: the payload carries only
+the rs1/rs2/rd field-register effects, and the op comes from the row's
+instruction kind. Neither `ProgramSummary` nor the trace row (formerly
 `jolt_program::TraceRow`) implements `Deserialize`. The deployed
 proof and preprocessing formats are unchanged.
 `Program::trace_to_file` still writes raw `Cycle` records and is outside this
@@ -378,10 +389,10 @@ Under `field-inline`, the baseline execution row occupied 72 bytes and
 witness construction retained a separate 64-byte core row, totaling `136N`
 bytes before payloads and capacity. `OwnedTrace::shared_rows` shared the
 execution vector; the live input handle was not a third allocation. The new
-owner retains `64N + 192M` element bytes for M field events on a 64-bit
-host. A `FieldEvent` is its 8-byte cycle plus the 184-byte
-`FieldInlineTraceData`: two 34-byte read options, a 66-byte write option, a
-1-byte op option, and a 48-byte bridge option, padded to 8-byte alignment.
+owner retains `64N + 144M` element bytes for M field events on a 64-bit
+host. A `FieldEvent` is its 8-byte cycle plus the 134-byte
+`FieldInlineTraceData`: two 34-byte read options and a 66-byte write option,
+padded to 8-byte alignment.
 Measurements must include actual event density and vector capacities rather
 than quote a universal savings percentage.
 
@@ -455,13 +466,18 @@ configurations also passed:
 | `prover-fixtures,field-inline` | 156 | 7 |
 | `prover-fixtures,field-inline,akita` | 105 | 6 |
 
-The final implementation at `b7a9d1eb9` adds a targeted hot-path adjustment:
+Commit `b7a9d1eb9` adds a targeted hot-path adjustment:
 `proof_rows()` is inlineable across crates, and each random-access window
 reuses one proof slice. Disassembly confirms that the two new out-of-line
 getter calls per window are eliminated in both feature modes. This preserves
 the checked prefix bound and avoids adding call overhead to row extraction.
 After this adjustment, all 38 ordinary and 53 field-inline witness tests passed,
 as did both workspace clippy configurations, formatting, and style checks.
+The follow-up commits that remove the trace cursor, the trace-row views, the
+payload `Arc`, `TraceEvent`, and the bridge payload were validated with the six
+full `jolt-prover` suites (23 clear, 26 ZK, and 34 Akita tests; 31, 22, and 28
+with field-inline), the `standard_muldiv` verifier fixture, and the
+field-inline verifier suite (133 tests).
 
 Performance/memory measurements are recorded below. They distinguish retained
 row storage from process peak memory and row production from proving time.
@@ -553,12 +569,14 @@ it shares the row allocation and sparse events.
 
 For inactive-field Fibonacci, retained row-element storage decreases from
 26,874,280 to 12,646,720 bytes, and median RSS after witness construction
-falls from 31.047 to 17.027 MiB. For active field operations, the row and
-event element lower bound decreases from 239,496 to 125,760 bytes (`136N`
-versus `64N + 192M`); this tiny workload's process RSS remains about 5.2 MiB.
-These element totals exclude unused capacity and other allocations; the
-baseline total also excludes its 68 separately allocated payloads, which the
-new events store inline. The new aggregate keeps capacities private, so they
+falls from 31.047 to 17.027 MiB. For active field operations at
+`b7a9d1eb9`, the row and event element lower bound decreased from 239,496 to
+113,792 bytes (`136N` versus `64N + 16M` with 16-byte `usize`/`Arc` events),
+and this tiny workload's process RSS remains about 5.2 MiB. Both totals exclude
+the 68 separately allocated payloads. The current inline-payload layout
+(`64N + 144M`, 122,496 bytes, no payload allocations) was not re-measured.
+These element totals exclude unused capacity and other allocations. The new
+aggregate keeps capacities private, so they
 were not inferred from lengths. Process peak RSS is essentially unchanged
 in these trace diagnostics: approximately 55 MiB for ordinary Fibonacci,
 88 MiB with field support, and 37 MiB for the small active field workload.

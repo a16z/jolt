@@ -29,7 +29,7 @@ use jolt_program::field_inline::{
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{
-    FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
+    JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
     NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
     TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
@@ -308,31 +308,30 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
         FieldEvent {
             cycle: 0,
             data: FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
+                rs1: None,
+                rs2: None,
                 rd: Some(FieldRegisterWrite {
                     register: 1,
                     pre_value: enc(0),
                     post_value: enc(13),
                 }),
-                ..FieldInlineTraceData::default()
             },
         },
         FieldEvent {
             cycle: 1,
             data: FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
+                rs1: None,
+                rs2: None,
                 rd: Some(FieldRegisterWrite {
                     register: 2,
                     pre_value: enc(0),
                     post_value: enc(17),
                 }),
-                ..FieldInlineTraceData::default()
             },
         },
         FieldEvent {
             cycle: 2,
             data: FieldInlineTraceData {
-                op: Some(FieldInlineOp::Mul),
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(13),
@@ -346,7 +345,6 @@ fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Ve
                     pre_value: enc(0),
                     post_value: enc(221),
                 }),
-                ..FieldInlineTraceData::default()
             },
         },
     ];

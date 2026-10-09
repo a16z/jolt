@@ -6,16 +6,12 @@
 //!
 //! Reads return the running field register file state and writes advance it, so the
 //! witness view's build-time replay validation holds by construction. Bridge ops
-//! (`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`/`FIELD_ADVICE_LIMB`) are deliberately not modeled — their
-//! payloads couple to the x-register file, and the field-inline kernel surface under
+//! (`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`/`FIELD_ADVICE_LIMB`) are deliberately not modeled — they
+//! couple field values to the x-register file, and the field-inline kernel surface under
 //! test never distinguishes bridge writes from ordinary ones (the e2e's eq-MLE guest
 //! covers them at the proof level).
 
-#![expect(
-    clippy::unwrap_used,
-    clippy::panic,
-    reason = "test support module: fail loudly"
-)]
+#![expect(clippy::unwrap_used, reason = "test support module: fail loudly")]
 
 use std::sync::Arc;
 
@@ -28,8 +24,7 @@ use jolt_program::field_inline::{
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{
-    FieldInlineOp, JoltInstructionKind, JoltInstructionRow, NormalizedOperands,
-    RV64IMAC_JOLT_FIELD_INLINE,
+    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_riscv::{JoltTraceRow as TraceRow, RamAccess, RegisterState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -140,22 +135,16 @@ impl FieldRegisterTraceFixture {
         self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadImm),
+                rs1: None,
+                rs2: None,
                 rd: Some(rd),
-                ..FieldInlineTraceData::default()
             },
         );
     }
 
-    /// One field-inline arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
+    /// One `FIELD_ADD`/`FIELD_SUB`/`FIELD_MUL` row: reads both operands off the
     /// running state and writes a fresh pseudo-random destination value.
-    pub(crate) fn arithmetic(&mut self, op: FieldInlineOp, rd: u8, rs1: u8, rs2: u8) {
-        let kind = match op {
-            FieldInlineOp::Add => JoltInstructionKind::FIELD_ADD,
-            FieldInlineOp::Sub => JoltInstructionKind::FIELD_SUB,
-            FieldInlineOp::Mul => JoltInstructionKind::FIELD_MUL,
-            _ => panic!("arithmetic fixture rows are Add/Sub/Mul only"),
-        };
+    pub(crate) fn arithmetic(&mut self, kind: JoltInstructionKind, rd: u8, rs1: u8, rs2: u8) {
         let instruction = self.instruction(kind, Some(rd), Some(rs1), Some(rs2), 0);
         let rs1 = self.read(rs1);
         let rs2 = self.read(rs2);
@@ -164,11 +153,9 @@ impl FieldRegisterTraceFixture {
         self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(op),
                 rs1: Some(rs1),
                 rs2: Some(rs2),
                 rd: Some(rd),
-                ..FieldInlineTraceData::default()
             },
         );
     }
@@ -186,10 +173,9 @@ impl FieldRegisterTraceFixture {
         self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::AssertEq),
                 rs1: Some(rs1),
                 rs2: Some(rs2),
-                ..FieldInlineTraceData::default()
+                rd: None,
             },
         );
     }
@@ -203,10 +189,9 @@ impl FieldRegisterTraceFixture {
         self.push_field_row(
             instruction,
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::Inv),
                 rs1: Some(rs1),
+                rs2: None,
                 rd: Some(rd),
-                ..FieldInlineTraceData::default()
             },
         );
     }
@@ -277,13 +262,13 @@ pub(crate) fn structured_field_register_fixture(cycles: usize) -> FieldRegisterT
     for step in 0..cycles {
         match step % 8 {
             0 => fixture.load_imm(3, 17 + step as u64),
-            1 => fixture.arithmetic(FieldInlineOp::Add, 5, 3, 15),
-            2 => fixture.arithmetic(FieldInlineOp::Mul, 5, 5, 3),
+            1 => fixture.arithmetic(JoltInstructionKind::FIELD_ADD, 5, 3, 15),
+            2 => fixture.arithmetic(JoltInstructionKind::FIELD_MUL, 5, 5, 3),
             3 => fixture.noop(),
-            4 => fixture.arithmetic(FieldInlineOp::Sub, 15, 5, 5),
+            4 => fixture.arithmetic(JoltInstructionKind::FIELD_SUB, 15, 5, 5),
             5 => fixture.inv(7, 15),
             6 => fixture.assert_eq_row(5, 7),
-            _ => fixture.arithmetic(FieldInlineOp::Mul, 0, 7, 0),
+            _ => fixture.arithmetic(JoltInstructionKind::FIELD_MUL, 0, 7, 0),
         }
     }
     fixture

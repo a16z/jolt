@@ -14,15 +14,14 @@ use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{FieldEvent, JoltProgram, TraceData, TraceOutput},
     field_inline::{
-        FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
-        FieldRegisterWrite,
+        FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
     },
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{
-    CircuitFlags, FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
-    JoltTraceRow, NormalizedOperands, RamAccess, RegisterRead, RegisterState, RegisterWrite,
-    RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
+    CircuitFlags, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow,
+    NormalizedOperands, RamAccess, RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
+    RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_witness::{
     field_inline::{TraceBackedFieldInlineWitness, FIELD_INLINE_LABEL},
@@ -133,13 +132,13 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEve
     let event0 = FieldEvent {
         cycle: 0,
         data: FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadImm),
+            rs1: None,
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: 1,
                 pre_value: enc(0),
                 post_value: enc(13),
             }),
-            ..FieldInlineTraceData::default()
         },
     };
     let load_b = instruction(
@@ -153,13 +152,13 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEve
     let event1 = FieldEvent {
         cycle: 1,
         data: FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadImm),
+            rs1: None,
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: 2,
                 pre_value: enc(0),
                 post_value: enc(17),
             }),
-            ..FieldInlineTraceData::default()
         },
     };
     let mul = instruction(
@@ -173,7 +172,6 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEve
     let event2 = FieldEvent {
         cycle: 2,
         data: FieldInlineTraceData {
-            op: Some(FieldInlineOp::Mul),
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(13),
@@ -187,7 +185,6 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<JoltTraceRow>, Vec<FieldEve
                 pre_value: enc(0),
                 post_value: enc(221),
             }),
-            ..FieldInlineTraceData::default()
         },
     };
     let bytecode = vec![load_a, load_b, mul];
@@ -265,22 +262,16 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
     let load_event = FieldEvent {
         cycle: 0,
         data: FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadAccumulateFromRegister),
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(0),
             }),
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: 1,
                 pre_value: enc(0),
                 post_value: enc(19),
             }),
-            bridge: Some(FieldInlineBridge::LoadAccumulateFromRegister {
-                x_register: 5,
-                x_value: 19,
-                field_value: enc(19),
-            }),
-            ..FieldInlineTraceData::default()
         },
     };
 
@@ -306,23 +297,16 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
     let advice_event = FieldEvent {
         cycle: 1,
         data: FieldInlineTraceData {
-            op: Some(FieldInlineOp::AdviceLimb),
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(19),
             }),
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: 0,
                 pre_value: enc(0),
                 post_value: enc(0),
             }),
-            bridge: Some(FieldInlineBridge::AdviceLimb {
-                field_register: 1,
-                field_value: enc(19),
-                x_register: 6,
-                x_value: 19,
-            }),
-            ..FieldInlineTraceData::default()
         },
     };
 

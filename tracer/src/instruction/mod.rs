@@ -1969,7 +1969,7 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::emulator::default_terminal::DefaultTerminal;
     #[cfg(feature = "field-inline")]
-    use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
+    use jolt_program::field_inline::{FieldEncodedValue, FieldRegisterRead, FieldRegisterWrite};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
 
@@ -2018,17 +2018,12 @@ mod tests {
         );
         assert_eq!(load_cycle.rs1_read(), Some((5, 7)));
         assert_eq!(load_cycle.rd_write(), None);
-        let load_trace = load_cycle.field_inline_trace().unwrap();
         assert_eq!(
-            load_trace.op,
-            Some(FieldInlineOp::LoadAccumulateFromRegister)
-        );
-        assert_eq!(
-            load_trace.bridge,
-            Some(FieldInlineBridge::LoadAccumulateFromRegister {
-                x_register: 5,
-                x_value: 7,
-                field_value: FieldEncodedValue::from_u64(7),
+            load_cycle.field_inline_trace().unwrap().rd,
+            Some(FieldRegisterWrite {
+                register: 1,
+                pre_value: FieldEncodedValue::zero(),
+                post_value: FieldEncodedValue::from_u64(7),
             })
         );
 
@@ -2051,7 +2046,6 @@ mod tests {
         assert_eq!(mul_cycle.rs2_read(), None);
         assert_eq!(mul_cycle.rd_write(), None);
         let mul_trace = mul_cycle.field_inline_trace().unwrap();
-        assert_eq!(mul_trace.op, Some(FieldInlineOp::Mul));
         assert_eq!(mul_trace.rs1.unwrap().value, FieldEncodedValue::from_u64(7));
         assert_eq!(mul_trace.rs2.unwrap().value, FieldEncodedValue::from_u64(3));
         assert_eq!(
@@ -2065,14 +2059,11 @@ mod tests {
         );
         assert_eq!(advice_cycle.rs1_read(), None);
         assert_eq!(advice_cycle.rd_write(), Some((10, 0, 21)));
-        let advice_trace = advice_cycle.field_inline_trace().unwrap();
         assert_eq!(
-            advice_trace.bridge,
-            Some(FieldInlineBridge::AdviceLimb {
-                field_register: 3,
-                field_value: FieldEncodedValue::from_u64(21),
-                x_register: 10,
-                x_value: 21,
+            advice_cycle.field_inline_trace().unwrap().rs1,
+            Some(FieldRegisterRead {
+                register: 3,
+                value: FieldEncodedValue::from_u64(21),
             })
         );
         assert_eq!(cpu.read_register(10), 21);
@@ -2229,12 +2220,10 @@ mod tests {
         assert_eq!(cycle.rs2_read(), None);
         assert_eq!(cycle.rd_write(), None);
         let trace = cycle.field_inline_trace().unwrap();
-        assert_eq!(trace.op, Some(FieldInlineOp::AssertZero));
         assert_eq!(trace.rs1.unwrap().register, 3);
         assert_eq!(trace.rs1.unwrap().value, FieldEncodedValue::zero());
         assert_eq!(trace.rs2, None);
         assert_eq!(trace.rd, None);
-        assert_eq!(trace.bridge, None);
         assert_eq!(cpu.x, integer_registers);
         assert_eq!(cpu.field_registers.read(3), FieldEncodedValue::zero());
         assert!(Instruction::decode(0x7b | (6 << 12), 0x8000_0000, false).is_err());

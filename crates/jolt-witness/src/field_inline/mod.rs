@@ -6,14 +6,12 @@ use jolt_field::JoltField;
 use jolt_program::{
     execution::{FieldEvent, JoltProgram, TraceData},
     field_inline::{
-        validate_field_inline_instruction, FieldEncodedValue, FieldInlineBridge,
-        FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
+        validate_field_inline_instruction, FieldEncodedValue, FieldInlineTraceData,
+        FieldRegisterRead, FieldRegisterWrite,
     },
     preprocess::JoltProgramPreprocessing,
 };
-use jolt_riscv::{
-    field_inline_operand_shape, FieldInlineOp, FieldInlineOperandShape, JoltTraceRow,
-};
+use jolt_riscv::{field_inline_operand_shape, FieldInlineOperandShape, JoltTraceRow};
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -587,18 +585,10 @@ fn validate_trace_data(
     shape: FieldInlineOperandShape,
     data: FieldInlineTraceData,
 ) -> Result<(), WitnessError> {
-    if data.op != Some(shape.op) {
-        return Err(invalid_row(
-            index,
-            "field-inline trace payload op does not match instruction",
-        ));
-    }
     let operands = row.instruction().field_operands();
     validate_read(index, "rs1", data.rs1, operands.rs1, shape.reads_field_rs1)?;
     validate_read(index, "rs2", data.rs2, operands.rs2, shape.reads_field_rs2)?;
-    validate_write(index, data.rd, operands.rd, shape.writes_field_rd)?;
-
-    validate_bridge(index, row, shape, data)
+    validate_write(index, data.rd, operands.rd, shape.writes_field_rd)
 }
 
 fn validate_read(
@@ -643,107 +633,6 @@ fn validate_write(
         (false, Some(_), _) => Err(invalid_row(
             index,
             "field-inline trace payload has an unexpected write",
-        )),
-    }
-}
-
-fn validate_bridge(
-    index: usize,
-    row: &JoltTraceRow,
-    shape: FieldInlineOperandShape,
-    data: FieldInlineTraceData,
-) -> Result<(), WitnessError> {
-    match (shape.op, data.bridge) {
-        (
-            FieldInlineOp::Add
-            | FieldInlineOp::Sub
-            | FieldInlineOp::Mul
-            | FieldInlineOp::Inv
-            | FieldInlineOp::AssertEq
-            | FieldInlineOp::AssertZero
-            | FieldInlineOp::LoadImm,
-            bridge,
-        ) => {
-            if bridge.is_none() {
-                Ok(())
-            } else {
-                Err(invalid_row(
-                    index,
-                    "pure field-inline instruction carries bridge payload",
-                ))
-            }
-        }
-        (
-            FieldInlineOp::LoadAccumulateFromRegister,
-            Some(FieldInlineBridge::LoadAccumulateFromRegister {
-                x_register,
-                x_value,
-                field_value,
-            }),
-        ) => {
-            if Some(x_register) != row.instruction().operands.rs1
-                || Some(x_value) != row.rs1_read().map(|read| read.value)
-                || Some(field_value) != data.rd.map(|write| write.post_value)
-            {
-                return Err(invalid_row(
-                    index,
-                    "field-inline load bridge payload is inconsistent",
-                ));
-            }
-            Ok(())
-        }
-        (
-            FieldInlineOp::AdviceLimb,
-            Some(FieldInlineBridge::AdviceLimb {
-                field_register,
-                field_value,
-                x_register,
-                x_value,
-            }),
-        ) => {
-            let operands = row.instruction().operands;
-            if Some(field_register) != operands.rs1
-                || Some(field_value) != data.rs1.map(|read| read.value)
-                || Some(x_register) != operands.rd
-                || Some(x_value) != row.rd_write().map(|write| write.post_value)
-            {
-                return Err(invalid_row(
-                    index,
-                    "field-inline advice bridge payload is inconsistent",
-                ));
-            }
-            Ok(())
-        }
-        (
-            FieldInlineOp::LoadAccumulateFromMemory,
-            Some(FieldInlineBridge::LoadAccumulateFromMemory {
-                x_base,
-                x_register,
-                word,
-                field_value,
-            }),
-        ) => {
-            let operands = row.instruction().operands;
-            if Some(x_base) != operands.rs1
-                || Some(x_register) != operands.rd
-                || Some(word) != row.rd_write().map(|write| write.post_value)
-                || Some(field_value) != data.rd.map(|write| write.post_value)
-            {
-                return Err(invalid_row(
-                    index,
-                    "field-inline load word bridge payload is inconsistent",
-                ));
-            }
-            Ok(())
-        }
-        (
-            FieldInlineOp::LoadAccumulateFromRegister
-            | FieldInlineOp::LoadAccumulateFromMemory
-            | FieldInlineOp::AdviceLimb,
-            _,
-        ) => Err(invalid_row(
-            index,
-            "field-inline bridge instruction is missing bridge payload",
         )),
     }
 }
@@ -806,7 +695,6 @@ mod tests {
         execution::{JoltProgram, TraceOutput},
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
     };
-    use jolt_riscv::FieldInlineOp;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
         RamAccess, RamRead, RegisterRead, RegisterState, RegisterWrite, RV64IMAC_JOLT,
@@ -922,13 +810,13 @@ mod tests {
             i128::from(value),
         );
         let data = FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadImm),
+            rs1: None,
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: rd,
                 pre_value: enc(0),
                 post_value: enc(value),
             }),
-            ..FieldInlineTraceData::default()
         };
         (instruction, data)
     }
@@ -945,7 +833,6 @@ mod tests {
             0,
         );
         let mul_data = FieldInlineTraceData {
-            op: Some(FieldInlineOp::Mul),
             rs1: Some(FieldRegisterRead {
                 register: 2,
                 value: enc(5),
@@ -959,7 +846,6 @@ mod tests {
                 pre_value: enc(0),
                 post_value: enc(35),
             }),
-            ..FieldInlineTraceData::default()
         };
         let advice = instruction(
             JoltInstructionKind::FIELD_ADVICE_LIMB,
@@ -978,23 +864,16 @@ mod tests {
             ..RegisterState::default()
         };
         let advice_data = FieldInlineTraceData {
-            op: Some(FieldInlineOp::AdviceLimb),
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(35),
             }),
+            rs2: None,
             rd: Some(FieldRegisterWrite {
                 register: 0,
                 pre_value: enc(0),
                 post_value: enc(0),
             }),
-            bridge: Some(FieldInlineBridge::AdviceLimb {
-                field_register: 1,
-                field_value: enc(35),
-                x_register: 10,
-                x_value: 35,
-            }),
-            ..FieldInlineTraceData::default()
         };
         let field_events = [load_rs1_data, load_rs2_data, mul_data, advice_data]
             .into_iter()
@@ -1171,17 +1050,11 @@ mod tests {
 
     #[test]
     fn accumulating_loads_read_and_bind_the_nonzero_destination() {
-        for (kind, op) in [
-            (
-                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
-                FieldInlineOp::LoadAccumulateFromRegister,
-            ),
-            (
-                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
-                FieldInlineOp::LoadAccumulateFromMemory,
-            ),
+        for kind in [
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
         ] {
-            let memory_load = op == FieldInlineOp::LoadAccumulateFromMemory;
+            let memory_load = kind == JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY;
             let (seed, seed_data) = load_imm(0, 1, 3);
             let load = instruction(
                 kind,
@@ -1193,20 +1066,6 @@ mod tests {
             );
             let mut accumulated = enc(11);
             accumulated.bytes_le[8] = 3;
-            let bridge = if memory_load {
-                FieldInlineBridge::LoadAccumulateFromMemory {
-                    x_base: 5,
-                    x_register: 6,
-                    word: 11,
-                    field_value: accumulated,
-                }
-            } else {
-                FieldInlineBridge::LoadAccumulateFromRegister {
-                    x_register: 5,
-                    x_value: 11,
-                    field_value: accumulated,
-                }
-            };
             let load_row = JoltTraceRow::new(
                 load,
                 RegisterState {
@@ -1233,18 +1092,16 @@ mod tests {
             )
             .unwrap();
             let load_data = FieldInlineTraceData {
-                op: Some(op),
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(3),
                 }),
+                rs2: None,
                 rd: Some(FieldRegisterWrite {
                     register: 1,
                     pre_value: enc(3),
                     post_value: accumulated,
                 }),
-                bridge: Some(bridge),
-                ..FieldInlineTraceData::default()
             };
             let bytecode = vec![seed, load];
             let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);

@@ -139,7 +139,11 @@ mod tests {
     fn event(cycle: usize) -> FieldEvent {
         FieldEvent {
             cycle,
-            data: FieldInlineTraceData::default(),
+            data: FieldInlineTraceData {
+                rs1: None,
+                rs2: None,
+                rd: None,
+            },
         }
     }
 

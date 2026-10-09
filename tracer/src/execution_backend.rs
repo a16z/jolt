@@ -359,9 +359,7 @@ impl Cycle {
             | Self::FIELD_ADVICE_LIMB(RISCVCycle { register_state, .. }) => register_state,
             _ => return None,
         };
-        let op =
-            jolt_riscv::field_inline_source_op(self.instruction().source_instruction().kind())?;
-        Some(register_state.to_field_inline_trace(op))
+        Some(register_state.to_field_inline_trace())
     }
 }
 
@@ -578,7 +576,7 @@ mod tests {
         ));
     }
     #[cfg(feature = "field-inline")]
-    use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
+    use jolt_program::field_inline::{FieldEncodedValue, FieldRegisterRead, FieldRegisterWrite};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
 
@@ -619,17 +617,19 @@ mod tests {
         assert_eq!(row.rs1_read().unwrap().value, 11);
         assert!(row.rs2_read().is_none());
         assert!(row.rd_write().is_none());
-        let field_trace = data.field_inline(0).unwrap();
         assert_eq!(
-            field_trace.op,
-            Some(FieldInlineOp::LoadAccumulateFromRegister)
-        );
-        assert_eq!(
-            field_trace.bridge,
-            Some(FieldInlineBridge::LoadAccumulateFromRegister {
-                x_register: 5,
-                x_value: 11,
-                field_value: FieldEncodedValue::from_u64(11),
+            data.field_inline(0),
+            Some(&FieldInlineTraceData {
+                rs1: Some(FieldRegisterRead {
+                    register: 2,
+                    value: FieldEncodedValue::zero(),
+                }),
+                rs2: None,
+                rd: Some(FieldRegisterWrite {
+                    register: 2,
+                    pre_value: FieldEncodedValue::zero(),
+                    post_value: FieldEncodedValue::from_u64(11),
+                }),
             })
         );
     }

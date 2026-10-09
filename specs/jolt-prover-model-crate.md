@@ -481,7 +481,6 @@ field-inline row data, when enabled:
   field op kind / selector flags
   field register operands and destination
   field register read/write values
-  bridge payloads for x-register <-> field-register movement
 ```
 
 Pure field operations should not create incidental ordinary x-register effects.
