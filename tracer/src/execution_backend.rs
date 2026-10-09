@@ -112,7 +112,7 @@ fn collect_rows(cycles: &[Cycle], bytecode: &BytecodePCMapper) -> Result<TraceDa
             data.push(TraceEvent {
                 row: cycle_to_trace_row(cycle, bytecode)?,
                 #[cfg(feature = "field-inline")]
-                field_inline: cycle.field_inline_trace().map(Arc::new),
+                field_inline: cycle.field_inline_trace(),
             });
         }
         return Ok(data);
@@ -152,14 +152,19 @@ fn collect_rows(cycles: &[Cycle], bytecode: &BytecodePCMapper) -> Result<TraceDa
                     if let Some(data) = cycle.field_inline_trace() {
                         fields.push(FieldEvent {
                             cycle: batch * PARALLEL_ROW_CONVERSION_THRESHOLD + offset,
-                            data: Arc::new(data),
+                            data,
                         });
                     }
                 }
                 Ok(fields)
             })
             .collect::<Result<Vec<_>, TraceError>>()?;
-        let fields = batches.into_iter().flatten().collect();
+        // A flattening collect cannot size the result from its batches, so it
+        // would regrow and recopy the inline payloads.
+        let mut fields = Vec::with_capacity(batches.iter().map(Vec::len).sum());
+        for batch in batches {
+            fields.extend(batch);
+        }
         TraceData::from_parts(rows, fields)
     }
 }

@@ -129,7 +129,7 @@ fn field_row_with_registers(
 ) -> TraceEvent {
     TraceEvent {
         row: JoltTraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap(),
-        field_inline: Some(data.into()),
+        field_inline: Some(data),
     }
 }
 

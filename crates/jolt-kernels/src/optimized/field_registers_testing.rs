@@ -54,7 +54,7 @@ pub(crate) struct FieldRegisterTraceFixture {
 fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
     TraceEvent {
         row: TraceRow::new(instruction, RegisterState::default(), RamAccess::NoOp, 1).unwrap(),
-        field_inline: Some(Arc::new(data)),
+        field_inline: Some(data),
     }
 }
 

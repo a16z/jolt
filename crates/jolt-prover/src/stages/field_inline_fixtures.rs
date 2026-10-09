@@ -141,7 +141,7 @@ fn trace_event(
 
 fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceEvent {
     let mut event = trace_event(instruction, RegisterState::default(), RamAccess::NoOp).unwrap();
-    event.field_inline = Some(data.into());
+    event.field_inline = Some(data);
     event
 }
 

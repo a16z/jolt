@@ -1,6 +1,3 @@
-#[cfg(feature = "field-inline")]
-use std::sync::Arc;
-
 use jolt_riscv::JoltTraceRow;
 #[cfg(feature = "serialization")]
 use serde::{ser::SerializeSeq, Serialize, Serializer};
@@ -16,7 +13,7 @@ use crate::field_inline::FieldInlineTraceData;
 pub struct TraceEvent {
     pub row: JoltTraceRow,
     #[cfg(feature = "field-inline")]
-    pub field_inline: Option<Arc<FieldInlineTraceData>>,
+    pub field_inline: Option<FieldInlineTraceData>,
 }
 
 impl From<JoltTraceRow> for TraceEvent {
@@ -33,7 +30,7 @@ impl From<JoltTraceRow> for TraceEvent {
 #[derive(Clone, Debug)]
 pub struct FieldEvent {
     pub cycle: usize,
-    pub data: Arc<FieldInlineTraceData>,
+    pub data: FieldInlineTraceData,
 }
 
 /// Shared execution storage. The proof view omits canonical trailing padding
@@ -137,7 +134,7 @@ impl TraceData {
             .binary_search_by_key(&cycle, |event| event.cycle)
             .ok()
             .and_then(|index| self.field_events.get(index))
-            .map(|event| event.data.as_ref())
+            .map(|event| &event.data)
     }
 }
 
@@ -171,7 +168,7 @@ impl Serialize for TraceData {
                 #[cfg(feature = "field-inline")]
                 field_inline: events
                     .next_if(|event| event.cycle == cycle)
-                    .map(|event| event.data.as_ref()),
+                    .map(|event| &event.data),
             };
             sequence.serialize_element(&event)?;
         }

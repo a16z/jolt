@@ -241,9 +241,11 @@ TraceData {
     proof_len: usize,
     field_events: Vec<FieldEvent>, // field-inline only
 }
-FieldEvent { cycle: usize, data: Arc<FieldInlineTraceData> }
+FieldEvent { cycle: usize, data: FieldInlineTraceData }
 ```
 
+Each event stores its `Copy` payload inline. `Arc<TraceData>` is the only
+sharing handle, so payloads carry no reference count or separate allocation.
 A transient `TraceEvent` contains a core row and, in field-enabled builds, an
 optional payload. `TraceData::push` appends them together. `from_parts`
 transfers parallel producer buffers and rejects unsorted, duplicate, or
@@ -280,7 +282,11 @@ this method; it does not binary-search the sparse table once per cycle.
 Interpreter parallel collection writes one final core vector. Field-enabled
 collection fills that vector by indexed chunks and combines sparse event
 batches in order, without a full intermediate `(row, optional_payload)`
-vector. The interpreter's raw `Vec<Cycle>` and x86 observation buffer remain.
+vector. The combined event vector is allocated once from the summed batch
+lengths, so combining copies each payload once instead of regrowing; the
+per-batch vectors still grow by push, and they coexist with the combined
+vector while batches are moved in. The interpreter's raw `Vec<Cycle>` and
+x86 observation buffer remain.
 
 ### Execution length and proof length
 
@@ -369,9 +375,12 @@ Under `field-inline`, the baseline execution row occupied 72 bytes and
 witness construction retained a separate 64-byte core row, totaling `136N`
 bytes before payloads and capacity. `OwnedTrace::shared_rows` shared the
 execution vector; the live input handle was not a third allocation. The new
-owner retains `64N` plus sparse events and payloads. A `usize`/`Arc` event is
-16 bytes on a 64-bit host. Measurements must include actual event density
-and vector capacities rather than quote a universal savings percentage.
+owner retains `64N + 192M` element bytes for M field events on a 64-bit
+host. A `FieldEvent` is its 8-byte cycle plus the 184-byte
+`FieldInlineTraceData`: two 34-byte read options, a 66-byte write option, a
+1-byte op option, and a 48-byte bridge option, padded to 8-byte alignment.
+Measurements must include actual event density and vector capacities rather
+than quote a universal savings percentage.
 
 The change preserves cycle ordering, advice tapes, final memory, and device
 outputs. It does not eliminate the interpreter's raw `Vec<Cycle>` or x86's
@@ -541,11 +550,12 @@ it shares the row allocation and sparse events.
 
 For inactive-field Fibonacci, retained row-element storage decreases from
 26,874,280 to 12,646,720 bytes, and median RSS after witness construction
-falls from 31.047 to 17.027 MiB. For active field operations, the row-element
-lower bound decreases from 239,496 to 113,792 bytes (`136N` versus
-`64N + 16M`); this tiny workload's process RSS remains about 5.2 MiB.
-These element totals exclude payload bodies, Arc headers, unused capacity,
-and other allocations. The new aggregate keeps capacities private, so they
+falls from 31.047 to 17.027 MiB. For active field operations, the row and
+event element lower bound decreases from 239,496 to 125,760 bytes (`136N`
+versus `64N + 192M`); this tiny workload's process RSS remains about 5.2 MiB.
+These element totals exclude unused capacity and other allocations; the
+baseline total also excludes its 68 separately allocated payloads, which the
+new events store inline. The new aggregate keeps capacities private, so they
 were not inferred from lengths. Process peak RSS is essentially unchanged
 in these trace diagnostics: approximately 55 MiB for ordinary Fibonacci,
 88 MiB with field support, and 37 MiB for the small active field workload.

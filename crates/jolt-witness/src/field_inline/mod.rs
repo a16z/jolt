@@ -215,7 +215,7 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
         let mut rows = Vec::new();
         for event in self.trace_data.field_events() {
             let cycle = event.cycle;
-            let data = event.data.as_ref();
+            let data = &event.data;
             let value = |encoded: Option<FieldEncodedValue>| {
                 encoded.map_or_else(F::zero, |encoded| decode_value(encoded))
             };
@@ -317,7 +317,7 @@ impl TraceBackedFieldInlineWitness {
         let mut events = self.trace_data.field_events().iter().peekable();
         for (index, row) in self.trace_data.proof_rows().iter().enumerate() {
             let data = if events.peek().is_some_and(|event| event.cycle == index) {
-                events.next().map(|event| event.data.as_ref())
+                events.next().map(|event| &event.data)
             } else {
                 None
             };
@@ -407,7 +407,7 @@ impl TraceBackedFieldInlineWitness {
         let first = events.partition_point(|event| event.cycle < start);
         let env = WitnessEnv::new(&self.preprocessing);
         for event in events[first..].iter().take_while(|event| event.cycle < end) {
-            values[event.cycle - start] = value(event.data.as_ref(), &env)?;
+            values[event.cycle - start] = value(&event.data, &env)?;
         }
         Ok(())
     }
@@ -443,7 +443,7 @@ impl TraceBackedFieldInlineWitness {
 
         for event in self.trace_data.field_events() {
             let cycle = event.cycle;
-            let data = event.data.as_ref();
+            let data = &event.data;
             let register = match id {
                 FieldInlineVirtualPolynomial::FieldRs1Ra => data.rs1.map(|read| read.register),
                 FieldInlineVirtualPolynomial::FieldRs2Ra => data.rs2.map(|read| read.register),
@@ -520,7 +520,7 @@ impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlin
             .trace_data
             .field_events()
             .par_iter()
-            .map(|event| (event.cycle, field_register_row(event.data.as_ref())))
+            .map(|event| (event.cycle, field_register_row(&event.data)))
             .collect())
     }
 }
@@ -752,7 +752,7 @@ fn validate_field_register_state(events: &[FieldEvent]) -> Result<(), WitnessErr
     let mut state = vec![FieldEncodedValue::zero(); field_register_count()];
     for event in events {
         let index = event.cycle;
-        let data = event.data.as_ref();
+        let data = &event.data;
         if let Some(read) = data.rs1 {
             validate_state_value(index, "rs1", &state, read.register, read.value)?;
         }
@@ -920,7 +920,7 @@ mod tests {
     ) -> TraceEvent {
         TraceEvent {
             row: JoltTraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap(),
-            field_inline: Some(data.into()),
+            field_inline: Some(data),
         }
     }
 
@@ -1252,23 +1252,20 @@ mod tests {
             .unwrap();
             let load_row = TraceEvent {
                 row: load_row,
-                field_inline: Some(
-                    FieldInlineTraceData {
-                        op: Some(op),
-                        rs1: Some(FieldRegisterRead {
-                            register: 1,
-                            value: enc(3),
-                        }),
-                        rd: Some(FieldRegisterWrite {
-                            register: 1,
-                            pre_value: enc(3),
-                            post_value: accumulated,
-                        }),
-                        bridge: Some(bridge),
-                        ..FieldInlineTraceData::default()
-                    }
-                    .into(),
-                ),
+                field_inline: Some(FieldInlineTraceData {
+                    op: Some(op),
+                    rs1: Some(FieldRegisterRead {
+                        register: 1,
+                        value: enc(3),
+                    }),
+                    rd: Some(FieldRegisterWrite {
+                        register: 1,
+                        pre_value: enc(3),
+                        post_value: accumulated,
+                    }),
+                    bridge: Some(bridge),
+                    ..FieldInlineTraceData::default()
+                }),
             };
             let bytecode = vec![seed, load];
             let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
@@ -1293,7 +1290,7 @@ mod tests {
                 }),
             ] {
                 let mut tampered = rows.clone();
-                Arc::make_mut(tampered[1].field_inline.as_mut().unwrap()).rs1 = read;
+                tampered[1].field_inline.as_mut().unwrap().rs1 = read;
                 assert!(matches!(
                     witness(&program, &preprocessing, tampered, 2).field_inline_witness(),
                     Err(WitnessError::InvalidWitnessData { .. })
@@ -1318,7 +1315,7 @@ mod tests {
         let Some(data) = bad_rows[2].field_inline.as_mut() else {
             return;
         };
-        Arc::make_mut(data).rs1 = Some(FieldRegisterRead {
+        data.rs1 = Some(FieldRegisterRead {
             register: 2,
             value: enc(6),
         });
