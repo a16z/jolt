@@ -204,10 +204,11 @@ trace range. Other explicit configurations require a deployment-owned catalog
 containing that exact shape. Grouped preprocessing rejects a missing final shape
 during setup and reports the requested K, arity, and column count.
 
-The catalogs are generated with Akita revision
-`d98400c555a7fc779bb4e29c35fbd4adad3232d1`, including
-[Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
+The catalogs match Akita revision
+`318c322113dc66aeed31f9f3c640e84099ba043f`, as verified by the complete
+artifact freshness check above.
 Native trace batching establishes first-fold cycle locality. Recursive folds
 inherit chunk ownership, align chunk bodies to the successor's source block
 width, and keep the shared tail in the last owner. A reduction in chunk count
-merges owners. Regenerate catalogs after updating Akita.
+merges owners. Check artifact freshness after updating Akita and regenerate
+catalogs if they differ.
