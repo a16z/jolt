@@ -42,12 +42,16 @@
 //!   and fold matrices; packed SIMD backends (NEON, AVX2, AVX-512) for
 //!   32/64/128-bit lanes and packed extensions.
 //!
+//! - `binary`: portable `F64`, `F128`, and `F192` binary fields for Jolt,
+//!   matching Akita's binary-field commitment (LaBinius) coordinates.
+//!
 //! # Feature flags
 //!
 //! - `bn254` (default) — the arkworks-backed BN254 backend.
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
 //!   packed, and the conditional-parallelism helpers in
 //!   `solinas::parallel`).
+//! - `binary` — the binary-field backend, off by default.
 //! - `asm` — opts into architecture-specific Fp128 assembly kernels on
 //!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
 //! - `parallel` — activates rayon behind the `cfg_*!` helper macros.
@@ -90,6 +94,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod algebra;
+#[cfg(feature = "binary")]
+mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
 mod extension;
@@ -108,6 +114,8 @@ pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
+#[cfg(feature = "binary")]
+pub use binary::{F128, F192, F64};
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
