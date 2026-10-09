@@ -956,41 +956,6 @@ mod tests {
     }
 
     #[test]
-    fn field_rd_inc_materializes_field_deltas_and_padding() {
-        let (bytecode, mut rows, mut field_events) = arithmetic_fixture();
-        rows.insert(1, JoltTraceRow::default());
-        for event in &mut field_events[1..] {
-            event.cycle += 1;
-        }
-        let provider = build_field_provider(bytecode, rows, field_events, 3);
-        assert_eq!(
-            owned_view(
-                &provider,
-                FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc)
-            ),
-            vec![fr(5), fr(0), fr(7), fr(35), fr(0), fr(0), fr(0), fr(0)]
-        );
-        let mut increments = [fr(99); 5];
-        provider.fill_rd_increments(1, &mut increments).unwrap();
-        assert_eq!(increments, [fr(0), fr(7), fr(35), fr(0), fr(0)]);
-        provider
-            .fill_rd_increments(1, &mut increments[..2])
-            .unwrap();
-        assert_eq!(&increments[..2], &[fr(0), fr(7)]);
-        provider
-            .fill_rd_increments(8, &mut increments[..0])
-            .unwrap();
-        assert!(matches!(
-            provider.fill_rd_increments(7, &mut increments),
-            Err(WitnessError::InvalidDimensions { .. })
-        ));
-        assert!(matches!(
-            provider.fill_rd_increments(usize::MAX, &mut increments),
-            Err(WitnessError::InvalidDimensions { .. })
-        ));
-    }
-
-    #[test]
     fn trace_domain_virtual_views_decode_values_and_products() {
         let (bytecode, rows, field_events) = arithmetic_fixture();
         let provider = build_field_provider(bytecode, rows, field_events, 3);

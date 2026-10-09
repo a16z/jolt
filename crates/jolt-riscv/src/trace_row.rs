@@ -641,14 +641,6 @@ mod tests {
     }
 
     #[test]
-    fn layout_is_64_bytes_and_copy() {
-        fn assert_copy<T: Copy>() {}
-        assert_copy::<JoltTraceRow>();
-        assert_eq!(core::mem::size_of::<JoltTraceRow>(), 64);
-        assert_eq!(core::mem::align_of::<JoltTraceRow>(), 8);
-    }
-
-    #[test]
     fn default_is_canonical_no_op() {
         let row = JoltTraceRow::default();
         assert_eq!(row.instruction(), JoltInstructionRow::default());

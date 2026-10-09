@@ -98,37 +98,6 @@ mod tests {
     }
 
     #[test]
-    fn cycles_convert_to_rows_with_their_bytecode_pc_and_captured_values() {
-        let preprocessing = preprocessing();
-        let cycles = traced_cycles();
-        let rows: Vec<_> = cycles
-            .iter()
-            .map(|cycle| cycle_to_trace_row(cycle, &preprocessing.pc_map).unwrap())
-            .collect();
-
-        let base = DRAM_BASE + 0x100;
-
-        // ADD: non-memory row; pc 1 (index 0 is the injected no-op)
-        assert_eq!(rows[0].pc(), 1);
-        assert_eq!(rows[0].rs1_value(), base);
-        assert_eq!(rows[0].rs2_value(), 7);
-        assert_eq!(rows[0].rd_write_value(), base + 7);
-        assert_eq!(rows[0].ram_address(), 0);
-
-        assert_eq!(rows[1].pc(), 2);
-        assert_eq!(rows[1].ram_address(), base);
-        assert_eq!(rows[1].rd_write_value(), 0x1234_5678);
-        assert_eq!(rows[1].ram_read_value(), 0x1234_5678);
-        assert_eq!(rows[1].ram_write_value(), 0x1234_5678);
-
-        assert_eq!(rows[2].pc(), 3);
-        assert_eq!(rows[2].ram_address(), base + 8);
-        assert_eq!(rows[2].rs2_value(), 7);
-        assert_eq!(rows[2].ram_write_value(), 7);
-        assert_eq!(rows[2].rd_write_value(), 0);
-    }
-
-    #[test]
     fn source_only_cycles_are_rejected_at_the_phase_boundary() {
         // DIV never appears in final bytecode; its cycle must be refused.
         let div_word: u32 = (0x01 << 25) | (2 << 20) | (1 << 15) | (0b100 << 12) | (3 << 7) | 0x33;

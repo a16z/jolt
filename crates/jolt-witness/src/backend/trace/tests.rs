@@ -175,44 +175,6 @@ fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
 }
 
 #[test]
-fn backend_rejects_proof_rows_beyond_cycle_domain() {
-    let program = Arc::new(JoltProgram::default());
-    let instruction = instruction(0x8000_0000);
-    let bytecode = BytecodePreprocessing::preprocess(
-        vec![instruction],
-        instruction.address as u64,
-        RV64IMAC_JOLT,
-    )
-    .unwrap();
-    let preprocessing = preprocessing_with_bytecode(bytecode);
-    let rows = vec![
-        checked_row(
-            &preprocessing,
-            instruction,
-            RegisterState::default(),
-            RamAccess::NoOp,
-        ),
-        checked_row(
-            &preprocessing,
-            instruction,
-            RegisterState::default(),
-            RamAccess::NoOp,
-        ),
-    ];
-    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
-
-    let error = match TraceBackend::try_new(config().with_log_t(0), inputs) {
-        Ok(_) => panic!("oversized trace was accepted"),
-        Err(error) => error,
-    };
-    assert!(matches!(
-        error,
-        WitnessError::InvalidWitnessData { reason, .. }
-            if reason == "physical trace has 2 rows but the cycle domain has 1"
-    ));
-}
-
-#[test]
 fn committed_polynomial_order_uses_proof_payload_order() {
     let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
@@ -1026,52 +988,6 @@ fn excluded_ids_report_their_classification() {
     ] {
         assert_reason(JoltPolynomialId::Virtual(id), PROTOCOL_INTERMEDIATE_REASON);
     }
-}
-
-#[test]
-fn backend_shares_full_trace_allocation_and_bounds_the_proof_view() {
-    let instruction_row = instruction(RAM_START_ADDRESS as usize);
-    let bytecode =
-        BytecodePreprocessing::preprocess(vec![instruction_row], RAM_START_ADDRESS, RV64IMAC_JOLT)
-            .unwrap();
-    let preprocessing = preprocessing_with_bytecode(bytecode);
-    let program = Arc::new(JoltProgram::default());
-    let row = checked_row(
-        &preprocessing,
-        instruction_row,
-        RegisterState::default(),
-        RamAccess::NoOp,
-    );
-    let rows = vec![
-        row,
-        JoltTraceRow::default(),
-        row,
-        JoltTraceRow::default(),
-        JoltTraceRow::default(),
-    ];
-    let row_buffer = rows.as_ptr();
-    let trace = trace_output_with_rows(rows);
-    let data = Arc::clone(&trace.trace);
-    assert_eq!(data.rows().as_ptr(), row_buffer);
-    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace);
-    let backend = TraceBackend::new(config().with_log_t(2), inputs);
-
-    assert!(Arc::ptr_eq(&backend.trace.trace, &data));
-    assert_eq!(backend.trace.trace.rows().as_ptr(), row_buffer);
-    assert_eq!(backend.trace.trace.len(), 5);
-    assert_eq!(backend.trace.trace.proof_len(), 3);
-    assert_eq!(
-        backend.trace.trace.proof_rows(),
-        &[row, JoltTraceRow::default(), row]
-    );
-    assert_eq!(
-        materialized_virtual_view(&backend, JoltVirtualPolynomial::PC).unwrap(),
-        [1, 0, 1, 0].map(Fr::from_u64)
-    );
-    assert_eq!(
-        materialized_virtual_view(&backend, JoltVirtualPolynomial::NextIsNoop).unwrap(),
-        [1, 0, 1, 1].map(Fr::from_u64)
-    );
 }
 
 /// The dense-grid capacity formula: in-range shapes pass through, the

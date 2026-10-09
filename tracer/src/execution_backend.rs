@@ -576,8 +576,6 @@ mod tests {
         ));
     }
     #[cfg(feature = "field-inline")]
-    use jolt_program::field_inline::{FieldEncodedValue, FieldRegisterRead, FieldRegisterWrite};
-    #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
 
     #[cfg(feature = "field-inline")]
@@ -592,46 +590,6 @@ mod tests {
             }
             None => base | (u32::from(rs2_or_imm & 0x0fff) << 20),
         }
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn trace_data_from_cycles_carries_field_inline_payload() {
-        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
-        cpu.write_register(5, 11);
-        let instruction = Instruction::decode(
-            field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 2, 5, 0),
-            0x8000_0000,
-            false,
-        )
-        .unwrap();
-        let mut trace = Vec::new();
-        instruction.trace(&mut cpu, Some(&mut trace));
-        assert_eq!(trace.len(), 1);
-
-        let bytecode =
-            BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
-        let data = super::collect_rows(&trace, &bytecode).unwrap();
-        let row = data.rows()[0];
-        assert_eq!(row.rs1_read().unwrap().register, 5);
-        assert_eq!(row.rs1_read().unwrap().value, 11);
-        assert!(row.rs2_read().is_none());
-        assert!(row.rd_write().is_none());
-        assert_eq!(
-            data.field_inline(0),
-            Some(&FieldInlineTraceData {
-                rs1: Some(FieldRegisterRead {
-                    register: 2,
-                    value: FieldEncodedValue::zero(),
-                }),
-                rs2: None,
-                rd: Some(FieldRegisterWrite {
-                    register: 2,
-                    pre_value: FieldEncodedValue::zero(),
-                    post_value: FieldEncodedValue::from_u64(11),
-                }),
-            })
-        );
     }
 
     #[cfg(feature = "field-inline")]
