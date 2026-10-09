@@ -107,10 +107,10 @@ instruction metadata, including encoded field operands, immediate, address,
 and sequence metadata. The no-op boolean restriction below is necessary for
 that exact reconstruction.
 
-A compile-time assertion pins the 64-byte size. Tests cover alignment and
-`Copy`; compile-time width/non-overlap assertions pin metadata and control
-masks. Serialization uses logical values and does not depend on these offsets
-or bit assignments. No unused bytes remain.
+A compile-time assertion pins the 64-byte size, and the type derives `Copy`;
+compile-time width/non-overlap assertions pin metadata and control masks.
+Serialization uses logical values and does not depend on these offsets or bit
+assignments. No unused bytes remain.
 
 ### Checked construction
 
@@ -482,12 +482,11 @@ field-inline verifier suite (133 tests).
 Performance/memory measurements are recorded below. They distinguish retained
 row storage from process peak memory and row production from proving time.
 
-Permanent tests cover independent layout and semantic properties: 64-byte
-`Copy` rows, metadata/control bounds, exact accepted instruction reconstruction,
-field operand projection, capture absence versus observed zero, memory
-aliasing, malformed identity/RAM rejection, and no-op PC/boolean rules. Tests
-use independent properties or live production paths rather than a copy of
-removed row conversion code.
+Permanent tests cover independent semantic properties: metadata/control
+bounds, exact accepted instruction reconstruction, field operand projection,
+capture absence versus observed zero, memory aliasing, malformed identity/RAM
+rejection, and no-op PC/boolean rules. Tests use independent properties or
+live production paths rather than a copy of removed row conversion code.
 
 Existing interpreter/x86 differential and chunk-composition tests check rows,
 PCs, sparse payload association, and execution outputs. Guest-dependent
@@ -498,8 +497,9 @@ including missing/extraneous payloads and register continuity failures.
 Memory accumulation must retain encoded field rs2 while exposing no integer
 rs2 and binding its RAM read to integer rd's value.
 
-Ownership tests check that witness construction retains the producer's
-allocation when another `Arc` owner exists. Shared proof bounds,
+Witness construction moves the producer's `Arc<TraceData>` into the backend,
+and `TraceData` does not implement `Clone`, so retaining the producer's rows
+holds by construction rather than by a test. Shared proof bounds,
 padding/lookahead, and lengths around powers of two have distinct failure
 signals.
 
