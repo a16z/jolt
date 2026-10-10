@@ -152,8 +152,12 @@ Key abstractions introduced or modified:
   with `B: ?Sized + PrepareKernel<F, SpartanShift<F>, P>
   + PrepareKernel<F, InstructionInput<F>, P> + ...`, one bound per member. Each stage
   demands exactly its members' slots through this impl's where-clause, and prepares the
-  members inline in `prove`. Both generated impls attach to the batch type, so a family
-  declared in another crate can expand the same macro without violating the orphan rule.
+  members inline in `prove`. Both generated impls are for the batch type and for no
+  uncovered type parameter, so the orphan rule admits the expansion in jolt-prover, which
+  owns the two traits, for any batch, and in another crate wherever the batch name
+  resolves to a local type: the crate that declares the batch, or a crate that wraps a
+  foreign batch in a local type of the same name with `Deref` to it (the expansion
+  reaches the batch only through `self` and member fields).
   `Proved<F, S, C>` is one generic carrier in jolt-prover
   `{ recorded, output_claims: S::OutputClaims, output_points: S::OutputPoints, final_claim }`
   (replaces v1's per-stage generated `ProvedStageN`).
@@ -185,14 +189,16 @@ Key abstractions introduced or modified:
   then `curate = |batch, claims, points| { ... },`; omitted arguments select `JoltPlane`
   and canonical opening order. A custom-plane invocation is
   `<batch>_members!(impl_stage_prover plane = ToyPlane,)`.
-  The expanding crate needs direct dependencies under their own names on `jolt-prover`,
-  `jolt-field`, `jolt-kernels`, `jolt-sumcheck`, `jolt-transcript`, `jolt-verifier`, and
-  `tracing`; batch, aggregates, and relation names must be in scope. The batch and its
-  relations have one `F: JoltField` parameter, and the plane implements `WitnessPlane<F>`
-  for every such `F`. Declaring the claims and batch also needs `jolt-claims` and `serde`;
-  dense polynomial tables need `jolt-poly`. If the expanding crate declares an `allocative`
-  feature, its member claim structs need `Allocative` and a direct `allocative` dependency
-  under that feature, as required by the batch derive. The stage driver's expansion has
+  The expanding crate needs a dependency on `jolt-prover`, reached through `$crate`, and
+  direct dependencies under their own names on `jolt-field`, `jolt-kernels`,
+  `jolt-sumcheck`, `jolt-transcript`, `jolt-verifier`, and `tracing`; batch, aggregates,
+  and relation names must be in scope. The batch and its relations have one
+  `F: JoltField` parameter, and the plane implements `WitnessPlane<F>` for every such `F`.
+  Declaring the claims and batch also needs `jolt-claims` and `serde`; dense polynomial
+  tables need `jolt-poly`. If the expanding crate declares an `allocative` feature, each
+  member's output-claims struct and challenges struct need `Allocative`, with a direct
+  `allocative` dependency under that feature: the batch derive derives it on the
+  output-value, output-point and challenge aggregates. The stage driver's expansion has
   no feature predicates: its heap-snapshot helper is selected by `jolt-prover`'s
   `allocative` feature.
 - **Fused round API** (jolt-sumcheck; done in v1, unchanged):

@@ -435,19 +435,29 @@ macro_rules! __stage_shape_check {
 /// `curate = |batch, claims, points| { .. },`; both are optional. The defaults
 /// are [`jolt_kernels::JoltPlane`] and canonical opening order.
 ///
-/// The expanding crate needs direct dependencies under their own names on
-/// `jolt-prover`, `jolt-field`, `jolt-kernels`, `jolt-sumcheck`, `jolt-transcript`,
+/// The expanding crate needs a dependency on `jolt-prover`, which the
+/// expansion reaches through `$crate`, and direct dependencies under their own
+/// names on `jolt-field`, `jolt-kernels`, `jolt-sumcheck`, `jolt-transcript`,
 /// `jolt-verifier`, and `tracing`. The batch, aggregate and relation names must
 /// be in scope by bare name. The batch and relations are generic in exactly
 /// one parameter `F: JoltField`, and the plane implements `WitnessPlane<F>`
 /// for every `F: JoltField`.
 ///
+/// Both impls are for the batch. Outside `jolt-prover`, which owns the two
+/// traits, the batch name must therefore resolve to a type local to the
+/// expanding crate. For a batch declared in another crate, declare a local
+/// tuple struct of the same name with `Deref` to that batch: the expansion
+/// reaches the batch only through `self` and its member fields, which must be
+/// visible to the expanding crate.
+///
 /// Declaring a family also needs `jolt-claims` for the claim derives and
 /// `serde` for `SumcheckBatch`'s output aggregate. Tables for
 /// `NaiveSumcheckProver` need `jolt-poly`. If that crate declares an `allocative`
-/// feature, it needs `allocative` and `Allocative` on its member claim structs:
-/// the batch derive selects that feature at its expansion site. Stage-driver
-/// heap instrumentation instead uses `jolt-prover`'s feature selection.
+/// feature, it needs `allocative` under that feature and `Allocative` on each
+/// member's output-claims struct and challenges struct: the batch derive
+/// derives it on the output-value, output-point and challenge aggregates and
+/// selects the feature at its expansion site. Stage-driver heap
+/// instrumentation instead uses `jolt-prover`'s feature selection.
 ///
 /// ```ignore
 /// toy_sumchecks_members!(impl_stage_prover plane = ToyPlane,);
