@@ -206,26 +206,49 @@ impl SourceExecution {
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
         let mmu = &mut emulator.get_mut_cpu().mmu;
-        // Original positions break address ties so later sections win. Sorting
-        // indices avoids allocating over gaps in the image's address space.
-        let mut image_order: Vec<usize> = (0..memory_init.len()).collect();
-        image_order.sort_unstable_by_key(|&index| (memory_init[index].0, index));
-        for (position, &index) in image_order.iter().enumerate() {
-            let (address, expected) = memory_init[index];
-            if image_order
-                .get(position + 1)
-                .is_some_and(|&next| memory_init[next].0 == address)
-            {
-                continue;
-            }
+        let byte_differs = |address, expected| {
             let actual = if mmu.memory.validate_address(address) {
                 mmu.memory.memory.get_byte(address - RAM_START_ADDRESS)
             } else {
                 0
             };
-            if actual != expected {
-                return Err(SourceTraceError::ImageMismatch { address }.into());
+            actual != expected
+        };
+        let mut previous = None;
+        let mut mismatch = None;
+        let mut increasing = true;
+        for &(address, expected) in &memory_init {
+            if previous.is_some_and(|previous| address <= previous) {
+                increasing = false;
+                break;
             }
+            if byte_differs(address, expected) && mismatch.is_none() {
+                mismatch = Some(address);
+            }
+            previous = Some(address);
+        }
+        if !increasing {
+            // Later entries can replace a mismatch found in the increasing
+            // prefix. Restart in address order, with original positions as ties.
+            mismatch = None;
+            let mut image_order: Vec<usize> = (0..memory_init.len()).collect();
+            image_order.sort_unstable_by_key(|&index| (memory_init[index].0, index));
+            for (position, &index) in image_order.iter().enumerate() {
+                let (address, expected) = memory_init[index];
+                if image_order
+                    .get(position + 1)
+                    .is_some_and(|&next| memory_init[next].0 == address)
+                {
+                    continue;
+                }
+                if byte_differs(address, expected) {
+                    mismatch = Some(address);
+                    break;
+                }
+            }
+        }
+        if let Some(address) = mismatch {
+            return Err(SourceTraceError::ImageMismatch { address }.into());
         }
         mmu.set_access_recording(false);
         if let Some(device) = mmu.jolt_device.as_mut() {
