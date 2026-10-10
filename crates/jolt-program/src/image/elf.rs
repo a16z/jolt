@@ -209,7 +209,10 @@ mod tests {
     use super::{decode_elf, decode_elf_with_mode, merge_ranges, DecodeMode};
     use crate::ProgramError;
     use common::constants::RAM_START_ADDRESS;
-    use jolt_riscv::{SourceInstructionKind, RV64I, RV64IMAC_JOLT, RV64IM_JOLT};
+    use jolt_riscv::{
+        NormalizedOperands, SourceInstruction, SourceInstructionKind, SourceInstructionRow, RV64I,
+        RV64IMAC_JOLT, RV64IM_JOLT,
+    };
 
     const SHSTRTAB: &[u8] = b"\0.text\0.data\0.shstrtab\0";
     const TEXT_NAME: u32 = 1;
@@ -581,6 +584,7 @@ mod tests {
         enum Rejection {
             Compressed(u64),
             Malformed,
+            UnknownOpcode,
             Mul,
             None,
         }
@@ -605,6 +609,7 @@ mod tests {
             (0x0220_81b3_u32, Rejection::Mul),
             (0x0000_0085, Rejection::Compressed(4)),
             (0, Rejection::None),
+            (0xffff_ffff, Rejection::UnknownOpcode),
         ] {
             cases.push((
                 RAM_START_ADDRESS,
@@ -639,6 +644,12 @@ mod tests {
             Rejection::None,
             vec![(4, SourceInstructionKind::JAL)],
         ));
+        cases.push((
+            0x8000_0000,
+            vec![0x10, 0, 0, 0x80, 0, 0, 0, 0],
+            Rejection::Compressed(0),
+            Vec::new(),
+        ));
         for (start, bytes, rejection, expected) in cases {
             let elf = build_elf64(&[text_section(start, &bytes)]);
             let strict = decode_elf_with_mode(&elf, RV64I, DecodeMode::Strict);
@@ -650,6 +661,10 @@ mod tests {
                 Rejection::Malformed => {
                     assert!(matches!(strict, Err(ProgramError::MalformedImage(_))));
                 }
+                Rejection::UnknownOpcode => assert!(matches!(
+                    strict,
+                    Err(ProgramError::MalformedImage("unknown RV64 opcode"))
+                )),
                 Rejection::Mul => assert!(matches!(
                     strict,
                     Err(ProgramError::IllegalSourceInstruction(
@@ -692,6 +707,62 @@ mod tests {
     }
 
     #[test]
+    fn executable_instruction_values_in_each_decode_mode() {
+        let elf = build_elf64(&[text_section(
+            0x8000_0000,
+            &[0x93, 0, 0x10, 0, 0x6f, 0, 0, 0],
+        )]);
+        let expected_instructions = vec![
+            SourceInstruction::new(
+                SourceInstructionKind::ADDI,
+                SourceInstructionRow {
+                    address: 0x8000_0000,
+                    operands: NormalizedOperands {
+                        rs1: Some(0),
+                        rs2: None,
+                        rd: Some(1),
+                        imm: 1,
+                    },
+                    inline: None,
+                    is_compressed: false,
+                },
+            ),
+            SourceInstruction::new(
+                SourceInstructionKind::JAL,
+                SourceInstructionRow {
+                    address: 0x8000_0004,
+                    operands: NormalizedOperands {
+                        rs1: None,
+                        rs2: None,
+                        rd: Some(0),
+                        imm: 0,
+                    },
+                    inline: None,
+                    is_compressed: false,
+                },
+            ),
+        ];
+        let expected_memory = vec![
+            (0x8000_0000, 0x93),
+            (0x8000_0001, 0),
+            (0x8000_0002, 0x10),
+            (0x8000_0003, 0),
+            (0x8000_0004, 0x6f),
+            (0x8000_0005, 0),
+            (0x8000_0006, 0),
+            (0x8000_0007, 0),
+        ];
+        for mode in [DecodeMode::Strict, DecodeMode::DataHoles] {
+            let image = decode_elf_with_mode(&elf, RV64I, mode)
+                .expect("aligned base instructions decode in each mode");
+            assert_eq!(image.instructions, expected_instructions);
+            assert_eq!(image.memory_init, expected_memory);
+            assert_eq!(image.program_end, 0x8000_0008);
+            assert_eq!(image.entry_address, 0x8000_0000);
+        }
+    }
+
+    #[test]
     fn data_slots_apply_profile_before_parsing_and_at_each_word() {
         let text = [0x0010_0093_u32, 0x0220_81b3, 0x0000_006f];
         let bytes: Vec<_> = text.into_iter().flat_map(u32::to_le_bytes).collect();
@@ -713,7 +784,9 @@ mod tests {
             ));
             assert!(matches!(
                 decode_elf_with_mode(&build_elf32(), RV64I, mode),
-                Err(ProgramError::UnsupportedArchitecture(_))
+                Err(ProgramError::UnsupportedArchitecture(
+                    "jolt-program supports RV64/ELF64 program images only"
+                ))
             ));
             let mut section = text_section(RAM_START_ADDRESS, &[0x13]);
             section.size_override = Some(0x1000);

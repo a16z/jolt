@@ -107,11 +107,17 @@ struct TextSections {
     second_address: u64,
 }
 
+struct NoteSection {
+    address: u64,
+    bytes: Vec<u8>,
+}
+
 struct Fixture {
     words: Vec<u32>,
     expected: Vec<SourceTraceRow>,
     inputs: TraceInputs,
     text_sections: Option<TextSections>,
+    note_section: Option<NoteSection>,
     decode_mode: DecodeMode,
 }
 
@@ -121,6 +127,7 @@ impl Fixture {
             words: Vec::new(),
             expected: Vec::new(),
             text_sections: None,
+            note_section: None,
             decode_mode: DecodeMode::Strict,
             inputs: TraceInputs::new(
                 Vec::new(),
@@ -249,6 +256,21 @@ impl Fixture {
             elf[60..62].copy_from_slice(&(count + 1).to_le_bytes());
             elf.extend_from_slice(&second_header);
         }
+        if let Some(note) = &self.note_section {
+            // ELF64 SHT_NOTE = 7, SHF_ALLOC = 2. The extra header is appended
+            // to the section table, followed by its file-backed bytes.
+            let mut header = [0u8; 64];
+            header[4..8].copy_from_slice(&7u32.to_le_bytes());
+            header[8..16].copy_from_slice(&2u64.to_le_bytes());
+            header[16..24].copy_from_slice(&note.address.to_le_bytes());
+            header[24..32].copy_from_slice(&(elf.len() as u64 + 64).to_le_bytes());
+            header[32..40].copy_from_slice(&(note.bytes.len() as u64).to_le_bytes());
+            header[48..56].copy_from_slice(&1u64.to_le_bytes());
+            let count = u16::from_le_bytes(elf[60..62].try_into().unwrap());
+            elf[60..62].copy_from_slice(&(count + 1).to_le_bytes());
+            elf.extend_from_slice(&header);
+            elf.extend_from_slice(&note.bytes);
+        }
         JoltProgram::from_elf_bytes_with_profile(elf, RV64I)
     }
 
@@ -279,13 +301,18 @@ impl Fixture {
         output
     }
 
-    fn error(self, expected: SourceTraceError) {
+    fn backend_error(&self, expected: SourceTraceError) {
         let program = self.program();
         let error = SourceTracerBackend::default()
             .with_decode_mode(self.decode_mode)
             .trace(&program, self.inputs.clone())
             .unwrap_err();
         assert!(matches!(error, TraceError::SourceTrace(actual) if actual == expected));
+    }
+
+    fn error(self, expected: SourceTraceError) {
+        self.backend_error(expected);
+        let program = self.program();
         let mut execution = SourceExecution::new(&program, self.inputs, self.decode_mode).unwrap();
         let mut rows = Vec::with_capacity(self.words.len());
         for _ in 0..=self.words.len() {
@@ -1641,6 +1668,172 @@ fn default_decode_mode_rejects_data_in_executable_sections() {
                 address
             })) if address == ENTRY + 16
         ));
+    }
+}
+
+#[test]
+fn an_image_containing_only_a_data_pointer_has_no_entry_instruction() {
+    let mut f = Fixture::new();
+    f.decode_mode = DecodeMode::DataHoles;
+    f.words = vec![0x8000_0010, 0];
+    f.backend_error(SourceTraceError::PcOutsideProgram { pc: 0x8000_0000 });
+}
+
+#[test]
+fn stores_to_data_holes_change_their_memory_bytes() {
+    let mut f = Fixture::new();
+    f.decode_mode = DecodeMode::DataHoles;
+    f.words = vec![
+        0x0000_0297,
+        0x0052_b823,
+        0x0102_b303,
+        0x00c0_006f,
+        0x8000_0018,
+        0,
+        0x0000_006f,
+    ];
+    f.expected = vec![
+        SourceTraceRow::new(
+            0,
+            0x8000_0000,
+            0x8000_0004,
+            registers(None, None, Some((5, 0, 0x8000_0000))),
+            RamAccess::NoOp,
+        ),
+        SourceTraceRow::new(
+            1,
+            0x8000_0004,
+            0x8000_0008,
+            registers(Some((5, 0x8000_0000)), Some((5, 0x8000_0000)), None),
+            write(0x8000_0010, 0x8000_0018, 0x8000_0000),
+        ),
+        SourceTraceRow::new(
+            2,
+            0x8000_0008,
+            0x8000_000c,
+            registers(Some((5, 0x8000_0000)), None, Some((6, 0, 0x8000_0000))),
+            read(0x8000_0010, 0x8000_0000),
+        ),
+        SourceTraceRow::new(
+            3,
+            0x8000_000c,
+            0x8000_0018,
+            registers(None, None, Some((0, 0, 0))),
+            RamAccess::NoOp,
+        ),
+        SourceTraceRow::new(
+            4,
+            0x8000_0018,
+            0x8000_0018,
+            registers(None, None, Some((0, 0, 0))),
+            RamAccess::NoOp,
+        ),
+    ];
+    f.complete();
+}
+
+#[test]
+fn a_store_overlapping_a_hole_and_an_instruction_is_rejected() {
+    let mut f = Fixture::new();
+    f.decode_mode = DecodeMode::DataHoles;
+    f.words = vec![
+        0x0000_0297,
+        0x0052_b823,
+        0x0102_b303,
+        0x00c0_006f,
+        0x8000_0018,
+        0x0000_0013,
+        0x0000_006f,
+    ];
+    f.backend_error(SourceTraceError::StoreToProgramText {
+        pc: 0x8000_0004,
+        address: 0x8000_0010,
+    });
+}
+
+#[test]
+fn a_later_note_over_text_must_match_loaded_ram() {
+    for mode in [DecodeMode::Strict, DecodeMode::DataHoles] {
+        let mut f = Fixture::new();
+        f.decode_mode = mode;
+        f.words = vec![0x0080_006f, 0, 0x0000_006f];
+        f.note_section = Some(NoteSection {
+            address: 0x8000_0004,
+            bytes: vec![0x13, 0, 0, 0],
+        });
+        f.backend_error(SourceTraceError::ImageMismatch {
+            address: 0x8000_0004,
+        });
+    }
+}
+
+#[test]
+fn a_zero_note_over_zero_text_keeps_the_two_rows() {
+    for mode in [DecodeMode::Strict, DecodeMode::DataHoles] {
+        let mut f = Fixture::new();
+        f.decode_mode = mode;
+        f.words = vec![0x0080_006f, 0, 0x0000_006f];
+        f.note_section = Some(NoteSection {
+            address: 0x8000_0004,
+            bytes: vec![0, 0, 0, 0],
+        });
+        f.expected = vec![
+            SourceTraceRow::new(
+                0,
+                0x8000_0000,
+                0x8000_0008,
+                registers(None, None, Some((0, 0, 0))),
+                RamAccess::NoOp,
+            ),
+            SourceTraceRow::new(
+                1,
+                0x8000_0008,
+                0x8000_0008,
+                registers(None, None, Some((0, 0, 0))),
+                RamAccess::NoOp,
+            ),
+        ];
+        f.complete();
+    }
+}
+
+#[test]
+fn a_later_note_over_data_holes_must_match_loaded_ram() {
+    let mut f = Fixture::new();
+    f.decode_mode = DecodeMode::DataHoles;
+    f.words = vec![
+        0x0000_0297,
+        0x0102_b303,
+        0x0000_0013,
+        0x00c0_006f,
+        0x8000_0018,
+        0,
+        0x0000_006f,
+    ];
+    f.note_section = Some(NoteSection {
+        address: 0x8000_0010,
+        bytes: vec![0xff; 8],
+    });
+    f.backend_error(SourceTraceError::ImageMismatch {
+        address: 0x8000_0010,
+    });
+}
+
+#[test]
+fn decoded_bytes_outside_ram_are_compared_with_zero() {
+    for mode in [DecodeMode::Strict, DecodeMode::DataHoles] {
+        let mut f = Fixture::new();
+        f.decode_mode = mode;
+        f.halt();
+        f.note_section = Some(NoteSection {
+            address: 0x8001_0000,
+            bytes: vec![0x42],
+        });
+        f.backend_error(SourceTraceError::ImageMismatch {
+            address: 0x8001_0000,
+        });
+        f.note_section.as_mut().unwrap().bytes[0] = 0;
+        f.complete();
     }
 }
 
