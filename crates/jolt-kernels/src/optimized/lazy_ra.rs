@@ -372,7 +372,7 @@ fn gather<F: JoltField, S: ChunkIndexSource>(
     if width == 1 {
         return source.index(i, j).map_or_else(F::zero, |k| table[k]);
     }
-    let stride = table.len() / width;
+    let stride = table.len() >> width.trailing_zeros();
     let mut sum = F::zero();
     let mut base = 0;
     for offset in 0..width {
