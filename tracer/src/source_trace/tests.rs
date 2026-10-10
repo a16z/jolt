@@ -336,7 +336,10 @@ fn check_replay_with_mode(
     mode: DecodeMode,
 ) {
     let image = decode_elf_with_mode(program.elf_bytes(), RV64I, mode).unwrap();
-    let mut memory: BTreeMap<u64, u8> = image.memory_init.into_iter().collect();
+    let mut memory = BTreeMap::new();
+    for (address, byte) in image.memory_init {
+        memory.insert(address, byte);
+    }
     let layout = MemoryLayout::new(&inputs.memory_config);
     for (start, bytes) in [
         (layout.input_start, &inputs.inputs),
