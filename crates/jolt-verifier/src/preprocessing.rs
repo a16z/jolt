@@ -1,8 +1,6 @@
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use common::jolt_device::MemoryLayout;
-use jolt_claims::protocols::jolt::JoltRelationId;
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::TracePolynomialOrder;
+use jolt_claims::protocols::jolt::{JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
@@ -25,7 +23,6 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub max_padded_trace_length: usize,
     pub program_image_commitment: PCS::Output,
     pub bytecode_commitment: PCS::Output,
-    #[cfg(feature = "akita")]
     pub trace_order: TracePolynomialOrder,
 }
 
@@ -42,12 +39,9 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     serialize = "PCS::Output: Serialize",
     deserialize = "PCS::Output: serde::de::DeserializeOwned"
 ))]
-#[cfg_attr(
-    feature = "akita",
-    expect(
-        clippy::large_enum_variant,
-        reason = "constructed once per preprocessing; boxing Committed buys nothing"
-    )
+#[expect(
+    clippy::large_enum_variant,
+    reason = "constructed once per preprocessing; boxing Committed buys nothing"
 )]
 pub enum ProgramPreprocessing<PCS: CommitmentScheme> {
     /// `Arc` so witness backends take an owning handle without deep-cloning
@@ -148,11 +142,11 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// deployed verifier sees.
 #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/v1";
+    b"jolt/program-preprocessing/dory-whole-bytecode/v2";
 // Field flags use the common circuit columns; preprocessing has no side table.
 #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
-    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v1";
+    b"jolt/program-preprocessing/dory-whole-bytecode/field-inline/v2";
 
 #[cfg(all(feature = "akita", not(feature = "field-inline")))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] =
@@ -287,7 +281,6 @@ mod tests {
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     #[cfg(feature = "akita")]
     use jolt_akita::{AkitaCommitment as Commitment, AkitaScheme as Pcs};
-    #[cfg(feature = "akita")]
     use jolt_claims::protocols::jolt::TracePolynomialOrder;
     #[cfg(not(feature = "akita"))]
     use jolt_dory::{DoryCommitment as Commitment, DoryScheme as Pcs};
@@ -303,13 +296,13 @@ mod tests {
     /// digest domain for the extended instruction and proof profile.
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        244, 6, 173, 180, 102, 227, 123, 89, 175, 147, 200, 109, 100, 66, 232, 11, 109, 231, 53,
-        24, 12, 157, 107, 201, 228, 48, 74, 158, 19, 246, 64, 42,
+        133, 6, 248, 64, 134, 10, 13, 97, 113, 88, 4, 183, 242, 201, 144, 120, 30, 151, 164, 146,
+        90, 21, 172, 40, 66, 30, 227, 116, 84, 61, 239, 152,
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        181, 23, 45, 136, 228, 24, 238, 134, 235, 114, 52, 43, 248, 33, 38, 232, 19, 33, 167, 38,
-        238, 71, 235, 184, 143, 205, 31, 35, 121, 138, 3, 119,
+        87, 168, 29, 207, 44, 118, 157, 60, 27, 174, 47, 253, 183, 18, 104, 176, 123, 105, 194,
+        163, 209, 235, 110, 178, 34, 44, 192, 6, 174, 150, 43, 232,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
@@ -323,8 +316,8 @@ mod tests {
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        70, 90, 230, 155, 241, 24, 184, 115, 134, 123, 194, 81, 78, 30, 203, 47, 124, 122, 155, 66,
-        29, 231, 235, 138, 9, 161, 39, 8, 44, 195, 136, 136,
+        220, 129, 247, 129, 71, 22, 158, 201, 54, 160, 53, 213, 136, 185, 9, 158, 7, 132, 235, 185,
+        244, 193, 125, 23, 91, 203, 88, 8, 160, 200, 9, 233,
     ];
     #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -333,8 +326,8 @@ mod tests {
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        73, 161, 154, 115, 7, 159, 203, 43, 179, 51, 184, 201, 119, 78, 146, 243, 222, 198, 86,
-        130, 115, 122, 141, 30, 154, 5, 176, 194, 247, 206, 114, 167,
+        26, 26, 41, 3, 13, 169, 36, 76, 85, 80, 178, 178, 64, 96, 136, 8, 103, 212, 167, 121, 31,
+        194, 26, 112, 238, 167, 211, 248, 248, 82, 15, 246,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -373,7 +366,6 @@ mod tests {
             max_padded_trace_length: full.max_padded_trace_length,
             program_image_commitment: Commitment::default(),
             bytecode_commitment: Commitment::default(),
-            #[cfg(feature = "akita")]
             trace_order: TracePolynomialOrder::CycleMajor,
         }
     }

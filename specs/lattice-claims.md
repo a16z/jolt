@@ -267,7 +267,7 @@ provisioning request, not to the process cache.
 - `ProgramBytecode` and `ProgramImageInit` are opened directly. No
   virtualized reconstruction exception or auxiliary proof path exists.
 - Akita preprocessing uses the versioned `akita-whole-bytecode/v1` digest
-  domain; Dory uses `dory-whole-bytecode/v1`. Regenerate older preprocessing
+  domain; Dory uses `dory-whole-bytecode/v2`. Regenerate older preprocessing
   and proofs for both backends, including full-program mode.
 
 ## Testing Strategy

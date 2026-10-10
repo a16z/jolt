@@ -8,10 +8,17 @@ use std::sync::Arc;
 
 use crate::PreprocessingError;
 
-pub(crate) fn validate_committed_mode() -> Result<(), PreprocessingError> {
+pub(crate) fn validate_committed_mode(
+    program: &JoltProgramPreprocessing,
+) -> Result<(), PreprocessingError> {
     if cfg!(feature = "field-inline") {
         return Err(PreprocessingError::InvalidCommittedProgram {
             reason: "field-inline requires full public bytecode preprocessing".to_owned(),
+        });
+    }
+    if program.bytecode.code_size != program.bytecode.bytecode.len() {
+        return Err(PreprocessingError::InvalidCommittedProgram {
+            reason: "declared bytecode size differs from padded rows".to_owned(),
         });
     }
     Ok(())
@@ -122,7 +129,7 @@ use crate::akita::witness::DirectProgramObjects;
 /// The prover-retained committed-program data: the verifier's preprocessing
 /// carries only the program COMMITMENTS in committed mode, but the prover
 /// still needs the full program (witness generation, the bytecode stage-value
-/// folds, the reduction chunk grids, the stage-8 materialization) and the
+/// folds, the whole-bytecode reduction grid, the stage-8 materialization) and the
 /// commitments' opening material (the stage-8 openings). Mirrors legacy's
 /// `CommittedProgramProverData`.
 ///

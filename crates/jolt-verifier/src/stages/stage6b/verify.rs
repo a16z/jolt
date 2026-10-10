@@ -267,7 +267,7 @@ where
 /// over-length trailing entries are never algebraically consumed and would
 /// otherwise reach the Fiat-Shamir absorb, letting a malicious prover pass off
 /// padded, non-canonical proofs. Also checks the bytecode reduction's
-/// intermediate-vs-chunks shape. Member presence is enforced separately by the
+/// intermediate-vs-final shape. Member presence is enforced separately by the
 /// hand-listed `validate_member_presence` calls; a missing advice inner opening is caught by
 /// `expected_final_claim` (the advice cycle phase's `expected_output`).
 fn validate_cycle_phase_claim_shape<F: JoltField>(

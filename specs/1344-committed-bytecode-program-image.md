@@ -53,12 +53,19 @@ also take no count. SDK program preprocessing uses `ProgramPreprocessingMode`
 to select Full or Committed. Example `--committed-bytecode` flags take no value.
 
 Retired serialized identifier slots use uninhabited payloads to preserve live
-tags while rejecting old identifiers. Dory preprocessing digest domains are
-`jolt/program-preprocessing/dory-whole-bytecode/v1` and
-`jolt/program-preprocessing/dory-whole-bytecode/field-inline/v1`. All existing
-Dory preprocessing and proofs must be regenerated, including full mode. Akita
-retains its whole-bytecode domains. There is no old-format migration or automatic
-partitioning. Committed mode remains unsupported with field-inline.
+tags while rejecting old identifiers. Both backends introduce new preprocessing
+digest domains in this change:
+
+- Dory: `jolt/program-preprocessing/dory-whole-bytecode/v2`.
+- Dory field-inline: `jolt/program-preprocessing/dory-whole-bytecode/field-inline/v2`.
+- Akita: `jolt/program-preprocessing/akita-whole-bytecode/v1`.
+- Akita field-inline: `jolt/program-preprocessing/akita-whole-bytecode/field-inline/v1`.
+
+All existing Dory and Akita preprocessing and proofs must be regenerated,
+including full mode. Committed preprocessing records the coefficient trace order,
+and verification rejects a proof declaring a different order. Dory's domain
+version 2 includes this order binding. There is no old-format migration or
+automatic partitioning. Committed mode remains unsupported with field-inline.
 
 ## Validation and limits
 

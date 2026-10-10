@@ -446,7 +446,6 @@ where
         program
             .committed()
             .map(|committed| {
-                #[cfg(feature = "akita")]
                 if committed.trace_order != trace_polynomial_order {
                     return Err(VerifierError::InvalidCommittedProgram {
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
@@ -1091,7 +1090,6 @@ where
             .program
             .committed()
             .map(|committed| {
-                #[cfg(feature = "akita")]
                 if committed.trace_order != trace_polynomial_order {
                     return Err(VerifierError::InvalidCommittedProgram {
                         reason: "committed-program trace order disagrees with the proof".to_owned(),

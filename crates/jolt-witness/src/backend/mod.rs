@@ -67,7 +67,7 @@ pub trait JoltWitnessOracle<F: Field> {
 
 /// The full program preprocessing behind the witness: the kernels whose
 /// tables materialize from the program itself (the bytecode stage-value
-/// fold, the reduction chunk grids, the program-image words) read it off the
+/// fold, the whole-bytecode reduction grid, the program-image words) read it off the
 /// witness plane inside `prepare`.
 pub trait ProgramSource {
     fn program_preprocessing(&self) -> &JoltProgramPreprocessing;

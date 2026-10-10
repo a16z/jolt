@@ -158,13 +158,8 @@ pub fn preprocess_committed_with_advice(
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
-    crate::preprocessing::validate_committed_mode()?;
+    crate::preprocessing::validate_committed_mode(&program)?;
     validate_trace_order(config)?;
-    if program.bytecode.code_size != program.bytecode.bytecode.len() {
-        return Err(PreprocessingError::InvalidCommittedProgram {
-            reason: "declared bytecode size differs from padded rows".to_owned(),
-        });
-    }
     let metadata =
         program
             .metadata()

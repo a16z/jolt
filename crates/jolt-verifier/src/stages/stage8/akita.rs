@@ -303,22 +303,7 @@ where
             .map_err(batch_failed)
         })
         .transpose()?;
-    let capacity = [
-        untrusted.is_some(),
-        trusted.is_some(),
-        cfg!(feature = "field-inline"),
-    ]
-    .into_iter()
-    .filter(|present| *present)
-    .map(|_| ())
-    .chain(
-        program
-            .iter()
-            .flat_map(|(_, plan)| plan.objects())
-            .map(|_| ()),
-    )
-    .count();
-    let mut auxiliary_groups = Vec::with_capacity(capacity);
+    let mut auxiliary_groups = Vec::with_capacity(5);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),
         (trusted.as_ref(), trusted_claim.as_ref()),
