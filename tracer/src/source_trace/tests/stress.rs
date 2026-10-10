@@ -146,7 +146,7 @@ fn allocation_free_step_loop() {
         i(0x67, 0, 0, 1, 0),
     ]);
     let program = f.program();
-    let mut execution = SourceExecution::new(&program, f.inputs).unwrap();
+    let mut execution = SourceExecution::new(&program, f.inputs, DecodeMode::Strict).unwrap();
     let mut rows = Vec::with_capacity(4096 * 10 + 11);
     ALLOCATIONS.with(|counter| counter.set(Some(0)));
     let result = loop {

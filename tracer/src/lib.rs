@@ -14,7 +14,7 @@ use alloc::{boxed::Box, vec::Vec};
 use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
-use jolt_program::ProgramError;
+use jolt_program::{image::DecodeMode, ProgramError};
 use jolt_riscv::{JoltInstructionProfile, RV64IMAC_JOLT};
 
 pub mod emulator;
@@ -752,7 +752,25 @@ pub fn decode_with_profile(
     elf: &[u8],
     profile: JoltInstructionProfile,
 ) -> Result<(Vec<Instruction>, Vec<(u64, u8)>, u64, u64), ProgramError> {
-    let image = jolt_program::image::decode_elf(elf, profile)?;
+    decode_with_mode(elf, profile, DecodeMode::Strict)
+}
+
+/// Decodes executable sections using the selected treatment of data words.
+///
+/// In `DataHoles`, words that the profile rejects are omitted from the instruction
+/// list while their bytes remain in initial memory. Compressed profiles do not
+/// support this mode. Instruction indices in source rows refer to this list when
+/// the backend uses the same mode.
+#[expect(
+    clippy::type_complexity,
+    reason = "the same four-value tuple that `decode` returns"
+)]
+pub fn decode_with_mode(
+    elf: &[u8],
+    profile: JoltInstructionProfile,
+    mode: DecodeMode,
+) -> Result<(Vec<Instruction>, Vec<(u64, u8)>, u64, u64), ProgramError> {
+    let image = jolt_program::image::decode_elf_with_mode(elf, profile, mode)?;
     let mut instructions = Vec::with_capacity(image.instructions.len());
     for instruction in image.instructions {
         instructions.push(
@@ -1014,6 +1032,73 @@ mod tests {
             decode_with_profile(&elf, RV64I),
             Err(ProgramError::IllegalSourceInstruction(Kind::MUL))
         ));
+    }
+
+    #[test]
+    fn decode_with_mode_keeps_data_bytes_and_dense_instruction_indices() {
+        let elf = build_elf64(
+            &[0x0010_0093, 0x8000_0010, 0, 0x0000_006f],
+            &[],
+            StrtabOrder::GnuLd,
+        );
+        let expected = (
+            vec![
+                Instruction::ADDI(ADDI {
+                    address: 0x8000_0000,
+                    operands: FormatI {
+                        rd: 1,
+                        rs1: 0,
+                        imm: 1,
+                    },
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                }),
+                Instruction::JAL(JAL {
+                    address: 0x8000_000c,
+                    operands: FormatJ { rd: 0, imm: 0 },
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                }),
+            ],
+            [
+                0x93, 0x00, 0x10, 0x00, 0x10, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x6f, 0x00,
+                0x00, 0x00,
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(offset, byte)| (0x8000_0000 + offset as u64, byte))
+            .collect::<Vec<_>>(),
+            0x8000_0010,
+            0x8000_0000,
+        );
+        assert_eq!(
+            decode_with_mode(&elf, RV64I, DecodeMode::DataHoles).unwrap(),
+            expected
+        );
+        for result in [
+            decode_with_profile(&elf, RV64I),
+            decode_with_mode(&elf, RV64I, DecodeMode::Strict),
+        ] {
+            assert!(matches!(
+                result,
+                Err(ProgramError::IllegalCompressedInstruction {
+                    address: 0x8000_0004
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_with_mode_rejects_compressed_profiles_before_parsing() {
+        let elf = tiny_guest_elf();
+        for bytes in [elf.as_slice(), b"not an ELF".as_slice()] {
+            assert!(matches!(
+                decode_with_mode(bytes, RV64IMAC_JOLT, DecodeMode::DataHoles),
+                Err(ProgramError::DecodeModeUnsupportedByProfile)
+            ));
+        }
     }
 
     fn tiny_guest_config(elf: &[u8]) -> MemoryConfig {

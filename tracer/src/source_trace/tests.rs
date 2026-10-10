@@ -7,7 +7,7 @@ use jolt_program::{
         RegisterState, RegisterWrite, SourceTraceError, SourceTraceRow, TraceError, TraceInputs,
         TraceOutput,
     },
-    image::decode_elf,
+    image::{decode_elf, decode_elf_with_mode, DecodeMode},
     ProgramError,
 };
 use jolt_riscv::{SourceInstructionKind as Kind, RV64I};
@@ -112,6 +112,7 @@ struct Fixture {
     expected: Vec<SourceTraceRow>,
     inputs: TraceInputs,
     text_sections: Option<TextSections>,
+    decode_mode: DecodeMode,
 }
 
 impl Fixture {
@@ -120,6 +121,7 @@ impl Fixture {
             words: Vec::new(),
             expected: Vec::new(),
             text_sections: None,
+            decode_mode: DecodeMode::Strict,
             inputs: TraceInputs::new(
                 Vec::new(),
                 Vec::new(),
@@ -260,16 +262,18 @@ impl Fixture {
     ) -> TraceOutput<OwnedTrace<SourceTraceRow>> {
         let program = self.program();
         let output = SourceTracerBackend::with_row_capacity(self.expected.len())
+            .with_decode_mode(self.decode_mode)
             .trace(&program, self.inputs.clone())
             .unwrap();
         assert_eq!(output.trace.rows(), self.expected);
-        check_replay(&program, &self.inputs, &output);
+        check_replay_with_mode(&program, &self.inputs, &output, self.decode_mode);
         if !output.device.panic {
             check_lockstep_with_reference_panic(
                 &program,
                 &self.inputs,
                 output.trace.rows(),
                 expected_reference_panic,
+                self.decode_mode,
             );
         }
         output
@@ -278,10 +282,11 @@ impl Fixture {
     fn error(self, expected: SourceTraceError) {
         let program = self.program();
         let error = SourceTracerBackend::default()
+            .with_decode_mode(self.decode_mode)
             .trace(&program, self.inputs.clone())
             .unwrap_err();
         assert!(matches!(error, TraceError::SourceTrace(actual) if actual == expected));
-        let mut execution = SourceExecution::new(&program, self.inputs).unwrap();
+        let mut execution = SourceExecution::new(&program, self.inputs, self.decode_mode).unwrap();
         let mut rows = Vec::with_capacity(self.words.len());
         for _ in 0..=self.words.len() {
             let cpu = execution.emulator.get_cpu();
@@ -321,7 +326,16 @@ fn check_replay(
     inputs: &TraceInputs,
     output: &TraceOutput<OwnedTrace<SourceTraceRow>>,
 ) {
-    let image = decode_elf(program.elf_bytes(), RV64I).unwrap();
+    check_replay_with_mode(program, inputs, output, DecodeMode::Strict);
+}
+
+fn check_replay_with_mode(
+    program: &JoltProgram,
+    inputs: &TraceInputs,
+    output: &TraceOutput<OwnedTrace<SourceTraceRow>>,
+    mode: DecodeMode,
+) {
+    let image = decode_elf_with_mode(program.elf_bytes(), RV64I, mode).unwrap();
     let mut memory: BTreeMap<u64, u8> = image.memory_init.into_iter().collect();
     let layout = MemoryLayout::new(&inputs.memory_config);
     for (start, bytes) in [
@@ -391,7 +405,7 @@ fn check_replay(
 }
 
 fn check_lockstep(program: &JoltProgram, inputs: &TraceInputs, expected: &[SourceTraceRow]) {
-    check_lockstep_with_reference_panic(program, inputs, expected, false);
+    check_lockstep_with_reference_panic(program, inputs, expected, false, DecodeMode::Strict);
 }
 
 fn check_lockstep_with_reference_panic(
@@ -399,8 +413,9 @@ fn check_lockstep_with_reference_panic(
     inputs: &TraceInputs,
     expected: &[SourceTraceRow],
     expected_reference_panic: bool,
+    mode: DecodeMode,
 ) {
-    let mut source = SourceExecution::new(program, inputs.clone()).unwrap();
+    let mut source = SourceExecution::new(program, inputs.clone(), mode).unwrap();
     let mut reference = create_emulator(
         program.elf_bytes(),
         None,
@@ -1529,6 +1544,101 @@ fn text_span() {
         InstructionTable::new(&instructions),
         Err(SourceTraceError::ProgramTextTooLarge { span: 0x1000_0004 })
     ));
+}
+
+#[test]
+fn data_words_inside_executable_sections() {
+    let mut f = Fixture::new();
+    f.decode_mode = DecodeMode::DataHoles;
+    f.words = vec![
+        0x0000_0297,
+        0x0102_b303,
+        0x0000_0013,
+        0x00c0_006f,
+        0x8000_0018,
+        0,
+        HALT,
+    ];
+    f.expected = vec![
+        SourceTraceRow::new(
+            0,
+            ENTRY,
+            ENTRY + 4,
+            registers(None, None, Some((5, 0, ENTRY))),
+            RamAccess::NoOp,
+        ),
+        SourceTraceRow::new(
+            1,
+            ENTRY + 4,
+            ENTRY + 8,
+            registers(Some((5, ENTRY)), None, Some((6, 0, ENTRY + 24))),
+            read(ENTRY + 16, ENTRY + 24),
+        ),
+        SourceTraceRow::new(
+            2,
+            ENTRY + 8,
+            ENTRY + 12,
+            registers(Some((0, 0)), None, Some((0, 0, 0))),
+            RamAccess::NoOp,
+        ),
+        SourceTraceRow::new(
+            3,
+            ENTRY + 12,
+            ENTRY + 24,
+            registers(None, None, Some((0, 0, 0))),
+            RamAccess::NoOp,
+        ),
+        SourceTraceRow::new(
+            4,
+            ENTRY + 24,
+            ENTRY + 24,
+            registers(None, None, Some((0, 0, 0))),
+            RamAccess::NoOp,
+        ),
+    ];
+    f.complete();
+}
+
+#[test]
+fn fetching_a_data_hole_fails() {
+    let mut f = Fixture::new();
+    f.decode_mode = DecodeMode::DataHoles;
+    f.words = vec![
+        0x0000_0297,
+        0x0102_b303,
+        0x0000_0013,
+        0x0000_0013,
+        0x8000_0018,
+        0,
+        HALT,
+    ];
+    f.error(SourceTraceError::PcOutsideProgram { pc: ENTRY + 16 });
+}
+
+#[test]
+fn default_decode_mode_rejects_data_in_executable_sections() {
+    let mut f = Fixture::new();
+    f.words = vec![
+        0x0000_0297,
+        0x0102_b303,
+        0x0000_0013,
+        0x00c0_006f,
+        0x8000_0018,
+        0,
+        HALT,
+    ];
+    let program = f.program();
+    for mut backend in [
+        SourceTracerBackend::default(),
+        SourceTracerBackend::with_row_capacity(5),
+    ] {
+        assert!(matches!(
+            backend.trace(&program, f.inputs.clone()),
+            Err(TraceError::Program(ProgramError::IllegalCompressedInstruction {
+                address
+            })) if address == ENTRY + 16
+        ));
+    }
 }
 
 mod stress;

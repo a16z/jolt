@@ -3,13 +3,15 @@ use jolt_program::execution::{
     RegisterRead, RegisterState, RegisterWrite, SourceTraceError, SourceTraceRow, TraceError,
     TraceInputs, TraceOutput,
 };
+use jolt_program::image::DecodeMode;
 use jolt_riscv::{NormalizedOperands, SourceInstructionKind as Kind, RV64I};
 
 use crate::{emulator::Emulator, instruction::Instruction, AdviceTape};
 
 /// Traces RV64I source instructions without virtual-sequence expansion.
 ///
-/// Decoding always uses RV64I. ECALL and EBREAK are rejected when reached;
+/// Decoding always uses RV64I and defaults to strict decoding. ECALL and
+/// EBREAK are rejected when reached;
 /// fetches must name decoded instructions, accesses must be aligned, control
 /// cells are write-once and unreadable, and stores cannot overlap instructions.
 /// Rows capture old operands and aligned RAM doublewords, including x0 loads.
@@ -19,13 +21,27 @@ use crate::{emulator::Emulator, instruction::Instruction, AdviceTape};
 #[derive(Default, Debug, Clone)]
 pub struct SourceTracerBackend {
     row_capacity: usize,
+    decode_mode: DecodeMode,
 }
 
 impl SourceTracerBackend {
     /// Reserves space for this many rows before execution; otherwise capacity
     /// grows amortised. The default hint is zero.
     pub fn with_row_capacity(rows: usize) -> Self {
-        Self { row_capacity: rows }
+        Self {
+            row_capacity: rows,
+            decode_mode: DecodeMode::Strict,
+        }
+    }
+
+    /// Selects how executable sections containing data words are decoded.
+    ///
+    /// Rows index the instruction list returned by `decode_elf_with_mode` with
+    /// RV64I and this same mode. A fetch of an omitted word returns
+    /// `PcOutsideProgram`; loads still read its original image bytes.
+    pub fn with_decode_mode(mut self, mode: DecodeMode) -> Self {
+        self.decode_mode = mode;
+        self
     }
 }
 
@@ -37,7 +53,7 @@ impl ExecutionBackend<SourceTraceRow> for SourceTracerBackend {
         program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError> {
-        let mut execution = SourceExecution::new(program, inputs)?;
+        let mut execution = SourceExecution::new(program, inputs, self.decode_mode)?;
         let mut rows = Vec::with_capacity(self.row_capacity);
         while execution.step(&mut rows)? {}
         let (advice_tape, memory, device) = crate::finish_emulator(execution.emulator);
@@ -157,11 +173,15 @@ struct SourceExecution {
 }
 
 impl SourceExecution {
-    fn new(program: &JoltProgram, inputs: TraceInputs) -> Result<Self, TraceError> {
+    fn new(
+        program: &JoltProgram,
+        inputs: TraceInputs,
+        mode: DecodeMode,
+    ) -> Result<Self, TraceError> {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
-        let (instructions, _, _, _) = crate::decode_with_profile(program.elf_bytes(), RV64I)?;
+        let (instructions, _, _, _) = crate::decode_with_mode(program.elf_bytes(), RV64I, mode)?;
         let table = InstructionTable::new(&instructions)?;
         let mut emulator = crate::create_emulator(
             program.elf_bytes(),
