@@ -97,44 +97,59 @@ fn bench_word_products(c: &mut Criterion) {
     let mut output = vec![F128::zero(); pairs.len()];
     let mut group = c.benchmark_group("F128");
     let _ = group.throughput(Throughput::Elements(1024));
-    for (name, specialized, word_product) in [
-        ("mul_x_slice", true, false),
-        ("mul_x_slice_general", false, false),
-        ("mul_word_slice", true, true),
-        ("mul_word_slice_general", false, true),
-    ] {
-        let _ = group.bench_function(name, |bencher| {
-            bencher.iter(|| {
-                for (dest, &(a, word)) in output.iter_mut().zip(black_box(&pairs)) {
-                    *dest = match (specialized, word_product) {
-                        (true, false) => a.mul_x(),
-                        (false, false) => a * F128::from_raw(2),
-                        (true, true) => a.mul_word(word),
-                        (false, true) => a * F128::from_raw(u128::from(word)),
-                    };
-                }
-                let _ = black_box(&output);
-            });
+    let _ = group.bench_function("mul_x_slice", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, _)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a.mul_x();
+            }
+            let _ = black_box(&output);
         });
-    }
+    });
+    let _ = group.bench_function("mul_x_slice_general", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, _)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a * F128::from_raw(2);
+            }
+            let _ = black_box(&output);
+        });
+    });
+    let _ = group.bench_function("mul_word_slice", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, word)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a.mul_word(word);
+            }
+            let _ = black_box(&output);
+        });
+    });
+    let _ = group.bench_function("mul_word_slice_general", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, word)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a * F128::from_raw(u128::from(word));
+            }
+            let _ = black_box(&output);
+        });
+    });
     group.finish();
     let mut group = c.benchmark_group("F128/accumulator");
     let _ = group.throughput(Throughput::Elements(1024));
-    for (name, specialized) in [("deferred_word", true), ("deferred_word_general", false)] {
-        let _ = group.bench_function(name, |bencher| {
-            bencher.iter(|| {
-                let mut acc = F128Accumulator::default();
-                for &(a, word) in black_box(&pairs) {
-                    if specialized {
-                        acc.fmadd_word(black_box(a), black_box(word));
-                    } else {
-                        acc.fmadd(black_box(a), F128::from_raw(u128::from(black_box(word))));
-                    }
-                }
-                black_box(acc.reduce())
-            });
+    let _ = group.bench_function("deferred_word", |bencher| {
+        bencher.iter(|| {
+            let mut acc = F128Accumulator::default();
+            for &(a, word) in black_box(&pairs) {
+                acc.fmadd_word(a, word);
+            }
+            black_box(acc.reduce())
         });
-    }
+    });
+    let _ = group.bench_function("deferred_word_general", |bencher| {
+        bencher.iter(|| {
+            let mut acc = F128Accumulator::default();
+            for &(a, word) in black_box(&pairs) {
+                acc.fmadd(a, F128::from_raw(u128::from(word)));
+            }
+            black_box(acc.reduce())
+        });
+    });
     group.finish();
 }
 
