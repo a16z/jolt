@@ -13,7 +13,7 @@ use crate::protocols::jolt::JoltOpeningId;
 ///   embedding. Return the original composite unchanged in `Err` for every
 ///   other arm, other family, and own-family index outside the embedding's image.
 /// - Uphold the alias invariants of
-///   [`ConcreteSumcheck::aliased_output_openings`](https://github.com/a16z/jolt/blob/7d0eb51e6/crates/jolt-verifier/src/stages/relations.rs#L165-L189):
+///   `ConcreteSumcheck::aliased_output_openings` in `jolt-verifier`:
 ///   each alias is owned and expression-referenced by the declaring relation,
 ///   has one canonical source absorbed by another batch member, and binds the
 ///   identical point slice as its source.

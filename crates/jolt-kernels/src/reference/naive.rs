@@ -47,6 +47,10 @@ use rayon::prelude::*;
 
 use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
+/// Shared dense reference round driver: evaluate the summand at `degree + 1`
+/// checked nodes (`0`, `1`, then the canonical images of `2, 3, ...`) over the
+/// Boolean remainder, enforce the running claim, then interpolate.
+///
 /// Requires degree at least one. Node availability and distinctness are checked
 /// before evaluating any summand; the message retains `degree + 1` coefficients.
 pub(crate) fn sample_dense_round<F: JoltField>(
