@@ -60,11 +60,9 @@ jobs:
           cargo clippy -p jolt-field --all-targets --no-default-features --features binary
           cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
           cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
-      - name: Require kernel differential test discovery
+      - name: Compare binary kernels with portable arithmetic
         if: matrix.kernel
-        run: |
-          cargo nextest list -p jolt-field --no-default-features --features binary --cargo-quiet --lib --message-format json > /tmp/binary-tests.json
-          python3 -c 'import json; suites = json.load(open("/tmp/binary-tests.json"))["rust-suites"]; assert any("binary::tests::kernel_matches_portable" in suite["testcases"] for suite in suites.values()), "binary kernel differential test was not discovered"'
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
       - name: Run whole binary field suite
         run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
 
@@ -97,11 +95,9 @@ jobs:
           cargo clippy -p jolt-field --all-targets --no-default-features --features binary
           cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
           cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
-      - name: Require kernel differential test discovery
+      - name: Compare binary kernels with portable arithmetic
         if: matrix.kernel
-        run: |
-          cargo nextest list -p jolt-field --no-default-features --features binary --cargo-quiet --lib --message-format json > /tmp/binary-tests.json
-          python3 -c 'import json; suites = json.load(open("/tmp/binary-tests.json"))["rust-suites"]; assert any("binary::tests::kernel_matches_portable" in suite["testcases"] for suite in suites.values()), "binary kernel differential test was not discovered"'
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
       - name: Run whole binary field suite
         run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
 
