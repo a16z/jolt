@@ -19,7 +19,7 @@
 //! ## `#[derive(OutputClaims)]`
 //!
 //! For a relation's *produced*-claim struct. Requires a struct-level
-//! `#[relation(RelationVariant)]` (the owning `JoltRelationId`) when the struct
+//! `#[relation(RelationVariant)]` (the owning relation id) when the struct
 //! has leaf opening fields. Each field is either a leaf opening (annotated with
 //! `#[opening(..)]`) or a nested aggregate (no annotation; its type must also
 //! implement `OutputClaims`). An `Option<C>` leaf is a *conditional* opening: it
@@ -65,8 +65,8 @@
 //! field `F` directly (challenges carry no opening point, so there is no opening
 //! *cell* / `GetValue` indirection — field values are read directly). Each field
 //! carries `#[challenge(SubEnum::Variant)]` naming a challenge sub-enum *unit*
-//! variant; the resolved id is `JoltChallengeId::from(SubEnum::Variant)` (relying
-//! on the `From<SubEnum> for JoltChallengeId` impls). Every field is a scalar `F`
+//! variant; the selected namespace supplies `ChallengeId::from(SubEnum::Variant)`
+//! through its `From<SubEnum>` impls. Every field is a scalar `F`
 //! (one drawn Fiat-Shamir scalar). A `Vec<F>` field is rejected (challenge sub-enum
 //! variants are unit, so there is no indexed id), and an `Option<F>` field is
 //! rejected (no relation draws a conditional challenge, and the `draw_challenges`
@@ -84,8 +84,30 @@
 //! so each namespace is one more instantiation, not a new trait. Absent, the
 //! namespace is `jolt` (`JoltOpeningId` / `JoltChallengeId` / ..); with
 //! `#[protocol(field_inline)]` the impls target the field-inline id family
-//! (`FieldInlineOpeningId` / `FieldInlineChallengeId` / ..). Advice openings are
-//! a jolt-protocol concept and are rejected under any other namespace.
+//! (`FieldInlineOpeningId` / `FieldInlineChallengeId` / ..). With
+//! `#[protocol(ids = some::path)]`, the path is emitted verbatim and resolves at
+//! the derive site. Advice openings are jolt-protocol ids and are rejected under
+//! any other namespace.
+//!
+//! The module named by `ids` supplies the following items. An item unused by the
+//! deriving struct need not exist:
+//!
+//! - `RelationId` has a variant for each `#[relation(Rel)]` and `from = Rel`.
+//! - `OpeningId: PartialEq + Debug` identifies openings. The resolvers compare
+//!   ids, and output construction uses `MissingOpeningValue<OpeningId>`.
+//! - Virtual leaves use `VirtualPolynomial` and
+//!   `OpeningId::virtual_polynomial(VirtualPolynomial, RelationId)`. A scalar
+//!   leaf names `VirtualPolynomial::V`, a `Vec` leaf names `V(usize)` with the
+//!   element index, and a payload annotation names `V(payload)`.
+//! - Committed leaves use `CommittedPolynomial` and
+//!   `OpeningId::committed(CommittedPolynomial, RelationId)`, with `V` for a
+//!   scalar leaf or `V(usize)` for a `Vec` leaf.
+//! - `SumcheckChallenges` uses `ChallengeId: PartialEq` and `ChallengeId: From<S>`
+//!   for the type `S` of each path named by a field's `#[challenge(..)]`.
+//!
+//! Using these structs as a relation's claims additionally requires the id
+//! bounds and composite conversions of
+//! `jolt_verifier::stages::relations::ConcreteSumcheck`.
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -111,8 +133,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields, GenericParam, Generics,
-    Ident, Path, Result, Type,
+    parse::ParseStream, parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields,
+    GenericParam, Generics, Ident, Path, Result, Token, Type,
 };
 
 /// Owning relation comes from the struct-level `#[relation(..)]`.
@@ -144,8 +166,8 @@ pub fn derive_sumcheck_challenges(input: TokenStream) -> TokenStream {
 }
 
 /// The protocol id namespace the emitted impls resolve against. Each namespace
-/// names the id-family types of one `jolt_claims::protocols::*` module; the
-/// derives stay a single implementation instantiated per namespace.
+/// names the id-family types of one module; the derives stay a single
+/// implementation instantiated per namespace.
 struct Namespace {
     opening_id: TokenStream2,
     relation_id: TokenStream2,
@@ -182,7 +204,7 @@ impl Namespace {
 }
 
 fn parse_namespace(attrs: &[Attribute]) -> Result<Namespace> {
-    let mut selected: Option<(Ident, Namespace)> = None;
+    let mut selected = None;
     for attr in attrs {
         if attr.path().is_ident("protocol") {
             if selected.is_some() {
@@ -191,21 +213,46 @@ fn parse_namespace(attrs: &[Attribute]) -> Result<Namespace> {
                     "duplicate #[protocol(..)] attribute",
                 ));
             }
-            let ident = attr.parse_args::<Ident>()?;
-            let namespace = match ident.to_string().as_str() {
-                "jolt" => Namespace::jolt(),
-                "field_inline" => Namespace::field_inline(),
-                other => {
-                    return Err(Error::new_spanned(
-                        &ident,
-                        format!("unknown protocol namespace `{other}` (expected `jolt` or `field_inline`)"),
-                    ));
-                }
-            };
-            selected = Some((ident, namespace));
+            let namespace = attr
+                .parse_args_with(|input: ParseStream<'_>| {
+                    let ident = input.parse::<Ident>()?;
+                    match ident.to_string().as_str() {
+                        "jolt" => Ok(Namespace::jolt()),
+                        "field_inline" => Ok(Namespace::field_inline()),
+                        "ids" => {
+                            let _: Token![=] = input.parse().map_err(|_| {
+                                Error::new_spanned(
+                                    attr,
+                                    "expected `ids = <path>` in #[protocol(..)]",
+                                )
+                            })?;
+                            let path = input.parse::<Path>().map_err(|_| {
+                                Error::new_spanned(attr, "expected a module path after `ids =`")
+                            })?;
+                            Ok(Namespace {
+                                opening_id: quote!(#path::OpeningId),
+                                relation_id: quote!(#path::RelationId),
+                                virtual_polynomial: quote!(#path::VirtualPolynomial),
+                                committed_polynomial: quote!(#path::CommittedPolynomial),
+                                challenge_id: quote!(#path::ChallengeId),
+                                allows_advice: false,
+                            })
+                        }
+                        other if input.peek(Token![=]) => Err(Error::new_spanned(
+                            attr,
+                            format!("unknown protocol key `{other}` (expected `ids`)"),
+                        )),
+                        other => Err(Error::new_spanned(
+                            attr,
+                            format!("unknown protocol namespace `{other}` (expected `jolt`, `field_inline`, or `ids = <path>`)"),
+                        )),
+                    }
+                })
+                .map_err(|error| Error::new_spanned(attr, error.to_string()))?;
+            selected = Some(namespace);
         }
     }
-    Ok(selected.map_or_else(Namespace::jolt, |(_, namespace)| namespace))
+    Ok(selected.unwrap_or_else(Namespace::jolt))
 }
 
 enum LeafKind {
