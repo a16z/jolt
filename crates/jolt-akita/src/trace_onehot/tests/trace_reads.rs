@@ -26,20 +26,17 @@ impl TraceOneHotRows for CountingRows {
     }
 }
 
-#[test]
-fn fused_kernels_read_each_trace_row_once() {
-    const D: usize = 64;
+fn assert_fused_kernels_read_each_trace_row_once<const D: usize>(k: usize, positions: usize) {
     const ROWS: usize = 32;
-    const NUM_POSITIONS: usize = 4;
     let fills = Arc::new(AtomicUsize::new(0));
     let columns = TraceOneHotColumn::new(
-        16,
+        k,
         D,
         Arc::new(CountingRows {
             inner: TestRows {
                 rows: ROWS,
                 columns: 3,
-                k: 16,
+                k,
                 committed_zero_column: None,
             },
             fills: Arc::clone(&fills),
@@ -47,8 +44,7 @@ fn fused_kernels_read_each_trace_row_once() {
     )
     .unwrap();
     let source = &columns[0];
-    let num_blocks =
-        RootPolyShape::<AkitaField, D>::num_ring_elems(&source).div_ceil(NUM_POSITIONS);
+    let num_blocks = RootPolyShape::<AkitaField, D>::num_ring_elems(&source).div_ceil(positions);
     let challenges = (0..num_blocks * columns.len())
         .map(|block| SparseChallenge {
             positions: vec![0, (block % (D - 1) + 1) as u32].into(),
@@ -61,7 +57,7 @@ fn fused_kernels_read_each_trace_row_once() {
         1,
         1,
         SetupMatrixCapacity {
-            num_field_elements: D * NUM_POSITIONS,
+            num_field_elements: D * positions,
         },
     )
     .unwrap();
@@ -72,7 +68,7 @@ fn fused_kernels_read_each_trace_row_once() {
             ring_dimension: D,
             num_live_blocks: num_blocks,
             n_a: 1,
-            num_positions_per_block: NUM_POSITIONS,
+            num_positions_per_block: positions,
             num_digits_inner: 1,
             log_basis_inner: 1,
         },
@@ -80,26 +76,35 @@ fn fused_kernels_read_each_trace_row_once() {
     .unwrap();
     assert_eq!(fills.swap(0, Ordering::Relaxed), ROWS);
     let challenge_set = Challenges::from_sparse(challenges, num_blocks, columns.len()).unwrap();
-    let chunk_ranges = akita_params::dyadic_block_ranges(num_blocks, 2).unwrap();
-    let chunks = <TestBackend as OpeningBatchKernel<
-        TraceOneHotColumnBatchView<'_, D>,
-        AkitaField,
-        D,
-    >>::decompose_fold_batch(
-        &backend,
-        None,
-        <TraceOneHotColumn as RootOpeningSource<AkitaField, D>>::opening_batch(&sources).unwrap(),
-        DecomposeFoldBatchPlan::SparseChunked {
-            challenges: &challenge_set,
-            chunk_ranges: &chunk_ranges,
-            num_positions_per_block: NUM_POSITIONS,
-            num_digits: 2,
-            log_basis: 3,
-        },
-    )
-    .unwrap();
-    assert_eq!(chunks.chunk_count(), 2);
-    assert_eq!(fills.load(Ordering::Relaxed), ROWS);
+    for num_chunks in [1, 2, 4, 8] {
+        let chunk_ranges = akita_params::dyadic_block_ranges(num_blocks, num_chunks).unwrap();
+        let chunks = <TestBackend as OpeningBatchKernel<
+            TraceOneHotColumnBatchView<'_, D>,
+            AkitaField,
+            D,
+        >>::decompose_fold_batch(
+            &backend,
+            None,
+            <TraceOneHotColumn as RootOpeningSource<AkitaField, D>>::opening_batch(&sources)
+                .unwrap(),
+            DecomposeFoldBatchPlan::SparseChunked {
+                challenges: &challenge_set,
+                chunk_ranges: &chunk_ranges,
+                num_positions_per_block: positions,
+                num_digits: 2,
+                log_basis: 3,
+            },
+        )
+        .unwrap();
+        assert_eq!(chunks.chunk_count(), num_chunks);
+        assert_eq!(fills.swap(0, Ordering::Relaxed), ROWS);
+    }
+}
+
+#[test]
+fn fused_kernels_read_each_trace_row_once() {
+    assert_fused_kernels_read_each_trace_row_once::<64>(16, 4);
+    assert_fused_kernels_read_each_trace_row_once::<128>(256, 16);
 }
 
 #[test]

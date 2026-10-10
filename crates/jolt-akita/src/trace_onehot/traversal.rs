@@ -91,6 +91,54 @@ impl<const D: usize> DeferredFp128Ring<D> {
     }
 }
 
+/// Reads bounded batches of K>=D trace rows once, retaining their row-major
+/// indices and committed-zero masks for kernels that group updates by destination.
+pub(super) fn visit_segment_ring_row_batches<const D: usize>(
+    source: &TraceOneHotColumn,
+    ring_start: usize,
+    ring_end: usize,
+    mut visit: impl FnMut(usize, &[u8], &[u64]),
+) -> Result<(), AkitaError> {
+    validate_dimension::<D>(source.one_hot_k)?;
+    let segment_rings = source.segment_ring_elems::<D>()?;
+    if ring_start > ring_end || ring_end > segment_rings {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot ring range {ring_start}..{ring_end} exceeds segment size {segment_rings}"
+        )));
+    }
+    let k = source.one_hot_k;
+    if k < D {
+        return Err(AkitaError::InvalidInput(format!(
+            "trace one-hot row batches require K={k} >= D={D}"
+        )));
+    }
+    const ROWS_PER_BATCH: usize = 8;
+    let num_columns = source.num_columns;
+    let rings_per_row = k / D;
+    let row_start = ring_start / rings_per_row;
+    let row_end = ring_end.div_ceil(rings_per_row).min(source.rows.num_rows());
+    let mut selected_rows = [NO_SELECTED_ROW; u64::BITS as usize * ROWS_PER_BATCH];
+    let mut committed_zero_masks = [0u64; ROWS_PER_BATCH];
+    for batch_start in (row_start..row_end).step_by(ROWS_PER_BATCH) {
+        let batch_rows = (row_end - batch_start).min(ROWS_PER_BATCH);
+        let selected_rows = &mut selected_rows[..batch_rows * num_columns];
+        let committed_zero_masks = &mut committed_zero_masks[..batch_rows];
+        source.rows.fill_rows(batch_start, selected_rows);
+        source
+            .rows
+            .fill_committed_digit_zero_masks(batch_start, committed_zero_masks);
+        if k <= usize::from(u8::MAX) {
+            if let Some(&hot) = selected_rows.iter().find(|&&hot| usize::from(hot) >= k) {
+                return Err(AkitaError::InvalidInput(format!(
+                    "trace one-hot row {hot} is outside K={k}"
+                )));
+            }
+        }
+        visit(batch_start, selected_rows, committed_zero_masks);
+    }
+    Ok(())
+}
+
 /// Visits ring elements within one semantic column segment. Each callback
 /// receives the segment-relative ring index and `(column, coefficient)` pairs
 /// contributed by the same trace rows.
