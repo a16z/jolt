@@ -1,5 +1,5 @@
 //! The per-stage [`StageProver`](crate::driver::StageProver) /
-//! [`KernelSource`](crate::driver::KernelSource) impl expansions: one
+//! [`StageAggregates`](crate::driver::StageAggregates) impl expansions: one
 //! member-list callback invocation per stage batch, each in a module that
 //! imports the batch's relation and aggregate names so the derive-emitted
 //! tokens resolve. This file is the prove side's complete stage-driver
@@ -188,8 +188,8 @@ mod twin_tests {
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
     use jolt_field::{Fr, JoltField, One, Ring, Zero, F128};
     use jolt_kernels::{
-        KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
-        SumcheckKernelError,
+        JoltPlane, KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs,
+        SumcheckKernel, SumcheckKernelError,
     };
     use jolt_poly::{Polynomial, UnivariatePoly};
     use jolt_sumcheck::{ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckError};
@@ -1075,7 +1075,7 @@ mod twin_tests {
             claimed_sum: Vec::new(),
         };
 
-        let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, _>(
+        let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, JoltPlane, _>(
             &kernels,
             None,
             &mut session,

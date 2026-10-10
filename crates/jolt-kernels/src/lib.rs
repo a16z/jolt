@@ -48,7 +48,10 @@ pub mod precommitted_reduction;
 pub mod reference;
 pub mod uniskip;
 
-pub use backend::{BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession};
+pub use backend::{
+    BuildRoundScheduler, JoltBackend, JoltPlane, MaybeAllocative, PrepareKernel, ProofSession,
+    WitnessPlane,
+};
 #[cfg(feature = "field-inline")]
 pub use commitment::FieldInlineWitnessCommitment;
 pub use commitment::{

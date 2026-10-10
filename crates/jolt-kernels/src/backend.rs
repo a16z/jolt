@@ -79,6 +79,25 @@ pub trait BuildRoundScheduler<F: JoltField> {
     fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
 }
 
+/// Selects the witness view passed to a family's kernel preparers.
+/// Preparers return kernels with a `'static` object bound, so data retained
+/// beyond `prepare` must be owned or shared rather than borrowed through this view.
+pub trait WitnessPlane<F: JoltField> {
+    type Ref<'w>: Copy
+    where
+        F: 'w;
+}
+
+/// The witness view for Jolt's kernel slots; the default of [`PrepareKernel`].
+pub struct JoltPlane;
+
+impl<F: JoltField> WitnessPlane<F> for JoltPlane {
+    type Ref<'w>
+        = &'w (dyn JoltWitnessPlane<F> + 'w)
+    where
+        F: 'w;
+}
+
 /// The universal backend trait behind [`JoltBackend`]'s naive-served slots:
 /// mint the [`SumcheckKernel`] that proves `R`, from the proof session, the
 /// witness plane, and the member's protocol inputs. The relation instance
@@ -108,15 +127,16 @@ pub trait BuildRoundScheduler<F: JoltField> {
 // No claim-trait where-clauses: `R: ConcreteSumcheck<F>` already implies them
 // (the ConcreteSumcheck where-clauses are elaborated at every use site), and
 // the relation-family-generic spellings would restate them for nothing.
-pub trait PrepareKernel<F, R>
+pub trait PrepareKernel<F, R, P = JoltPlane>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
+    P: WitnessPlane<F>,
 {
     fn prepare(
         &self,
         session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
+        witness: P::Ref<'_>,
         inputs: ProverInputs<'_, F, R>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>;
 }

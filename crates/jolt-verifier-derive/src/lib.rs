@@ -59,7 +59,7 @@
 //!   forwarded to a caller-chosen macro. The derive's
 //!   ONLY prover-facing emission — the single-sourcing handoff from which
 //!   `jolt-prover`'s `impl_stage_prover` expands the prove-side stage-driver
-//!   impls (`StageProver`/`KernelSource`), so no stage's member list, order,
+//!   impls (`StageAggregates`/`StageProver`), so no stage's member list, order,
 //!   or presence is ever restated. See `specs/prover-stage-drivers.md`.
 //! - `verify_clear` — the composed clear-path driver: `begin_batch` with a clear
 //!   recorder, reduce the combined claim through the single-instance
@@ -1132,7 +1132,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // sumcheck errors identically), the aggregate type names, and the
     // output-shape flag — as a structured token list forwarded to a
     // caller-chosen macro. `jolt-prover`'s `impl_stage_prover` expands its
-    // `StageProver`/`KernelSource` impls from it, so no stage's member list,
+    // `StageAggregates`/`StageProver` impls from it, so no stage's member list,
     // order, or presence is ever restated.
     // Tokens resolve at the consumer's invocation site (which imports the
     // batch's relation and aggregate names); extra invocation tokens (e.g. a

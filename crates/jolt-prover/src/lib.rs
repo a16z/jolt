@@ -57,7 +57,7 @@ pub use akita::prove;
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
 #[cfg(not(feature = "akita"))]
 pub use dory::prove;
-pub use driver::{KernelSource, Proved, StageProver};
+pub use driver::{Proved, StageAggregates, StageProver};
 pub use error::{PreprocessingError, ProverError};
 pub use jolt_kernels::{JoltBackend, ProofSession};
 pub use preprocessing::{
