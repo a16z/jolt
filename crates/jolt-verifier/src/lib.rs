@@ -25,7 +25,6 @@ pub(crate) mod num {
     //! crate stays free of `as` casts (`clippy::as_conversions` is denied
     //! crate-wide; fallible conversions use `TryFrom` at the call site).
 
-    /// Widens `usize` to `u64`.
     #[expect(
         clippy::as_conversions,
         reason = "usize is at most 64 bits on every supported target, so the cast is lossless"
@@ -65,7 +64,7 @@ pub use preprocessing::{
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "akita")]
-pub use verifier::absorb_packed_commitments;
+pub use verifier::absorb_akita_commitments;
 #[cfg(not(feature = "akita"))]
 pub use verifier::absorb_transcript_commitments;
 pub use verifier::{

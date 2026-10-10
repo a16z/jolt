@@ -5,17 +5,20 @@
 //! `jolt-verifier` needs to name them, and the verifier crate stays
 //! prover-free.
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
-use jolt_claims::{InputClaims, MissingOpeningValue, OutputClaims, SumcheckChallenges};
+use std::fmt::Debug;
+
+use jolt_claims::protocols::composed::ComposedOpeningId;
+use jolt_claims::MissingOpeningValue;
 use jolt_field::{Field, JoltField};
 use jolt_sumcheck::ProveRounds;
+use jolt_verifier::stages::ids::VerifierDerivedId;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
 
-use crate::ProofSession;
+use crate::{MaybeAllocative, ProofSession};
 
 /// Extraction/self-check failures a [`SumcheckKernel`] can surface: the
 /// kernel-side error vocabulary the generated prove drivers name. Deliberately
@@ -30,7 +33,7 @@ pub enum SumcheckKernelError<F: Field> {
     Verifier(#[from] VerifierError),
 
     #[error(transparent)]
-    MissingOpeningValue(#[from] MissingOpeningValue<JoltOpeningId>),
+    MissingOpeningValue(MissingOpeningValue<ComposedOpeningId>),
 
     /// Final values were requested before every round was bound.
     #[error("final table values requested with {remaining} unbound rounds")]
@@ -41,7 +44,7 @@ pub enum SumcheckKernelError<F: Field> {
     /// resolver drifted from the relation's scalar path.
     #[error("derived table {id:?} bound to {got}, but derive_output_term gives {expected}")]
     DerivedTableDrift {
-        id: JoltDerivedId,
+        id: VerifierDerivedId,
         expected: F,
         got: F,
     },
@@ -69,12 +72,12 @@ pub enum SumcheckKernelError<F: Field> {
 /// retained-memory peak. Implement it with size arithmetic
 /// (`Vec` capacity × element size; see the reference kernels) so `F` stays
 /// unbounded.
-pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + crate::backend::MaybeAllocative
-where
-    SumcheckInputClaims<F, Self::Relation>: InputClaims<F>,
-    SumcheckOutputClaims<F, Self::Relation>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, Self::Relation>: SumcheckChallenges<F, JoltChallengeId>,
-{
+// No claim-trait where-clauses: `Relation: ConcreteSumcheck<F>` already
+// implies them (the ConcreteSumcheck where-clauses are elaborated at every use
+// site), and spelling them with the relation's own id families — required for
+// non-jolt protocol families — would name `Self` in a bound's type arguments,
+// which breaks dyn compatibility.
+pub trait SumcheckKernel<F: JoltField>: ProveRounds<F> + MaybeAllocative + Send {
     type Relation: ConcreteSumcheck<F>;
 
     /// Extract the member's typed produced-opening values from its fully
@@ -119,10 +122,17 @@ where
     /// generated stage drivers call it uniformly on every member, after typed
     /// extraction and derived-table validation (both borrow the kernel; this
     /// call consumes it, so it is necessarily last). The default parks
-    /// nothing; the stage-6b precommitted cycle kernels override it to park
-    /// their post-cycle bound state as plain owned data for stage 7's
-    /// address-phase `prepare` to reclaim.
-    fn park_residue(self: Box<Self>, _session: &mut ProofSession) {}
+    /// nothing and passes the kernel to
+    /// [`drop_in_background_thread`](crate::mem::drop_in_background_thread);
+    /// the stage-6b precommitted cycle kernels override it to park their
+    /// post-cycle bound state as plain owned data for stage 7's address-phase
+    /// `prepare` to reclaim.
+    fn park_residue(self: Box<Self>, _session: &mut ProofSession)
+    where
+        Self: 'static,
+    {
+        crate::mem::drop_in_background_thread(self);
+    }
 }
 
 /// One batch member's prepare-time protocol inputs, bundled: the stage's
@@ -138,12 +148,19 @@ pub struct ProverInputs<'a, F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     pub relation: &'a R,
     pub claims: &'a SumcheckInputClaims<F, R>,
     pub points: &'a SumcheckInputPoints<F, R>,
     pub challenges: &'a ConcreteSumcheckChallenges<F, R>,
+}
+
+impl<F: Field, O: Debug + Into<ComposedOpeningId>> From<MissingOpeningValue<O>>
+    for SumcheckKernelError<F>
+{
+    fn from(error: MissingOpeningValue<O>) -> Self {
+        Self::MissingOpeningValue(MissingOpeningValue {
+            id: error.id.into(),
+        })
+    }
 }

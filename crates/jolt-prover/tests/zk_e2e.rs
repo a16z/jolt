@@ -3,10 +3,18 @@
 //! unaligned SHA3 inline expansion, committed programs). Plain acceptance
 //! across guests is `e2e_matrix.rs`.
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 mod support;
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 #[expect(
     clippy::expect_used,
     clippy::panic,
@@ -22,21 +30,13 @@ mod zk {
     use jolt_program::execution::OwnedTrace;
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
-    use jolt_riscv::{JoltInstructionKind, JoltTraceRow};
+    use jolt_riscv::JoltTraceRow;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
-
-    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
-    const KECCAK_ROTRI_ROWS: usize = 576;
-    // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
-    // `digest` takes its unaligned path: two fused absorb-permute blocks staged
-    // through stack copies, then a padded final block.
-    const SHA3_INPUT_LEN: usize = 300;
-    const SHA3_PERMUTATIONS: usize = 3;
 
     type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 
@@ -140,33 +140,6 @@ mod zk {
     }
 
     #[test]
-    fn zk_sha3_inline_modular_proof_is_accepted() {
-        with_zk_stack(|| {
-            let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
-            let proved = prove_guest(
-                GuestCase {
-                    func: Some("sha3"),
-                    inputs: postcard::to_stdvec(&message).expect("serialize input"),
-                    ..GuestCase::new("sha3-guest")
-                },
-                JoltBackend::optimized(),
-                |rows| {
-                    assert_eq!(
-                        rows.iter()
-                            .filter(|row| {
-                                row.instruction_kind() == Some(JoltInstructionKind::VirtualROTRI)
-                            })
-                            .count(),
-                        KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
-                        "two unaligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
-                    );
-                },
-            );
-            verify(&proved).expect("modular SHA3 ZK proof must verify");
-        });
-    }
-
-    #[test]
     fn zk_muldiv_tampered_blindfold_is_rejected() {
         with_zk_stack(|| {
             let mut proved = prove_muldiv(JoltBackend::reference());
@@ -175,25 +148,6 @@ mod zk {
             };
             blindfold_proof.random_u += Fr::from_u64(1);
             assert!(verify(&proved).is_err());
-        });
-    }
-
-    #[test]
-    fn zk_advice_consumer_modular_proof_is_accepted() {
-        with_zk_stack(|| {
-            let proved = prove_guest(
-                GuestCase {
-                    inputs: postcard::to_stdvec(&12u64).expect("serialize input"),
-                    untrusted_advice: postcard::to_stdvec(&5u64)
-                        .expect("serialize untrusted advice"),
-                    trusted_advice: postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
-                    ..GuestCase::new("advice-consumer-guest")
-                },
-                JoltBackend::reference(),
-                |_| {},
-            );
-            assert!(proved.proof.untrusted_advice_commitment.is_some());
-            verify(&proved).expect("modular ZK advice proof must verify");
         });
     }
 

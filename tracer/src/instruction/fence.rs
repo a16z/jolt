@@ -1,3 +1,4 @@
+use crate::instruction::registers::fence::RegisterStateFence;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,6 +12,7 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x0000000f,
     format = FormatFence,
+    registers = RegisterStateFence,
     ram    = ()
 );
 
@@ -42,7 +44,6 @@ mod tests {
         }
     }
 
-    /// `fence` (`fence iorw, iorw`) still decodes to [`FENCE`].
     #[test]
     fn decode_accepts_fence() {
         let decoded = Instruction::decode(0x0ff0_000f, 0x1000, false).expect("fence should decode");

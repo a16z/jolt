@@ -4,7 +4,7 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-07-02 |
-| Updated | 2026-09-03 |
+| Updated | 2026-10-04 |
 | Status | implemented |
 | PR | [#1675](https://github.com/a16z/jolt/pull/1675) |
 
@@ -19,6 +19,14 @@
 > [a16z/jolt#1829](https://github.com/a16z/jolt/pull/1829)
 > for the Stage 4 advice leaf-claim boundary. One-hot trace digit-zero
 > reduction and direct committed-program openings remain active.
+>
+> **Field-inline update:** on Akita builds with field-inline enabled, the
+> joint opening also carries an always-present dense commitment to the full
+> `FieldRdInc` values, created from the execution witness in stage 0 and
+> ordered after `TrustedAdvice`. Stage 8 opens the stage-6b reduced claim
+> directly. The verifier rejects committed-program mode with field-inline
+> enabled, so direct-program roles never share a batch with it. See
+> [field-inline-portability.md](field-inline-portability.md).
 
 ## Purpose
 
@@ -26,11 +34,13 @@ Akita is a lattice PCS with no commitment homomorphism. Jolt therefore cannot
 reuse Dory's commitment-level RLC at the final opening. The Akita protocol
 instead has two layers:
 
-1. Per-proof one-hot trace columns are packed into one physical
-   `OneHotTrace` polynomial and selector-reduced to one evaluation.
-2. Independently committed dense objects—advice, direct bytecode chunks, and
-   the initial program image—join that trace in one native grouped Akita
-   opening.
+1. Per-proof one-hot trace columns form one native `OneHotTrace` commitment
+   group. Every column has `log_T + log_K` variables and one evaluation at
+   the common `(cycle || address)` point; Stage 8 assembles these evaluations
+   in canonical column order without a selector reduction.
+2. Independently committed dense objects—advice, field increments, direct
+   bytecode chunks, and the initial program image—join that trace in one
+   native grouped Akita opening, according to the selected protocol.
 
 This document defines the current Akita claim boundary, commitment layout, and
 stage schedule. The direct committed-program design is introduced in
@@ -40,7 +50,7 @@ stage schedule. The direct committed-program design is introduced in
 
 The Akita clear-mode protocol includes:
 
-- one physical `OneHotTrace` commitment;
+- one native `OneHotTrace` commitment group containing the actual trace columns;
 - fused balanced-digit increment columns and their signed carry;
 - the lattice bytecode read-RAF and digit-zero claim-reduction chain;
 - dense word commitments for trusted and untrusted advice;
@@ -100,7 +110,7 @@ separately committed in Akita mode: the bytecode read-RAF stages consume their
 reduced claims and produce the fused value used by the balanced-digit chain.
 
 Enum `Ord` is not protocol group order. Packing plans and
-`PrecommittedRole` explicitly define order, and layout/statement transcripts
+`CommitmentGroupRole` explicitly define order, and layout/statement transcripts
 bind it.
 
 ## Commitment Layout
@@ -118,15 +128,19 @@ RamRa(0..R)
 ```
 
 Every semantic column has logical arity `log_K + log_T`. Instruction,
-bytecode, digit, and carry columns omit the digit-zero row; RAM retains it.
-Unused physical slots are zero. Stage 8 rejects missing claims, point
-disagreement, arity disagreement, or noncanonical commitment metadata before
-calling the PCS.
+bytecode, digit, and carry columns omit the digit-zero row.
+RAM retains digit zero only on cycles with a remappable RAM access. Stage 8
+requires exactly one final claim per canonical column and rejects missing
+claims, point disagreement, arity disagreement, or noncanonical commitment
+metadata before calling the PCS.
 
-The physical polynomial uses the layout's row-major order. Relation claims use
-the protocol's logical address/cycle order, so the canonical layout performs
-the required point permutation before adding the selector prefix. The layout
-digest binds the ordered identities, capacity, dimensions, and trace order.
+Each native polynomial uses the row-major `(cycle || address)` order. Relation
+claims use `(address || cycle)`, so the canonical layout permutes the point.
+There is no slot prefix. The versioned layout digest binds ordered column
+identities, their count, arity, chunk width, trace length, and family dimensions.
+`OneHotTraceLayout::plan` rejects more than 64 columns because the streaming
+witness represents digit-zero presence with a `u64` mask; this is a witness
+representation limit, not a PCS batching limit.
 
 ### Advice objects
 
@@ -199,9 +213,12 @@ Stage 8 first resolves one final evaluation for every semantic column:
 - bytecode chunk claims come from the bytecode claim reduction;
 - the program-image claim comes from the program-image claim reduction.
 
-Each object plan zero-prefix-embeds its logical claim to the object's physical
-arity and selector-reduces occupied slots. Akita then proves one heterogeneous
-grouped opening statement whose groups use their own local evaluation points.
+Auxiliary singleton object plans zero-prefix-embed their logical claims to
+their physical arities. The native trace group keeps all ordered column
+evaluations at its common point. Akita proves one heterogeneous grouped opening
+statement whose groups use their own local evaluation points. Commitments
+(including polynomial counts), group roles, points, and ordered evaluations
+are absorbed before backend batching challenges are derived.
 The canonical group order is:
 
 ```text
@@ -232,16 +249,12 @@ longer participates in the shared precommitted claim-reduction scheduling
 reference for bytecode or program-image reductions. Direct objects are not
 power-set factors.
 
-For a program with `C` bytecode chunks and `A` advice kinds with nonzero
-capacity, setup capacity is exactly:
-
-```text
-C + 2 + A
-```
-
-That is `C` chunks, one image, one main trace, and `A` advice objects. The
-largest admitted shape is `C = 256`, `A = 2`: 260 total
-groups/polynomials. One setup plans only its final arity, so at most four rows
+For a program with `C` bytecode chunks, `A` advice kinds with nonzero capacity,
+and `M` native trace columns, setup covers `C + 2 + A` commitment groups and
+`C + 1 + A + M` polynomials: `C` singleton chunks, one singleton image, `A`
+singleton advice objects, and one `M`-polynomial trace group. The bounds
+`C <= 256`, `A <= 2`, and `M <= 64` allow at most 260 groups and 323 polynomials.
+One setup plans only its final arity and column count, so at most four rows
 cover the reachable advice-presence cases. The 128-row bound applies to one
 provisioning request, not to the process cache.
 

@@ -1,10 +1,17 @@
-//! Prover-side packed (Akita) witness assembly: the `OneHotTrace` columns
+//! Prover-side Akita witness assembly: the `OneHotTrace` columns
 //! from the witness plane's typed rows, the advice word objects, the
 //! direct bounded-dense committed-program objects.
 
-use std::{collections::HashMap, sync::Arc};
+#[cfg(feature = "field-inline")]
+use jolt_kernels::field_inline::FieldIncrementColumn;
+#[cfg(all(feature = "field-inline", feature = "parallel"))]
+use rayon::prelude::*;
+use std::collections::HashMap;
+#[cfg(not(feature = "field-inline"))]
+use std::marker::PhantomData;
+use std::sync::{Arc, OnceLock};
 
-use jolt_akita::TraceOneHotRows;
+use jolt_akita::{no_selected_row, TraceOneHotRows};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, committed_program_packing_plan, PrefixPackedObjectPlan,
@@ -18,22 +25,33 @@ use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::witnesses::{
     BalancedIncColumn, BytecodePc, FusedInc, LookupIndex, RaChunkSelector, RemappedRamAddress,
 };
-use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle};
-
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use jolt_witness::{
+    collect_bundles, JoltWitnessPlane, RandomAccessRows, WitnessBundle, WitnessError,
+};
 
 use crate::ProverError;
 
-/// The per-cycle sources every `OneHotTrace` column derives from: the
-/// instruction's lookup index, the mapped bytecode PC, the remapped RAM word
-/// address, and the fused increment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct OneHotTraceSourceRow {
     lookup_index: LookupIndex,
     bytecode_pc: BytecodePc,
     ram_address: RemappedRamAddress,
     fused_inc: FusedInc,
+}
+
+/// The RAM access of [`OneHotTraceSourceRow`] alone: whether the RAM columns
+/// commit row zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
+struct RamAccessRow {
+    ram_address: RemappedRamAddress,
+}
+
+pub(super) struct AssembledTrace<F: JoltField> {
+    pub(super) rows: Arc<OneHotTraceRows>,
+    #[cfg(feature = "field-inline")]
+    pub(super) increments: FieldIncrementColumn<F>,
+    #[cfg(not(feature = "field-inline"))]
+    field: PhantomData<F>,
 }
 
 #[derive(Clone, Copy)]
@@ -44,15 +62,45 @@ enum OneHotTraceColumn {
     Increment(BalancedIncColumn),
 }
 
-struct PackedTraceRows {
-    num_rows: usize,
-    num_columns: usize,
-    selected_rows: Vec<u8>,
-    ram_active_rows: Vec<u64>,
-    ram_digit_zero_mask: u64,
+/// Extracts rows on every read from the witness plane's resident compact
+/// trace, so no trace-sized row matrix lives from the commitment to the
+/// opening. The row trait cannot return extraction errors, so the first error
+/// is retained for [`OneHotTraceRows::check_extraction`]. The commitment reads
+/// every row of this immutable source, so it observes any error a later read could.
+struct ExtractedRows {
+    access: RandomAccessRows,
+    extraction_error: OnceLock<WitnessError>,
 }
 
-impl PackedTraceRows {
+impl ExtractedRows {
+    fn window<B: WitnessBundle>(&self, row: usize) -> Option<B> {
+        self.access
+            .window(row)
+            .map_err(|error| {
+                let _ = self.extraction_error.set(error);
+            })
+            .ok()
+    }
+}
+
+enum SelectedRows {
+    Extracted(ExtractedRows),
+    /// Materialized for witness planes without random access.
+    Packed {
+        selected_rows: Vec<u8>,
+        ram_active_rows: Vec<u64>,
+    },
+}
+
+/// Row-major `OneHotTrace` rows in the plan's canonical semantic-column order.
+pub(super) struct OneHotTraceRows {
+    num_rows: usize,
+    columns: Vec<OneHotTraceColumn>,
+    ram_digit_zero_mask: u64,
+    selected_rows: SelectedRows,
+}
+
+impl OneHotTraceRows {
     fn validate_dimensions<F: JoltField>(
         plan: &OneHotTraceLayoutPlan,
         log_k_chunk: usize,
@@ -60,48 +108,85 @@ impl PackedTraceRows {
     ) -> Result<(), ProverError<F>> {
         if !matches!(log_k_chunk, 4 | 8) {
             return Err(ProverError::Unsupported {
-                reason: "packed one-hot trace chunk width must be 4 or 8 bits",
+                reason: "native one-hot trace chunk width must be 4 or 8 bits",
             });
         }
         let logical_num_vars = log_t
             .checked_add(log_k_chunk)
             .ok_or(ProverError::Unsupported {
-                reason: "packed one-hot trace dimensions overflow",
+                reason: "native one-hot trace dimensions overflow",
             })?;
-        if plan.packing().logical_num_vars() != logical_num_vars {
+        if plan.num_vars() != logical_num_vars {
             return Err(ProverError::InvariantViolation {
                 reason: "OneHotTrace plan dimensions disagree with the witness dimensions",
             });
         }
         Ok(())
     }
+
+    /// Returns the first extraction error any read has hit.
+    pub(super) fn check_extraction(&self) -> Result<(), WitnessError> {
+        match &self.selected_rows {
+            SelectedRows::Extracted(rows) => {
+                rows.extraction_error.get().cloned().map_or(Ok(()), Err)
+            }
+            SelectedRows::Packed { .. } => Ok(()),
+        }
+    }
 }
 
-impl TraceOneHotRows for PackedTraceRows {
+impl TraceOneHotRows for OneHotTraceRows {
     fn num_rows(&self) -> usize {
         self.num_rows
     }
 
     fn num_columns(&self) -> usize {
-        self.num_columns
+        self.columns.len()
     }
 
     fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
-        let start = row * self.num_columns;
-        selected_rows.copy_from_slice(&self.selected_rows[start..start + self.num_columns]);
+        self.fill_rows(row, selected_rows);
     }
 
     fn fill_rows(&self, row_start: usize, selected_rows: &mut [u8]) {
-        debug_assert_eq!(selected_rows.len() % self.num_columns, 0);
-        let start = row_start * self.num_columns;
-        selected_rows.copy_from_slice(&self.selected_rows[start..start + selected_rows.len()]);
+        let num_columns = self.columns.len();
+        debug_assert_eq!(selected_rows.len() % num_columns, 0);
+        match &self.selected_rows {
+            SelectedRows::Extracted(rows) => {
+                for (row_offset, selected_rows) in
+                    selected_rows.chunks_exact_mut(num_columns).enumerate()
+                {
+                    match rows.window(row_start + row_offset) {
+                        Some(row) => {
+                            let _ = fill_trace_row(row, &self.columns, selected_rows);
+                        }
+                        None => selected_rows.fill(no_selected_row()),
+                    }
+                }
+            }
+            SelectedRows::Packed {
+                selected_rows: packed,
+                ..
+            } => {
+                let start = row_start * num_columns;
+                selected_rows.copy_from_slice(&packed[start..start + selected_rows.len()]);
+            }
+        }
     }
 
     fn committed_digit_zero_mask(&self, row: usize) -> u64 {
-        let active = self.ram_active_rows[row / u64::BITS as usize]
-            & (1u64 << (row % u64::BITS as usize))
-            != 0;
-        if active {
+        let ram_active = match &self.selected_rows {
+            SelectedRows::Extracted(rows) => rows
+                .window::<RamAccessRow>(row)
+                .is_some_and(|row| row.ram_address.0.is_some()),
+            SelectedRows::Packed {
+                ram_active_rows, ..
+            } => {
+                ram_active_rows[row / u64::BITS as usize] & (1u64 << (row % u64::BITS as usize))
+                    != 0
+            }
+        };
+        if ram_active {
             self.ram_digit_zero_mask
         } else {
             0
@@ -135,25 +220,26 @@ fn fill_trace_row(
 }
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
-/// plan's canonical semantic-column order.
+/// plan's canonical semantic-column order. Witness planes with random access
+/// yield a view that extracts rows on demand; others are materialized once.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
-pub fn assemble_one_hot_trace_rows<F: JoltField>(
+pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
     plan: &OneHotTraceLayoutPlan,
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
     log_t: usize,
-) -> Result<Arc<dyn TraceOneHotRows>, ProverError<F>> {
-    PackedTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
+) -> Result<AssembledTrace<F>, ProverError<F>> {
+    OneHotTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
     let num_rows = 1usize << log_t;
-    let num_columns = plan.packing().ids().len();
+    let num_columns = plan.ids().len();
     let ram_digit_zero_mask = plan
         .ranges()
         .ram
         .clone()
         .fold(0u64, |mask, column| mask | (1u64 << column));
     let mut columns = Vec::with_capacity(num_columns);
-    for polynomial in plan.packing().ids() {
+    for polynomial in plan.ids() {
         match polynomial {
             JoltCommittedPolynomial::InstructionRa(index) => {
                 let selector = RaChunkSelector::new(*index, ra_layout.instruction(), log_k_chunk)?;
@@ -186,67 +272,69 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         }
     }
 
-    let mut selected_rows = vec![0u8; num_rows * num_columns];
-    let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
-    #[cfg(feature = "parallel")]
-    if let Some(access) = witness.random_access() {
-        if num_rows <= access.cycles() {
-            let extraction_error = std::sync::Mutex::new(None);
-            selected_rows
-                .par_chunks_mut(num_columns * u64::BITS as usize)
-                .zip(ram_active_rows.par_iter_mut())
-                .enumerate()
-                .for_each(|(word_index, (word_rows, ram_active_word))| {
-                    for (row_offset, selected_rows) in
-                        word_rows.chunks_exact_mut(num_columns).enumerate()
-                    {
-                        let row_index = word_index * u64::BITS as usize + row_offset;
-                        match access.window::<OneHotTraceSourceRow>(row_index) {
-                            Ok(row) => {
-                                if fill_trace_row(row, &columns, selected_rows) {
-                                    *ram_active_word |= 1u64 << row_offset;
-                                }
-                            }
-                            Err(error) => {
-                                if let Ok(mut guard) = extraction_error.try_lock() {
-                                    let _ = guard.get_or_insert(error);
-                                }
-                            }
-                        }
-                    }
-                });
-            #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
-            if let Some(error) = extraction_error.into_inner().unwrap() {
-                return Err(error.into());
-            }
-            return Ok(Arc::new(PackedTraceRows {
-                num_rows,
-                num_columns,
-                selected_rows,
-                ram_active_rows,
-                ram_digit_zero_mask,
-            }));
-        }
-    }
+    #[cfg(feature = "field-inline")]
+    let field_oracle = witness.field_inline().ok_or(ProverError::Unsupported {
+        reason: "field-inline trace assembly requires its witness oracle",
+    })?;
+    #[cfg(feature = "field-inline")]
+    let mut increments = vec![F::zero(); num_rows];
 
-    let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
-    for (row_index, (row, selected_rows)) in rows
-        .into_iter()
-        .zip(selected_rows.chunks_exact_mut(num_columns))
-        .enumerate()
-    {
-        if fill_trace_row(row, &columns, selected_rows) {
-            ram_active_rows[row_index / u64::BITS as usize] |=
-                1u64 << (row_index % u64::BITS as usize);
+    let random_access = witness
+        .random_access()
+        .filter(|access| num_rows <= access.cycles());
+    let selected_rows = if let Some(access) = random_access {
+        // Increment commitments precede the trace commitment, so retain only
+        // their shared column; the one-hot rows stay lazy.
+        #[cfg(feature = "field-inline")]
+        {
+            #[cfg(feature = "parallel")]
+            let values = increments.par_iter_mut();
+            #[cfg(not(feature = "parallel"))]
+            let values = increments.iter_mut();
+            values.enumerate().try_for_each(|(index, value)| {
+                *value = field_oracle.rd_increment_at(index)?;
+                Ok::<_, WitnessError>(())
+            })?;
         }
-    }
-    Ok(Arc::new(PackedTraceRows {
-        num_rows,
-        num_columns,
-        selected_rows,
-        ram_active_rows,
-        ram_digit_zero_mask,
-    }))
+        SelectedRows::Extracted(ExtractedRows {
+            access,
+            extraction_error: OnceLock::new(),
+        })
+    } else {
+        let mut selected_rows = vec![0u8; num_rows * num_columns];
+        let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
+        let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
+        for (row_index, (row, selected_rows)) in rows
+            .into_iter()
+            .zip(selected_rows.chunks_exact_mut(num_columns))
+            .enumerate()
+        {
+            #[cfg(feature = "field-inline")]
+            {
+                increments[row_index] = field_oracle.rd_increment_at(row_index)?;
+            }
+            if fill_trace_row(row, &columns, selected_rows) {
+                ram_active_rows[row_index / u64::BITS as usize] |=
+                    1u64 << (row_index % u64::BITS as usize);
+            }
+        }
+        SelectedRows::Packed {
+            selected_rows,
+            ram_active_rows,
+        }
+    };
+    Ok(AssembledTrace {
+        rows: Arc::new(OneHotTraceRows {
+            num_rows,
+            columns,
+            ram_digit_zero_mask,
+            selected_rows,
+        }),
+        #[cfg(feature = "field-inline")]
+        increments: FieldIncrementColumn::from_values(increments),
+        #[cfg(not(feature = "field-inline"))]
+        field: PhantomData,
+    })
 }
 
 /// One advice-word commitment object: one field coefficient per
@@ -328,7 +416,8 @@ where
     PCS: CommitmentScheme + TransparentObjectSetup,
 {
     let bytecode_len = program.bytecode.bytecode.len();
-    let image_words = program_image_words_padded(program);
+    let image_words =
+        jolt_kernels::committed_program::program_image_words_padded(&program.ram.bytecode_words);
     let plan = committed_program_packing_plan(
         bytecode_len,
         bytecode_chunk_count,
@@ -393,15 +482,4 @@ where
         })
         .collect::<Result<Vec<_>, ProverError<PCS::Field>>>()?;
     Ok(DirectProgramObjects { objects })
-}
-
-/// The padded program-image words: the RAM preprocessing's bytecode words,
-/// zero-padded to `committed_program_image_num_words` (the next power of two,
-/// at least 2 — the packed word-domain convention legacy shares).
-pub fn program_image_words_padded(program: &JoltProgramPreprocessing) -> Vec<u64> {
-    let words = &program.ram.bytecode_words;
-    let padded_len = words.len().next_power_of_two().max(2);
-    let mut padded = words.clone();
-    padded.resize(padded_len, 0);
-    padded
 }

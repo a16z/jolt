@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -13,6 +14,7 @@ declare_riscv_instr!(
     mask   = 0xf9f0707f,
     match  = 0x1000302f,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
@@ -24,13 +26,11 @@ impl LRD {
 
         let address = cpu.x[self.operands.rs1 as usize] as u64;
 
-        // Load the doubleword from memory
         let value = cpu.mmu.load_doubleword(address);
 
         let write_value = match value {
             Ok((doubleword, _memory_read)) => {
                 cpu.set_reservation(address, ReservationWidth::Doubleword);
-                // Return the 64-bit value
                 doubleword as i64
             }
             Err(_) => panic!("MMU load error"),

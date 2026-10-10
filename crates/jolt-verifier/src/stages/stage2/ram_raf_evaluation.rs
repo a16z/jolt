@@ -129,7 +129,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRafEvaluation(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // The produced opening point is `[r_address(log_k) ‖ tau_low]`; the
@@ -159,9 +159,6 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
 
-    /// The `instance_point_offset` override must place the relation's own
-    /// rounds exactly at the batch tail, and reject batch vectors shorter
-    /// than the active stage-2 window.
     #[test]
     fn instance_point_offset_spans_the_batch_tail() {
         for (log_t, log_k, phase1, phase2) in [(4usize, 3usize, 2usize, 1usize), (6, 5, 3, 2)] {

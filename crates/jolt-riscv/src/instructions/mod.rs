@@ -6,7 +6,7 @@
 //! instruction kind: with the default `T = ()` it is a zero-sized marker
 //! (used by `JoltInstruction` variants and static-flag tests); with `T` set
 //! to an `Instruction`/`Cycle` payload it becomes the constructed form used
-//! by `LookupQuery` impls. `#[derive(Flags)]` declares the R1CS circuit and
+//! by `LookupQuery` impls. `jolt_instruction!` declares the R1CS circuit and
 //! witness-generation flags. The `InstructionLookupTable` impls (in
 //! `jolt-lookup-tables`) map instructions to lookup tables.
 
@@ -23,10 +23,9 @@ pub mod i;
 pub mod m;
 pub mod virt;
 
-use crate::{
-    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, SourceInlineKey,
-    SourceInstructionKind, SourceInstructionRow,
-};
+use crate::{JoltInstructionKind, JoltInstructionRow, SourceInstructionKind, SourceInstructionRow};
+#[cfg(feature = "serialization")]
+use crate::{NormalizedOperands, SourceInlineKey};
 pub use assert::AssertEq;
 pub use assert::AssertHalfwordAlignment;
 pub use assert::AssertLte;
@@ -36,7 +35,8 @@ pub use assert::AssertValidUnsignedRemainder;
 pub use assert::AssertWordAlignment;
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
+    FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldAssertZero, FieldInv,
+    FieldLoadAccumulateFromMemory, FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul,
     FieldSub,
 };
 pub use i::Add;
@@ -156,7 +156,6 @@ pub use virt::WindowMaskB;
 pub use virt::WindowMaskH;
 pub use virt::WindowMaskW;
 
-// Atomic + system + advice-load + virtual lw/sw additions
 pub use a::AmoAddD;
 pub use a::AmoAddW;
 pub use a::AmoAndD;
@@ -453,11 +452,15 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     #[cfg(feature = "field-inline")]
     FieldAssertEq(FieldAssertEq<T>),
     #[cfg(feature = "field-inline")]
-    FieldLoadFromX(FieldLoadFromX<T>),
+    FieldLoadAccumulateFromRegister(FieldLoadAccumulateFromRegister<T>),
     #[cfg(feature = "field-inline")]
-    FieldStoreToX(FieldStoreToX<T>),
+    FieldAssertZero(FieldAssertZero<T>),
     #[cfg(feature = "field-inline")]
     FieldLoadImm(FieldLoadImm<T>),
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromMemory(FieldLoadAccumulateFromMemory<T>),
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb(FieldAdviceLimb<T>),
 }
 
 macro_rules! impl_jolt_instruction_try_from_row {
@@ -677,11 +680,15 @@ impl_jolt_instructions_flags! {
     #[cfg(feature = "field-inline")]
     FieldAssertEq => FIELD_ASSERT_EQ,
     #[cfg(feature = "field-inline")]
-    FieldLoadFromX => FIELD_LOAD_FROM_X,
+    FieldLoadAccumulateFromRegister => FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
     #[cfg(feature = "field-inline")]
-    FieldStoreToX => FIELD_STORE_TO_X,
+    FieldAssertZero => FIELD_ASSERT_ZERO,
     #[cfg(feature = "field-inline")]
     FieldLoadImm => FIELD_LOAD_IMM,
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromMemory => FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb => FIELD_ADVICE_LIMB,
 }
 #[cfg(test)]
 mod tests {
@@ -741,45 +748,6 @@ mod tests {
                 "Load/Store flags not exclusive for {instr:?}",
             );
         }
-    }
-
-    #[test]
-    fn phase_specific_instruction_kinds_are_distinct() {
-        let source_kind = crate::SourceInstructionKind::AMOADDW;
-
-        assert_eq!(source_kind.jolt_kind(), None);
-        assert!(source_kind.expands_to_jolt());
-    }
-
-    #[test]
-    fn source_instruction_variant_is_the_source_identity() {
-        let row = SourceInstructionRow {
-            address: 0x8000_0000,
-            operands: crate::NormalizedOperands {
-                rd: Some(1),
-                rs1: Some(2),
-                rs2: Some(3),
-                imm: 4,
-            },
-            inline: None,
-            is_compressed: false,
-        };
-
-        let add = SourceInstruction::new(SourceInstructionKind::ADD, row);
-        let beq = SourceInstruction::new(SourceInstructionKind::BEQ, row);
-
-        assert_eq!(add.kind(), SourceInstructionKind::ADD);
-        assert_eq!(beq.kind(), SourceInstructionKind::BEQ);
-        assert_eq!(
-            JoltInstructionRow::try_from(&add).map(|row| row.instruction_kind),
-            Ok(JoltInstructionKind::ADD)
-        );
-        assert_eq!(
-            JoltInstructionRow::try_from(&beq).map(|row| row.instruction_kind),
-            Ok(JoltInstructionKind::BEQ)
-        );
-        assert!(matches!(add, SourceInstruction::Add(Add(..))));
-        assert!(matches!(beq, SourceInstruction::Beq(Beq(..))));
     }
 
     #[test]

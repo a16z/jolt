@@ -1,13 +1,5 @@
 #![no_main]
 
-//! Differential check of the hand-written GLV scalar-multiplication paths
-//! against plain double-and-add `scalar_mul`.
-//!
-//! Replaces the old `group_arith` target, which exercised only arkworks
-//! pass-throughs: `fixed_base_vector_msm_g1` (2D GLV with a precomputed
-//! Shamir table) and `glv_four_scalar_mul` (4D GLV over G2) are Jolt-owned
-//! decompositions with zero prior fuzz coverage.
-
 use std::sync::OnceLock;
 
 use jolt_crypto::ec::bn254::glv;
@@ -37,7 +29,7 @@ fuzz_target!(|data: &[u8]| {
     if data.is_empty() {
         return;
     }
-    let count = (data[0] as usize % MAX_SCALARS) + 1; // 1..=8
+    let count = (data[0] as usize % MAX_SCALARS) + 1;
     if data.len() < 1 + count * SCALAR_BYTES {
         return;
     }

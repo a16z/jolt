@@ -5,9 +5,7 @@ use jolt_riscv::{
     JoltTraceRow as TraceRow,
 };
 
-use super::{
-    decode_instruction, lookup_query, row_is_noop, Extract, ExtractIndexed, ToField, WitnessEnv,
-};
+use super::{decode_instruction, lookup_query, Extract, ExtractIndexed, ToField, WitnessEnv};
 use crate::WitnessError;
 use crate::RV64_XLEN;
 
@@ -87,7 +85,7 @@ impl Extract for NextIsNoop {
         next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(next.is_none_or(row_is_noop)))
+        Ok(Self(next.is_none_or(TraceRow::is_noop)))
     }
 }
 
@@ -122,7 +120,7 @@ impl Extract for ShouldJump {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let circuit_flags = row.circuit_flags();
-        let next_is_noop = next.is_some_and(row_is_noop);
+        let next_is_noop = next.is_some_and(TraceRow::is_noop);
         Ok(Self(circuit_flags[CircuitFlags::Jump] && !next_is_noop))
     }
 }

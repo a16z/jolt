@@ -20,9 +20,8 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
-use jolt_claims::protocols::jolt::geometry::dimensions::{
-    OUTER_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_DOMAIN_SIZE,
-};
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
+use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
@@ -73,11 +72,15 @@ impl<F> ZkStageWitnesses<F> {
 
 /// The BlindFold stage domains in the same order: the two uni-skips run over
 /// their centered integer domains, every batch over the Boolean hypercube —
-/// the constants the stage recipes themselves prove over.
+/// the constants the stage recipes themselves prove over. The uni-skip sizes
+/// are the COMPOSED jolt-claims R1CS constants (feature-aware): identical to the
+/// jolt-claims RV64-only constants without field-inline, and the field-inline-extended row/lane
+/// domains under `field-inline` — the domains the verifier's lowering
+/// (`stages::zk::blindfold`) builds its round constraints over.
 const STAGE_DOMAINS: [SumcheckDomainSpec; 10] = [
-    SumcheckDomainSpec::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE),
+    SumcheckDomainSpec::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE),
     SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE),
+    SumcheckDomainSpec::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE),
     SumcheckDomainSpec::BooleanHypercube,
     SumcheckDomainSpec::BooleanHypercube,
     SumcheckDomainSpec::BooleanHypercube,

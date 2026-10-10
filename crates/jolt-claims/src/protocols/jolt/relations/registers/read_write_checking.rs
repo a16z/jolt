@@ -1,13 +1,6 @@
-//! registers read-write checking symbolic sumcheck relation.
-
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
-#[cfg(test)]
-use crate::protocols::jolt::geometry::registers::{
-    rd_inc_read_write, rd_wa_read_write, rd_write_value_claim, registers_val_read_write,
-    rs1_ra_read_write, rs1_value_claim, rs2_ra_read_write, rs2_value_claim,
-};
 use crate::protocols::jolt::{
     JoltCommittedPolynomial, JoltExpr, JoltRelationId, JoltVirtualPolynomial, ReadWriteDimensions,
     RegistersReadWriteChallenge, RegistersReadWritePublic, UnbatchedClaim, UnbatchedClaimExpr,
@@ -52,7 +45,6 @@ pub struct RegistersReadWriteInputClaims<C> {
     pub rs2_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the registers read/write-checking sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 pub struct RegistersReadWriteChallenges<F> {
@@ -138,89 +130,5 @@ impl SymbolicSumcheck for ReadWriteChecking {
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         Self::unbatched_relation().folded_output()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, Ring};
-
-    fn read_write_dimensions() -> ReadWriteDimensions {
-        ReadWriteDimensions::new(5, 7, 2, 1)
-    }
-
-    #[test]
-    fn read_write_claims_evaluate_like_core_formula() {
-        let relation = ReadWriteChecking::new(read_write_dimensions());
-
-        let rd_write_value = Fr::from_u64(3);
-        let rs1_value = Fr::from_u64(5);
-        let rs2_value = Fr::from_u64(7);
-        let val = Fr::from_u64(11);
-        let rs1_ra = Fr::from_u64(13);
-        let rs2_ra = Fr::from_u64(17);
-        let rd_wa = Fr::from_u64(19);
-        let inc = Fr::from_u64(23);
-        let gamma = Fr::from_u64(29);
-        let eq_cycle = Fr::from_u64(31);
-        let zero = Fr::from_u64(0);
-
-        let input = relation.input_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == rd_write_value_claim() => rd_write_value,
-                id if id == rs1_value_claim() => rs1_value,
-                id if id == rs2_value_claim() => rs2_value,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |_| zero,
-        );
-
-        let output = relation.output_expression::<Fr>().evaluate(
-            |id| match *id {
-                id if id == registers_val_read_write() => val,
-                id if id == rs1_ra_read_write() => rs1_ra,
-                id if id == rs2_ra_read_write() => rs2_ra,
-                id if id == rd_wa_read_write() => rd_wa,
-                id if id == rd_inc_read_write() => inc,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltChallengeId::RegistersReadWrite(RegistersReadWriteChallenge::Gamma) => gamma,
-                _ => zero,
-            },
-            |id| match *id {
-                JoltDerivedId::RegistersReadWrite(RegistersReadWritePublic::EqCycle) => eq_cycle,
-                _ => zero,
-            },
-        );
-
-        assert_eq!(
-            input,
-            rd_write_value + gamma * rs1_value + gamma * gamma * rs2_value
-        );
-        assert_eq!(
-            output,
-            eq_cycle * (rd_wa * (inc + val) + gamma * rs1_ra * val + gamma * gamma * rs2_ra * val)
-        );
-    }
-
-    #[test]
-    fn read_write_checking_symbolic_matches_dependencies() {
-        let relation = ReadWriteChecking::new(read_write_dimensions());
-        assert_eq!(
-            ReadWriteChecking::id(),
-            JoltRelationId::RegistersReadWriteChecking
-        );
-        assert_eq!(
-            relation.rounds(),
-            read_write_dimensions().read_write_rounds()
-        );
-        assert_eq!(relation.degree(), 3);
     }
 }

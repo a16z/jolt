@@ -1,11 +1,9 @@
 use super::GuestConfig;
 
-/// BTreeMap guest: performs `self.0` map operations.
 pub struct BTreeMapOps(pub u32);
 
 impl Default for BTreeMapOps {
     fn default() -> Self {
-        // e2e_profiling.rs default
         Self(50)
     }
 }

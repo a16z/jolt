@@ -19,15 +19,21 @@
 //! The materializing modes (address-major order, widened grids) and advice
 //! commits delegate to the reference kernel unchanged.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "field-inline")]
+use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{
     stream_witnesses, JoltWitnessOracle, RandomAccessRows, RowSource, StreamConsumer, WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(feature = "field-inline")]
+use crate::commitment::FieldInlineWitnessCommitment;
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
     CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
@@ -86,6 +92,20 @@ where
         commit_streaming(source, ids, grid, setup, superchunk_cycles())
     }
 
+    #[cfg(feature = "field-inline")]
+    fn commit_field_inline_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn JoltWitnessPlane<F>,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        // One dense trace-domain column today; the reference pass is already
+        // the right shape, and sharing it keeps the tiers byte-identical.
+        ReferenceBackend.commit_field_inline_witness(session, source, ids, grid, setup)
+    }
+
     fn commit_advice(
         &self,
         session: &mut ProofSession,
@@ -132,8 +152,6 @@ where
     commit_streamed(source, ids, grid, setup, superchunk)
 }
 
-/// The chunk-walk commit pass: extraction and the commit grid alternate, a
-/// barrier between every phase.
 fn commit_streamed<F, PCS>(
     source: &dyn RowSource,
     ids: &[JoltCommittedPolynomial],
@@ -229,7 +247,6 @@ where
     Ok(package::<F, PCS>(state.finish(setup), ids))
 }
 
-/// Zips finished per-column outputs back to their polynomial ids.
 fn package<F, PCS>(
     outputs: Vec<(PCS::Output, PCS::OpeningHint)>,
     ids: &[JoltCommittedPolynomial],
@@ -480,9 +497,6 @@ mod tests {
                     .unwrap();
             assert_same_commitments(&reference, &single_window_superchunks);
 
-            // Both delivery shapes pinned explicitly: the chunk-walk pass
-            // (re-emulating sources) and the pipelined pass (slice-backed
-            // sources), at whole-trace and single-window superchunks.
             let streamed =
                 commit_streamed::<Fr, DoryScheme>(source, &ids, grid, &setup, grid.num_columns())
                     .unwrap();

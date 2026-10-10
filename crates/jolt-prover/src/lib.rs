@@ -15,12 +15,12 @@
 //!   streaming per-polynomial witness commitments, the stage 0–8 recipes,
 //!   and the RLC-batched joint opening (`dory::prove`), in the compiled
 //!   proof mode (transparent, or BlindFold ZK under the `zk` feature);
-//! - `akita` — the packed pipeline over the lattice PCS: one native
+//! - `akita` — the Akita pipeline over the lattice PCS: one native
 //!   `OneHotTrace` commitment group, the fused-increment relation changes,
 //!   and one native grouped opening (`akita::prove`).
 //!
 //! Like `jolt-verifier`, one compiled prover proves exactly one protocol:
-//! the `akita` feature swaps the shared wire types to the packed envelope,
+//! the `akita` feature swaps the shared wire types to the Akita envelope,
 //! so exactly one of the two path modules compiles into any given build,
 //! and the `zk` feature swaps the shared recorders to the committed flavor.
 //!
@@ -30,8 +30,8 @@
 //! [`error`]: ProverError
 //! [`recorder`]: ProofMode
 
-// The packed protocol is transparent-only: its native openings have no
-// hiding mode and the BlindFold tail has no packed plumbing (the same
+// The Akita protocol is transparent-only: its native openings have no
+// hiding mode and the BlindFold tail has no Akita plumbing (the same
 // exclusion enforced by the public prover configuration).
 #[cfg(all(feature = "akita", feature = "zk"))]
 compile_error!("the `akita` and `zk` features are mutually exclusive");
@@ -40,6 +40,7 @@ compile_error!("the `akita` and `zk` features are mutually exclusive");
 pub mod akita;
 #[cfg(feature = "zk")]
 mod blindfold;
+mod boundary;
 mod config;
 #[cfg(not(feature = "akita"))]
 pub mod dory;

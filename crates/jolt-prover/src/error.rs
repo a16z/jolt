@@ -1,3 +1,4 @@
+use common::jolt_device::MemoryLayoutError;
 use jolt_field::JoltField;
 use jolt_kernels::{KernelError, SumcheckKernelError};
 use jolt_openings::OpeningsError;
@@ -30,6 +31,9 @@ pub enum PreprocessingError {
     /// digest could not be computed.
     #[error(transparent)]
     Verifier(#[from] VerifierError),
+
+    #[error(transparent)]
+    MemoryLayout(#[from] MemoryLayoutError),
 }
 
 /// Errors surfaced while proving. The engine-level failures come through
@@ -56,6 +60,13 @@ pub enum ProverError<F: JoltField> {
     /// fall back to another prover.
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
+
+    /// The trace's last row is not a jump. Padding no-ops follow the last
+    /// row, and only a jump's next-PC constraint is waived for a no-op
+    /// successor, so any other final row (a taken self-branch, or the row
+    /// before a trap that emitted none) makes the honest witness fail R1CS.
+    #[error("trace does not end in a jump; only a jump to itself terminates a provable trace")]
+    TraceDoesNotEndInJump,
 
     /// A cross-stage carry or kernel contract the prover itself must uphold
     /// was violated — a prover bug, never a capability gap, so never worth

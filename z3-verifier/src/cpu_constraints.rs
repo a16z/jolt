@@ -2,13 +2,11 @@
 #![allow(non_upper_case_globals)]
 
 use crate::{Z3_RANDOM_SEED, Z3_TIMEOUT_MS};
-use jolt_field::{Fr, Ring};
-use jolt_r1cs::{
-    constraints::rv64::{
-        self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE, V_BRANCH, V_CONST, V_NEXT_IS_NOOP,
-    },
-    SparseRow,
+use jolt_claims::protocols::composed::r1cs::rv64::{
+    self, NUM_R1CS_INPUTS, NUM_VARS_PER_CYCLE, V_BRANCH, V_CONST, V_NEXT_IS_NOOP,
 };
+use jolt_field::{Fr, Ring};
+use jolt_r1cs::SparseRow;
 use jolt_riscv::{
     CircuitFlags, Flags, InstructionFlags, JoltInstruction, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
     NUM_INSTRUCTION_FLAGS,
@@ -80,7 +78,6 @@ use z3::{ast::Int, Params, SatResult, Solver};
 
 #[derive(Clone, Debug)]
 struct JoltState<T = Int> {
-    // R1CS cycle inputs
     left_input: T,
     right_input: T,
     product: T,
@@ -153,7 +150,7 @@ impl JoltState {
     }
 
     fn r1cs_inputs(&self) -> [&Int; NUM_R1CS_INPUTS] {
-        [
+        let scalars = [
             &self.left_input,
             &self.right_input,
             &self.product,
@@ -175,21 +172,14 @@ impl JoltState {
             &self.next_is_first_in_sequence,
             &self.lookup_output,
             &self.should_jump,
-            &self.flags[CircuitFlags::AddOperands as usize],
-            &self.flags[CircuitFlags::SubtractOperands as usize],
-            &self.flags[CircuitFlags::MultiplyOperands as usize],
-            &self.flags[CircuitFlags::Load as usize],
-            &self.flags[CircuitFlags::Store as usize],
-            &self.flags[CircuitFlags::Jump as usize],
-            &self.flags[CircuitFlags::WriteLookupOutputToRD as usize],
-            &self.flags[CircuitFlags::VirtualInstruction as usize],
-            &self.flags[CircuitFlags::Assert as usize],
-            &self.flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize],
-            &self.flags[CircuitFlags::Advice as usize],
-            &self.flags[CircuitFlags::IsCompressed as usize],
-            &self.flags[CircuitFlags::IsFirstInSequence as usize],
-            &self.flags[CircuitFlags::IsLastInSequence as usize],
-        ]
+        ];
+        array::from_fn(|index| {
+            if index < scalars.len() {
+                scalars[index]
+            } else {
+                &self.flags[index - scalars.len()]
+            }
+        })
     }
 
     fn r1cs_vars(&self) -> [Int; NUM_VARS_PER_CYCLE] {
@@ -242,10 +232,8 @@ impl JoltState {
             //(&self.next_pc).ne(&other.next_pc),
             self.next_is_noop.eq(Int::from(0))
                 & self.next_unexpanded_pc.ne(&other.next_unexpanded_pc),
-            // lookup inputs differ
             self.left_lookup.ne(&other.left_lookup),
             self.right_lookup.ne(&other.right_lookup),
-            // write to ram differs
             self.ram_addr.ne(&other.ram_addr),
             (&self.ram_addr.ne(Int::from(0))) & self.ram_write_value.ne(&other.ram_write_value),
         ];
@@ -327,7 +315,6 @@ impl JoltState {
             *solver += other.lookup_output.eq(&advice);
         }
 
-        // Make an artificially memory, placing rv1 at address 8 and rv2 at address 16, rest is 0
         let rv1 = Int::new_const("rv1");
         let rv2 = Int::new_const("rv2");
         let ram_expr = |addr: &Int| {
@@ -380,7 +367,6 @@ struct CompareResult {
 }
 
 impl JoltState<i64> {
-    /// Compare two states, returning lists of differing inputs and outputs
     fn compare(&self, other: &Self) -> (Vec<CompareResult>, Vec<CompareResult>) {
         macro_rules! cmp {
             ($vec:ident, $field:ident) => {
@@ -470,7 +456,6 @@ macro_rules! test_instruction_constraints {
                 let instr = Instruction::$instr($instr {
                     operands: $crate::template_format!($operands),
                     $($field: $value,)*
-                    // unused by solver
                     address: 8,
                     is_compressed: false,
                     is_first_in_sequence: false,

@@ -1,12 +1,5 @@
-//! Error types for sumcheck protocol verification failures.
-
 use jolt_field::Field;
 
-/// Errors that can occur during sumcheck verification.
-///
-/// Each variant corresponds to a distinct failure mode in the sumcheck
-/// protocol, enabling the caller to diagnose exactly where verification
-/// diverged.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SumcheckError<F: Field> {
@@ -16,7 +9,6 @@ pub enum SumcheckError<F: Field> {
     RoundCheckFailed {
         /// Zero-indexed round number where the check failed.
         round: usize,
-        /// The expected sum.
         expected: F,
         /// The computed domain sum.
         actual: F,
@@ -62,7 +54,6 @@ pub enum SumcheckError<F: Field> {
         exponent: usize,
     },
 
-    /// A batch activation window overflowed `usize`.
     #[error(
         "batch member {member}: activation window overflow for offset {offset}, rounds {rounds}"
     )]
@@ -119,7 +110,6 @@ pub enum SumcheckError<F: Field> {
         got: usize,
     },
 
-    /// A round witness did not contain any coefficients.
     #[error("round polynomial must contain at least one coefficient")]
     EmptyRoundCoefficients,
 
@@ -133,12 +123,9 @@ pub enum SumcheckError<F: Field> {
         kind: &'static str,
     },
 
-    /// A vector-commitment setup cannot commit to any values.
     #[error("vector-commitment setup has zero capacity")]
     ZeroCommitmentCapacity,
 
-    /// A round polynomial has more coefficients than the vector-commitment
-    /// setup can commit to.
     #[error("round polynomial has {coefficients} coefficients, but vector-commitment capacity is {capacity}")]
     RoundExceedsCommitmentCapacity {
         /// Number of coefficients in the offending round polynomial.
@@ -168,7 +155,6 @@ pub enum SumcheckError<F: Field> {
         got: usize,
     },
 
-    /// A batch member's activation window extends past the batch's last round.
     #[error(
         "batch member {member}: window [{offset}, {offset} + {rounds}) exceeds {max_num_vars} rounds"
     )]

@@ -31,9 +31,8 @@ profiling = ["jolt-akita/profiling"]
 [dev-dependencies]
 jolt-akita.workspace = true
 akita-config.workspace = true
+akita-params.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
-akita-prover = { workspace = true, features = ["parallel"] }
-akita-transcript.workspace = true
 akita-types.workspace = true
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
 criterion = { workspace = true }
@@ -53,6 +52,3 @@ harness = false
 [[bench]]
 name = "akita_paths"
 harness = false
-
-[package.metadata.cargo-machete]
-ignored = ["rand_core", "rand_chacha"]

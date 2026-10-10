@@ -7,17 +7,14 @@ use util::{read_fs_tree_recursively, FSResult, FSTree};
 
 const DEFAULT_TEMPLATE_YAML: &str = include_str!(env!("TEMPLATE_YAML_PATH"));
 
-/// A module to write to the ZkLean Jolt package
 pub struct Module {
     /// The name of the module. The filename will become `Jolt/{name}.lean`.
     pub name: String,
-    /// A list of modules to import
     pub imports: Vec<String>,
     /// The contents of the module formatted as Lean4 code
     pub contents: Vec<u8>,
 }
 
-/// Trait for objects that can be converted to `Module`.
 // NOTE: We cannot simply use `Into<Module>` here, because `Into` does not support dynamic
 // dispatch.
 pub trait AsModule {

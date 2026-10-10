@@ -68,9 +68,6 @@ impl<F: JoltField> CycleMajorEntry<F> {
         }
     }
 
-    /// Bind a `(row 2j, row 2j+1)` pair of same-column entries; a `None`
-    /// side is implicit (`ra = 0`, `val` recovered from the present side's
-    /// checkpoint).
     fn bind(even: Option<&Self>, odd: Option<&Self>, r: F) -> Self {
         match (even, odd) {
             (Some(even), Some(odd)) => {
@@ -110,10 +107,6 @@ impl<F: JoltField> CycleMajorEntry<F> {
         }
     }
 
-    /// The pair's contribution to the phase-1 quadratic factor:
-    /// `[q(0), q_∞]` (evaluation at 0 and the quadratic coefficient) of
-    /// `ra(t) · (val(t) + γ·(inc(t) + val(t)))` over the pair's row
-    /// variable, `inc_evals = [inc(0), inc_slope]`.
     fn quadratic_evals(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -145,14 +138,11 @@ impl<F: JoltField> CycleMajorEntry<F> {
     }
 }
 
-/// `val + γ·(inc + val)` — the shared value factor of the summand.
 #[inline]
-fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
+pub(super) fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
     val + gamma * (inc + val)
 }
 
-/// Merge two sorted-by-column adjacent rows into `out`, binding entries
-/// pairwise (the legacy `seq_bind_rows`).
 fn merge_bind_rows<F: JoltField>(
     even: &[CycleMajorEntry<F>],
     odd: &[CycleMajorEntry<F>],
@@ -186,8 +176,6 @@ fn merge_bind_rows<F: JoltField>(
     }
 }
 
-/// The pair contribution of two sorted-by-column adjacent rows (the legacy
-/// `seq_prover_message_contribution`).
 fn merge_quadratic_evals<F: JoltField>(
     even: &[CycleMajorEntry<F>],
     odd: &[CycleMajorEntry<F>],
@@ -252,8 +240,6 @@ fn merge_quadratic_evals<F: JoltField>(
     acc
 }
 
-/// Split a row-pair group (entries sharing `row / 2`) into its even and odd
-/// row slices.
 fn split_row_pair<F>(
     group: &[CycleMajorEntry<F>],
 ) -> (&[CycleMajorEntry<F>], &[CycleMajorEntry<F>]) {
@@ -329,6 +315,22 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         }
     }
 
+    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &Polynomial<F>, gamma: F) -> F {
+        self.entries
+            .iter()
+            .filter(|entry| entry.row % 2 == 1)
+            .fold(F::zero(), |sum, entry| {
+                let row = entry.row as usize;
+                let constant = CycleMajorEntry::quadratic_evals(
+                    Some(entry),
+                    None,
+                    [inc.evals()[row], F::zero()],
+                    gamma,
+                )[0];
+                sum + eq_head(row / 2) * constant
+            })
+    }
+
     /// Reinterpret as address-major once every cycle variable is bound: all
     /// rows are 0, so `(row, col)` order IS `(col, row)` order and only the
     /// checkpoint representation changes.
@@ -350,7 +352,6 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     }
 }
 
-/// Reconstructs a round-0 entry from the access columns.
 #[inline]
 fn round0_entry<F: JoltField>(
     columns: &RamAccessColumns,
@@ -370,7 +371,28 @@ fn round0_entry<F: JoltField>(
     })
 }
 
-/// Round-0 quadratic coefficients read directly from access columns.
+pub(crate) fn round0_q_at_one<F: JoltField>(
+    columns: &RamAccessColumns,
+    eq_head: impl Fn(usize) -> F,
+    inc: &Polynomial<F>,
+    gamma: F,
+) -> F {
+    (1..columns.addresses.len())
+        .step_by(2)
+        .fold(F::zero(), |sum, row| {
+            let Some(entry) = round0_entry::<F>(columns, row) else {
+                return sum;
+            };
+            let constant = CycleMajorEntry::quadratic_evals(
+                Some(&entry),
+                None,
+                [inc.evals()[row], F::zero()],
+                gamma,
+            )[0];
+            sum + eq_head(row / 2) * constant
+        })
+}
+
 pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
     columns: &RamAccessColumns,
     eq_head: impl Fn(usize) -> F + Sync,
@@ -452,8 +474,6 @@ pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> Cyc
 }
 
 impl<F: JoltField> AddressMajorEntry<F> {
-    /// Bind a `(col 2k, col 2k+1)` pair of same-row entries; a `None` side
-    /// is implicit (`ra = 0`, `val` recovered from its column checkpoint).
     fn bind(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -493,9 +513,6 @@ impl<F: JoltField> AddressMajorEntry<F> {
         }
     }
 
-    /// The pair's contribution `[s(0), s(2)]` to the phase-2 (address)
-    /// round message `eq · ra(t) · (val(t) + γ·(inc + val(t)))`, where the
-    /// cycle-bound `eq` and `inc` are scalars per row.
     fn address_round_evals(
         even: Option<&Self>,
         odd: Option<&Self>,
@@ -534,8 +551,6 @@ impl<F: JoltField> AddressMajorEntry<F> {
     }
 }
 
-/// Split a column-pair group (entries sharing `col / 2`) into its even and
-/// odd column slices.
 fn split_col_pair<F>(
     group: &[AddressMajorEntry<F>],
 ) -> (&[AddressMajorEntry<F>], &[AddressMajorEntry<F>]) {
@@ -543,8 +558,6 @@ fn split_col_pair<F>(
     group.split_at(odd_start)
 }
 
-/// Merge two sorted-by-row adjacent columns, binding entries pairwise and
-/// walking the value checkpoints forward (the legacy `seq_bind_cols`).
 fn merge_bind_cols<F: JoltField>(
     even: &[AddressMajorEntry<F>],
     odd: &[AddressMajorEntry<F>],
@@ -616,8 +629,6 @@ fn merge_bind_cols<F: JoltField>(
     }
 }
 
-/// The column pair's round contribution `[s(0), s(2)]` (the legacy
-/// `seq_prover_message_contribution`), checkpoints walked forward per row.
 fn merge_address_round_evals<F: JoltField>(
     even: &[AddressMajorEntry<F>],
     odd: &[AddressMajorEntry<F>],

@@ -23,9 +23,21 @@ pub fn set_flamegraph_prefix(prefix: impl Into<String>) {
     let _ = FLAMEGRAPH_PREFIX.set(prefix.into());
 }
 
-/// The configured prefix, if the harness opted in.
 pub fn flamegraph_prefix() -> Option<&'static str> {
     FLAMEGRAPH_PREFIX.get().map(String::as_str)
+}
+
+/// Capture the selected heap roots as `{prefix}{label}.folded` and timestamp
+/// the snapshot in the trace. The visitor is not called unless capture is enabled
+/// through [`set_flamegraph_prefix`]. I/O failures are logged as warnings.
+pub fn capture_heap_snapshot(label: &str, visit: impl FnOnce(&mut FlameGraphBuilder)) {
+    let Some(prefix) = flamegraph_prefix() else {
+        return;
+    };
+    tracing::info!(snapshot = label, "heap_snapshot");
+    let mut snapshot = FlameGraphBuilder::default();
+    visit(&mut snapshot);
+    write_flamegraph_folded(snapshot, format!("{prefix}{label}.folded"));
 }
 
 /// Logs the heap allocation size of an `Allocative`-instrumented value.

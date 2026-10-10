@@ -2,25 +2,36 @@
 //! mode-specific checks (tampering, forced one-hot sizes, committed programs,
 //! trace-order rejection). Plain acceptance across guests is `e2e_matrix.rs`.
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 mod support;
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(
     clippy::expect_used,
     clippy::panic,
     reason = "integration tests should fail loudly"
 )]
 mod akita_tests {
-    use common::constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE;
+    use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
     use common::jolt_device::JoltDevice;
-    use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-    use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
+    use jolt_akita::{
+        AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
+    };
+    use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
     use jolt_program::execution::OwnedTrace;
     use jolt_prover::akita::preprocessing::{
         self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
     };
+    use jolt_prover::akita::witness::commit_advice;
     use jolt_prover::akita::{self, JoltAkitaBackend};
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
@@ -249,6 +260,51 @@ mod akita_tests {
     }
 
     #[test]
+    fn akita_rejects_chunk_profile_mismatch() {
+        for setup_profile in [AkitaChunkProfile::Single, AkitaChunkProfile::Four] {
+            let (run, mut config) = muldiv_run();
+            config.akita_chunk_profile = setup_profile;
+            let preprocessing = preprocessing::preprocess_full(
+                &AkitaScheduleArtifacts::shared_from_default_directory(),
+                run.preprocessing,
+                &config,
+            )
+            .expect("preprocess selected chunk profile");
+            let program = preprocessing.program_arc().expect("full program");
+            let public_io = run.trace.device.clone();
+            let witness = TraceBackend::<OwnedTrace>::from_compact(
+                witness_config(&config, false, false),
+                JoltVmWitnessInputs::new(&run.program, &program, run.trace),
+            );
+            for requested in [
+                AkitaChunkProfile::Single,
+                AkitaChunkProfile::Two,
+                AkitaChunkProfile::Four,
+                AkitaChunkProfile::Eight,
+            ] {
+                if requested == setup_profile {
+                    continue;
+                }
+                config.akita_chunk_profile = requested;
+                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                    &JoltAkitaBackend::optimized(),
+                    &preprocessing,
+                    &config,
+                    None,
+                    &witness,
+                    &public_io,
+                );
+                assert!(matches!(
+                    result,
+                    Err(ProverError::Unsupported {
+                        reason: "Akita chunk profile differs from preprocessing; reuse its configuration or regenerate preprocessing"
+                    })
+                ));
+            }
+        }
+    }
+
+    #[test]
     fn advice_e2e_akita() {
         for with_trusted in [false, true] {
             let inputs = postcard::to_stdvec(&(if with_trusted { 12u64 } else { 5u64 }))
@@ -268,6 +324,98 @@ mod akita_tests {
     }
 
     #[test]
+    fn advice_e2e_akita_two_chunks() {
+        advice_chunk_roundtrip(AkitaChunkProfile::Two);
+    }
+
+    #[test]
+    fn advice_e2e_akita_four_chunks() {
+        advice_chunk_roundtrip(AkitaChunkProfile::Four);
+    }
+
+    #[test]
+    fn advice_e2e_akita_eight_chunks() {
+        advice_chunk_roundtrip(AkitaChunkProfile::Eight);
+    }
+
+    fn advice_chunk_roundtrip(profile: AkitaChunkProfile) {
+        let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
+        let mut untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+        untrusted.resize(DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE as usize, u8::MAX);
+        let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
+        let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
+        let mut config = derive_config(&run);
+        config.akita_chunk_profile = profile;
+        let proved = prove_guest(run, config, true, &trusted);
+        assert_eq!(
+            proved
+                .preprocessing
+                .verifier
+                .pcs_setup
+                .akita_chunk_profile(),
+            profile
+        );
+        verify(&proved).expect("chunked grouped advice proof must verify");
+    }
+
+    #[test]
+    fn trusted_advice_commitment_reused_across_chunk_profiles() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
+        let untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+        let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
+        let object = commit_advice::<AkitaScheme>(
+            &artifacts,
+            JoltAdviceKind::Trusted,
+            &trusted,
+            DEFAULT_MAX_TRUSTED_ADVICE_SIZE as usize,
+        )
+        .expect("commit trusted advice before selecting a trace chunk profile");
+        for profile in [
+            AkitaChunkProfile::Single,
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
+        ] {
+            let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
+            let mut config = derive_config(&run);
+            config.akita_chunk_profile = profile;
+            let preprocessing = preprocessing::preprocess_full_with_advice(
+                &artifacts,
+                run.preprocessing,
+                &config,
+                true,
+                true,
+            )
+            .expect("preprocess with the fixed advice producer");
+            let program = preprocessing
+                .program_arc()
+                .expect("full program preprocessing");
+            let public_io = run.trace.device.clone();
+            let witness = TraceBackend::<OwnedTrace>::from_compact(
+                witness_config(&config, true, true),
+                JoltVmWitnessInputs::new(&run.program, &program, run.trace),
+            );
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+                &JoltAkitaBackend::optimized(),
+                &preprocessing,
+                &config,
+                Some(&object),
+                &witness,
+                &public_io,
+            )
+            .expect("reuse the original advice commitment and opening hint");
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                &preprocessing.verifier,
+                &public_io,
+                &proof,
+                Some(&object.commitment),
+            )
+            .expect("verify with the original advice commitment");
+        }
+    }
+
+    #[test]
     fn advice_e2e_akita_full_advice() {
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
         let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
@@ -280,8 +428,9 @@ mod akita_tests {
         verify(&proved).expect("full-advice proof must verify");
     }
 
-    fn committed_e2e(bytecode_chunk_count: usize) {
-        let (run, config) = muldiv_run();
+    fn committed_e2e(bytecode_chunk_count: usize, profile: AkitaChunkProfile) {
+        let (run, mut config) = muldiv_run();
+        config.akita_chunk_profile = profile;
         let preprocessing = preprocessing::preprocess_committed(
             &AkitaScheduleArtifacts::shared_from_default_directory(),
             run.preprocessing,
@@ -314,7 +463,6 @@ mod akita_tests {
         };
         verify(&proof).expect("committed Akita proof must verify");
 
-        // A mutated direct bytecode claim breaks the grouped opening.
         let mut tampered = proof;
         let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
             panic!("Akita proofs carry clear claims");
@@ -330,8 +478,15 @@ mod akita_tests {
 
     #[test]
     fn muldiv_e2e_akita_committed_program() {
-        committed_e2e(1);
-        committed_e2e(2);
+        for profile in [
+            AkitaChunkProfile::Single,
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
+        ] {
+            committed_e2e(1, profile);
+            committed_e2e(2, profile);
+        }
     }
 
     #[test]
@@ -378,8 +533,3 @@ mod akita_tests {
         .expect("committed advice Akita proof must verify");
     }
 }
-
-#[cfg(not(all(feature = "prover-fixtures", feature = "akita")))]
-#[test]
-#[ignore = "enable --features akita,prover-fixtures to run the Akita e2e"]
-fn muldiv_e2e_akita() {}

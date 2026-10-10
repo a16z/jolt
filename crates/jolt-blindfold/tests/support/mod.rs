@@ -8,13 +8,14 @@ use jolt_blindfold::{
     BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
     FinalOpeningBinding, WitnessCoordinate,
 };
+use jolt_claims::r1cs::ClaimSourceTable;
 use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
     Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment, VectorCommitmentOpening,
 };
 use jolt_field::{CanonicalBytes, Field, Fr, Ring};
 use jolt_poly::{CompressedPoly, EqPolynomial};
-use jolt_r1cs::{ClaimSourceTable, ConstraintMatrices, R1csBuilder};
+use jolt_r1cs::{ConstraintMatrices, R1csBuilder};
 use jolt_sumcheck::{
     CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
     CommittedSumcheckProof, CompressedSumcheckProof, RoundMessage, SumcheckDomainSpec,
@@ -761,9 +762,6 @@ struct SumcheckTrace {
     point: Vec<F>,
 }
 
-/// Everything needed to drive a prover (harness or real) over the same
-/// protocol-backed instance: the statement-derived protocol plus the real
-/// witness rows, blindings, and final-opening evaluations.
 pub struct ProtocolBackedInstance {
     pub setup: PedersenSetup<Bn254G1>,
     pub protocol: BlindFoldProtocol<F, Bn254G1>,
@@ -776,6 +774,15 @@ pub struct ProtocolBackedInstance {
 pub const PROTOCOL_BACKED_TRANSCRIPT_LABEL: &[u8] = b"protocol-backed-blindfold-proof";
 
 pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBackedInstance {
+    build_protocol_backed_instance_with_bindings(rng, 1)
+}
+
+/// Like [`build_protocol_backed_instance`], with `binding_count` (1 or 2)
+/// final-opening bindings: the second opens stage 2's first output claim.
+pub fn build_protocol_backed_instance_with_bindings<R: RngCore>(
+    rng: &mut R,
+    binding_count: usize,
+) -> ProtocolBackedInstance {
     let setup = pedersen_setup(4);
     let transcript_label = PROTOCOL_BACKED_TRANSCRIPT_LABEL;
     let statement1 = SumcheckStatement::new(3, 3);
@@ -800,8 +807,14 @@ pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBacked
         .claim_outs
         .last()
         .expect("stage has at least one round");
-    let real_eval_outputs = vec![stage1.output_claim_rows[0][0]];
-    let real_eval_blindings = vec![rng_field(rng)];
+    let mut real_eval_outputs = vec![stage1.output_claim_rows[0][0]];
+    if binding_count == 2 {
+        real_eval_outputs.push(stage2.output_claim_rows[0][0]);
+    }
+    let real_eval_blindings = real_eval_outputs
+        .iter()
+        .map(|_| rng_field(rng))
+        .collect::<Vec<_>>();
     let eval_commitments = real_eval_outputs
         .iter()
         .zip(&real_eval_blindings)
@@ -849,11 +862,13 @@ pub fn build_protocol_backed_instance<R: RngCore>(rng: &mut R) -> ProtocolBacked
     ];
     let statement = BlindFoldStatement::new(
         stages,
-        vec![FinalOpeningBinding::new(
-            vec![0usize],
-            vec![f(1)],
-            eval_commitments[0],
-        )],
+        [0usize, 100]
+            .into_iter()
+            .zip(&eval_commitments)
+            .map(|(opening, &commitment)| {
+                FinalOpeningBinding::new(vec![opening], vec![f(1)], commitment)
+            })
+            .collect(),
     );
     let protocol = blindfold_protocol_from_statement(&statement)
         .expect("protocol builds from committed statement");

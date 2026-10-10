@@ -18,7 +18,6 @@ pub struct Environment<'a, F> {
     pub vars: &'a [F],
 }
 
-/// A [`JoltField`] that can be used to write a ZKLean representation of a computation.
 pub trait ZkLeanReprField: JoltField + Sized {
     fn register(name: char, size: usize) -> Vec<Self>;
 

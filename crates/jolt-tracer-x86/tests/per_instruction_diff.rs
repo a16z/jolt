@@ -29,8 +29,6 @@ use tracer::instruction::Instruction;
 const N: usize = 1000;
 const REGS: usize = REGISTER_COUNT as usize;
 
-// ── Kind classification (compile-time exhaustive) ───────────────────
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Class {
     Supported,
@@ -41,7 +39,6 @@ enum Class {
     NotYetSupported,
 }
 
-/// Marker names of the kinds the transpiler implements (slice 2: base ISA).
 const SUPPORTED: &[&str] = &[
     "Add",
     "Addi",
@@ -82,7 +79,6 @@ const SUPPORTED: &[&str] = &[
     "VirtualZeroExtendWord",
     "Xor",
     "XorI",
-    // Slice 3 (fast-pass coverage):
     "Slt",
     "Andn",
     "Pow2I",
@@ -113,26 +109,22 @@ const SUPPORTED: &[&str] = &[
     "VirtualNegateIf",
     "VirtualAdviceLen",
     "VirtualAdviceLoad",
-    // Fused RV64 word arithmetic (single-lookup W ops):
     "AddW",
     "AddiW",
     "SubW",
     "MulW",
     "MulIW",
-    // W-aware right shifts:
     "VirtualShiftRightBitmaskW",
     "VirtualSrlw",
     "VirtualSrliw",
     "VirtualSraw",
     "VirtualSraiw",
-    // Byte-addressable Tier 0 (fused sub-word extraction):
     "WindowMaskW",
     "PextSigned",
     "Pext",
     "WindowMaskB",
     "WindowMaskH",
     "AlignAddr",
-    // Byte-addressable Tier 0 (fused narrow stores):
     "ShiftDataB",
     "ShiftDataH",
     "ShiftDataW",
@@ -155,8 +147,6 @@ macro_rules! classify_kinds {
     (
         instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($tag:expr, $name:expr)),* $(,)?]
     ) => {
-        /// Exhaustive (no wildcard): a new `JoltInstructionKind` fails to
-        /// compile until classified.
         fn classify(kind: &JoltInstructionKind) -> Class {
             match kind {
                 JoltInstructionKind::Noop(_) => Class::NotYetSupported,
@@ -186,9 +176,6 @@ fn default_row(kind: JoltInstructionKind) -> JoltInstructionRow {
     }
 }
 
-/// The classification must agree with what the transpiler accepts: every
-/// supported kind compiles as a bare row, everything else fails fast
-/// (unimplemented kinds and advice-group-only kinds alike).
 #[test]
 fn classification_matches_compiler() {
     for &kind in JoltInstructionKind::ALL {
@@ -221,8 +208,6 @@ fn bare_virtual_advice_is_a_compile_error() {
         "expected the advice-group error, got: {message}"
     );
 }
-
-// ── Random row/state generation ─────────────────────────────────────
 
 struct Instance {
     row: JoltInstructionRow,
@@ -257,7 +242,6 @@ fn imm12(rng: &mut StdRng) -> i128 {
     rng.gen_range(-2048i64..2048) as i128
 }
 
-/// Pin `x[reg]` so that `x[reg] + imm == target` (wrapping).
 fn pin_base(instance: &mut Instance, register: u8, imm: i128, target: u64) {
     assert_ne!(register, 0, "cannot pin x0");
     instance.pre_regs[register as usize] = target.wrapping_sub(imm as i64 as u64);
@@ -338,7 +322,6 @@ fn shift_reg_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
 
 fn shift_reg(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     let mut i = alu_rr(rng, kind);
-    // rs2 carries a bitmask; mix one-hot, zero, and arbitrary values.
     let rs2 = i.row.operands.rs2.unwrap();
     if rs2 != 0 {
         i.pre_regs[rs2 as usize] = match rng.gen_range(0..3) {
@@ -373,7 +356,7 @@ fn jal(rng: &mut StdRng) -> Instance {
 
 fn jalr(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, JoltInstructionKind::JALR);
-    let rs1 = rd(rng); // nonzero so the base can be pinned
+    let rs1 = rd(rng);
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rd = Some(rd(rng)); // may alias rs1 (ordering test)
     let imm = (rng.gen_range(-8i64..8) * 2) as i128;
@@ -432,7 +415,6 @@ fn assert_lte(rng: &mut StdRng) -> Instance {
     let rs2 = rd(rng);
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
-    // Ensure the (passing) invariant x[rs1] <= x[rs2].
     let a = i.pre_regs[rs1 as usize];
     let b = i.pre_regs[rs2 as usize];
     if a > b {
@@ -461,7 +443,7 @@ fn host_io(rng: &mut StdRng) -> Instance {
         i.pre_regs[11] = scratch_slot(rng);
         i.pre_regs[12] = rng.gen_range(0..48);
     } else {
-        i.pre_regs[10] = rng.gen::<u32>() as u64 | 1 << 33; // unknown id
+        i.pre_regs[10] = rng.gen::<u32>() as u64 | 1 << 33;
     }
     i
 }
@@ -481,7 +463,6 @@ fn assert_eq_gen(rng: &mut StdRng) -> Instance {
     i.row.operands.rs1 = Some(rs1);
     i.row.operands.rs2 = Some(rs2);
     if rng.gen_ratio(1, 10) {
-        // Spoil mode: warn-and-continue on both sides.
         i.row.operands.imm = 1;
     } else {
         i.row.operands.imm = 0;
@@ -501,7 +482,7 @@ fn assert_valid_div0(rng: &mut StdRng) -> Instance {
         i.pre_regs[rs1 as usize] = 0;
         i.pre_regs[rs2 as usize] = u64::MAX;
         if rs1 == rs2 {
-            i.pre_regs[rs1 as usize] = u64::MAX; // MAX != 0, valid either way
+            i.pre_regs[rs1 as usize] = u64::MAX;
         }
     } else if i.pre_regs[rs1 as usize] == 0 {
         i.pre_regs[rs1 as usize] = 1;
@@ -519,7 +500,7 @@ fn assert_valid_unsigned_remainder(rng: &mut StdRng) -> Instance {
         // remainder == divisor is only valid when both are zero.
         i.pre_regs[rs1 as usize] = 0;
     } else if rng.gen_ratio(1, 5) {
-        i.pre_regs[rs2 as usize] = 0; // divisor 0: anything passes
+        i.pre_regs[rs2 as usize] = 0;
     } else {
         let divisor = i.pre_regs[rs2 as usize].max(1);
         i.pre_regs[rs2 as usize] = divisor;
@@ -543,11 +524,10 @@ fn assert_mulu_no_overflow(rng: &mut StdRng) -> Instance {
 fn negate_if(rng: &mut StdRng) -> Instance {
     let mut i = alu_rr(rng, kind_by_name("VirtualNegateIf"));
     if rng.gen_ratio(1, 4) {
-        // Exercise the negation branch and the i64::MIN wrapping edge.
         let rs1 = i.row.operands.rs1.unwrap();
         let rs2 = i.row.operands.rs2.unwrap();
         if rs1 != 0 && rs2 != 0 && rs1 != rs2 {
-            i.pre_regs[rs1 as usize] = u64::MAX; // negative sign source
+            i.pre_regs[rs1 as usize] = u64::MAX;
             if rng.gen_ratio(1, 2) {
                 i.pre_regs[rs2 as usize] = i64::MIN as u64;
             }
@@ -571,8 +551,6 @@ fn advice_load(rng: &mut StdRng) -> Instance {
     i.advice = (0..8 + rng.gen_range(0..32)).map(|_| rng.gen()).collect();
     i
 }
-
-// ── Reference execution ─────────────────────────────────────────────
 
 struct RefOutcome {
     regs: [u64; REGS],
@@ -622,8 +600,6 @@ fn reference_run(instance: &Instance) -> RefOutcome {
         advice_tape: cpu.advice_tape.clone().into_bytes(),
     }
 }
-
-// ── The differential loop ───────────────────────────────────────────
 
 fn run_difftest(name: &str, generate: fn(&mut StdRng) -> Instance) {
     let mut rng = StdRng::seed_from_u64(0x1717_5EED);

@@ -1,6 +1,6 @@
 //! Fixture-driven tamper suite for the akita path.
 //!
-//! Three layers, all over real packed-prover fixtures:
+//! Three layers, all over real Akita-prover fixtures:
 //!
 //! - An exhaustive typed sweep ([`every_clear_claim_wire_rejects_offset`]):
 //!   every field-element leaf of the clear claims is offset by one, one at a
@@ -80,8 +80,6 @@ use crate::support::akita_fixtures::{
 };
 use crate::support::assert_rejects;
 
-/// The single packed `OneHotTrace` commitment object type (also the advice object
-/// type): the concrete `Commitment::Output` of the akita scheme.
 type AkitaCommitment = <AkitaScheme as jolt_crypto::Commitment>::Output;
 
 fn one() -> AkitaField {
@@ -91,7 +89,7 @@ fn one() -> AkitaField {
 fn clear_claims_mut(proof: &mut AkitaJoltProof) -> &mut ClearProofClaims<AkitaField> {
     match &mut proof.claims {
         JoltProofClaims::Clear(claims) => claims,
-        JoltProofClaims::Zk { .. } => panic!("packed akita fixtures always carry clear claims"),
+        JoltProofClaims::Zk { .. } => panic!("Akita fixtures always carry clear claims"),
     }
 }
 
@@ -507,8 +505,6 @@ fn clear_claim_scalar_count(case: &AkitaFixtureCase) -> usize {
     count
 }
 
-/// Offset each clear-claim scalar in turn by one and assert the verifier
-/// rejects the mutated proof.
 fn sweep_clear_claim_offsets(case: &AkitaFixtureCase, scalar_count: usize) {
     for target in 0..scalar_count {
         let mut proof = case.proof.clone();
@@ -523,7 +519,6 @@ fn sweep_clear_claim_offsets(case: &AkitaFixtureCase, scalar_count: usize) {
     }
 }
 
-/// Every clear-claim scalar of every fixture case rejects a one-off offset.
 #[test]
 fn every_clear_claim_wire_rejects_offset() {
     let muldiv = akita_muldiv_case();
@@ -541,9 +536,6 @@ fn every_clear_claim_wire_rejects_offset() {
     sweep_clear_claim_offsets(committed, clear_claim_scalar_count(committed));
 }
 
-/// Collect every perturbable serde leaf under `value`, keyed by a dot/index
-/// path rooted at `prefix`. A non-empty all-number array (a limb/byte column)
-/// is one leaf; an empty array has none.
 fn leaf_paths(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(map) => {
@@ -553,7 +545,6 @@ fn leaf_paths(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
         }
         serde_json::Value::Array(items) => {
             if items.is_empty() {
-                // No leaf to perturb.
             } else if items.iter().all(serde_json::Value::is_number) {
                 out.push(prefix.to_string());
             } else {
@@ -629,8 +620,6 @@ fn sweep_commitment(
     }
 }
 
-/// Every trace, advice, and direct-program commitment rejects a leaf-level
-/// perturbation.
 #[test]
 fn every_commitment_wire_rejects_perturbation() {
     for case in [
@@ -690,8 +679,6 @@ fn every_commitment_wire_rejects_perturbation() {
     }
 }
 
-/// A swapped phase proof and reordered direct-program commitments both fail
-/// closed.
 #[test]
 fn akita_proof_shape_tampers_reject() {
     let muldiv = akita_muldiv_case();

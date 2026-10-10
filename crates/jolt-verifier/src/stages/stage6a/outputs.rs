@@ -1,6 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 6a (address-phase)
-//! verification.
-
 use jolt_claims::protocols::jolt::relations::booleanity::BooleanityAddressPhaseChallenges;
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_field::JoltField;
@@ -44,6 +41,22 @@ use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
 pub struct Stage6aSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafAddressPhase<F>,
     pub booleanity: BooleanityAddressPhase<F>,
+}
+
+impl<F: JoltField> Stage6aOutputClaims<F> {
+    /// Project base-protocol claims into the verifier's selected output shape.
+    pub fn from_base(
+        bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims<F>,
+        booleanity: BooleanityAddressPhaseOutputClaims<F>,
+    ) -> Self {
+        Self {
+            #[cfg(feature = "field-inline")]
+            bytecode_read_raf: bytecode_read_raf.into(),
+            #[cfg(not(feature = "field-inline"))]
+            bytecode_read_raf,
+            booleanity,
+        }
+    }
 }
 
 /// The stage-6a Fiat-Shamir draws sampled by the batch's `draw_challenges` but

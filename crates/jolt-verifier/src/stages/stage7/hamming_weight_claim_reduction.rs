@@ -64,9 +64,7 @@ mod mode {
 /// The active relation's shape. Public because the kernel seam reads it off the
 /// relation (`Self::dimensions`).
 pub use mode::Dimensions as HammingWeightClaimReductionDimensions;
-/// The claims the active relation consumes.
 pub use mode::InputClaims as HammingWeightClaimReductionInputClaims;
-/// The claims the active relation produces.
 pub use mode::OutputClaims as HammingWeightClaimReductionOutputClaims;
 
 type HammingWeightClaimReductionSymbolic = mode::Symbolic;
@@ -292,7 +290,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         _challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let rho_rev = self.rho_reversed(output_points)?;
         match public_id {
@@ -325,7 +323,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 }
                 #[cfg(not(feature = "akita"))]
                 {
-                    Err(VerifierError::MissingStageClaimDerived { id: *id })
+                    Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
                 }
             }
         }
@@ -341,7 +339,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         _challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero => {
@@ -360,7 +358,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
             HammingWeightClaimReductionPublic::EqBooleanity
             | HammingWeightClaimReductionPublic::EqVirtualization(_)
             | HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
     }

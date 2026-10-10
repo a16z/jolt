@@ -1,5 +1,3 @@
-//! Sumcheck round domains.
-
 use crate::error::SumcheckError;
 use crate::round_proof::ClearRound;
 use jolt_field::Field;

@@ -131,4 +131,4 @@ Z3_VERIFIER_BV_BITS=8 cargo nextest run -p z3-verifier virtual_sequences
 ### 3. R1CS Consistency Failures 
 **Symptom:** `test_...` in `cpu_constraints` fails.
 **Meaning:** The R1CS constraints allow multiple next states for the same input.
-**Fix:** Identify the unconstrained variable (e.g., `rd_write_value`). Add a constraint in `crates/jolt-r1cs/src/constraints/rv64.rs` to force this value to a deterministic state.
+**Fix:** Identify the unconstrained variable (e.g., `rd_write_value`). Add a constraint in `crates/jolt-claims/src/protocols/composed/r1cs/rv64.rs` to force this value to a deterministic state.

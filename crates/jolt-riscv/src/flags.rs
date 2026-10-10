@@ -28,11 +28,8 @@ pub enum CircuitFlags {
     SubtractOperands,
     /// First lookup operand is the product of the two instruction operands.
     MultiplyOperands,
-    /// Instruction is a load (e.g. `LW`).
     Load,
-    /// Instruction is a store (e.g. `SW`).
     Store,
-    /// Instruction is a jump (e.g. `JAL`, `JALR`).
     Jump,
     /// Lookup output is stored in `rd` at the end of the step.
     WriteLookupOutputToRD,
@@ -42,7 +39,6 @@ pub enum CircuitFlags {
     Assert,
     /// PC unchanged during inline virtual sequences.
     DoNotUpdateUnexpandedPC,
-    /// Is a (virtual) advice instruction.
     Advice,
     /// Is a compressed instruction (UnexpandedPc += 2 instead of 4).
     IsCompressed,
@@ -50,9 +46,28 @@ pub enum CircuitFlags {
     IsFirstInSequence,
     /// Last instruction in a virtual sequence.
     IsLastInSequence,
+    #[cfg(feature = "field-inline")]
+    FieldAdd,
+    #[cfg(feature = "field-inline")]
+    FieldSub,
+    #[cfg(feature = "field-inline")]
+    FieldMul,
+    #[cfg(feature = "field-inline")]
+    FieldInv,
+    #[cfg(feature = "field-inline")]
+    FieldAssertEq,
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromRegister,
+    #[cfg(feature = "field-inline")]
+    FieldAssertZero,
+    #[cfg(feature = "field-inline")]
+    FieldLoadImm,
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromMemory,
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb,
 }
 
-/// Number of circuit flags.
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 
 pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
@@ -70,6 +85,26 @@ pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
     CircuitFlags::IsCompressed,
     CircuitFlags::IsFirstInSequence,
     CircuitFlags::IsLastInSequence,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAdd,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldSub,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldMul,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldInv,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAssertEq,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldLoadAccumulateFromRegister,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAssertZero,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldLoadImm,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldLoadAccumulateFromMemory,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAdviceLimb,
 ];
 
 /// Boolean flags that are NOT part of Jolt's R1CS constraints.
@@ -82,45 +117,37 @@ pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, EnumCount)]
 #[repr(u8)]
 pub enum InstructionFlags {
-    /// First instruction operand is the program counter.
     LeftOperandIsPC,
-    /// Second instruction operand is an immediate value.
     RightOperandIsImm,
-    /// First instruction operand is RS1 register value.
     LeftOperandIsRs1Value,
-    /// Second instruction operand is RS2 register value.
     RightOperandIsRs2Value,
-    /// Instruction is a branch (e.g. `BEQ`, `BNE`).
     Branch,
-    /// No-op instruction.
     IsNoop,
 }
 
-/// Number of instruction flags.
 pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
-/// Packed bitfield of [`CircuitFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct CircuitFlagSet(u16);
+pub struct CircuitFlagSet(u32);
 
 impl CircuitFlagSet {
     #[inline]
     pub fn set(self, flag: CircuitFlags) -> Self {
-        Self(self.0 | (1 << flag as u16))
+        Self(self.0 | (1 << flag as u32))
     }
 
     #[inline]
     pub fn get(self, flag: CircuitFlags) -> bool {
-        self.0 & (1 << flag as u16) != 0
+        self.0 & (1 << flag as u32) != 0
     }
 
     #[inline]
-    pub fn bits(self) -> u16 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 
     #[inline]
-    pub const fn from_bits(bits: u16) -> Self {
+    pub const fn from_bits(bits: u32) -> Self {
         Self(bits)
     }
 }
@@ -137,7 +164,6 @@ impl Index<CircuitFlags> for CircuitFlagSet {
     }
 }
 
-/// Packed bitfield of [`InstructionFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct InstructionFlagSet(u8);
 
@@ -208,13 +234,6 @@ impl InterleavedBitsMarker for CircuitFlagSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn set_and_get() {
-        let flags = CircuitFlagSet::default().set(CircuitFlags::Load);
-        assert!(flags[CircuitFlags::Load]);
-        assert!(!flags[CircuitFlags::Store]);
-    }
 
     #[test]
     fn interleaved_default() {

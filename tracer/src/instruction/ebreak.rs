@@ -5,6 +5,8 @@
 //! In a zkVM context without a debugger, EBREAK serves as a termination point.
 //! The emulator detects termination when PC doesn't change (prev_pc == pc).
 
+use crate::instruction::registers::i::RegisterStateI;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -13,9 +15,10 @@ use super::{format::format_i::FormatI, Cycle, Instruction, RISCVInstruction, RIS
 
 declare_riscv_instr!(
     name   = EBREAK,
-    mask   = 0xffffffff,  // Exact match
-    match  = 0x00100073,  // EBREAK encoding
+    mask   = 0xffffffff,
+    match  = 0x00100073,
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 

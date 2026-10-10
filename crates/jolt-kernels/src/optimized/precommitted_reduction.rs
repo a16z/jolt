@@ -126,8 +126,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------- advice
-
 impl<F: JoltField> RamInitialOpeningEvaluation<F> for OptimizedPrecommittedCycle {
     #[tracing::instrument(skip_all, name = "OptimizedRamInitialOpeningEvaluation::evaluate")]
     fn evaluate(
@@ -268,8 +266,6 @@ fn advice_table<F: JoltField>(
     Ok(table)
 }
 
-// --------------------------------------------------------- program image
-
 impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>>
     for OptimizedPrecommittedCycle
 {
@@ -293,9 +289,6 @@ impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>>
     }
 }
 
-/// The program-image reduction's cycle-phase kernel: the padded word vector
-/// (permuted as raw `u64`s, converted in one parallel pass) against the
-/// blocked shifted eq slice.
 fn program_image_reduction_kernel<F: JoltField>(
     layout: &ProgramImageClaimReductionLayout,
     r_addr_rw: &[F],
@@ -358,7 +351,6 @@ fn shifted_eq_slice<F: JoltField>(r_addr: &[F], start_index: usize, len: usize) 
     out
 }
 
-/// Parallel `u64 → F` conversion of the (already permuted) word vector.
 fn convert_words<F: JoltField>(words: &[u64]) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if words.len() >= PAR_THRESHOLD {
@@ -366,8 +358,6 @@ fn convert_words<F: JoltField>(words: &[u64]) -> Vec<F> {
     }
     words.iter().map(|&word| F::from_u64(word)).collect()
 }
-
-// -------------------------------------------------------------- bytecode
 
 impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for OptimizedPrecommittedCycle {
     fn prepare(
@@ -386,10 +376,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReductionCyclePhase<F>> for Optimize
     }
 }
 
-/// The committed-bytecode reduction's cycle-phase kernel — the chunk-weight
-/// value fold over the parallel-built per-chunk grids, the lane-weight eq
-/// template, and the raw grids as aux tables (their fully bound coefficients
-/// are the final per-chunk openings).
 fn bytecode_reduction_kernel<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
     weights: &BytecodeReductionWeights<F>,
@@ -540,14 +526,10 @@ mod tests {
 
     const LOG_T: usize = 2;
     const LOG_K_CHUNK: usize = 4;
-    /// 16 advice words (4 variables).
     const TRUSTED_ADVICE_MAX_BYTES: usize = 128;
-    /// 8 advice words (3 variables).
     const UNTRUSTED_ADVICE_MAX_BYTES: usize = 64;
     const BYTECODE_CHUNK_COUNT: usize = 2;
     const IMAGE_START_INDEX: usize = 3;
-    /// RAM address point length for the program-image relation: domain 32
-    /// comfortably holds the 8-word image block at `IMAGE_START_INDEX`.
     const IMAGE_RAM_VARS: usize = 5;
 
     const MISSING_TRUSTED: &str =
@@ -651,10 +633,6 @@ mod tests {
         f(&backend, &schedule)
     }
 
-    /// Both phases of one kind in lockstep: cycle-phase parity, a
-    /// `park_residue` into each pipeline's session, cross-tier stage-7
-    /// reclaim, address-phase parity. Kind-specific pieces (relations, claim
-    /// extraction) stay with the callers; this drives the shared shape.
     struct PhasePair<'a, RC: ConcreteSumcheck<Fr>, RA: ConcreteSumcheck<Fr>>
     where
         SumcheckInputClaims<Fr, RC>: InputClaims<Fr>,
@@ -678,7 +656,7 @@ mod tests {
 
     impl<RC, RA> PhasePair<'_, RC, RA>
     where
-        RC: ConcreteSumcheck<Fr>,
+        RC: ConcreteSumcheck<Fr> + 'static,
         RA: ConcreteSumcheck<Fr> + 'static,
         SumcheckInputClaims<Fr, RC>: InputClaims<Fr>,
         SumcheckOutputClaims<Fr, RC>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
@@ -690,10 +668,6 @@ mod tests {
         OptimizedPrecommittedCycle: PrepareKernel<Fr, RC>,
         AddressReductionKernel<Fr, RA>: SumcheckKernel<Fr, Relation = RA>,
     {
-        /// Run the pair; `intermediate` extracts the staged handoff claim
-        /// (the address phase's standalone input claim) from the cycle
-        /// output claims. Returns the final address-phase output claims of
-        /// the reference pipeline for kind-specific scrutiny.
         fn run(
             &self,
             cycle_rounds: usize,
@@ -737,6 +711,11 @@ mod tests {
             )
             .unwrap();
             let input_claim = intermediate(&throwaway.output_claims(self.cycle_claims).unwrap());
+            assert_ne!(
+                input_claim,
+                fr(0),
+                "precommitted fixture must have a nonzero cycle claim"
+            );
 
             let cycle_challenges = synthetic_point(cycle_rounds, seed);
             run_lockstep(
@@ -752,6 +731,11 @@ mod tests {
                 "cycle outputs diverged"
             );
             let handoff_claim = intermediate(&reference_outputs);
+            assert_ne!(
+                handoff_claim,
+                fr(0),
+                "precommitted fixture must have a nonzero address claim"
+            );
 
             reference.park_residue(&mut session_ref);
             optimized.park_residue(&mut session_opt);
@@ -1044,7 +1028,6 @@ mod tests {
     #[test]
     fn initial_ram_openings_preserve_request_order_for_all_presence_combinations() {
         with_fixture(TracePolynomialOrder::CycleMajor, |backend, schedule| {
-            // Address 5 is the fixture's third word (13), after its offset of 3.
             let image_point = [fr(0), fr(0), fr(1), fr(0), fr(1)];
             let trusted_point = synthetic_point(4, 71);
             let untrusted_point = synthetic_point(3, 83);

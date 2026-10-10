@@ -15,7 +15,6 @@ pub(in crate::expand) fn expand_csrrw(
     let mut asm = ExpansionBuilder::new(*instruction);
 
     if rd(instruction)? == 0 {
-        // `csrw csr, rs1`: write the CSR and discard the old value.
         asm.emit_i(Kind::ADDI, reg(virtual_reg), reg(rs1(instruction)?), 0);
         return asm.finalize();
     } else if rd(instruction)? == rs1(instruction)? {
@@ -28,7 +27,6 @@ pub(in crate::expand) fn expand_csrrw(
         return asm.finalize();
     }
 
-    // General case: copy old CSR to rd, then copy rs1 into the CSR.
     asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
     asm.emit_i(Kind::ADDI, reg(virtual_reg), reg(rs1(instruction)?), 0);
 

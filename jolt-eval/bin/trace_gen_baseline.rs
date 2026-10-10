@@ -172,8 +172,6 @@ fn orchestrate(runs: usize) {
     println!("\n{}", provenance());
 }
 
-/// Machine and revision provenance, so a table pasted into a PR stays
-/// reproducible months later.
 fn provenance() -> String {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get().to_string())

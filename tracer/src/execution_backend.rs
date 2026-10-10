@@ -9,6 +9,8 @@ use jolt_program::execution::{
     RamWrite as ProgramRamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError,
     TraceInputs, TraceOutput, TraceRow,
 };
+#[cfg(feature = "field-inline")]
+use jolt_program::field_inline::FieldInlineTraceData;
 use jolt_program::preprocess::BytecodePreprocessing;
 use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
 use rayon::prelude::*;
@@ -17,6 +19,8 @@ use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+#[cfg(feature = "field-inline")]
+use crate::instruction::RISCVCycle;
 use crate::instruction::{Cycle, RAMAccess};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 use crate::trace_row::{cycle_to_trace_row, CycleConversionError};
@@ -173,19 +177,15 @@ where
 /// by every chunk that resumes there — plus this chunk's row window
 /// relative to that boundary.
 pub struct TracerChunkCheckpoint {
-    /// Boundary CPU/MMU/device state.
     boundary: Arc<ChunkCheckpoint>,
     /// Full-size flat-memory image at the same boundary (SnapshotPool
     /// layout).
     image: Arc<Vec<u64>>,
     seed: Arc<WorkerSeed>,
-    /// Rows to discard after resuming at the boundary.
     skip_rows: usize,
-    /// Rows this chunk emits.
     take_rows: usize,
 }
 
-/// Static per-program worker seed, shared by every checkpoint.
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
@@ -235,9 +235,6 @@ impl TracerBackend {
                 .snapshot_with_empty_entries(),
         });
 
-        // Construction-only bookkeeping: a captured boundary plus the row
-        // count pass-1 had produced there (used below to pick each mark's
-        // resume boundary; not needed at replay time).
         struct Boundary {
             checkpoint: Arc<ChunkCheckpoint>,
             image: Arc<Vec<u64>>,
@@ -252,8 +249,6 @@ impl TracerBackend {
             rows: pass.rows(),
         };
 
-        // The fast pass: execute mode, no rows; capture a boundary checkpoint
-        // whenever a chunk mark is crossed (subject to the spacing floor).
         let mut boundaries = vec![capture(&pass, &mut pool)];
         let mut next_mark = chunk_size;
         while pass.step() {
@@ -268,8 +263,6 @@ impl TracerBackend {
         }
         let trace_len = pass.rows();
 
-        // One contract checkpoint per exact chunk mark, resuming from the
-        // latest boundary at or before the mark.
         let mut checkpoints = Vec::with_capacity(trace_len.div_ceil(chunk_size));
         let mut boundary_index = 0;
         for chunk in 0..trace_len.div_ceil(chunk_size) {
@@ -367,6 +360,28 @@ fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
         row
     };
     Ok(row)
+}
+
+#[cfg(feature = "field-inline")]
+impl Cycle {
+    pub fn field_inline_trace(&self) -> Option<FieldInlineTraceData> {
+        let register_state = match self {
+            Self::FIELD_ADD(RISCVCycle { register_state, .. })
+            | Self::FIELD_SUB(RISCVCycle { register_state, .. })
+            | Self::FIELD_MUL(RISCVCycle { register_state, .. })
+            | Self::FIELD_INV(RISCVCycle { register_state, .. })
+            | Self::FIELD_ASSERT_EQ(RISCVCycle { register_state, .. })
+            | Self::FIELD_ASSERT_ZERO(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_IMM(RISCVCycle { register_state, .. })
+            | Self::FIELD_ADVICE_LIMB(RISCVCycle { register_state, .. }) => register_state,
+            _ => return None,
+        };
+        let op =
+            jolt_riscv::field_inline_source_op(self.instruction().source_instruction().kind())?;
+        Some(register_state.to_field_inline_trace(op))
+    }
 }
 
 fn jolt_instruction_row(cycle: &Cycle) -> Result<JoltInstructionRow, TraceError> {
@@ -599,16 +614,13 @@ mod tests {
 
         let rows = output.trace.rows();
         assert!(rows.len() >= 3, "two ADDIs plus the jump expansion");
-        // addi x1, x0, 1
         let rd = rows[0].registers().rd.expect("first ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (1, 0, 1));
-        // addi x2, x1, 2 reads the value the first ADDI wrote
         let rs1 = rows[1].registers().rs1.expect("second ADDI reads rs1");
         assert_eq!((rs1.register, rs1.value), (1, 1));
         let rd = rows[1].registers().rd.expect("second ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (2, 0, 3));
 
-        // The final memory image contains the loaded program bytes
         let image = output.final_memory.expect("memory image present");
         assert!(!image.bytes.is_empty());
         assert!(!output.device.panic);
@@ -630,11 +642,16 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
-        u32::from(FIELD_INLINE_OPCODE)
-            | (u32::from(rd) << 7)
-            | (u32::from(op.funct3()) << 12)
-            | (u32::from(rs1) << 15)
-            | (u32::from(rs2_or_imm) << 20)
+        let base =
+            u32::from(FIELD_INLINE_OPCODE) | (u32::from(rd) << 7) | (u32::from(op.funct3()) << 12);
+        match op.funct7() {
+            Some(funct7) => {
+                base | (u32::from(rs1) << 15)
+                    | (u32::from(rs2_or_imm & 0x1f) << 20)
+                    | (u32::from(funct7) << 25)
+            }
+            None => base | (u32::from(rs2_or_imm & 0x0fff) << 20),
+        }
     }
 
     #[cfg(feature = "field-inline")]
@@ -643,7 +660,7 @@ mod tests {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
         cpu.write_register(5, 11);
         let instruction = Instruction::decode(
-            field_inline_word(FieldInlineOp::LoadFromX, 2, 5, 0),
+            field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 2, 5, 0),
             0x8000_0000,
             false,
         )
@@ -658,10 +675,13 @@ mod tests {
         assert!(row.rs2_read().is_none());
         assert!(row.rd_write().is_none());
         let field_trace = row.field_inline.unwrap();
-        assert_eq!(field_trace.op, Some(FieldInlineOp::LoadFromX));
+        assert_eq!(
+            field_trace.op,
+            Some(FieldInlineOp::LoadAccumulateFromRegister)
+        );
         assert_eq!(
             field_trace.bridge,
-            Some(FieldInlineBridge::LoadFromX {
+            Some(FieldInlineBridge::LoadAccumulateFromRegister {
                 x_register: 5,
                 x_value: 11,
                 field_value: FieldEncodedValue::from_u64(11),

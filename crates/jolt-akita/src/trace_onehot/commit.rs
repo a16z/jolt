@@ -1,12 +1,12 @@
 use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
-use akita_prover::compute::CommitInnerPlan;
-use akita_prover::{CommitInnerWitness, ComputeBackendSetup, CpuBackend};
-use jolt_field::Fp128x8i32;
+use akita_pcs::custom_source::CommitInnerPlan;
+use akita_types::{AkitaExpandedSetup, RingVec};
+use jolt_field::{Fp128x8i32, Zero};
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
-use super::source::TracePackedOneHot;
+use super::source::TraceOneHotColumn;
 use super::traversal::{
     flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
     validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
@@ -15,19 +15,17 @@ use super::traversal::{
 use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
 use crate::AkitaField;
 
-pub(super) fn commit_packed<const D: usize>(
-    backend: &CpuBackend,
-    prepared: &<CpuBackend as ComputeBackendSetup<AkitaField>>::PreparedSetup,
-    source: &TracePackedOneHot,
+pub(super) fn commit_columns<const D: usize>(
+    expanded: &AkitaExpandedSetup<AkitaField>,
+    source: &TraceOneHotColumn,
     plan: CommitInnerPlan,
-) -> Result<CommitInnerWitness<AkitaField>, AkitaError> {
+) -> Result<Vec<RingVec<AkitaField>>, AkitaError> {
     let _span = tracing::info_span!(
-        "TracePackedOneHot::commit_inner",
+        "TraceOneHotColumn::commit_inner",
         ring_dimension = D,
         one_hot_k = source.one_hot_k,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
-        column_capacity = source.column_capacity,
         n_a = plan.n_a,
         positions_per_block = plan.num_positions_per_block,
         inner_digits = plan.num_digits_inner,
@@ -37,14 +35,18 @@ pub(super) fn commit_packed<const D: usize>(
     let segment_rings = source.segment_ring_elems::<D>()?;
     let (_, num_blocks) = validate_block_geometry(
         segment_rings,
-        source.column_capacity,
+        source.num_columns,
         plan.num_positions_per_block,
     )?;
+    if plan.num_live_blocks != num_blocks / source.num_columns {
+        return Err(AkitaError::InvalidInput(
+            "trace commitment live-block extent disagrees with its columns".into(),
+        ));
+    }
     let active_cols = plan
         .num_positions_per_block
         .checked_mul(plan.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-    let expanded = backend.prepared_expanded_setup(prepared);
     let a_view = expanded
         .shared_matrix()
         .ring_view::<D>(plan.n_a, active_cols)?;
@@ -52,7 +54,7 @@ pub(super) fn commit_packed<const D: usize>(
     let max_per_ring = (D / source.one_hot_k).max(1);
     drop(_prepare_span);
 
-    let rows = if segment_rings >= plan.num_positions_per_block {
+    let coefficients = if segment_rings >= plan.num_positions_per_block {
         let blocks_per_column = segment_rings / plan.num_positions_per_block;
         debug_assert_eq!(
             blocks_per_column * plan.num_positions_per_block,
@@ -109,7 +111,6 @@ pub(super) fn commit_packed<const D: usize>(
                             for (a, a_row) in a_rows.iter().enumerate() {
                                 windows.load(&a_row[a_col]);
                                 for column in 0..num_columns {
-                                    // Every row writes its shift; only committed rows keep it.
                                     let mut len = 0;
                                     for (row_offset, (row_indices, &committed_zero_mask)) in
                                         selected_rows
@@ -245,23 +246,28 @@ pub(super) fn commit_packed<const D: usize>(
             n_a = plan.n_a,
         )
         .entered();
-        let mut rows = vec![vec![CyclotomicRing::zero(); plan.n_a]; num_blocks];
+        let block_width = plan.n_a * D;
+        let mut coefficients =
+            vec![vec![AkitaField::zero(); blocks_per_column * block_width]; num_columns];
         for (task, block_rows) in partials.into_iter().enumerate() {
             let trace_block = task / schedule.parts;
             let part = task % schedule.parts;
-            for column in 0..num_columns {
-                let dst = &mut rows[column * blocks_per_column + trace_block];
-                let src = &block_rows[column * plan.n_a..(column + 1) * plan.n_a];
-                if part == 0 {
-                    dst.copy_from_slice(src);
-                } else {
-                    for (dst, src) in dst.iter_mut().zip(src) {
+            for (column, coefficients) in coefficients.iter_mut().enumerate() {
+                let start = trace_block * block_width;
+                let dst = &mut coefficients[start..start + block_width];
+                let src = block_rows[column * plan.n_a..(column + 1) * plan.n_a]
+                    .iter()
+                    .flat_map(|ring| ring.coefficients());
+                for (dst, src) in dst.iter_mut().zip(src) {
+                    if part == 0 {
+                        *dst = *src;
+                    } else {
                         *dst += *src;
                     }
                 }
             }
         }
-        rows
+        coefficients
     } else {
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate_flat",
@@ -275,9 +281,8 @@ pub(super) fn commit_packed<const D: usize>(
         let mut budget = 0usize;
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
-                let global_ring = column * segment_rings + ring;
-                let block = global_ring / plan.num_positions_per_block;
-                let position = global_ring % plan.num_positions_per_block;
+                let block = column;
+                let position = ring;
                 let a_col = position * plan.num_digits_inner;
                 for (a, a_row) in a_rows.iter().enumerate() {
                     let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
@@ -293,11 +298,17 @@ pub(super) fn commit_packed<const D: usize>(
         if budget != 0 {
             flush_wide(&mut wide, &mut reduced);
         }
-        reduced
-            .chunks_exact(plan.n_a)
-            .map(<[CyclotomicRing<AkitaField, D>]>::to_vec)
-            .collect()
+        let mut coefficients = (0..source.num_columns)
+            .map(|_| Vec::with_capacity(plan.n_a * D))
+            .collect::<Vec<_>>();
+        for (index, ring) in reduced.into_iter().enumerate() {
+            coefficients[index / plan.n_a].extend_from_slice(ring.coefficients());
+        }
+        coefficients
     };
 
-    Ok(CommitInnerWitness::from_rows(rows))
+    coefficients
+        .into_iter()
+        .map(|coefficients| RingVec::from_coeffs_with_ring_dim(coefficients, D))
+        .collect()
 }

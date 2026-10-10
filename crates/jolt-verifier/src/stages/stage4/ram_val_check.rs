@@ -237,21 +237,19 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         _challenges: &RamValCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamValCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // The `Val_init` decomposition publics are input publics: the public
-            // initial-RAM evaluation and the negated committed-contribution selectors.
             RamValCheckPublic::InitEval => Ok(self.public_eval),
             RamValCheckPublic::InitSelector(_) | RamValCheckPublic::InitSelectorProgramImage => {
                 self.init_selectors
                     .iter()
                     .find_map(|(selector, value)| (selector == public_id).then_some(*value))
-                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
             // Output public — resolved in `derive_output_term`, never in the input expr.
             RamValCheckPublic::LtCyclePlusGamma => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
     }
@@ -264,12 +262,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         challenges: &RamValCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamValCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation of
-            // the produced cycle point against the fixed read-write cycle. Gamma comes
-            // from the drawn `challenges` (the value `draw_challenges` produced).
             RamValCheckPublic::LtCyclePlusGamma => {
                 let output_cycle =
                     output_points
@@ -296,7 +291,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             RamValCheckPublic::InitEval
             | RamValCheckPublic::InitSelector(_)
             | RamValCheckPublic::InitSelectorProgramImage => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
     }
@@ -439,13 +434,13 @@ pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
     let program_image_contribution = match (&structure.program_image_point, ram.program_image) {
         (None, Some(_)) => {
             return Err(VerifierError::UnexpectedOpeningClaim {
-                id: program_image_opening,
+                id: program_image_opening.into(),
             });
         }
         (None, None) => None,
         (Some(_), None) => {
             return Err(VerifierError::MissingOpeningClaim {
-                id: program_image_opening,
+                id: program_image_opening.into(),
             });
         }
         (Some(point), Some(value)) => Some((point.clone(), value)),
@@ -459,11 +454,11 @@ pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
         let opening = ram::val_check_advice_opening(kind);
         match (structure.advice_block(kind), opening_claim) {
             (None, Some(_)) => {
-                return Err(VerifierError::UnexpectedOpeningClaim { id: opening });
+                return Err(VerifierError::UnexpectedOpeningClaim { id: opening.into() });
             }
             (None, None) => {}
             (Some(_), None) => {
-                return Err(VerifierError::MissingOpeningClaim { id: opening });
+                return Err(VerifierError::MissingOpeningClaim { id: opening.into() });
             }
             (Some(block), Some(value)) => {
                 advice_contributions.push(VerifiedRamValCheckAdviceContribution {
@@ -585,8 +580,6 @@ mod tests {
             RamValCheckInit::from(Fr::from(0u64)),
         );
 
-        // Inline (stage4/verify.rs L125-126): domain-separator append, then
-        // `ram_val_check_gamma = challenge_scalar()`.
         let (inline_events, inline_gamma) = record(|t| {
             append_ram_val_check_gamma_domain_separator(t);
             t.challenge_scalar()
@@ -594,8 +587,6 @@ mod tests {
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        // The draw is the domain-separator append(s) followed by exactly one squeeze;
-        // no challenge is squeezed before the gamma.
         assert!(draw_events.len() >= 2);
         let (separator, last) = draw_events.split_at(draw_events.len() - 1);
         assert_eq!(last, [DrawEvent::Squeeze(1)]);

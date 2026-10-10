@@ -1,13 +1,10 @@
 use derive_more::From;
-use jolt_openings::PrecommittedRole;
+use jolt_openings::CommitmentGroupRole;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use serde::{Deserialize, Serialize};
 
 use crate::Expr;
 
-/// The Jolt protocol's expression type: an [`Expr`](crate::Expr) over the Jolt id
-/// families (openings, deriveds, challenges). Each relation's `input`/`output`
-/// expression is a `JoltExpr<F>`.
 pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -135,11 +132,11 @@ pub enum HammingWeightClaimReductionChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
-    /// Packed path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
+    /// Akita path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
     /// weight of a Booleanity leg (`specs/digit-zero-virtualization.md`).
     EqBooleanityAtDigitZero,
     EqVirtualization(usize),
-    /// Packed path: `eq(r_virtualization_address_i, 0)` — the digit-zero
+    /// Akita path: `eq(r_virtualization_address_i, 0)` — the digit-zero
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
     BalancedIncValueAtAddress,
@@ -176,10 +173,10 @@ pub enum JoltAdviceKind {
 
 impl JoltAdviceKind {
     /// Role descriptor for the final heterogeneous Akita opening.
-    pub const fn precommitted_role(self) -> PrecommittedRole {
+    pub const fn group_role(self) -> CommitmentGroupRole {
         match self {
-            Self::Untrusted => PrecommittedRole::new(0, b"untrusted_advice", "untrusted-advice"),
-            Self::Trusted => PrecommittedRole::new(1, b"trusted_advice", "trusted-advice"),
+            Self::Untrusted => CommitmentGroupRole::new(0, b"untrusted_advice", "untrusted-advice"),
+            Self::Trusted => CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice"),
         }
     }
 }
@@ -340,7 +337,7 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed polynomials (slots of the packed witness); base
+    // Lattice-mode committed polynomials (columns of the native trace group); base
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
@@ -504,29 +501,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opening_constructors_preserve_stage_context() {
-        let relation = JoltRelationId::RamReadWriteChecking;
-
-        assert_eq!(
-            JoltOpeningId::committed(JoltCommittedPolynomial::RamInc, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamInc),
-                relation,
-            }
-        );
-        assert_eq!(
-            JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamVal, relation),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Virtual(JoltVirtualPolynomial::RamVal),
-                relation,
-            }
-        );
-    }
-
-    #[test]
-    fn advice_precommit_roles_fix_order_and_transcript_tags() {
-        let untrusted = JoltAdviceKind::Untrusted.precommitted_role();
-        let trusted = JoltAdviceKind::Trusted.precommitted_role();
+    fn advice_group_roles_fix_order_and_transcript_tags() {
+        let untrusted = JoltAdviceKind::Untrusted.group_role();
+        let trusted = JoltAdviceKind::Trusted.group_role();
 
         assert!(untrusted.order() < trusted.order());
         assert_eq!(untrusted.transcript_label(), b"untrusted_advice");

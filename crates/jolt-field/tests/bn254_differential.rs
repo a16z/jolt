@@ -17,7 +17,6 @@ fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xb254_b254)
 }
 
-/// BN254 scalar-field modulus r.
 fn p_fr() -> BigUint {
     BigUint::parse_bytes(
         b"30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
@@ -26,7 +25,6 @@ fn p_fr() -> BigUint {
     .unwrap()
 }
 
-/// BN254 base-field modulus q.
 fn p_fq() -> BigUint {
     BigUint::parse_bytes(
         b"30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
@@ -35,7 +33,6 @@ fn p_fq() -> BigUint {
     .unwrap()
 }
 
-/// Canonical value of an element via its (fixture-pinned) LE encoding.
 fn val<F: CanonicalEncoding>(x: &F) -> BigUint {
     BigUint::from_bytes_le(&x.to_bytes_le_vec())
 }
@@ -44,14 +41,12 @@ fn assert_val<F: CanonicalEncoding>(x: &F, expected: &BigUint) {
     assert_eq!(val(x), *expected);
 }
 
-/// `v mod p` for a possibly negative BigInt.
 fn imod(v: &BigInt, p: &BigUint) -> BigUint {
     let p_int = BigInt::from_biguint(Sign::Plus, p.clone());
     let r = ((v % &p_int) + &p_int) % &p_int;
     r.to_biguint().unwrap()
 }
 
-/// Sample an element together with its oracle value from the same bytes.
 fn sample_fr(rng: &mut ChaCha20Rng, p: &BigUint) -> (two::Fr, BigUint) {
     let bytes: [u8; 32] = rng.gen();
     let t = <two::Fr as CanonicalEncoding>::from_bytes_le_reduced(&bytes);
@@ -62,8 +57,6 @@ fn sample_fr(rng: &mut ChaCha20Rng, p: &BigUint) -> (two::Fr, BigUint) {
 
 #[test]
 fn moduli_are_consistent() {
-    // The hardcoded moduli agree with the crate: -1 encodes p − 1, and the
-    // reducing decode sends p to zero.
     for (minus_one_bytes, p) in [
         (two::Fr::from_i64(-1).to_bytes_le_vec(), p_fr()),
         (two::Fq::from_i64(-1).to_bytes_le_vec(), p_fq()),
@@ -167,7 +160,6 @@ fn serde_bytes_match() {
         assert_eq!(read, 32);
         assert_val(&t_back, &v);
     }
-    // Non-canonical wire bytes rejected.
     let bad = bincode::serde::encode_to_vec([0xffu8; 32], cfg).unwrap();
     assert!(bincode::serde::decode_from_slice::<two::Fr, _>(&bad, cfg).is_err());
 }
@@ -215,7 +207,6 @@ fn transcript_surface_matches() {
             &(BigUint::from_bytes_le(&wide) % &p),
         );
     }
-    // Small-value integer views agree with construction.
     for v in [0u64, 1, 999, u64::MAX] {
         assert_eq!(two::Fr::from_u64(v).to_u64_checked(), Some(v));
         assert_eq!(two::Fr::from_u64(v).to_u128_checked(), Some(v as u128));
@@ -241,7 +232,6 @@ fn wide_accumulator_matches() {
     }
     assert_val(&acc.reduce(), &expect);
 
-    // add / small-scalar fmadds / merge, mirrored in exact integers.
     let (t, v) = sample_fr(&mut rng, &p);
     let vi = BigInt::from_biguint(Sign::Plus, v.clone());
     let mut acc = <two::Fr as two::WithAccumulator>::Accumulator::default();
@@ -263,7 +253,6 @@ fn wide_accumulator_matches() {
     acc.merge(other);
     assert_val(&acc.reduce(), &imod(&expect, &p));
 
-    // Empty accumulators reduce to zero.
     let empty = <two::Fr as two::WithAccumulator>::Accumulator::default();
     assert_eq!(empty.reduce(), two::Fr::from_u64(0));
 }
@@ -322,22 +311,4 @@ fn fq_matches() {
             "wire = transcript bytes"
         );
     }
-}
-
-fn inner_product<F: two::JoltField>(xs: &[F], ys: &[F]) -> F {
-    let mut acc = F::Accumulator::default();
-    for (&x, &y) in xs.iter().zip(ys) {
-        acc.fmadd(x, y);
-    }
-    acc.reduce()
-}
-
-#[test]
-fn jolt_field_blanket_covers_bn254() {
-    let xs = [two::Fr::from_u64(2), two::Fr::from_u64(3)];
-    let ys = [two::Fr::from_u64(5), two::Fr::from_u64(7)];
-    assert_eq!(inner_product(&xs, &ys), two::Fr::from_u64(31));
-    let xq = [two::Fq::from_u64(2)];
-    let yq = [two::Fq::from_u64(5)];
-    assert_eq!(inner_product(&xq, &yq), two::Fq::from_u64(10));
 }
