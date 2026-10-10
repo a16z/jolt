@@ -1,11 +1,11 @@
 //! The stage 6b committed-program claim-reduction cycle phases.
 //!
-//! In committed-program mode the advice, program-image, and per-chunk bytecode
+//! In committed-program mode the advice, program-image, and bytecode
 //! polynomials are reduced over the shared precommitted schedule. Each reduction's
 //! cycle phase runs here (stage 6b); when the polynomial still has active
 //! address-phase rounds it stages an intermediate opening consumed by stage 7,
 //! otherwise it completes here, opening the committed polynomial under a
-//! `FinalScale` / `ChunkOutputWeight` public.
+//! final output weight.
 //!
 //! Because the produced opening point is the (reverse-ordered) cycle opening
 //! point while the scale is evaluated at the Dory-permuted point, each relation
@@ -24,6 +24,10 @@ use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
     TrustedAdviceCyclePhaseInputClaims, TrustedAdviceCyclePhaseOutputClaims,
     UntrustedAdviceCyclePhaseInputClaims, UntrustedAdviceCyclePhaseOutputClaims,
+};
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
+    BytecodeReductionAddressPhaseOutputClaims, BytecodeReductionIntermediateClaims,
+    CyclePhase as BytecodeCyclePhase,
 };
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::{
     BytecodeReductionCyclePhaseChallenges, BytecodeReductionCyclePhaseInputClaims,
@@ -372,10 +376,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
 
 #[derive(Clone)]
 pub struct BytecodeReductionCyclePhase<F: JoltField> {
-    symbolic: relations::claim_reductions::bytecode::CyclePhase,
+    symbolic: BytecodeCyclePhase,
     layout: BytecodeClaimReductionLayout,
     weights: BytecodeReductionWeights<F>,
-    chunk_count: usize,
 }
 
 impl<F: JoltField> BytecodeReductionCyclePhase<F> {
@@ -384,13 +387,9 @@ impl<F: JoltField> BytecodeReductionCyclePhase<F> {
         weights: BytecodeReductionWeights<F>,
     ) -> Self {
         Self {
-            symbolic: relations::claim_reductions::bytecode::CyclePhase::new((
-                layout.dimensions(),
-                layout.chunk_count(),
-            )),
+            symbolic: BytecodeCyclePhase::new(layout.dimensions()),
             layout: layout.clone(),
             weights,
-            chunk_count: layout.chunk_count(),
         }
     }
 
@@ -410,8 +409,8 @@ impl<F: JoltField> BytecodeReductionCyclePhase<F> {
 }
 
 /// Fold the stage-6a bytecode read-RAF address opening and the per-stage gamma
-/// vectors into the public [`BytecodeReductionWeights`] (the per-chunk `r_bc`
-/// weights and the gamma-folded lane weights) consumed by the bytecode
+/// vectors into the public [`BytecodeReductionWeights`] (the full `r_bc`
+/// point and the gamma-folded lane weights) consumed by the bytecode
 /// claim-reduction cycle and address phases.
 pub fn bytecode_reduction_weights<F: JoltField>(
     layout: &BytecodeClaimReductionLayout,
@@ -419,12 +418,11 @@ pub fn bytecode_reduction_weights<F: JoltField>(
     bytecode_r_address: &[F],
 ) -> Result<BytecodeReductionWeights<F>, VerifierError> {
     let address_point = layout
-        .split_address_point(bytecode_r_address)
+        .address_point(bytecode_r_address)
         .map_err(bytecode_public_failed)?;
     let lane_weights = lane_weights(lane_inputs).map_err(bytecode_public_failed)?;
     Ok(BytecodeReductionWeights {
-        r_bc: address_point.r_bc,
-        chunk_rbc_weights: address_point.chunk_rbc_weights,
+        r_bc: address_point,
         lane_weights,
     })
 }
@@ -437,7 +435,7 @@ fn bytecode_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
-    type Symbolic = relations::claim_reductions::bytecode::CyclePhase;
+    type Symbolic = BytecodeCyclePhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -458,16 +456,19 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
             .layout
             .cycle_phase_opening_point(sumcheck_point)
             .map_err(bytecode_public_failed)?;
+
         Ok(if self.layout.dimensions().has_address_phase() {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: Some(opening_point),
-                chunks: Vec::new(),
-            }
+            BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                BytecodeReductionIntermediateClaims {
+                    intermediate: opening_point,
+                },
+            )
         } else {
-            BytecodeReductionCyclePhaseOutputClaims {
-                intermediate: None,
-                chunks: vec![opening_point; self.chunk_count],
-            }
+            BytecodeReductionCyclePhaseOutputClaims::Final(
+                BytecodeReductionAddressPhaseOutputClaims {
+                    bytecode: opening_point,
+                },
+            )
         })
     }
 
@@ -479,37 +480,103 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
         _challenges: &BytecodeReductionCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         if self.layout.dimensions().has_address_phase() {
-            let intermediate = output_values.intermediate.ok_or_else(|| {
-                bytecode_public_failed("bytecode reduction produced no intermediate")
-            })?;
-            return Ok(intermediate);
+            return output_values
+                .intermediate()
+                .copied()
+                .ok_or_else(|| bytecode_public_failed("expected bytecode intermediate"));
         }
-        if output_values.chunks.len() != self.chunk_count {
-            return Err(bytecode_public_failed(format!(
-                "bytecode chunk claim count mismatch: expected {}, got {}",
-                self.chunk_count,
-                output_values.chunks.len()
-            )));
-        }
-        let opening_point = output_points
-            .chunks()
-            .first()
-            .map(Vec::as_slice)
-            .ok_or_else(|| {
-                bytecode_public_failed("bytecode reduction produced no chunk openings")
-            })?;
-        let weights = self
+        let value = output_values
+            .bytecode()
+            .copied()
+            .ok_or_else(|| bytecode_public_failed("expected final bytecode claim"))?;
+        let point = output_points
+            .bytecode()
+            .ok_or_else(|| bytecode_public_failed("expected final bytecode point"))?;
+        let weight = self
             .layout
-            .cycle_phase_final_output_weights_at_opening_point(
-                self.weights.as_inputs(),
-                opening_point,
-            )
+            .cycle_phase_final_output_weight_at_opening_point(self.weights.as_inputs(), point)
             .map_err(bytecode_public_failed)?;
-        Ok(output_values
-            .chunks
-            .iter()
-            .zip(weights)
-            .map(|(chunk, weight)| *chunk * weight)
-            .sum())
+        Ok(value * weight)
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "contract assertions fail loudly")]
+mod tests {
+    use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
+        cycle_phase_output_openings, COMMITTED_BYTECODE_LANE_CAPACITY,
+    };
+    use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
+    use jolt_claims::protocols::jolt::{
+        JoltCommittedPolynomial, PrecommittedClaimReduction, TracePolynomialOrder,
+    };
+    use jolt_claims::OutputClaims;
+    use jolt_field::{Fr, Ring};
+
+    use super::*;
+
+    #[test]
+    fn cycle_only_bytecode_final_opening_contract() {
+        let reference = PrecommittedClaimReduction::scheduling_reference(20, &[10], 4);
+        let layout = BytecodeClaimReductionLayout::balanced(
+            TracePolynomialOrder::CycleMajor,
+            16,
+            reference,
+            2,
+        )
+        .unwrap();
+        assert!(!layout.dimensions().has_address_phase());
+        let weights = BytecodeReductionWeights {
+            r_bc: vec![Fr::from_u64(3)],
+            lane_weights: vec![Fr::from_u64(7); COMMITTED_BYTECODE_LANE_CAPACITY],
+        };
+        let relation = BytecodeReductionCyclePhase::new(&layout, weights.clone());
+        let challenges = BytecodeReductionCyclePhaseChallenges {
+            eta: Fr::from_u64(11),
+        };
+        let points = relation
+            .derive_opening_points(
+                &vec![Fr::from_u64(5); layout.dimensions().cycle_phase_total_rounds()],
+                &Default::default(),
+            )
+            .unwrap();
+        assert!(matches!(
+            points,
+            BytecodeReductionCyclePhaseOutputClaims::Final(_)
+        ));
+        let value = Fr::from_u64(13);
+        let values = BytecodeReductionCyclePhaseOutputClaims::Final(
+            BytecodeReductionAddressPhaseOutputClaims { bytecode: value },
+        );
+        let ids = values.canonical_order();
+        assert_eq!(ids, cycle_phase_output_openings(layout.dimensions()));
+        assert_eq!(
+            ids,
+            vec![final_opening_id(JoltCommittedPolynomial::ProgramBytecode)]
+        );
+        let weight = layout
+            .cycle_phase_final_output_weight_at_opening_point(
+                weights.as_inputs(),
+                points.bytecode().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            relation
+                .expected_output(&Default::default(), &values, &points, &challenges)
+                .unwrap(),
+            value * weight
+        );
+        assert!(relation
+            .expected_output(
+                &Default::default(),
+                &BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                    BytecodeReductionIntermediateClaims {
+                        intermediate: value
+                    },
+                ),
+                &points,
+                &challenges,
+            )
+            .is_err());
     }
 }

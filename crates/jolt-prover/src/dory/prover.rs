@@ -47,7 +47,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// must not exceed the main commitment grid) and with or without
 /// committed-program preprocessing (which requires
 /// `preprocessing.committed_program` — the prover-retained full program and
-/// chunk/image hints). Dominant advice returns
+/// bytecode/image hints). Dominant advice returns
 /// [`ProverError::Unsupported`] at stage 0.
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
 pub fn prove<F, PCS, VC, T, W>(

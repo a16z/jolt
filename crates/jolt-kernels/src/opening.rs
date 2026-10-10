@@ -11,12 +11,12 @@
 //! address slot zero) — matching the address-major commit placement and the
 //! verifier's `commitment_embedding_scale` under the `[r_cycle ‖ r_address]`
 //! unified point. In both orders the precommitted polynomials (advice,
-//! bytecode chunks, program image) BLOCK-embed — their own balanced matrix
+//! whole bytecode, program image) BLOCK-embed — their own balanced matrix
 //! (`2^σ_p` columns) lands in the grid matrix's top-left corner, so
 //! coefficient `row · 2^σ_p + col` sits at grid index `row · 2^σ_main + col`
 //! (strided, not contiguous; the legacy `vmp_precommitted_contribution`
 //! layout the commitment and `commitment_embedding_scale` agree on). The
-//! trace order enters a chunk table only through its coefficient
+//! trace order enters a bytecode table only through its coefficient
 //! interleaving, which the recipe-supplied tables already carry. The slot
 //! returns [`MultilinearPoly`] objects because the PCS opening drives them
 //! lazily (`fold_rows`).

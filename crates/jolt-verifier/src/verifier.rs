@@ -446,7 +446,6 @@ where
         program
             .committed()
             .map(|committed| {
-                #[cfg(feature = "akita")]
                 if committed.trace_order != trace_polynomial_order {
                     return Err(VerifierError::InvalidCommittedProgram {
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
@@ -474,7 +473,6 @@ where
                     })?;
                 Ok(CommittedProgramSchedule {
                     bytecode_len: meta.bytecode_len,
-                    bytecode_chunk_count: committed.bytecode_chunk_count(),
                     program_image_len_words: meta.program_image_len_words,
                     program_image_start_index,
                 })
@@ -733,7 +731,7 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         );
         if let Some(committed) = preprocessing.program.committed() {
             absorb_committed_program_commitments(
-                &committed.bytecode_chunk_commitments,
+                &committed.bytecode_commitment,
                 &committed.program_image_commitment,
                 transcript,
             );
@@ -746,24 +744,26 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
         proof.field_inc_commitment.as_ref(),
-        preprocessing
-            .program
-            .committed()
-            .map_or(&[][..], |committed| &committed.direct_program_commitments),
+        preprocessing.program.committed().map(|committed| {
+            (
+                &committed.bytecode_commitment,
+                &committed.program_image_commitment,
+            )
+        }),
         transcript,
     );
 }
 
 /// Absorbs the Akita commitment objects in canonical object order: `OneHotTrace`, untrusted
-/// advice, trusted advice, the field-increment commitment (field-inline builds), then direct
-/// bytecode chunks and program image. Shared verbatim by the Akita prover's stage 0.
+/// advice, trusted advice, the field-increment commitment (field-inline builds), then the whole
+/// bytecode and program image. Shared verbatim by the Akita prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_akita_commitments<C, T>(
     one_hot_trace: &C,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&C>,
-    direct_program_commitments: &[C],
+    program_commitments: Option<(&C, &C)>,
     transcript: &mut T,
 ) where
     C: AppendToTranscript,
@@ -780,40 +780,34 @@ pub fn absorb_akita_commitments<C, T>(
     if let Some(commitment) = field_inc_commitment {
         append_length_prefixed(transcript, b"field_inc", commitment);
     }
-    absorb_akita_program_commitments(direct_program_commitments, transcript);
+    if let Some((bytecode, image)) = program_commitments {
+        absorb_akita_program_commitments(bytecode, image, transcript);
+    }
 }
 
 #[cfg(feature = "akita")]
-pub fn absorb_akita_program_commitments<C, T>(commitments: &[C], transcript: &mut T)
+pub fn absorb_akita_program_commitments<C, T>(bytecode: &C, image: &C, transcript: &mut T)
 where
     C: AppendToTranscript,
     T: Transcript,
 {
-    let Some((image, chunks)) = commitments.split_last() else {
-        return;
-    };
-    for (index, commitment) in chunks.iter().enumerate() {
-        transcript.append(&U64Word(num::u64_from_usize(index)));
-        append_length_prefixed(transcript, b"bytecode_chunk_commitment", commitment);
-    }
+    append_length_prefixed(transcript, b"program_bytecode_commitment", bytecode);
     append_length_prefixed(transcript, b"program_image_init_commitment", image);
 }
 
-/// Absorbs the preprocessing-held committed-program commitments (per-chunk
+/// Absorbs the preprocessing-held committed-program commitments (whole
 /// bytecode, then the program image), immediately after the proof-carried
 /// commitments. Shared verbatim by the prover's stage 0.
 pub fn absorb_committed_program_commitments<C, T>(
-    bytecode_chunk_commitments: &[C],
+    bytecode_commitment: &C,
     program_image_commitment: &C,
     transcript: &mut T,
 ) where
     C: AppendToTranscript,
     T: Transcript,
 {
-    for commitment in bytecode_chunk_commitments {
-        append_payload_label(transcript, b"bytecode_chunk_commit", commitment);
-        transcript.append(commitment);
-    }
+    append_payload_label(transcript, b"program_bytecode_commit", bytecode_commitment);
+    transcript.append(bytecode_commitment);
     append_payload_label(
         transcript,
         b"program_image_commitment",
@@ -1096,7 +1090,6 @@ where
             .program
             .committed()
             .map(|committed| {
-                #[cfg(feature = "akita")]
                 if committed.trace_order != trace_polynomial_order {
                     return Err(VerifierError::InvalidCommittedProgram {
                         reason: "committed-program trace order disagrees with the proof".to_owned(),
@@ -1123,7 +1116,6 @@ where
                     })?;
                 Ok(CommittedProgramSchedule {
                     bytecode_len: committed.meta.bytecode_len,
-                    bytecode_chunk_count: committed.bytecode_chunk_count(),
                     program_image_len_words: committed.meta.program_image_len_words,
                     program_image_start_index,
                 })

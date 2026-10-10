@@ -41,7 +41,7 @@ A claim reduction sumcheck takes multiple polynomial evaluation claims, potentia
 
 Akita commits the trace as one native `OneHotTrace` group containing the actual one-hot columns. Each column has `log_T + log_K` variables in `(cycle || address)` order. Stage 8 assembles exactly one evaluation per canonical column at the common point; it adds no slot variables and performs no selector reduction. The [native grouped opening](../optimizations/batched-openings.md#native-grouped-openings-akita) proves the ordered evaluations without combining commitments homomorphically.
 
-Advice and committed-program data are independent dense commitment objects: optional untrusted and trusted advice, one `BytecodeChunk(i)` per committed bytecode chunk, and a `ProgramImageInit` object. Stage 8 reduces the claims for each object separately, then opens all present objects together with `OneHotTrace` in one native Akita proof. Each group retains its own shape and opening point. The canonical order is untrusted advice, trusted advice, bytecode chunks, program image, and finally `OneHotTrace`, omitting absent objects. Group roles, commitments, points, and evaluations are bound to the transcript before the backend proof.
+Advice and committed-program data are independent dense commitment objects: optional untrusted and trusted advice, one whole `ProgramBytecode` object, and a `ProgramImageInit` object. Stage 8 reduces the claims for each object separately, then opens all present objects together with `OneHotTrace` in one native Akita proof. Each group retains its own shape and opening point. The canonical order is untrusted advice, trusted advice, whole bytecode, program image, and finally `OneHotTrace`, omitting absent objects. Group roles, commitments, points, and evaluations are bound to the transcript before the backend proof.
 
 The modular prover implements this in `crates/jolt-prover/src/akita/stage8.rs`, with the verifier counterpart in `crates/jolt-verifier/src/stages/stage8/akita.rs`. `AkitaNativeBatching` in `crates/jolt-akita/src/native_batching.rs` validates the groups and invokes the native backend opening. The Dory matrix embeddings described below apply only to the Dory backend.
 
@@ -56,7 +56,7 @@ Since Dory is an additively homomorphic commitment scheme, the verifier is able 
 
 ### Precommitted polynomials and final opening layout
 
-Most Stage 8 polynomials are **trace-domain** polynomials: their shape is determined by the padded execution trace and the address domain. Some committed polynomials, however, are fixed independently of the trace. Examples include bytecode chunks, the program image, and trusted or untrusted advice. In the implementation these independently committed objects are called **precommitted** polynomials.
+Most Stage 8 polynomials are **trace-domain** polynomials: their shape is determined by the padded execution trace and the address domain. Some committed polynomials, however, are fixed independently of the trace. Examples include whole bytecode in Dory and Akita, the program image, and trusted or untrusted advice. In the implementation these independently committed objects are called **precommitted** polynomials.
 
 The goal of Stage 8 is still the same: every committed polynomial should be opened at one batched Dory proof. The subtlety is that a precommitted polynomial keeps the Dory matrix shape it had when it was committed, while the trace-domain polynomials use Jolt's native trace layout.
 

@@ -143,7 +143,7 @@ fn advice_reduction_kernel<F: JoltField, R>(
         ),
         None => (table, eq_table(r_val)),
     };
-    CycleReductionKernel::new(reduction, value, eq, Vec::new())
+    CycleReductionKernel::new(reduction, value, eq)
 }
 
 fn advice_table<F: JoltField>(

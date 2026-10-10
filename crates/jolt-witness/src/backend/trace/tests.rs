@@ -994,7 +994,7 @@ fn excluded_ids_report_their_classification() {
     };
 
     for id in [
-        JoltCommittedPolynomial::BytecodeChunk(0),
+        JoltCommittedPolynomial::ProgramBytecode,
         JoltCommittedPolynomial::ProgramImageInit,
     ] {
         assert_reason(JoltPolynomialId::Committed(id), COMMITTED_PROGRAM_REASON);

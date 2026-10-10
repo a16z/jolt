@@ -45,13 +45,8 @@ pub enum PointGeometryError {
         reference_row_vars: usize,
         reference_col_vars: usize,
     },
-    #[error(
-        "bytecode chunk count ({chunk_count}) must be a nonzero power of two at most 256 dividing the power-of-two bytecode length ({bytecode_len})"
-    )]
-    InvalidBytecodeChunking {
-        bytecode_len: usize,
-        chunk_count: usize,
-    },
     #[error("evaluation domain size overflow for {num_vars} variables")]
     EvaluationDomainSizeOverflow { num_vars: usize },
+    #[error("bytecode length ({bytecode_len}) must be a nonzero power of two")]
+    InvalidBytecodeLength { bytecode_len: usize },
 }

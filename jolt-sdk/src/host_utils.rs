@@ -159,16 +159,25 @@ pub fn preprocess_shared_program(
 }
 
 #[cfg(feature = "host")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramPreprocessingMode {
+    Full,
+    Committed,
+}
+
+#[cfg(feature = "host")]
 pub fn preprocess_program(
     source: &mut dyn host::JoltProgramSource,
     memory_config: MemoryConfig,
     max_trace_length: usize,
-    bytecode_chunk_count: Option<usize>,
+    mode: ProgramPreprocessingMode,
 ) -> Result<JoltProverPreprocessing, PreprocessingError> {
     let program = program_preprocessing(source, memory_config, max_trace_length)?;
-    match bytecode_chunk_count {
-        Some(chunk_count) => jolt_prover::dory::preprocess_committed(program, chunk_count),
-        None => JoltSharedPreprocessing::new(program).and_then(jolt_prover::dory::from_shared),
+    match mode {
+        ProgramPreprocessingMode::Committed => jolt_prover::dory::preprocess_committed(program),
+        ProgramPreprocessingMode::Full => {
+            JoltSharedPreprocessing::new(program).and_then(jolt_prover::dory::from_shared)
+        }
     }
 }
 

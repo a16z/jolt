@@ -105,7 +105,6 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
         &AkitaScheduleArtifacts::shared_from_default_directory(),
         run.program_preprocessing.clone(),
         &config,
-        2,
     )
     .expect("committed Akita preprocessing");
     prove_prepared(run, config, preprocessing, &[])

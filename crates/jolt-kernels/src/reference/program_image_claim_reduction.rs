@@ -86,5 +86,5 @@ fn program_image_reduction_kernel<F: JoltField>(
             });
         }
     };
-    CycleReductionKernel::new(reduction, value, eq, Vec::new())
+    CycleReductionKernel::new(reduction, value, eq)
 }

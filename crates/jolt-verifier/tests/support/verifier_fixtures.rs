@@ -32,7 +32,7 @@ use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
 // Program digests derive from the serde encoding (`ProgramPreprocessing::digest`);
 // fixtures carrying the legacy digest layout must regenerate.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0005";
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0006";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -268,15 +268,10 @@ pub fn fresh_standard_muldiv_address_major_case() -> VerifierFixtureCase {
 }
 
 #[cfg(not(feature = "zk"))]
-pub fn fresh_standard_committed_muldiv_address_major_case(
-    bytecode_chunk_count: usize,
-) -> VerifierFixtureCase {
+pub fn fresh_standard_committed_muldiv_address_major_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();
     fresh_case_from_accepted_fixture(|| {
-        generate_committed_muldiv_with_order(
-            bytecode_chunk_count,
-            TracePolynomialOrder::AddressMajor,
-        )
+        generate_committed_muldiv_with_order(TracePolynomialOrder::AddressMajor)
     })
 }
 
@@ -629,7 +624,7 @@ fn generate_advice_consumer_with_committed_program(
     let run = prepare_guest(program, &inputs, &untrusted_advice, &trusted_advice);
     let config = derive_config(&run);
     let preprocessing = if committed_program {
-        jolt_prover::dory::preprocess_committed(run.program_preprocessing, 2)
+        jolt_prover::dory::preprocess_committed(run.program_preprocessing)
             .expect("committed preprocessing")
     } else {
         let shared =
@@ -646,24 +641,18 @@ fn generate_advice_consumer_with_committed_program(
 }
 
 fn generate_committed_muldiv() -> GeneratedVerifierFixture {
-    generate_committed_muldiv_with_order(2, TracePolynomialOrder::CycleMajor)
+    generate_committed_muldiv_with_order(TracePolynomialOrder::CycleMajor)
 }
 
-fn generate_committed_muldiv_with_order(
-    bytecode_chunk_count: usize,
-    order: TracePolynomialOrder,
-) -> GeneratedVerifierFixture {
+fn generate_committed_muldiv_with_order(order: TracePolynomialOrder) -> GeneratedVerifierFixture {
     let program = Program::new("muldiv-guest");
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(program, &inputs, &[], &[]);
     let mut config = derive_config(&run);
     config.trace_polynomial_order = order;
-    let preprocessing = jolt_prover::dory::preprocess_committed_with_order(
-        run.program_preprocessing,
-        bytecode_chunk_count,
-        order,
-    )
-    .expect("committed preprocessing");
+    let preprocessing =
+        jolt_prover::dory::preprocess_committed_with_order(run.program_preprocessing, order)
+            .expect("committed preprocessing");
     prove_prepared(run.program, run.trace, config, preprocessing, &[])
 }
 

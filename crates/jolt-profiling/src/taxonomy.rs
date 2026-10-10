@@ -1,5 +1,5 @@
 //! The versioned span taxonomy for the modular prover — **the normative
-//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 3).
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 4).
 //!
 //! One instrumentation layer, two renderings: the same `tracing` span stream
 //! becomes both the Perfetto-viewable chrome trace and the machine-queryable
@@ -77,7 +77,7 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-pub const TAXONOMY_VERSION: u32 = 3;
+pub const TAXONOMY_VERSION: u32 = 4;
 
 /// The whole-run root span emitted by the Dory and Akita provers. Named
 /// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an
@@ -164,7 +164,7 @@ pub fn field_inline_spans(mode: ProverMode) -> &'static [&'static str] {
 pub const INITIAL_RAM_OPENING_SEAM_SPANS: [&str; 1] = ["RamInitialOpeningEvaluation::evaluate"];
 
 /// Kernel-seam spans that fire only with committed-program preprocessing.
-pub const COMMITTED_PROGRAM_SEAM_SPANS: [&str; 1] = ["build_committed_bytecode_chunk_coeffs"];
+pub const COMMITTED_PROGRAM_SEAM_SPANS: [&str; 1] = ["build_committed_bytecode_coeffs"];
 
 /// Witness-plane seams (`jolt-witness`).
 pub const WITNESS_AND_OPENING_SPANS: [&str; 3] = [

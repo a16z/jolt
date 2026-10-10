@@ -190,7 +190,7 @@ impl ProverConfig {
         }
         if let Some(committed) = committed_program {
             total_vars = total_vars
-                .max(committed.bytecode_chunk_vars)
+                .max(committed.bytecode_vars)
                 .max(committed.program_image_vars);
         }
         total_vars
@@ -256,7 +256,7 @@ pub(crate) fn committed_log_k_chunk(log_T: usize) -> u8 {
 /// into the shared commitment grid alongside the advice candidates.
 #[derive(Clone, Copy, Debug)]
 pub struct CommittedProgramCandidates {
-    pub bytecode_chunk_vars: usize,
+    pub bytecode_vars: usize,
     pub program_image_vars: usize,
 }
 
@@ -266,7 +266,7 @@ impl CommittedProgramCandidates {
     pub fn from_schedule(schedule: &jolt_verifier::stages::PrecommittedSchedule) -> Option<Self> {
         match (&schedule.bytecode, &schedule.program_image) {
             (Some(bytecode), Some(image)) => Some(Self {
-                bytecode_chunk_vars: bytecode.chunk_shape().total_vars(),
+                bytecode_vars: bytecode.polynomial_shape().total_vars(),
                 program_image_vars: image.image_shape().total_vars(),
             }),
             _ => None,
