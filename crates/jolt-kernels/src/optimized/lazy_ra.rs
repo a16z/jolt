@@ -51,7 +51,6 @@ const DEFAULT_MAX_WIDTH: usize = 8;
 /// one-hot selector, or `factors` per factored polynomial) over a shared
 /// compact backing store (typed witness rows, packed columns).
 pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
-    /// Number of point-mass columns served.
     fn num_columns(&self) -> usize;
 
     /// The unbound cycle-domain length.
@@ -287,10 +286,6 @@ fn gather<F: JoltField, S: ChunkIndexSource>(
     sum
 }
 
-/// A factored polynomial's gather (its column `tables`, lead column
-/// `column`): per hot branch, the pre-scaled lead entry times the trailing
-/// columns' unscaled entries, the last product accumulated unreduced. Kept
-/// out of line so single-factor gathers inline as small as before.
 #[inline(never)]
 fn gather_product<F: JoltField, S: ChunkIndexSource>(
     tables: &[Vec<F>],
