@@ -22,7 +22,7 @@ export RUST_LOG=info
 # Define the exclude list
 # field-ops is feature-gated (field-inline) and exits non-zero without it;
 # its smoke run lives in the field-inline CI lane instead.
-exclusion_list=("advice-consumer" "collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery" "field-ops")
+exclusion_list=("advice-consumer" "collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery" "field-ops" "field-limbs")
 # JSON file to store results
 output_file="benchmark_results.json"
 

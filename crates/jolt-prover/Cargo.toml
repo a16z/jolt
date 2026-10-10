@@ -143,7 +143,7 @@ sha3.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
 rand_core = { workspace = true, features = ["getrandom"] }
 serde_json = { workspace = true, features = ["std"] }
-tracer.workspace = true
+tracer = { workspace = true, features = ["test-utils"] }
 
 [[bin]]
 name = "jolt-prover"

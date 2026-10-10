@@ -468,9 +468,10 @@ jobs:
         uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: nextest
-      # e2e_matrix selects field_ops and muldiv for the field-inline
-      # profile. Run the full package to retain its specialized parity and
-      # tamper suites alongside matrix acceptance in both Dory modes.
+      # e2e_matrix selects field_ops, field_limbs, and muldiv for the
+      # field-inline profile. Run the full package to retain its specialized
+      # parity, tamper, and limb-conversion suites alongside matrix acceptance
+      # in both Dory modes.
       - name: Run field-inline matrix and specialized suites (clear)
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline
       - name: Run field-inline matrix and specialized suites (zk)
@@ -479,6 +480,10 @@ jobs:
       # examples; the ci-bench sweep excludes this one).
       - name: Run the field-ops example
         run: cargo run --profile ci -p field-ops --features field-inline
+      # Pins the example's static field-inline row budget, including the
+      # SDK limb conversions' modulus binding.
+      - name: Run the field-ops example tests
+        run: cargo nextest run --cargo-profile ci -p field-ops --features field-inline --cargo-quiet
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
@@ -512,7 +517,7 @@ jobs:
         uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: nextest
-      # The same field_ops and muldiv matrix table runs over fp128.
+      # The same field_ops, field_limbs, and muldiv matrix table runs over fp128.
       # The full package also runs Akita field-inline parity and tamper suites.
       - name: Run Akita field-inline matrix and specialized suites
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
@@ -932,6 +937,10 @@ jobs:
       # The Akita chain's two-limb field value encoding on the tracer side.
       - name: Run tracer tests with field-inline,fp128-field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
+      # The guest platform crate the tracer shares with guests, including the
+      # field-inline modulus table and canonicality predicate.
+      - name: Run jolt-platform tests
+        run: cargo nextest run --cargo-profile ci -p jolt-platform --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests

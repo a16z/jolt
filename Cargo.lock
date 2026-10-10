@@ -2566,6 +2566,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "field-limbs-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "field-ops"
 version = "0.1.0"
 dependencies = [
@@ -3375,6 +3382,7 @@ dependencies = [
  "bincode 2.0.1",
  "common",
  "jolt-field",
+ "jolt-platform",
  "jolt-program",
  "jolt-riscv",
  "postcard",

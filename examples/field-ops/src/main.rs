@@ -236,12 +236,22 @@ fn main() {
 mod tests {
     use super::pipeline::{compile_and_trace, field_inline_rows, guest_inputs, PAIRS};
 
+    /// Limb width of the example's Dory field (BN254).
+    const MODULUS_LIMBS: usize = 4;
+    /// `field_to_limbs!`: the advice split and its residual assertion, the
+    /// modulus binding and its assertion, and the restoring accumulations.
+    const READOUT: usize = 3 * MODULUS_LIMBS + 2;
+    /// `field_from_limbs!` of four limbs: the reset, the modulus binding and its
+    /// assertion, and four accumulations.
+    const IMPORT: usize = 1 + MODULUS_LIMBS + 1 + 4;
+
     /// The guest's static field-inline instruction budget: 2 accumulator seeds,
     /// 10 per coordinate pair (2 resets, 2 bridge accumulations, 3 muls, 2 subs,
-    /// 1 add), 5 for the expected value (reset + 4 accumulations), the assert,
-    /// 11 for memory ingress, in-place readout and restoration, 4 for inversion,
-    /// and 5 for the result value, AdviceLimb and AssertZero.
-    const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 10 * PAIRS.len() + 5 + 1 + 11 + 4 + 5;
+    /// 1 add), the expected-value import, the assert, 3 for memory ingress and
+    /// two readouts of it, 4 for inversion, and 3 for the result value and its
+    /// readout.
+    const EXPECTED_FIELD_INLINE_CYCLES: usize =
+        2 + 10 * PAIRS.len() + IMPORT + 1 + 3 + 2 * READOUT + 4 + 3 + READOUT;
 
     /// Commit-A scope: the guest builds and traces field-active — the tracer
     /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or

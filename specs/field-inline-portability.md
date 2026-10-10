@@ -107,12 +107,16 @@ register indices, and integer immediates carry no field-specific value
 encoding, so there is no separate encoding tag or field-instruction table.
 The verifier checks instruction-profile legality and operand shapes on these
 rows. Proof configuration binds the field-inline and commitment modes; the
-commitment mode selects the proof field. Guests that use a field modulus or
-a fixed limb count still need to match that configuration.
+commitment mode selects the proof field. Guests see that field as
+`jolt::field_inline::MODULUS`: jolt-host passes the tracer's execution field
+to field-inline guest builds, and every SDK limb conversion proves in-guest
+that the guest's modulus is the proof field's (protocol spec, "Guest Field
+Selection").
 
 Guest ingress and readout still use u64 limbs because the integer register
 file is RV64; these instruction operands are independent of the commitment
-representation:
+representation. `field_from_limbs!` and `field_to_limbs!` emit these sequences
+with the modulus binding added:
 
 - A full fp128 load uses zero initialization followed by two
   `FIELD_LOAD_ACCUMULATE_FROM_REGISTER` instructions, high limb first. Each
@@ -136,8 +140,9 @@ representation:
   the field-increment role in the batch.
 
 The shared guest acceptance matrix runs field-inline in clear Dory, ZK Dory,
-and Akita modes. Tracer tests check canonical-value roundtrips and zero
-padding under both proof-field configurations.
+and Akita modes, including the `field-limbs` conversion conformance guest.
+Tracer tests check canonical-value roundtrips, zero padding, and the
+guest-visible modulus table under both proof-field configurations.
 
 The field-inline schedule coverage test resolves all 266 production K=16 keys
 (widths 51–64, column arities 16–34) under Single, W2R2, W4R2, and W8R2,
