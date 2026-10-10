@@ -1,4 +1,4 @@
-pub(super) use reduce64 as reduce_accumulator64;
+pub(super) use super::scalar::{reduce64, reduce64 as reduce_accumulator64};
 
 pub(super) type Unreduced64 = u128;
 pub(super) type Unreduced128 = [u128; 2];
@@ -89,16 +89,6 @@ pub(super) fn product192([a0, a1, a2]: [u64; 3], [b0, b1, b2]: [u64; 3]) -> Unre
     let c3 = product64(a1, b2) ^ product64(a2, b1);
     let c4 = product64(a2, b2);
     [c0 ^ c3, c1 ^ c3 ^ c4, c2 ^ c4]
-}
-
-#[inline]
-pub(super) fn reduce64(product: Unreduced64) -> u64 {
-    let low = product as u64;
-    let high = product >> 64;
-    let first = high ^ (high << 1) ^ (high << 3) ^ (high << 4);
-    let overflow = (first >> 64) as u64;
-    let second = overflow ^ (overflow << 1) ^ (overflow << 3) ^ (overflow << 4);
-    low ^ first as u64 ^ second
 }
 
 #[inline]
