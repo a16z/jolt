@@ -92,5 +92,7 @@ pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly
 pub use omitted_constant::OmittedConstantPoly;
 pub use one_hot::{OneHotIndexOrder, OneHotPolynomial};
 pub use point::{Endianness, Point, HIGH_TO_LOW, LOW_TO_HIGH};
-pub use split_eq::{GruenSplitEqPolynomial, TensorEqTable};
+pub use split_eq::{
+    gruen_mul_linear, gruen_recover_endpoint, GruenSplitEqPolynomial, TensorEqTable,
+};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};
