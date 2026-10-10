@@ -19,9 +19,9 @@ pub enum TraceError {
 /// Fetch, instruction kind, alignment, device cells, and text stores are checked
 /// in that order before the failing instruction executes; the text span is
 /// bounded before emulator setup.
-/// After setup and before any row, both decode modes check the last decoded
-/// image byte at each address against initial RAM, returning `ImageMismatch`
-/// at the lowest differing address.
+/// After setup and before any row, both decode modes check initial RAM against
+/// the decoded image everywhere, returning `ImageMismatch` at the lowest
+/// differing address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SourceTraceError {
     #[error("unsupported source instruction {kind:?} at {pc:#x}")]
@@ -39,8 +39,11 @@ pub enum SourceTraceError {
     DeviceRegisterAccess { pc: u64, address: u64 },
     #[error("source program text span {span} bytes exceeds the slot table limit")]
     ProgramTextTooLarge { span: u64 },
-    /// The last decoded image byte at this address differs from the emulator's
-    /// initial RAM byte; an address outside that RAM is compared with zero.
+    /// The lowest address where the emulator's initial RAM differs from the
+    /// decoded image. The last `memory_init` entry wins; absent image bytes and
+    /// RAM outside its allocation count as zero. The source backend checks this
+    /// on the emulator's memory at trace start, before any row, in either mode.
+    /// This runtime check is not a constraint on a proof.
     #[error("source initial RAM differs from the decoded image at {address:#x}")]
     ImageMismatch { address: u64 },
 }
