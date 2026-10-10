@@ -1,17 +1,18 @@
-use super::{arithmetic, reduction, F128, F192, F64};
+use super::arithmetic::{Unreduced128, Unreduced192, Unreduced64};
+use super::{arithmetic, F128, F192, F64};
 use crate::{signed::S256, Accumulator, ExtField};
 
 /// XOR of unreduced degree-at-most-126 product polynomials.
 #[derive(Default, Clone, Copy)]
-pub struct F64Accumulator(u128);
+pub struct F64Accumulator(Unreduced64);
 
-/// XOR of unreduced products, with low and high 128-bit words.
+/// XOR of unreduced degree-at-most-254 product polynomials.
 #[derive(Default, Clone, Copy)]
-pub struct F128Accumulator([u128; 2]);
+pub struct F128Accumulator(Unreduced128);
 
 /// Unreduced base-field coefficients after folding by `y^3 + y + 1`.
 #[derive(Default, Clone, Copy)]
-pub struct F192Accumulator([u128; 3]);
+pub struct F192Accumulator(Unreduced192);
 
 // Integer ring maps in characteristic two retain only parity, including signs.
 macro_rules! scalar_methods {
@@ -58,7 +59,7 @@ impl Accumulator for F64Accumulator {
 
     #[inline]
     fn add(&mut self, value: F64) {
-        self.0 ^= u128::from(value.to_raw());
+        self.0 ^= arithmetic::embed64(value.to_raw());
     }
 
     #[inline]
@@ -68,7 +69,7 @@ impl Accumulator for F64Accumulator {
 
     #[inline]
     fn reduce(self) -> F64 {
-        F64::from_raw(reduction::reduce64(self.0))
+        F64::from_raw(arithmetic::reduce_accumulator64(self.0))
     }
 
     #[inline]
@@ -84,7 +85,7 @@ impl Accumulator for F128Accumulator {
 
     #[inline]
     fn add(&mut self, value: F128) {
-        self.0[0] ^= value.to_raw();
+        self.merge(Self(arithmetic::embed128(value.to_raw())));
     }
 
     #[inline]
@@ -96,13 +97,12 @@ impl Accumulator for F128Accumulator {
 
     #[inline]
     fn reduce(self) -> F128 {
-        let [low, high] = self.0;
-        F128::from_raw(reduction::reduce128(low, high))
+        F128::from_raw(arithmetic::reduce128(self.0))
     }
 
     #[inline]
     fn fmadd(&mut self, a: F128, b: F128) {
-        self.merge(Self(arithmetic::product128(a.to_raw(), b.to_raw())));
+        self.0 = arithmetic::accumulate128(self.0, a.to_raw(), b.to_raw());
     }
 
     scalar_methods!();
@@ -113,9 +113,9 @@ impl Accumulator for F192Accumulator {
 
     #[inline]
     fn add(&mut self, value: F192) {
-        for (i, word) in self.0.iter_mut().enumerate() {
-            *word ^= u128::from(value.base_coefficient(i).to_raw());
-        }
+        self.merge(Self(arithmetic::embed192(std::array::from_fn(|i| {
+            value.base_coefficient(i).to_raw()
+        }))));
     }
 
     #[inline]
@@ -127,7 +127,8 @@ impl Accumulator for F192Accumulator {
 
     #[inline]
     fn reduce(self) -> F192 {
-        F192::from_base_fn(|i| F64::from_raw(reduction::reduce64(self.0[i])))
+        let coefficients = arithmetic::reduce192(self.0);
+        F192::from_base_fn(|i| F64::from_raw(coefficients[i]))
     }
 
     #[inline]
