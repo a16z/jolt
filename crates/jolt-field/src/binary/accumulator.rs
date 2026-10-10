@@ -85,6 +85,8 @@ impl F128Accumulator {
     /// coefficients are the bits of `word`. Unlike `Accumulator::fmadd_u64`,
     /// this uses every bit, rather than the integer scalar's parity.
     /// Subsequent operations and reduction agree with `fmadd(a, F128::from_raw(word as u128))`.
+    /// On carry-less backends, this uses two carry-less multiplications,
+    /// versus three on x86-64 or four on aarch64 for `fmadd`.
     #[inline]
     pub fn fmadd_word(&mut self, a: F128, word: u64) {
         self.0 = arithmetic::accumulate128_word(self.0, a.to_raw(), word);
