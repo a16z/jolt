@@ -709,6 +709,24 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
+            /// Executes source semantics without expansion or row emission.
+            pub(crate) fn execute_direct(&self, cpu: &mut Cpu) {
+                match self {
+                    Instruction::NoOp | Instruction::UNIMPL => panic!("Unsupported instruction: {:?}", self),
+                    $(
+                        $(#[$meta])*
+                        Instruction::$instr(instr) => {
+                            let mut access = <$instr as RISCVInstruction>::RAMAccess::default();
+                            RISCVInstruction::execute(instr, cpu, &mut access);
+                        },
+                    )*
+                    Instruction::INLINE(instr) => {
+                        let mut access = <INLINE as RISCVInstruction>::RAMAccess::default();
+                        RISCVInstruction::execute(instr, cpu, &mut access);
+                    },
+                }
+            }
+
             /// Applies this instruction's state effects without emitting rows.
             ///
             /// Mirror of `trace(cpu, None)`: execute mode must leave the CPU

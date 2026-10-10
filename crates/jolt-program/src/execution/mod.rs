@@ -17,10 +17,11 @@ pub use crate::field_inline::{
     FieldRegisterWrite,
 };
 pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, TraceSource};
-pub use error::TraceError;
+pub use error::{SourceTraceError, TraceError};
 pub use trace::{
     JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
-    RegisterState, RegisterWrite, TraceInputs, TraceOutput, TraceRow, TraceRowError,
+    RegisterState, RegisterWrite, SourceTraceRow, TraceInputs, TraceOutput, TraceRow,
+    TraceRowError,
 };
 
 #[cfg(feature = "image")]

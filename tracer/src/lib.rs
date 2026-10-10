@@ -22,6 +22,7 @@ pub mod execution_backend;
 pub mod instruction;
 mod jolt_cycle_adapter;
 pub mod parallel;
+mod source_trace;
 pub mod trace_row;
 pub mod utils;
 
@@ -33,6 +34,7 @@ pub use instruction::inline::{
     TracerInlineExpansionProvider,
 };
 pub use jolt_riscv::InlineExtension;
+pub use source_trace::SourceTracerBackend;
 pub use trace_row::{build_trace_rows, cycle_to_trace_row, CycleConversionError};
 
 use crate::emulator::{

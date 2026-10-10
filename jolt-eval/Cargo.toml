@@ -22,7 +22,7 @@ jolt-transcript = { workspace = true, features = [
 ] }
 spongefish = { workspace = true }
 common = { workspace = true, features = ["std"] }
-tracer = { workspace = true }
+tracer = { workspace = true, features = ["test-utils"] }
 
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
@@ -95,6 +95,10 @@ harness = false
 
 [[bench]]
 name = "prover_time_sha2_chain"
+harness = false
+
+[[bench]]
+name = "source_trace_gen"
 harness = false
 
 [[bench]]

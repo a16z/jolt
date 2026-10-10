@@ -6,6 +6,9 @@ use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 use super::{ExecutionBackend, TraceError, TraceSource};
 
 mod row;
+mod source_row;
+
+pub use source_row::SourceTraceRow;
 
 pub use row::{
     RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceRow,
