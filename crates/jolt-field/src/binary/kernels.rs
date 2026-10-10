@@ -29,7 +29,7 @@ pub(super) fn reduce64(product: Unreduced64) -> u64 {
 #[inline]
 pub(super) fn reduce_accumulator64(product: Unreduced64) -> u64 {
     if SCALAR_ACCUMULATOR64 {
-        super::portable::reduce_accumulator64(Word::from_unreduced64(product).to_u128())
+        super::scalar::reduce64(Word::from_unreduced64(product).to_u128())
     } else {
         reduce64(product)
     }
