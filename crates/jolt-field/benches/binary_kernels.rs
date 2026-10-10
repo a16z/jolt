@@ -1,18 +1,32 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use jolt_field::{
-    Accumulator, ExtField, Field, NaiveAccumulator, Ring, WithAccumulator, F128, F192, F64,
+    Accumulator, ExtField, Field, NaiveAccumulator, WithAccumulator, F128, F192, F64,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::hint::black_box;
 
-fn bench_field<F: Ring>(c: &mut Criterion, name: &str, a: F, b: F) {
+fn bench_field<F: Field>(c: &mut Criterion, name: &str, a: F, b: F) {
     let mut group = c.benchmark_group(name);
     let _ = group.bench_function("mul", |bencher| {
         bencher.iter(|| black_box(black_box(a) * black_box(b)));
     });
     let _ = group.bench_function("square", |bencher| {
         bencher.iter(|| black_box(black_box(a).square()));
+    });
+    let mut rng = ChaCha20Rng::seed_from_u64(0x6d75_6c5f_736c_6963);
+    let pairs: Vec<_> = (0..1024)
+        .map(|_| (F::random(&mut rng), F::random(&mut rng)))
+        .collect();
+    let mut output = vec![F::zero(); pairs.len()];
+    let _ = group.throughput(Throughput::Elements(1024));
+    let _ = group.bench_function("mul_slice", |bencher| {
+        bencher.iter(|| {
+            for (dest, &(a, b)) in output.iter_mut().zip(black_box(&pairs)) {
+                *dest = a * b;
+            }
+            let _ = black_box(&output);
+        });
     });
     group.finish();
 }
