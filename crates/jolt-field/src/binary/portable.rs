@@ -134,3 +134,27 @@ pub(super) fn accumulate128(acc: Unreduced128, a: u128, b: u128) -> Unreduced128
     let product = product128(a, b);
     std::array::from_fn(|i| acc[i] ^ product[i])
 }
+
+#[inline]
+pub(super) fn multiply128_word(a: u128, word: u64) -> u128 {
+    reduce128(accumulate128_word([0; 2], a, word))
+}
+
+#[inline]
+pub(super) fn accumulate128_word(
+    mut acc: Unreduced128,
+    mut a: u128,
+    mut word: u64,
+) -> Unreduced128 {
+    let mut high = 0;
+    for _ in 0..64 {
+        if word & 1 != 0 {
+            acc[0] ^= a;
+            acc[1] ^= high;
+        }
+        high = (high << 1) | (a >> 127);
+        a <<= 1;
+        word >>= 1;
+    }
+    acc
+}

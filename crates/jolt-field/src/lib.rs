@@ -46,6 +46,9 @@
 //!   matching Akita's binary-field commitment (LaBinius) coordinates, with
 //!   compile-time carry-less multiply kernels and a portable fallback.
 //!
+//! `F128::mul_x`, `F128::mul_word`, and `F128Accumulator::fmadd_word` multiply
+//! polynomial coefficients, distinct from integer scalar maps that retain parity.
+//!
 //! # Feature flags
 //!
 //! - `bn254` (default) — the arkworks-backed BN254 backend.
@@ -120,7 +123,7 @@ pub use algebra::{
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "binary")]
-pub use binary::{F128, F192, F64, F8};
+pub use binary::{F128Accumulator, F128, F192, F64, F8};
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};

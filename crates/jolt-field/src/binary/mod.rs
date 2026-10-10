@@ -58,6 +58,7 @@ use kernels as arithmetic;
 )))]
 use portable as arithmetic;
 
+pub use accumulator::F128Accumulator;
 pub use f128::F128;
 pub use f192::F192;
 pub use f64::F64;

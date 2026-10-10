@@ -80,6 +80,17 @@ impl Accumulator for F64Accumulator {
     scalar_methods!();
 }
 
+impl F128Accumulator {
+    /// Adds the unreduced product with the degree-below-64 polynomial whose
+    /// coefficients are the bits of `word`. Unlike `Accumulator::fmadd_u64`,
+    /// this uses every bit, rather than the integer scalar's parity.
+    /// Subsequent operations and reduction agree with `fmadd(a, F128::from_raw(word as u128))`.
+    #[inline]
+    pub fn fmadd_word(&mut self, a: F128, word: u64) {
+        self.0 = arithmetic::accumulate128_word(self.0, a.to_raw(), word);
+    }
+}
+
 impl Accumulator for F128Accumulator {
     type Element = F128;
 
