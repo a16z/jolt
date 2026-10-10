@@ -9,7 +9,7 @@
 
 ## Summary
 
-The tracer emits one row per Jolt instruction, so a source instruction that expands to a virtual sequence produces several rows and none describes the instruction itself. A consumer that proves, profiles or checks one row per executed RISC-V instruction, with no virtual-sequence expansion, must regroup rows and discard virtual-register traffic. It also cannot make decode reject what it does not handle: the smallest exported profile is `RV64IM_JOLT`, `tracer::decode` hard-codes `RV64IMAC_JOLT`, and no code consults `SourceExtension::Rv64C`. This spec covers one pull request in three parts. **Profile**: an `RV64I` profile that decode enforces, compressed encodings included. **Seam**: the execution seam carries any row type. **Backend**: `SourceTraceRow` and `SourceTracerBackend`, one flat row per executed instruction of an RV64I program. The profile and the seam are on the branch and are described as built; the backend is specified here.
+The tracer emits one row per Jolt instruction, so a source instruction that expands to a virtual sequence produces several rows and none describes the instruction itself. A consumer that works on the source ISA directly, such as a profiler or a differential checker that wants one row per executed RISC-V instruction, must regroup rows and discard virtual-register traffic. It also cannot make decode reject what it does not handle: the smallest exported profile is `RV64IM_JOLT`, `tracer::decode` hard-codes `RV64IMAC_JOLT`, and no code consults `SourceExtension::Rv64C`. This spec covers one pull request in three parts. **Profile**: an `RV64I` profile that decode enforces, compressed encodings included. **Seam**: the execution seam carries any row type. **Backend**: `SourceTraceRow` and `SourceTracerBackend`, one flat row per executed instruction of an RV64I program.
 
 ## Intent
 
@@ -155,8 +155,6 @@ No `jolt-eval` invariant is added. B5 and B13 are checked by test code inside `t
 
 ### Acceptance Criteria
 
-Tests for the profile and seam criteria are on the branch.
-
 - [ ] Profile: for every `kind` in `SourceInstructionKind::ALL`, `RV64I.supports_source(kind)` equals membership in a literal list of the 52 base instructions, or `source_extension(kind).is_none()`; `RV64I.fingerprint()` differs from that of every other exported profile.
 - [ ] Profile: one hand-encoded word per base instruction decodes under `RV64I` to its kind; `mul`, `amoadd.w`, `csrrw`, `mret` and an inline-opcode word each return `IllegalSourceInstruction` with the matching kind.
 - [ ] Profile: `c.addi x1, 1` (`0x0085`) returns `IllegalCompressedInstruction` under `RV64I` and `RV64IM_JOLT` and decodes to `ADDI` under `RV64IMAC_JOLT`, through `decode_instruction` and `decode_elf`; a 32-bit `nop` at `0x8000_0002` returns `MalformedImage` under `RV64I` and decodes under `RV64IMAC_JOLT`.
@@ -202,7 +200,7 @@ Every existing test passes unmodified, except that test-local `RV64I_ONLY` profi
 - [ ] A new `jolt-eval` objective `source_trace_gen` (via `/new-objective`; `jolt-eval` enables `tracer/test-utils`) runs three hand-assembled programs of about 2^22 executed instructions each: an ALU and branch loop, a mix of loads and stores of every width over a heap buffer, and a call and return loop that pushes and pops a stack frame. Criterion ids per program: `source` (`SourceTracerBackend`, capacity reserved), `reference` (`raw_trace_cycles` on the same ELF, `TRACER_PARALLEL` unset) and `scan` (one pass over `rows()` that wrapping-adds the ten numeric accessors of every row into a `u64` passed to `black_box`). Every id sets `Throughput::Elements` to the source row count, so `reference` is normalised per executed source instruction and not per row it emits. Figures are Criterion medians of 10 flat samples after warm-up, release profile, one thread, on an Apple M4 Max, recorded in the PR description. Gates: `source` is not slower than `reference` on any program, and `scan` costs at most 10 ns per row (8 GB/s).
 - [ ] The existing path is cost-neutral: seam dispatch stays static, the `Mmu` switch adds one predictable branch to four helpers, and the `reference` ids of `trace_gen_fibonacci` and `trace_gen_sha2_chain` stay within run-to-run noise on the same machine.
 
-The decode gate is off the proving path: decode runs once per program and gains one slice search and one remainder per instruction. A consumer reads `&[SourceTraceRow]` from `TraceSource::rows()`, or the `Arc` from `shared_rows()`, and splits it into parallel chunks without cloning. Each row carries its instruction index, its `next_pc`, and the old and new values of `rd` and of the RAM doubleword, so a chunk needs neither a replay of memory nor, beyond the previous row's `next_pc`, its neighbour.
+The decode gate is off every hot path: decode runs once per program and gains one slice search and one remainder per instruction. A consumer reads `&[SourceTraceRow]` from `TraceSource::rows()`, or the `Arc` from `shared_rows()`, and splits it into parallel chunks without cloning. Each row carries its instruction index, its `next_pc`, and the old and new values of `rd` and of the RAM doubleword, so a chunk needs neither a replay of memory nor, beyond the previous row's `next_pc`, its neighbour.
 
 ## Design
 
