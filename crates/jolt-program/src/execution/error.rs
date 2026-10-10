@@ -10,4 +10,6 @@ pub enum TraceError {
     Backend(&'static str),
     #[error(transparent)]
     InvalidRow(#[from] TraceRowError),
+    #[error("RAM bounds must be both absent or nonzero and ordered")]
+    InvalidRamBounds,
 }

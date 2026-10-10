@@ -244,8 +244,8 @@ mod matrix {
 
         fn prove_case(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let mut config = ProverConfig::derive_compact::<Fr>(
-                prepared.trace.trace.as_slice(),
+            let mut config = ProverConfig::derive_from_dimensions::<Fr>(
+                prepared.trace.dimensions,
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
                 prepared.preprocessing.ram.bytecode_words.len(),
@@ -276,12 +276,11 @@ mod matrix {
                 .include_trusted_advice(trusted.is_some()),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-                &JoltBackend::optimized(),
+            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
                 trusted.as_ref(),
-                &witness,
                 &public_io,
             )
             .expect("Dory proof");
@@ -299,8 +298,9 @@ mod matrix {
     mod mode {
         use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_program::execution::OwnedTrace;
+        use jolt_prover::akita;
         use jolt_prover::akita::preprocessing::{self, AkitaTranscript, AkitaVc};
-        use jolt_prover::akita::{self, JoltAkitaBackend};
+        use jolt_prover::JoltBackend;
         use jolt_prover::ProverConfig;
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
@@ -308,8 +308,8 @@ mod matrix {
 
         pub fn prove_and_verify(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let mut config = ProverConfig::derive_compact::<AkitaField>(
-                prepared.trace.trace.as_slice(),
+            let mut config = ProverConfig::derive_from_dimensions::<AkitaField>(
+                prepared.trace.dimensions,
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
                 prepared.preprocessing.ram.bytecode_words.len(),
@@ -346,12 +346,11 @@ mod matrix {
                 .include_trusted_advice(trusted_advice),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-                &JoltAkitaBackend::optimized(),
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
                 trusted.as_ref(),
-                &witness,
                 &public_io,
             )
             .expect("Akita proof");
@@ -367,7 +366,7 @@ mod matrix {
     #[cfg(feature = "field-inline")]
     mod mode {
         #[cfg(feature = "akita")]
-        use jolt_prover::akita::JoltAkitaBackend;
+        use jolt_prover::JoltBackend;
         #[cfg(not(feature = "akita"))]
         use jolt_prover::JoltBackend;
 
@@ -398,7 +397,7 @@ mod matrix {
             }
             #[cfg(feature = "akita")]
             {
-                let (output, ()) = akita::prove(case, JoltAkitaBackend::optimized(), |_, _, _| ());
+                let (output, ()) = akita::prove(case, JoltBackend::optimized(), |_, _, _| ());
                 akita::verify_full(
                     &output.verifier_preprocessing,
                     &output.public_io,

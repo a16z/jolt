@@ -64,7 +64,7 @@ Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold.
 The checked-in schedule catalogs match this revision.
 
-`ProverConfig::derive` selects the single-chunk Akita profile. To use
+`ProverConfig::derive_from_dimensions` selects the single-chunk Akita profile. To use
 two, four, or eight chunks, set `config.akita_chunk_profile` before Akita
 preprocessing and use that config for proving. Proving rejects a profile that
 differs from the prepared setup. The selected profile is carried
@@ -84,7 +84,8 @@ The main implementation paths are:
 - `crates/jolt-claims/src/protocols/jolt/lattice/`: canonical layouts and Akita-specific sumcheck relations.
 - `crates/jolt-openings/src/schemes.rs`: native group claims and metadata checks.
 - `crates/jolt-openings/src/prefix.rs`: zero-prefix embeddings for auxiliary objects.
-- `crates/jolt-prover/src/akita/`: witness assembly, commitments, and the final grouped opening.
+- `crates/jolt-kernels/src/reference/akita/`: native trace assembly and commitment kernels.
+- `crates/jolt-prover/src/akita/`: preprocessing, advice objects, and final grouped opening orchestration.
 - `crates/jolt-verifier/src/stages/stage8/akita.rs`: verifier assembly of the final opening claims.
 
 The modular prover's end-to-end suite covers arithmetic execution, both one-hot chunk sizes, advice, committed programs, and rejection of modified claims. Run it with:

@@ -3,7 +3,6 @@
 //! into the Akita-envelope [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{
@@ -12,12 +11,10 @@ use jolt_openings::{
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
-use jolt_witness::JoltWitnessPlane;
 
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
 use super::witness::AdviceObject;
-use super::JoltAkitaBackend;
 use crate::boundary::finish_stage;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -28,79 +25,70 @@ use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
+use jolt_kernels::{JoltBackend, KernelContext};
 
 /// See [`super::prove`].
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
-pub fn prove<F, PCS, VC, T, W>(
-    backend: &JoltAkitaBackend<F, PCS>,
+pub fn prove<F, PCS, VC, T>(
+    mut backend: KernelContext<'_, F, JoltBackend<F, PCS>>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
-    witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
     F: JoltField + CanonicalBytes + AppendToTranscript,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup + TraceOneHotCommitment,
+    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
+    PCS::VerifierSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F>,
 {
     // The Akita path is transparent-only (`akita` and `zk` are mutually
     // exclusive), so the mode context carries nothing; the shared stage
     // recipes still thread it to mint their clear recorders.
     let mode = ProofMode::<VC>::new(None)?;
     let mut session = backend.begin_proof();
-    let stage0 = prove_stage0::<F, PCS, VC, T, W>(
+    let stage0 = prove_stage0::<F, PCS, VC, T>(
+        &backend,
+        &mut session,
         preprocessing,
         config,
         trusted_advice,
-        witness,
         public_io,
     )?;
-    #[cfg(feature = "field-inline")]
-    session.park(stage0.field_inc.column.clone());
     let log_t = config.trace_length.ilog2() as usize;
     finish_stage("stage0", log_t, &session, &());
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
 
-    let stage1 = prove_stage1::<F, PCS, VC, T>(
-        &backend.base,
-        &mut session,
-        &mode,
-        log_t,
-        witness,
-        &mut transcript,
-    )?;
+    let stage1 =
+        prove_stage1::<F, PCS, VC, T>(&backend, &mut session, &mode, log_t, &mut transcript)?;
     finish_stage("stage1", log_t, &session, &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
-        &backend.base,
+        &backend,
         &mut session,
         &mode,
         config,
         public_io,
         &stage1.clear_output,
-        witness,
         &mut transcript,
     )?;
     finish_stage("stage2", log_t, &session, &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
-        &backend.base,
+        &backend,
         &mut session,
         &mode,
         config,
         &stage1.clear_output,
         &stage2.clear_output,
-        witness,
         &mut transcript,
     )?;
     finish_stage("stage3", log_t, &session, &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
-        &backend.base,
+        &backend,
         &mut session,
         &mode,
         &checked,
@@ -108,12 +96,11 @@ where
         preprocessing,
         &stage2.clear_output,
         &stage3.clear_output,
-        witness,
         &mut transcript,
     )?;
     finish_stage("stage4", log_t, &session, &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
-        &backend.base,
+        &backend,
         &mut session,
         &mode,
         &checked,
@@ -121,12 +108,11 @@ where
         preprocessing,
         &stage2.clear_output,
         &stage4.clear_output,
-        witness,
         &mut transcript,
     )?;
     finish_stage("stage5", log_t, &session, &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
-        &backend.base,
+        &backend,
         &mut session,
         &mode,
         &checked,
@@ -137,12 +123,11 @@ where
         &stage3.clear_output,
         &stage4.clear_output,
         &stage5.clear_output,
-        witness,
         &mut transcript,
     )?;
     finish_stage("stage6a", log_t, &session, &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
-        &backend.base,
+        &backend,
         &mut session,
         &mode,
         &checked,
@@ -154,12 +139,11 @@ where
         &stage4.clear_output,
         &stage5.clear_output,
         &stage6a.clear_output,
-        witness,
         &mut transcript,
     )?;
     finish_stage("stage6b", log_t, &session, &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
-        &backend.base,
+        &backend,
         &mut session,
         &mode,
         &checked,
@@ -167,7 +151,6 @@ where
         preprocessing,
         &stage4.clear_output,
         &stage6b.clear_output,
-        witness,
         &mut transcript,
     )?;
     finish_stage("stage7", log_t, &session, &stage7.clear_output);

@@ -36,8 +36,8 @@ fn not_served(id: JoltPolynomialId, reason: &'static str) -> WitnessError {
     }
 }
 
-impl<T: TraceSource> TraceBackend<T> {
-    pub(crate) fn shape_of(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
+impl JoltVmWitnessMetadata<'_> {
+    pub fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
         use JoltCommittedPolynomial as C;
         use JoltVirtualPolynomial as V;
         use PolynomialEncoding::{Compact, Dense, OneHot};
@@ -159,7 +159,7 @@ impl<T: TraceSource> TraceBackend<T> {
 
 impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
     fn shape(&self, id: JoltPolynomialId) -> Result<Shape, WitnessError> {
-        self.shape_of(id)
+        self.metadata().shape(id)
     }
 
     #[tracing::instrument(skip_all, name = "TraceBackend::oracle_table", fields(id = ?id))]
@@ -168,24 +168,24 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
         use JoltVirtualPolynomial as V;
         // Validates presence and index ranges (and rejects excluded ids)
         // before materialization, exactly like the arms below.
-        let _ = self.shape_of(id)?;
+        let _ = self.metadata().shape(id)?;
         match id {
             JoltPolynomialId::Committed(committed) => match committed {
                 C::RdInc => self.materialize_cycle::<F, RdInc>(),
                 C::RamInc => self.materialize_cycle::<F, RamInc>(),
                 C::InstructionRa(index) => self.materialize_one_hot::<F, InstructionRaChunk>(
                     index,
-                    self.ra_layout()?.instruction(),
+                    self.metadata().ra_layout()?.instruction(),
                     self.config.one_hot.committed_chunk_bits(),
                 ),
                 C::BytecodeRa(index) => self.materialize_one_hot::<F, BytecodeRaChunk>(
                     index,
-                    self.ra_layout()?.bytecode(),
+                    self.metadata().ra_layout()?.bytecode(),
                     self.config.one_hot.committed_chunk_bits(),
                 ),
                 C::RamRa(index) => self.materialize_one_hot::<F, RamRaChunk>(
                     index,
-                    self.ra_layout()?.ram(),
+                    self.metadata().ra_layout()?.ram(),
                     self.config.one_hot.committed_chunk_bits(),
                 ),
                 C::TrustedAdvice => self.materialize_trusted_advice(),
@@ -213,7 +213,7 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                 V::RamValFinal => self.materialize_ram_val_final(),
                 V::InstructionRa(index) => self.materialize_one_hot::<F, InstructionRaChunk>(
                     index,
-                    self.instruction_virtual_ra_count()?,
+                    self.metadata().instruction_virtual_ra_count()?,
                     self.config.one_hot.lookup_virtual_chunk_bits(),
                 ),
                 V::PC => self.materialize_cycle::<F, Pc>(),

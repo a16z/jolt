@@ -935,6 +935,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
     fn one_hot_k(&self) -> usize {
         self.one_hot_k()
     }
+
+    fn one_hot_num_chunks(&self) -> usize {
+        self.akita_chunk_profile().num_chunks()
+    }
 }
 
 impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
@@ -956,6 +960,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
 
     fn one_hot_k(&self) -> usize {
         self.one_hot_k()
+    }
+
+    fn one_hot_num_chunks(&self) -> usize {
+        self.verifier.akita_chunk_profile().num_chunks()
     }
 }
 

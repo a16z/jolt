@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use common::jolt_device::JoltDevice;
 use jolt_program::execution::{
-    ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite,
-    TraceError, TraceInputs, TraceOutput, TraceRow,
+    ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
+    MemoryImage, OwnedTrace, RamAccess, RamAddressBounds, RamRead, RamWrite, RegisterRead,
+    RegisterState, RegisterWrite, TraceError, TraceInputs, TraceOutput, TraceRow,
 };
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
+use jolt_riscv::{CircuitFlags, JoltInstructionKind, JoltInstructionRow};
 
 use compile::CompiledProgram;
 use memory::MemoryPlane;
@@ -271,8 +271,10 @@ impl ExecutionBackend for X86TracerBackend {
                 "record pass emitted a different row count than the fast pass",
             ));
         }
-        let rows = Observation::reassemble_rows(&program.expanded_bytecode, &record.observations)?;
-        Ok(TraceOutput::new(
+        let (rows, dimensions) =
+            Observation::reassemble_rows(&program.expanded_bytecode, &record.observations)?;
+        Ok(TraceOutput::with_dimensions(
+            dimensions,
             OwnedTrace::new(rows),
             record.device,
             Some(record.final_memory),
@@ -292,12 +294,19 @@ impl Observation {
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
         observations: &[Self],
-    ) -> Result<Vec<TraceRow>, TraceError> {
+    ) -> Result<(Vec<TraceRow>, ExecutionDimensions), TraceError> {
+        let mut bounds = RamAddressBounds::default();
         let mut rows = Vec::with_capacity(observations.len());
         for observation in observations {
             let row = bytecode
                 .get(observation.row_index as usize)
                 .ok_or(TraceError::Backend("observation row index out of range"))?;
+            let access = observation.ram_access(row.instruction_kind);
+            bounds.observe(match access {
+                RamAccess::Read(read) => read.address,
+                RamAccess::Write(write) => write.address,
+                RamAccess::NoOp => 0,
+            });
             rows.push(TraceRow::new(
                 *row,
                 RegisterState {
@@ -314,10 +323,17 @@ impl Observation {
                         },
                     }),
                 },
-                observation.ram_access(row.instruction_kind),
+                access,
             )?);
         }
-        Ok(rows)
+        let dimensions = ExecutionDimensions {
+            trace_length: rows.len(),
+            ends_in_jump: rows
+                .last()
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+            ram_bounds: bounds,
+        };
+        Ok((rows, dimensions))
     }
 
     fn register_read(register: Option<u8>, value: u64) -> Option<RegisterRead> {
@@ -623,7 +639,7 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             ));
         }
         observations.truncate(needed);
-        let rows = Observation::reassemble_rows(
+        let (rows, _) = Observation::reassemble_rows(
             &checkpoint.bytecode,
             &observations[checkpoint.skip_rows..],
         )?;

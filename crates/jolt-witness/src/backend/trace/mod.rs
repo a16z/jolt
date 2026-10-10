@@ -23,7 +23,9 @@ use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
 mod advice;
 mod cycle;
+mod metadata;
 mod oracle;
+pub use metadata::JoltVmWitnessMetadata;
 mod ram;
 mod registers;
 
@@ -132,6 +134,7 @@ impl<T: TraceSource> TraceBackend<T> {
         inputs: JoltVmWitnessInputs<Arc<Vec<JoltTraceRow>>>,
     ) -> Self {
         let TraceOutput {
+            dimensions,
             trace,
             device,
             final_memory,
@@ -150,7 +153,13 @@ impl<T: TraceSource> TraceBackend<T> {
             config,
             program: inputs.program,
             preprocessing: inputs.preprocessing,
-            trace: TraceOutput::new(trace, device, final_memory, advice_tape),
+            trace: TraceOutput::with_dimensions(
+                dimensions,
+                trace,
+                device,
+                final_memory,
+                advice_tape,
+            ),
             source: std::marker::PhantomData,
         }
     }
@@ -180,6 +189,7 @@ impl<T: TraceSource> TraceBackend<T> {
     ) -> Result<Self, WitnessError> {
         let cycles = checked_pow2(config.log_t)?;
         let TraceOutput {
+            dimensions,
             trace: source,
             device,
             final_memory,
@@ -216,7 +226,13 @@ impl<T: TraceSource> TraceBackend<T> {
         let raw_rows = source
             .shared_rows()
             .unwrap_or_else(|| Arc::new(physical.to_vec()));
-        let trace = TraceOutput::new(Arc::new(trace_rows), device, final_memory, advice_tape);
+        let trace = TraceOutput::with_dimensions(
+            dimensions,
+            Arc::new(trace_rows),
+            device,
+            final_memory,
+            advice_tape,
+        );
         let backend = Self {
             config,
             program: inputs.program,
@@ -231,6 +247,17 @@ impl<T: TraceSource> TraceBackend<T> {
         Ok(backend)
     }
 
+    pub fn committed_polynomial_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        self.metadata().committed_polynomial_order()
+    }
+
+    /// Trace-independent dimensions and program facts for this witness.
+    pub fn metadata(&self) -> JoltVmWitnessMetadata<'_> {
+        JoltVmWitnessMetadata::new(&self.config, &self.preprocessing)
+    }
+}
+
+impl JoltVmWitnessMetadata<'_> {
     pub fn committed_polynomial_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         let mut order = committed_openings::proof_commitment_order(self.ra_layout()?);
         if self.config.include_trusted_advice {

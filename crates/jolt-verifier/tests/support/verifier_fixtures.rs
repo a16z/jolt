@@ -705,28 +705,14 @@ fn generate_verifier_fixture_with_order(
 }
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
-    #[cfg(not(feature = "field-inline"))]
-    {
-        ProverConfig::derive_compact::<Fr>(
-            run.trace.trace.as_slice(),
-            &run.program_preprocessing.memory_layout,
-            run.program_preprocessing.ram.min_bytecode_address,
-            run.program_preprocessing.ram.bytecode_words.len(),
-            1 << 16,
-        )
-        .expect("derive config")
-    }
-    #[cfg(feature = "field-inline")]
-    {
-        ProverConfig::derive::<Fr>(
-            run.trace.trace.rows(),
-            &run.program_preprocessing.memory_layout,
-            run.program_preprocessing.ram.min_bytecode_address,
-            run.program_preprocessing.ram.bytecode_words.len(),
-            1 << 16,
-        )
-        .expect("derive config")
-    }
+    ProverConfig::derive_from_dimensions::<Fr>(
+        run.trace.dimensions,
+        &run.program_preprocessing.memory_layout,
+        run.program_preprocessing.ram.min_bytecode_address,
+        run.program_preprocessing.ram.bytecode_words.len(),
+        1 << 16,
+    )
+    .expect("derive config")
 }
 
 fn prove_prepared(
@@ -751,16 +737,14 @@ fn prove_prepared(
         jolt_prover::dory::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof =
-        jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &JoltBackend::optimized(),
-            &preprocessing,
-            &config,
-            trusted.as_ref(),
-            &witness,
-            &public_io,
-        )
-        .expect("prove verifier fixture");
+    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        JoltBackend::optimized().with_witness(&witness),
+        &preprocessing,
+        &config,
+        trusted.as_ref(),
+        &public_io,
+    )
+    .expect("prove verifier fixture");
     GeneratedVerifierFixture {
         preprocessing: preprocessing.verifier,
         public_io,
@@ -830,8 +814,8 @@ mod field_inline {
         let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
         let public_io = trace_output.device.clone();
 
-        let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.rows(),
+        let config = ProverConfig::derive_from_dimensions::<Fr>(
+            trace_output.dimensions,
             &memory_layout,
             program_preprocessing.ram.min_bytecode_address,
             program_preprocessing.ram.bytecode_words.len(),
@@ -840,7 +824,8 @@ mod field_inline {
         .expect("derive config");
         let mut rows = trace_output.trace.rows().to_vec();
         rows.resize(config.trace_length, TraceRow::default());
-        let padded_output = TraceOutput::new(
+        let padded_output = TraceOutput::with_dimensions(
+            trace_output.dimensions,
             OwnedTrace::new(rows),
             trace_output.device,
             trace_output.final_memory,
@@ -866,12 +851,11 @@ mod field_inline {
         let witness = Arc::new(witness);
 
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            backend.with_witness(&witness),
             &prover_preprocessing,
             &config,
             None,
-            witness.as_ref(),
             &public_io,
         )
         .expect("modular field-inline prove");

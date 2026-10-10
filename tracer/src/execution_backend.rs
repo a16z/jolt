@@ -1,18 +1,15 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, OnceLock},
-};
+use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
-    ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    OwnedTrace, RamAccess as ProgramRamAccess, RamRead as ProgramRamRead,
-    RamWrite as ProgramRamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError,
-    TraceInputs, TraceOutput, TraceRow,
+    ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
+    MemoryImage, OwnedTrace, RamAccess as ProgramRamAccess, RamAddressBounds,
+    RamRead as ProgramRamRead, RamWrite as ProgramRamWrite, RegisterRead, RegisterState,
+    RegisterWrite, TraceError, TraceInputs, TraceOutput, TraceRow,
 };
 #[cfg(feature = "field-inline")]
 use jolt_program::field_inline::FieldInlineTraceData;
 use jolt_program::preprocess::BytecodePreprocessing;
-use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
+use jolt_riscv::{CircuitFlags, JoltInstructionRow, JoltTraceRow};
 use rayon::prelude::*;
 
 use common::jolt_device::JoltDevice;
@@ -50,13 +47,20 @@ impl TracerBackend {
         bytecode: &BytecodePreprocessing,
     ) -> Result<TraceOutput<Arc<Vec<JoltTraceRow>>>, CompactTraceError> {
         let execution = self.trace_execution(program, inputs)?;
-        let mut rows = collect_rows(execution.cycles, |cycle| {
-            cycle_to_trace_row(&cycle, bytecode)
-        })?;
+        let (mut rows, mut dimensions) = collect_rows(
+            execution.cycles,
+            |cycle| cycle_to_trace_row(&cycle, bytecode),
+            |row| row.circuit_flags().get(CircuitFlags::Jump),
+        )?;
         while rows.last() == Some(&JoltTraceRow::default()) {
             rows.pop();
         }
-        Ok(TraceOutput::new(
+        dimensions.trace_length = rows.len();
+        dimensions.ends_in_jump = rows
+            .last()
+            .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump));
+        Ok(TraceOutput::with_dimensions(
+            dimensions,
             Arc::new(rows),
             execution.device,
             Some(execution.final_memory),
@@ -117,8 +121,11 @@ impl ExecutionBackend for TracerBackend {
         inputs: TraceInputs,
     ) -> Result<TraceOutput<Self::Trace>, TraceError> {
         let execution = self.trace_execution(program, inputs)?;
-        let rows = collect_rows(execution.cycles, trace_row_from_cycle)?;
-        Ok(TraceOutput::new(
+        let (rows, dimensions) = collect_rows(execution.cycles, trace_row_from_cycle, |row| {
+            row.circuit_flags().get(CircuitFlags::Jump)
+        })?;
+        Ok(TraceOutput::with_dimensions(
+            dimensions,
             OwnedTrace::new(rows),
             execution.device,
             Some(execution.final_memory),
@@ -132,7 +139,8 @@ const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 fn collect_rows<R, E>(
     cycles: Vec<Cycle>,
     convert: impl Fn(Cycle) -> Result<R, E> + Sync,
-) -> Result<Vec<R>, E>
+    is_jump: impl Fn(&R) -> bool,
+) -> Result<(Vec<R>, ExecutionDimensions), E>
 where
     R: Default + Send,
     E: Send + Sync,
@@ -148,27 +156,47 @@ where
         }
     )
     .entered();
-    if !parallel {
-        return cycles.into_iter().map(convert).collect();
-    }
-
-    // Rayon's fallible collector creates temporary shard vectors. Capturing the
-    // error out of band keeps collection indexed and writes into one allocation.
-    let error = OnceLock::new();
-    let rows = cycles
-        .into_par_iter()
-        .map(|cycle| match convert(cycle) {
-            Ok(row) => row,
-            Err(worker_error) => {
-                let _ = error.set(worker_error);
-                R::default()
-            }
-        })
-        .collect();
-    match error.into_inner() {
-        Some(worker_error) => Err(worker_error),
-        None => Ok(rows),
-    }
+    let trace_length = cycles.len();
+    let address = |cycle: &Cycle| match cycle.ram_access() {
+        RAMAccess::Read(read) => read.address,
+        RAMAccess::Write(write) => write.address,
+        RAMAccess::NoOp => 0,
+    };
+    let (rows, bounds) = if !parallel {
+        let mut bounds = RamAddressBounds::default();
+        let rows = cycles
+            .into_iter()
+            .map(|cycle| {
+                bounds.observe(address(&cycle));
+                convert(cycle)
+            })
+            .collect::<Result<Vec<_>, E>>()?;
+        (rows, bounds)
+    } else {
+        // Workers write directly into their final row slots. Only the small
+        // address summaries are reduced; no row buffers are concatenated.
+        let mut rows = Vec::with_capacity(trace_length);
+        rows.resize_with(trace_length, R::default);
+        let bounds = cycles
+            .into_par_iter()
+            .zip(rows.par_iter_mut())
+            .try_fold(RamAddressBounds::default, |mut bounds, (cycle, row)| {
+                bounds.observe(address(&cycle));
+                *row = convert(cycle)?;
+                Ok(bounds)
+            })
+            .try_reduce(RamAddressBounds::default, |a, b| Ok(a.merge(b)))?;
+        (rows, bounds)
+    };
+    let ends_in_jump = rows.last().is_some_and(is_jump);
+    Ok((
+        rows,
+        ExecutionDimensions {
+            trace_length,
+            ends_in_jump,
+            ram_bounds: bounds,
+        },
+    ))
 }
 
 /// A resume point for the chunked-execution contract, built on the two-pass
@@ -687,5 +715,78 @@ mod tests {
                 field_value: FieldEncodedValue::from_u64(11),
             })
         );
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used)]
+mod conversion_tests {
+    use super::*;
+    use crate::instruction::{RAMRead, RAMWrite, RISCVCycle};
+
+    #[test]
+    fn conversion_reduces_read_and_write_dimensions_without_reordering_rows() {
+        for length in [8, PARALLEL_ROW_CONVERSION_THRESHOLD + 1] {
+            for (read, write) in [
+                (0, 0),
+                (0, u64::MAX),
+                (u64::MAX, 0),
+                (0x8000_2000, 0x8000_1000),
+                (0x8000_1000, 0x8000_2000),
+            ] {
+                let mut cycles = vec![Cycle::NoOp; length];
+                cycles[1] = Cycle::LD(RISCVCycle {
+                    ram_access: RAMRead {
+                        address: read,
+                        value: 0,
+                    },
+                    ..Default::default()
+                });
+                cycles[2] = Cycle::SD(RISCVCycle {
+                    ram_access: RAMWrite {
+                        address: write,
+                        pre_value: 0,
+                        post_value: 0,
+                    },
+                    ..Default::default()
+                });
+                let (rows, dimensions) = collect_rows(
+                    cycles,
+                    |cycle| Ok::<_, ()>(cycle.ram_access().address()),
+                    |_| false,
+                )
+                .expect("convert synthetic cycles");
+                assert_eq!(rows.len(), length);
+                assert_eq!(&rows[..3], &[0, read as usize, write as usize]);
+                assert!(rows[3..].iter().all(|address| *address == 0));
+                assert_eq!(dimensions.trace_length, length);
+                assert_eq!(
+                    dimensions.ram_bounds.min(),
+                    [read, write]
+                        .into_iter()
+                        .filter(|address| *address != 0)
+                        .min()
+                );
+                assert_eq!(
+                    dimensions.ram_bounds.max(),
+                    [read, write]
+                        .into_iter()
+                        .filter(|address| *address != 0)
+                        .max()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn conversion_propagates_errors_in_serial_and_parallel_paths() {
+        for length in [8, PARALLEL_ROW_CONVERSION_THRESHOLD + 1] {
+            let result = collect_rows(
+                vec![Cycle::NoOp; length],
+                |_| Err::<u64, _>("invalid row"),
+                |_| false,
+            );
+            assert_eq!(result, Err("invalid row"));
+        }
     }
 }

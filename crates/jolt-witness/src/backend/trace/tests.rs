@@ -5,8 +5,8 @@ use common::{
 use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{
-        JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite, RegisterRead,
-        RegisterState, RegisterWrite, TraceOutput, TraceRow,
+        ExecutionDimensions, JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite,
+        RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
     },
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
@@ -145,7 +145,7 @@ fn shape(
     witness: &TraceBackend<OwnedTrace>,
     id: impl Into<JoltPolynomialId>,
 ) -> Result<Shape, WitnessError> {
-    witness.shape_of(id.into())
+    JoltWitnessOracle::<Fr>::shape(witness, id.into())
 }
 
 fn committed_table(
@@ -184,7 +184,13 @@ fn hot_addresses(table: &[Fr], cycles: usize) -> Vec<Option<usize>> {
 #[test]
 fn backend_shares_precompacted_trace_rows() {
     let rows = Arc::new(vec![JoltTraceRow::default()]);
-    let trace = TraceOutput::new(Arc::clone(&rows), Default::default(), None, None);
+    let trace = TraceOutput::with_dimensions(
+        ExecutionDimensions::from_compact(&rows),
+        Arc::clone(&rows),
+        Default::default(),
+        None,
+        None,
+    );
     let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace);
@@ -978,7 +984,7 @@ fn excluded_ids_report_their_classification() {
 
     let assert_reason = |id: JoltPolynomialId, reason: &'static str| {
         for result in [
-            witness.shape_of(id).map(|_| ()),
+            JoltWitnessOracle::<Fr>::shape(&witness, id).map(|_| ()),
             <TraceBackend<OwnedTrace> as JoltWitnessOracle<Fr>>::oracle_table(&witness, id)
                 .map(|_| ()),
         ] {
@@ -1034,7 +1040,8 @@ fn backend_rejects_iterator_only_trace_sources() {
     let iterator_inputs = JoltVmWitnessInputs::new(
         &program,
         &preprocessing,
-        TraceOutput::new(
+        TraceOutput::with_dimensions(
+            ExecutionDimensions::default(),
             IteratorOnlyTrace(OwnedTrace::default()),
             Default::default(),
             None,
@@ -1106,5 +1113,34 @@ fn dense_grid_len_is_capped_and_overflow_checked() {
     assert!(matches!(
         checked_dense_grid_len::<Fr>(usize::MAX / 8, 1),
         Err(WitnessError::InvalidDimensions { .. })
+    ));
+}
+
+#[test]
+fn witness_metadata_serves_shapes_and_rejects_data_queries() {
+    use crate::RowSource;
+    let preprocessing = base_preprocessing();
+    let config = config();
+    let metadata = JoltVmWitnessMetadata::new(&config, &preprocessing);
+    let id = JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc);
+    assert_eq!(
+        metadata.shape(id).unwrap(),
+        Shape::new(4, PolynomialEncoding::Compact)
+    );
+    assert_eq!(metadata.program_preprocessing().bytecode.code_size, 32);
+    assert!(metadata
+        .committed_polynomial_order()
+        .unwrap()
+        .contains(&JoltCommittedPolynomial::RdInc));
+    assert!(matches!(
+        JoltWitnessOracle::<Fr>::oracle_table(&metadata, id),
+        Err(WitnessError::UnavailableView { .. })
+    ));
+    assert!(metadata.random_access().is_none());
+    assert!(matches!(
+        metadata.visit_chunks(0..16, 4, &mut |_, _, _| panic!(
+            "witness metadata must not emit trace rows"
+        )),
+        Err(WitnessError::UnavailableView { .. })
     ));
 }

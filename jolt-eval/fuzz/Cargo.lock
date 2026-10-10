@@ -1507,6 +1507,7 @@ dependencies = [
  "common",
  "jolt-riscv",
  "object",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]

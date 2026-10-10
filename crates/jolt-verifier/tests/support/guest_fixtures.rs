@@ -107,7 +107,8 @@ pub fn fixture_witness(
     {
         let mut rows = trace.trace.into_rows();
         rows.resize(config.trace_length, TraceRow::default());
-        let trace = TraceOutput::new(
+        let trace = TraceOutput::with_dimensions(
+            trace.dimensions,
             OwnedTrace::new(rows),
             trace.device,
             trace.final_memory,

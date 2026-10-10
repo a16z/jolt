@@ -14,6 +14,7 @@ workspace = true
 [features]
 default = ["parallel"]
 parallel = [
+  "jolt-program/parallel",
   "jolt-crypto/parallel",
   "jolt-kernels/parallel",
   "jolt-sumcheck/parallel",

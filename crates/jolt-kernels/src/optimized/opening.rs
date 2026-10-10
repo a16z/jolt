@@ -33,37 +33,36 @@
 //! (`reference::opening`); the in-module tests pin dense equality against
 //! the reference slot on a real synthetic trace.
 
-#[cfg(feature = "field-inline")]
-use crate::field_inline::FieldIncrementColumn;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
-use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
 use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
+#[cfg(feature = "parallel")]
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamConsumer};
+#[cfg(feature = "parallel")]
+use jolt_witness::RandomAccessRows;
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
+use crate::commitment::CommitmentGrid;
+use crate::commitment::CommittedColumnsWitness;
 use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::reference::views::dense_view;
+use crate::trace_column::{emit_sorted_rows, scatter_fold, scatter_sum, TracePlacement};
+#[cfg(feature = "field-inline")]
+use crate::ReferenceBackend;
 use crate::{KernelError, OptimizedBackend, ProofSession};
 
 const COLD: u64 = u64::MAX;
 
 const COLLECT_CHUNK: usize = 1 << 12;
-
-/// Minimum per-range work of the parallel scatter/sum drivers; below it the
-/// range split costs more than the loop.
-#[cfg(feature = "parallel")]
-const MIN_RANGE: usize = 1 << 12;
 
 impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
     #[tracing::instrument(
@@ -138,6 +137,16 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
                 }
             })
             .collect()
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn prepare_field_inline(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        grid: CommitmentGrid,
+    ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
+        JointOpeningPolynomials::prepare_field_inline(&ReferenceBackend, session, witness, grid)
     }
 }
 
@@ -300,94 +309,8 @@ impl StreamConsumer for CollectOpeningColumns {
 }
 
 // ---------------------------------------------------------------------------
-// Grid placement
+// Trace openings
 // ---------------------------------------------------------------------------
-
-/// A trace coefficient's grid index: `(k, t) ↦ t · t_stride + k · k_stride`,
-/// dense columns at `k = 0`. Covers both proof orders with one formula:
-/// cycle-major prefix-embeds the flat address-major `(K × T)` matrix
-/// (`t_stride = 1`, `k_stride = 2^log_t`); address-major scatters
-/// cycle-block-strided (`t_stride = cycle_stride`, `k_stride =
-/// one_hot_stride`) — the reference embeddings' index maps verbatim.
-#[derive(Clone, Copy, Debug)]
-struct TracePlacement {
-    total_vars: usize,
-    t_stride: usize,
-    k_stride: usize,
-}
-
-impl TracePlacement {
-    fn new(grid: CommitmentGrid) -> Self {
-        match grid.order {
-            TracePolynomialOrder::CycleMajor => Self {
-                total_vars: grid.total_vars,
-                t_stride: 1,
-                k_stride: 1usize << grid.log_t,
-            },
-            TracePolynomialOrder::AddressMajor => Self {
-                total_vars: grid.total_vars,
-                t_stride: grid.cycle_stride(),
-                k_stride: grid.one_hot_stride(),
-            },
-        }
-    }
-
-    #[inline(always)]
-    const fn index(self, cycle: usize, address: usize) -> usize {
-        cycle * self.t_stride + address * self.k_stride
-    }
-}
-
-/// Fold `total` source slots into a `num_cols`-sized accumulator through
-/// `fill`, splitting into per-thread partial accumulators when parallel.
-/// Field addition is exact, so the merge order cannot change the values.
-fn scatter_fold<F: JoltField>(
-    total: usize,
-    num_cols: usize,
-    fill: impl Fn(Range<usize>, &mut [F]) + Send + Sync,
-) -> Vec<F> {
-    #[cfg(feature = "parallel")]
-    if total > MIN_RANGE {
-        let ranges = split_ranges(total);
-        return ranges
-            .into_par_iter()
-            .map(|range| {
-                let mut acc: Vec<F> = unsafe_allocate_zero_vec(num_cols);
-                fill(range, &mut acc);
-                acc
-            })
-            .reduce(
-                || unsafe_allocate_zero_vec(num_cols),
-                super::support::merge_evals,
-            );
-    }
-    let mut acc: Vec<F> = unsafe_allocate_zero_vec(num_cols);
-    fill(0..total, &mut acc);
-    acc
-}
-
-fn scatter_sum<F: JoltField>(total: usize, sum: impl Fn(Range<usize>) -> F + Send + Sync) -> F {
-    #[cfg(feature = "parallel")]
-    if total > MIN_RANGE {
-        let ranges = split_ranges(total);
-        return ranges
-            .into_par_iter()
-            .map(sum)
-            .reduce(F::zero, |left, right| left + right);
-    }
-    sum(0..total)
-}
-
-#[cfg(feature = "parallel")]
-fn split_ranges(total: usize) -> Vec<Range<usize>> {
-    let max_ranges = rayon::current_num_threads() * 4;
-    let ranges = (total / MIN_RANGE).clamp(1, max_ranges.max(1));
-    let chunk = total.div_ceil(ranges);
-    (0..total)
-        .step_by(chunk)
-        .map(|start| start..(start + chunk).min(total))
-        .collect()
-}
 
 struct TraceOpeningPoly<F: JoltField> {
     columns: Arc<OpeningColumns>,
@@ -455,82 +378,6 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
                     } else {
                         acc[index & mask] += left[index >> sigma] * value;
                     }
-                }
-            }
-        })
-    }
-}
-
-/// One dense trace-domain column (`T` values at address slot zero) as a lazy
-/// view over the commitment grid: the placement of an increment column,
-/// without materializing the `2^total_vars` grid it is embedded in. The
-/// field-inline prover's stage-8 `FieldRdInc` entry opens through this (its
-/// only production caller); the base increment columns ride the shared
-/// [`TraceOpeningPoly`].
-#[cfg(feature = "field-inline")]
-pub struct DenseTraceColumnPoly<F: JoltField> {
-    values: FieldIncrementColumn<F>,
-    placement: TracePlacement,
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> DenseTraceColumnPoly<F> {
-    /// `None` when the column carries more cycles than the grid's trace
-    /// dimension.
-    pub fn new(values: FieldIncrementColumn<F>, grid: CommitmentGrid) -> Option<Self> {
-        (values.len() <= 1usize << grid.log_t).then(|| Self {
-            values,
-            placement: TracePlacement::new(grid),
-        })
-    }
-
-    #[inline]
-    fn entries(&self) -> impl Iterator<Item = (usize, F)> + '_ {
-        self.values
-            .nonzero_entries()
-            .map(|(cycle, value)| (self.placement.index(cycle, 0), value))
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
-    fn num_vars(&self) -> usize {
-        self.placement.total_vars
-    }
-
-    fn evaluate(&self, point: &[F]) -> F {
-        debug_assert_eq!(point.len(), self.placement.total_vars);
-        let eq = TensorEqTable::new(point);
-        scatter_sum(self.values.len(), |range| {
-            let mut acc = F::zero();
-            for cycle in range {
-                let value = self.values.value(cycle);
-                if !value.is_zero() {
-                    acc += value * eq.evaluate_index(self.placement.index(cycle, 0));
-                }
-            }
-            acc
-        })
-    }
-
-    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        emit_sorted_rows(self.entries().collect(), self.num_vars(), sigma, f);
-    }
-
-    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        debug_assert_eq!(
-            left.len(),
-            1usize << self.num_vars().saturating_sub(sigma),
-            "left vector length must equal number of rows"
-        );
-        let num_cols = 1usize << sigma;
-        let mask = num_cols - 1;
-        scatter_fold(self.values.len(), num_cols, |range, acc| {
-            for cycle in range {
-                let value = self.values.value(cycle);
-                if !value.is_zero() {
-                    let index = self.placement.index(cycle, 0);
-                    acc[index & mask] += left[index >> sigma] * value;
                 }
             }
         })
@@ -629,43 +476,10 @@ impl<F: JoltField> MultilinearPoly<F> for BlockOpeningPoly<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Row emission (off the stage-8 path)
-// ---------------------------------------------------------------------------
-
-/// Emit the `(2^{n-σ} × 2^σ)` matrix rows of a sparse entry set. Sorts the
-/// entries and cursor-walks them into one reused row buffer — `O(N log N +
-/// 2^n)` time, `O(N + 2^σ)` space. The batch opening never calls this
-/// (it drives `fold_rows`); it serves the general [`MultilinearPoly`]
-/// contract (`to_dense`, tests).
-fn emit_sorted_rows<F: JoltField>(
-    mut entries: Vec<(usize, F)>,
-    num_vars: usize,
-    sigma: usize,
-    f: &mut dyn FnMut(usize, &[F]),
-) {
-    entries.sort_unstable_by_key(|&(index, _)| index);
-    let num_cols = 1usize << sigma;
-    let num_rows = 1usize << num_vars.saturating_sub(sigma);
-    let mut row_buffer: Vec<F> = unsafe_allocate_zero_vec(num_cols);
-    let mut cursor = 0usize;
-    for row in 0..num_rows {
-        row_buffer.fill(F::zero());
-        let row_base = row << sigma;
-        while let Some(&(index, value)) = entries.get(cursor) {
-            if index >= row_base + num_cols {
-                break;
-            }
-            row_buffer[index - row_base] = value;
-            cursor += 1;
-        }
-        f(row, &row_buffer);
-    }
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module: fail loudly")]
 mod tests {
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
     use jolt_field::Fr;
 
     use super::*;
@@ -692,12 +506,12 @@ mod tests {
     fn prepare_both(
         witness: &dyn JoltWitnessPlane<Fr>,
         grid: CommitmentGrid,
+        mut order: Vec<JoltCommittedPolynomial>,
     ) -> (
         Vec<JoltCommittedPolynomial>,
         Vec<Box<dyn MultilinearPoly<Fr>>>,
         Vec<Box<dyn MultilinearPoly<Fr>>>,
     ) {
-        let mut order = witness.committed_order().unwrap();
         order.push(JoltCommittedPolynomial::BytecodeChunk(0));
         order.push(JoltCommittedPolynomial::ProgramImageInit);
         let mut precommitted_tables = BTreeMap::new();
@@ -743,7 +557,19 @@ mod tests {
                 log_k_chunk: 4,
                 order,
             };
-            let (ids, reference, optimized) = prepare_both(witness, grid);
+            let ids: Vec<JoltCommittedPolynomial> = witness
+                .committed_order()
+                .unwrap()
+                .into_iter()
+                .filter(|id| {
+                    !matches!(
+                        id,
+                        JoltCommittedPolynomial::TrustedAdvice
+                            | JoltCommittedPolynomial::UntrustedAdvice
+                    )
+                })
+                .collect();
+            let (ids, reference, optimized) = prepare_both(witness, grid, ids);
             let point = random_scalars(grid.total_vars, 23);
             let sigmas = [
                 grid.total_vars.div_ceil(2),
