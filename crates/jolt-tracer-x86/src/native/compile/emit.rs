@@ -194,6 +194,21 @@ impl Emitter {
         dynasm!(self.ops ; .arch x64 ; jmp ->bad_jump);
     }
 
+    /// Static branch and jump targets without a compiled group fault when
+    /// taken, like a dispatched jump to the same address.
+    pub(super) fn emit_unmapped_target_stubs(&mut self) {
+        for (&address, &label) in &self.labels {
+            if self.ops.labels().resolve_dynamic(label).is_err() {
+                dynasm!(self.ops
+                    ; .arch x64
+                    ; =>label
+                    ; mov rax, QWORD address as i64
+                    ; jmp ->bad_jump
+                );
+            }
+        }
+    }
+
     pub(super) fn emit_stubs(&mut self) -> Stubs {
         dynasm!(self.ops
             ; .arch x64

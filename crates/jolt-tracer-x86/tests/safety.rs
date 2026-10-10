@@ -198,3 +198,29 @@ fn in_range_unmapped_jump_reports_bad_target() {
     );
     assert_eq!(outcome.fault_addr, TEST_ADDR + 2);
 }
+
+/// A static branch whose target has no compiled group must compile: it
+/// executes normally when not taken and reports the bad target when taken.
+#[test]
+fn static_branch_to_unmapped_target_faults_only_when_taken() {
+    let target = TEST_ADDR + 12;
+    let program = single_row_program(row(
+        JoltInstructionKind::BEQ,
+        Some(1),
+        None,
+        (target - TEST_ADDR).into(),
+    ));
+    for (x1, exit) in [(1, 1), (0, 3)] {
+        let mut pre = [0u64; REGS];
+        pre[1] = x1;
+        let outcome = run_program(&program, &pre, &[], &[]).expect("run should not error");
+        assert_eq!(
+            outcome.exit, exit,
+            "x1 = {x1}: unexpected exit reason ({:?})",
+            outcome.helper_error
+        );
+        if exit == 3 {
+            assert_eq!(outcome.fault_addr, target);
+        }
+    }
+}
