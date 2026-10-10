@@ -8,18 +8,32 @@ use jolt_riscv::{
     field_inline_load_accumulate_from_memory_offset, FieldInlineOp, FIELD_INLINE_OPCODE,
 };
 use jolt_riscv::{
-    JoltInstructionProfile, NormalizedOperands, SourceInlineKey, SourceInstruction,
-    SourceInstructionKind, SourceInstructionRow,
+    JoltInstructionProfile, NormalizedOperands, SourceExtension, SourceInlineKey,
+    SourceInstruction, SourceInstructionKind, SourceInstructionRow,
 };
 
 use crate::ProgramError;
 
+/// Decodes a normalized RV64 word and checks source legality for `profile`.
+///
+/// Profiles without `Rv64C` reject compressed rows and then unaligned addresses
+/// before decoding the kind. Profiles containing `Rv64C` permit either row width
+/// without an alignment check. This function does not expand instructions.
 pub fn decode_instruction(
     word: u32,
     address: u64,
     is_compressed: bool,
     profile: JoltInstructionProfile,
 ) -> Result<SourceInstruction, ProgramError> {
+    if !profile.source_extensions.contains(&SourceExtension::Rv64C) {
+        if is_compressed {
+            return Err(ProgramError::IllegalCompressedInstruction { address });
+        }
+        if !address.is_multiple_of(4) {
+            return invalid("instruction address is not 4-byte aligned");
+        }
+    }
+
     let opcode = word & 0x7f;
     let kind = match opcode {
         0b0110111 => SourceInstructionKind::LUI,

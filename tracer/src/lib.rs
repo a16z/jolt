@@ -14,7 +14,8 @@ use alloc::{boxed::Box, vec::Vec};
 use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
-use jolt_riscv::RV64IMAC_JOLT;
+use jolt_program::ProgramError;
+use jolt_riscv::{JoltInstructionProfile, RV64IMAC_JOLT};
 
 pub mod emulator;
 pub mod execution_backend;
@@ -733,22 +734,36 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         panic!("tracer only supports RV64 ELF inputs");
     }
 
-    let image = jolt_program::image::decode_elf(elf, RV64IMAC_JOLT)
-        .expect("jolt-program ELF64 decoding failed");
-    let instructions = image
-        .instructions
-        .into_iter()
-        .map(|instruction| {
+    decode_with_profile(elf, RV64IMAC_JOLT).expect("jolt-program ELF64 decoding failed")
+}
+
+/// Decodes ELF source instructions without expanding them into Jolt bytecode.
+///
+/// The selected profile determines instruction legality, including compressed
+/// encoding support. Returns instructions, initial memory bytes, the program end,
+/// and the entry address; a source row with no tracer counterpart is malformed.
+#[expect(
+    clippy::type_complexity,
+    reason = "the same four-value tuple that `decode` returns"
+)]
+pub fn decode_with_profile(
+    elf: &[u8],
+    profile: JoltInstructionProfile,
+) -> Result<(Vec<Instruction>, Vec<(u64, u8)>, u64, u64), ProgramError> {
+    let image = jolt_program::image::decode_elf(elf, profile)?;
+    let mut instructions = Vec::with_capacity(image.instructions.len());
+    for instruction in image.instructions {
+        instructions.push(
             Instruction::try_from_source_instruction(instruction)
-                .expect("jolt-program image decoder produced an unknown tracer row")
-        })
-        .collect();
-    (
+                .map_err(ProgramError::MalformedImage)?,
+        );
+    }
+    Ok((
         instructions,
         image.memory_init,
         image.program_end,
         image.entry_address,
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -810,8 +825,12 @@ pub(crate) mod test_utils {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instruction::{
+        addi::ADDI, format::format_i::FormatI, format::format_j::FormatJ, jal::JAL,
+    };
     use crate::test_utils::build_muldiv_guest;
     use common::jolt_device::MemoryConfig;
+    use jolt_riscv::{SourceInstructionKind as Kind, RV64I};
 
     fn minimal_elf() -> Vec<u8> {
         vec![
@@ -918,6 +937,81 @@ mod tests {
             &[],
             StrtabOrder::GnuLd,
         )
+    }
+
+    #[test]
+    fn decode_with_rv64i_returns_unexpanded_source_image() {
+        let elf = build_elf64(
+            &[
+                0x0010_0093, // addi x1, x0, 1
+                0x0020_8113, // addi x2, x1, 2
+                0x0000_006f, // jal x0, 0
+            ],
+            &[],
+            StrtabOrder::GnuLd,
+        );
+        let expected = (
+            vec![
+                Instruction::ADDI(ADDI {
+                    address: 0x8000_0000,
+                    operands: FormatI {
+                        rd: 1,
+                        rs1: 0,
+                        imm: 1,
+                    },
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                }),
+                Instruction::ADDI(ADDI {
+                    address: 0x8000_0004,
+                    operands: FormatI {
+                        rd: 2,
+                        rs1: 1,
+                        imm: 2,
+                    },
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                }),
+                Instruction::JAL(JAL {
+                    address: 0x8000_0008,
+                    operands: FormatJ { rd: 0, imm: 0 },
+                    virtual_sequence_remaining: None,
+                    is_first_in_sequence: false,
+                    is_compressed: false,
+                }),
+            ],
+            [
+                0x93, 0x00, 0x10, 0x00, 0x13, 0x81, 0x20, 0x00, 0x6f, 0x00, 0x00, 0x00,
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(offset, byte)| (0x8000_0000 + offset as u64, byte))
+            .collect::<Vec<_>>(),
+            0x8000_000c,
+            0x8000_0000,
+        );
+        assert_eq!(decode_with_profile(&elf, RV64I).unwrap(), expected);
+        assert_eq!(decode(&elf), expected);
+    }
+
+    #[test]
+    fn decode_with_rv64i_rejects_appended_mul() {
+        let elf = build_elf64(
+            &[
+                0x0010_0093, // addi x1, x0, 1
+                0x0020_8113, // addi x2, x1, 2
+                0x0000_006f, // jal x0, 0
+                0x0220_81b3, // mul x3, x1, x2
+            ],
+            &[],
+            StrtabOrder::GnuLd,
+        );
+        assert!(matches!(
+            decode_with_profile(&elf, RV64I),
+            Err(ProgramError::IllegalSourceInstruction(Kind::MUL))
+        ));
     }
 
     fn tiny_guest_config(elf: &[u8]) -> MemoryConfig {

@@ -52,6 +52,12 @@ pub struct JoltInstructionProfile {
     pub inline_extensions: &'static [InlineExtension],
 }
 
+/// RV64I base instructions, with no compressed, custom, or inline extensions.
+pub const RV64I: JoltInstructionProfile = JoltInstructionProfile {
+    source_extensions: &[SourceExtension::Rv64I],
+    inline_extensions: &[],
+};
+
 pub const RV64IM_JOLT: JoltInstructionProfile = JoltInstructionProfile {
     source_extensions: &[
         SourceExtension::Rv64I,
@@ -296,6 +302,84 @@ mod tests {
     use super::*;
     #[cfg(feature = "field-inline")]
     use crate::NormalizedOperands;
+
+    #[test]
+    fn rv64i_source_legality_matches_base_isa() {
+        let base = [
+            SourceInstructionKind::LUI,
+            SourceInstructionKind::AUIPC,
+            SourceInstructionKind::JAL,
+            SourceInstructionKind::JALR,
+            SourceInstructionKind::BEQ,
+            SourceInstructionKind::BNE,
+            SourceInstructionKind::BLT,
+            SourceInstructionKind::BGE,
+            SourceInstructionKind::BLTU,
+            SourceInstructionKind::BGEU,
+            SourceInstructionKind::LB,
+            SourceInstructionKind::LH,
+            SourceInstructionKind::LW,
+            SourceInstructionKind::LBU,
+            SourceInstructionKind::LHU,
+            SourceInstructionKind::SB,
+            SourceInstructionKind::SH,
+            SourceInstructionKind::SW,
+            SourceInstructionKind::ADDI,
+            SourceInstructionKind::SLTI,
+            SourceInstructionKind::SLTIU,
+            SourceInstructionKind::XORI,
+            SourceInstructionKind::ORI,
+            SourceInstructionKind::ANDI,
+            SourceInstructionKind::SLLI,
+            SourceInstructionKind::SRLI,
+            SourceInstructionKind::SRAI,
+            SourceInstructionKind::ADD,
+            SourceInstructionKind::SUB,
+            SourceInstructionKind::SLL,
+            SourceInstructionKind::SLT,
+            SourceInstructionKind::SLTU,
+            SourceInstructionKind::XOR,
+            SourceInstructionKind::SRL,
+            SourceInstructionKind::SRA,
+            SourceInstructionKind::OR,
+            SourceInstructionKind::AND,
+            SourceInstructionKind::FENCE,
+            SourceInstructionKind::ECALL,
+            SourceInstructionKind::EBREAK,
+            SourceInstructionKind::LWU,
+            SourceInstructionKind::LD,
+            SourceInstructionKind::SD,
+            SourceInstructionKind::ADDIW,
+            SourceInstructionKind::SLLIW,
+            SourceInstructionKind::SRLIW,
+            SourceInstructionKind::SRAIW,
+            SourceInstructionKind::ADDW,
+            SourceInstructionKind::SUBW,
+            SourceInstructionKind::SLLW,
+            SourceInstructionKind::SRLW,
+            SourceInstructionKind::SRAW,
+        ];
+        assert_eq!(base.len(), 52);
+        for kind in SourceInstructionKind::ALL {
+            assert_eq!(
+                RV64I.supports_source(*kind),
+                base.contains(kind) || source_extension(*kind).is_none(),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rv64i_fingerprint_is_distinct_from_other_exported_profiles() {
+        for profile in [RV64IM_JOLT, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES] {
+            assert_ne!(RV64I.fingerprint(), profile.fingerprint());
+        }
+        #[cfg(feature = "field-inline")]
+        assert_ne!(
+            RV64I.fingerprint(),
+            RV64IMAC_JOLT_FIELD_INLINE.fingerprint()
+        );
+    }
 
     #[test]
     fn default_profile_matches_current_source_shape() {

@@ -8,6 +8,8 @@ pub enum ProgramError {
     MalformedImage(&'static str),
     #[error("source instruction is not legal in the selected profile: {0:?}")]
     IllegalSourceInstruction(SourceInstructionKind),
+    #[error("compressed instruction at {address:#x} is not legal in the selected profile")]
+    IllegalCompressedInstruction { address: u64 },
     #[error(transparent)]
     Expansion(#[from] crate::expand::ExpansionError),
 }
