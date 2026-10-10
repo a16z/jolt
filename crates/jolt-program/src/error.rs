@@ -10,6 +10,8 @@ pub enum ProgramError {
     IllegalSourceInstruction(SourceInstructionKind),
     #[error("compressed instruction at {address:#x} is not legal in the selected profile")]
     IllegalCompressedInstruction { address: u64 },
+    #[error("the selected decode mode is not defined for a profile with compressed instructions")]
+    DecodeModeUnsupportedByProfile,
     #[error(transparent)]
     Expansion(#[from] crate::expand::ExpansionError),
 }
