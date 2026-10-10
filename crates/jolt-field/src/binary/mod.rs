@@ -7,12 +7,19 @@
 //! `F8`, `F64`, `F128`, and `F192` implement the field spine. `From<F8>`
 //! embeds into `F64` and `F128` by sending x to the smallest raw root of
 //! x^8 + x^4 + x^3 + x + 1; the `F192` embedding lifts through `F64`.
+//!
+//! `F64`, `F128`, and `F192` defer reduction through `WithAccumulator`:
+//! products accumulate by XOR in fixed-width polynomial state with no term
+//! limit. `F192` folds the extension modulus before accumulating and reduces
+//! its three base-field coefficients only when the accumulator is finalized.
 
+mod accumulator;
 mod embed;
 mod f128;
 mod f192;
 mod f64;
 mod f8;
+mod scalar;
 
 #[cfg(any(
     all(target_arch = "aarch64", target_feature = "aes"),
@@ -65,11 +72,5 @@ fn inverse<F: Field + CanonicalEncoding>(value: F) -> Option<F> {
     Some(result.square())
 }
 
-#[cfg(all(
-    test,
-    any(
-        all(target_arch = "aarch64", target_feature = "aes"),
-        all(target_arch = "x86_64", target_feature = "pclmulqdq")
-    )
-))]
+#[cfg(test)]
 mod tests;
