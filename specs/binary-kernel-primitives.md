@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Claude              |
 | Created     | 2026-10-10                     |
 | Status      | proposed                       |
-| PR          |                                |
+| PR          | #2045                          |
 
 ## Summary
 
