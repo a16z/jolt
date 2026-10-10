@@ -183,7 +183,7 @@ where
 
 #[cfg(all(test, feature = "field-inline"))]
 pub(crate) mod field_registers_testing;
-#[cfg(test)]
-pub(crate) mod parity;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod parity;
 #[cfg(test)]
 pub(crate) mod testing;

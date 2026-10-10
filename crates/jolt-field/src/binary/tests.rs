@@ -269,22 +269,42 @@ fn f128_word_accumulator_mixed_merges() {
         let mut kernel_accumulators = [Default::default(); 2];
         let mut expected = F128::from_raw(0);
         for list in 0..2 {
-            for _ in 0..count {
+            for term in 0..count {
                 let a =
                     F128::from_raw(u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64));
                 let b =
                     F128::from_raw(u128::from(rng.next_u64()) | (u128::from(rng.next_u64()) << 64));
                 let word = rng.next_u64();
                 let add = F128::from_raw(u128::from(rng.next_u64()));
-                accumulators[list].fmadd_word(a, word);
-                accumulators[list].fmadd(a, b);
-                accumulators[list].add(add);
-                expected += a * F128::from_raw(u128::from(word)) + a * b + add;
-                let acc = &mut portable_accumulators[list];
-                *acc = portable::accumulate128_word(*acc, a.to_raw(), word);
-                *acc = portable::accumulate128(*acc, a.to_raw(), b.to_raw());
-                for (lane, value) in acc.iter_mut().zip(portable::embed128(add.to_raw())) {
-                    *lane ^= value;
+                match (term + list) % 3 {
+                    0 => {
+                        accumulators[list].fmadd_word(a, word);
+                        portable_accumulators[list] = portable::accumulate128_word(
+                            portable_accumulators[list],
+                            a.to_raw(),
+                            word,
+                        );
+                        expected += a * F128::from_raw(u128::from(word));
+                    }
+                    1 => {
+                        accumulators[list].fmadd(a, b);
+                        portable_accumulators[list] = portable::accumulate128(
+                            portable_accumulators[list],
+                            a.to_raw(),
+                            b.to_raw(),
+                        );
+                        expected += a * b;
+                    }
+                    _ => {
+                        accumulators[list].add(add);
+                        for (lane, value) in portable_accumulators[list]
+                            .iter_mut()
+                            .zip(portable::embed128(add.to_raw()))
+                        {
+                            *lane ^= value;
+                        }
+                        expected += add;
+                    }
                 }
                 #[cfg(any(
                     all(target_arch = "aarch64", target_feature = "aes"),
@@ -292,10 +312,15 @@ fn f128_word_accumulator_mixed_merges() {
                 ))]
                 {
                     let acc = &mut kernel_accumulators[list];
-                    *acc = kernels::accumulate128_word(*acc, a.to_raw(), word);
-                    *acc = kernels::accumulate128(*acc, a.to_raw(), b.to_raw());
-                    for (lane, value) in acc.iter_mut().zip(kernels::embed128(add.to_raw())) {
-                        *lane ^= value;
+                    match (term + list) % 3 {
+                        0 => *acc = kernels::accumulate128_word(*acc, a.to_raw(), word),
+                        1 => *acc = kernels::accumulate128(*acc, a.to_raw(), b.to_raw()),
+                        _ => {
+                            for (lane, value) in acc.iter_mut().zip(kernels::embed128(add.to_raw()))
+                            {
+                                *lane ^= value;
+                            }
+                        }
                     }
                 }
             }

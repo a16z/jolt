@@ -1214,4 +1214,313 @@ mod tests {
             Err(KernelError::ConsumedClaimShadowed { id }) if id == leaf_id.into(),
         ));
     }
+
+    mod lockstep_tests {
+        use std::panic::AssertUnwindSafe;
+
+        #[cfg(feature = "allocative")]
+        use allocative::Allocative;
+        use jolt_poly::UnivariatePoly;
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::{RngCore, SeedableRng};
+
+        use super::{
+            virt, BTreeMap, BindingOrder, ConcreteSumcheck, EqPolynomial, Fr, JoltDerivedId,
+            JoltField, JoltOpeningId, JoltVirtualPolynomial, NaiveSumcheckProver, OutputClaims,
+            Polynomial, ProveRounds, ProverInputs, SumcheckError, SumcheckKernel,
+            SumcheckKernelError, SymbolicSumcheck, ToyChallenges, ToyInputs, ToyOutputs,
+            ToyRelation, ToySymbolic, F128, ROUNDS, SIZE,
+        };
+        use crate::optimized::parity::{probe_input_claim, run_lockstep, run_lockstep_checked};
+
+        struct Fixture<F: JoltField> {
+            relation: ToyRelation<F>,
+            claims: ToyInputs<F>,
+            points: ToyInputs<Vec<F>>,
+            challenges: ToyChallenges<F>,
+            round_challenges: Vec<F>,
+            openings: BTreeMap<JoltOpeningId, Polynomial<F>>,
+            derived: BTreeMap<JoltDerivedId, Polynomial<F>>,
+        }
+
+        impl<F: JoltField> Fixture<F> {
+            fn new() -> Self {
+                let mut rng = ChaCha20Rng::seed_from_u64(0x76b4_901e_218a_37cd);
+                let mut sample = || {
+                    let bits = (u128::from(rng.next_u64()) << 64) | u128::from(rng.next_u64());
+                    F::from_u128_checked(bits).unwrap()
+                };
+                let reference_point: Vec<F> = (0..ROUNDS).map(|_| sample()).collect();
+                let openings = [
+                    JoltVirtualPolynomial::LookupOutput,
+                    JoltVirtualPolynomial::LeftLookupOperand,
+                    JoltVirtualPolynomial::InstructionRa(0),
+                    JoltVirtualPolynomial::InstructionRa(1),
+                    JoltVirtualPolynomial::RightLookupOperand,
+                ]
+                .into_iter()
+                .map(|polynomial| {
+                    (
+                        virt(polynomial),
+                        Polynomial::new((0..SIZE).map(|_| sample()).collect::<Vec<_>>()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+                let derived = BTreeMap::from([(
+                    JoltDerivedId::Test,
+                    Polynomial::new(EqPolynomial::new(reference_point.clone()).evaluations()),
+                )]);
+                let challenges = ToyChallenges { gamma: sample() };
+                let expression = ToySymbolic::new(ROUNDS).output_expression::<F>();
+                let total: F = (0..SIZE)
+                    .map(|row| {
+                        expression.evaluate(
+                            |id| openings[id].evals()[row],
+                            |_| challenges.gamma,
+                            |id| derived[id].evals()[row],
+                        )
+                    })
+                    .sum();
+                assert_ne!(total, F::zero());
+                Self {
+                    relation: ToyRelation {
+                        symbolic: ToySymbolic::new(ROUNDS),
+                        reference_point,
+                    },
+                    claims: ToyInputs {
+                        total,
+                        untrusted: Some(sample()),
+                    },
+                    points: ToyInputs {
+                        total: (0..ROUNDS).map(|_| sample()).collect(),
+                        untrusted: None,
+                    },
+                    challenges,
+                    round_challenges: (0..ROUNDS).map(|_| sample()).collect(),
+                    openings,
+                    derived,
+                }
+            }
+
+            fn inputs(&self) -> ProverInputs<'_, F, ToyRelation<F>> {
+                ProverInputs {
+                    relation: &self.relation,
+                    claims: &self.claims,
+                    points: &self.points,
+                    challenges: &self.challenges,
+                }
+            }
+
+            fn kernel(&self) -> NaiveSumcheckProver<F, ToyRelation<F>> {
+                NaiveSumcheckProver::new(
+                    &self.inputs(),
+                    self.openings.clone(),
+                    self.derived.clone(),
+                    BindingOrder::HighToLow,
+                )
+                .unwrap()
+            }
+        }
+
+        #[derive(Clone, Copy)]
+        #[cfg_attr(feature = "allocative", derive(Allocative))]
+        enum Fault {
+            Coefficient,
+            Output,
+            Derived,
+            RoundCount(usize),
+        }
+
+        #[cfg_attr(
+            feature = "allocative",
+            derive(Allocative),
+            allocative(bound = "F: JoltField")
+        )]
+        struct Perturbed<F: JoltField> {
+            inner: NaiveSumcheckProver<F, ToyRelation<F>>,
+            fault: Fault,
+        }
+
+        impl<F: JoltField> ProveRounds<F> for Perturbed<F> {
+            fn num_rounds(&self) -> usize {
+                match self.fault {
+                    Fault::RoundCount(rounds) => rounds,
+                    _ => self.inner.num_rounds(),
+                }
+            }
+
+            fn prove_round(
+                &mut self,
+                bind: Option<F>,
+                round: usize,
+                previous_claim: F,
+            ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+                let polynomial = self.inner.prove_round(bind, round, previous_claim)?;
+                if matches!(self.fault, Fault::Coefficient) {
+                    let mut coefficients = polynomial.coefficients().to_vec();
+                    coefficients[0] += F::one();
+                    Ok(UnivariatePoly::new(coefficients))
+                } else {
+                    Ok(polynomial)
+                }
+            }
+
+            fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+                self.inner.finish_rounds(bind)
+            }
+        }
+
+        impl<F: JoltField> SumcheckKernel<F> for Perturbed<F> {
+            type Relation = ToyRelation<F>;
+
+            fn output_claims(
+                &mut self,
+                inputs: &ToyInputs<F>,
+            ) -> Result<ToyOutputs<F>, SumcheckKernelError<F>> {
+                let mut outputs = self.inner.output_claims(inputs)?;
+                if matches!(self.fault, Fault::Output) {
+                    outputs.c += F::one();
+                }
+                Ok(outputs)
+            }
+
+            fn validate_derived_tables(
+                &self,
+                relation: &ToyRelation<F>,
+                input_points: &ToyInputs<Vec<F>>,
+                output_points: &ToyOutputs<Vec<F>>,
+                challenges: &ToyChallenges<F>,
+            ) -> Result<(), SumcheckKernelError<F>> {
+                if matches!(self.fault, Fault::Derived) {
+                    Err(SumcheckKernelError::InvariantViolation {
+                        reason: "perturbed derived-table validation",
+                    })
+                } else {
+                    self.inner.validate_derived_tables(
+                        relation,
+                        input_points,
+                        output_points,
+                        challenges,
+                    )
+                }
+            }
+        }
+
+        fn check_success<F: JoltField>() {
+            let fixture = Fixture::<F>::new();
+            let mut reference = fixture.kernel();
+            let mut optimized = fixture.kernel();
+            assert_eq!(probe_input_claim(&mut reference), fixture.claims.total);
+            assert_eq!(probe_input_claim(&mut reference), fixture.claims.total);
+            let outputs = run_lockstep_checked(
+                &fixture.inputs(),
+                &mut reference,
+                &mut optimized,
+                fixture.claims.total,
+                &fixture.round_challenges,
+            );
+            let points = fixture
+                .relation
+                .derive_opening_points(&fixture.round_challenges, &fixture.points)
+                .unwrap();
+            for (polynomial, point) in [
+                (JoltVirtualPolynomial::LookupOutput, &points.a),
+                (JoltVirtualPolynomial::LeftLookupOperand, &points.b),
+                (
+                    JoltVirtualPolynomial::InstructionRa(0),
+                    &points.instruction_ra[0],
+                ),
+                (
+                    JoltVirtualPolynomial::InstructionRa(1),
+                    &points.instruction_ra[1],
+                ),
+                (JoltVirtualPolynomial::RightLookupOperand, &points.c),
+            ] {
+                let id = virt(polynomial);
+                assert_eq!(
+                    outputs.resolve_output(&id),
+                    Some(fixture.openings[&id].evaluate(point)),
+                );
+            }
+            assert_eq!(outputs.untrusted, fixture.claims.untrusted);
+            let mut reference = fixture.kernel();
+            let mut optimized = fixture.kernel();
+            run_lockstep(
+                &mut reference,
+                &mut optimized,
+                fixture.claims.total,
+                &fixture.round_challenges,
+            );
+        }
+
+        fn check_failure<F: JoltField>(
+            reference_fault: Option<Fault>,
+            optimized_fault: Option<Fault>,
+            check: &str,
+            round: usize,
+        ) {
+            let fixture = Fixture::<F>::new();
+            let reference = fixture.kernel();
+            let optimized = fixture.kernel();
+            let mut reference: Box<dyn SumcheckKernel<F, Relation = ToyRelation<F>>> =
+                match reference_fault {
+                    Some(fault) => Box::new(Perturbed {
+                        inner: reference,
+                        fault,
+                    }),
+                    None => Box::new(reference),
+                };
+            let mut optimized: Box<dyn SumcheckKernel<F, Relation = ToyRelation<F>>> =
+                match optimized_fault {
+                    Some(fault) => Box::new(Perturbed {
+                        inner: optimized,
+                        fault,
+                    }),
+                    None => Box::new(optimized),
+                };
+            let failure = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let _ = run_lockstep_checked(
+                    &fixture.inputs(),
+                    &mut *reference,
+                    &mut *optimized,
+                    fixture.claims.total,
+                    &fixture.round_challenges,
+                );
+            }))
+            .unwrap_err();
+            let message = failure
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| failure.downcast_ref::<&str>().copied())
+                .unwrap();
+            assert!(message.contains(check), "{message}");
+            assert!(message.contains(&format!("round {round}")), "{message}");
+        }
+
+        #[test]
+        fn lockstep_checked_claims_and_probe_match_tables() {
+            check_success::<Fr>();
+            check_success::<F128>();
+        }
+
+        fn check_faults<F: JoltField>() {
+            check_failure::<F>(None, Some(Fault::Coefficient), "check (a)", 0);
+            check_failure::<F>(None, Some(Fault::Output), "check (b)", ROUNDS - 1);
+            check_failure::<F>(None, Some(Fault::Derived), "check (c)", ROUNDS - 1);
+            check_failure::<F>(Some(Fault::Derived), None, "check (c)", ROUNDS - 1);
+            check_failure::<F>(
+                Some(Fault::Output),
+                Some(Fault::Output),
+                "check (d)",
+                ROUNDS - 1,
+            );
+            check_failure::<F>(None, Some(Fault::RoundCount(ROUNDS - 1)), "check (a)", 0);
+        }
+
+        #[test]
+        fn lockstep_checked_identifies_each_failed_check() {
+            check_faults::<Fr>();
+            check_faults::<F128>();
+        }
+    }
 }
