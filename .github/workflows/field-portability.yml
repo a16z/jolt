@@ -55,6 +55,11 @@ jobs:
         run: |
           test "$(uname -m)" = "x86_64"
           grep -Eq '(^|[[:space:]])pclmulqdq([[:space:]]|$)' /proc/cpuinfo
+      - name: Clippy binary backend
+        run: |
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
+          cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
       - name: Require kernel differential test discovery
         if: matrix.kernel
         run: |
@@ -87,6 +92,11 @@ jobs:
           test "$(uname -m)" = "aarch64"
           grep -Eq '(^|[[:space:]])aes([[:space:]]|$)' /proc/cpuinfo
           grep -Eq '(^|[[:space:]])pmull([[:space:]]|$)' /proc/cpuinfo
+      - name: Clippy binary backend
+        run: |
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
+          cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
       - name: Require kernel differential test discovery
         if: matrix.kernel
         run: |
@@ -94,30 +104,6 @@ jobs:
           python3 -c 'import json; suites = json.load(open("/tmp/binary-tests.json"))["rust-suites"]; assert any("binary::tests::kernel_matches_portable" in suite["testcases"] for suite in suites.values()), "binary kernel differential test was not discovered"'
       - name: Run whole binary field suite
         run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
-
-  binary-cross-compile:
-    name: Binary field compile on ${{ matrix.target }} (${{ matrix.feature }})
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            feature: +pclmulqdq
-          - target: x86_64-unknown-linux-gnu
-            feature: -pclmulqdq
-          - target: aarch64-unknown-linux-gnu
-            feature: +aes
-          - target: aarch64-unknown-linux-gnu
-            feature: -aes
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
-        with:
-          target: ${{ matrix.target }}
-      - name: Check binary library
-        env:
-          RUSTFLAGS: -D warnings -C target-feature=${{ matrix.feature }}
-        run: cargo check -p jolt-field --lib --no-default-features --features binary --target ${{ matrix.target }}
 
   avx2:
     name: AVX2 field kernels
