@@ -13,19 +13,13 @@ mod f64;
     all(target_arch = "x86_64", target_feature = "pclmulqdq")
 ))]
 mod kernels;
-#[cfg_attr(
-    all(
-        not(test),
-        any(
-            all(target_arch = "aarch64", target_feature = "aes"),
-            all(target_arch = "x86_64", target_feature = "pclmulqdq")
-        )
-    ),
-    expect(
-        dead_code,
-        reason = "portable arithmetic stays compiled for kernel differential tests"
-    )
-)]
+#[cfg(any(
+    test,
+    not(any(
+        all(target_arch = "aarch64", target_feature = "aes"),
+        all(target_arch = "x86_64", target_feature = "pclmulqdq")
+    ))
+))]
 mod portable;
 
 #[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
