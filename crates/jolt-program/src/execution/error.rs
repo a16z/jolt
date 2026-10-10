@@ -35,4 +35,8 @@ pub enum SourceTraceError {
     DeviceRegisterAccess { pc: u64, address: u64 },
     #[error("source program text span {span} bytes exceeds the slot table limit")]
     ProgramTextTooLarge { span: u64 },
+    /// The last decoded image byte at this address differs from the emulator's
+    /// initial RAM byte; an address outside that RAM is compared with zero.
+    #[error("source initial RAM differs from the decoded image at {address:#x}")]
+    ImageMismatch { address: u64 },
 }
