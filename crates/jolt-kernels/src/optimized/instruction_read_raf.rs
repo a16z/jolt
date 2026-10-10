@@ -18,8 +18,7 @@
 //!   scalar multiplies (`mul_u64`/`mul_u128`, no Montgomery conversion of the
 //!   scalar): the scans avoid a full reduction per row; suffixes are
 //!   classified once per table (`One` / {0,1}-valued / general) so most rows
-//!   add instead of multiply, and every `One` suffix shares one weight-mass
-//!   sum per table.
+//!   add instead of multiply.
 //! - **Allocation-free address messages**: prefix/suffix extension
 //!   evaluations go into per-thread scratch reused across the chunk domain
 //!   (the reference allocates fresh eval vectors per point), evaluated at
@@ -524,7 +523,9 @@ struct ScanBlock {
 }
 
 impl ScanBlock {
-    /// Buckets one block of rows whose table indices are already checked.
+    /// `OptimizedInstructionReadRafKernel::new` rejects rows whose
+    /// `table_index()` is not below `LookupTableKind::COUNT` before it builds
+    /// the blocks; such a row's class would index `starts` out of bounds.
     fn new(rows: &[InstructionCycleRow]) -> Self {
         let mut starts = [0u16; SCAN_CLASSES + 1];
         for row in rows {
@@ -552,7 +553,6 @@ impl ScanBlock {
 /// across heterogeneous cores.
 const SCAN_TASKS_PER_THREAD: usize = 8;
 
-/// One phase's fused-scan parameters.
 struct PhaseScan<'a, F> {
     /// The previous phase's chunk shift and bound-challenge eq table, folded
     /// into the weights before they are read (every phase but the first).
@@ -566,90 +566,94 @@ struct PhaseScan<'a, F> {
 
 /// One phase's scan sums: the RAF sums, plus each table's suffix sums
 /// (`table.suffixes()`-major over the chunk domain) by
-/// `LookupTableKind::index()`, empty for tables no cycle selects.
+/// `LookupTableKind::index()`, `None` for tables no cycle selects.
 struct PhaseSums<F> {
     raf: RafSums<F>,
-    suffixes: Vec<Vec<F>>,
+    suffixes: Vec<Option<Vec<F>>>,
 }
 
 impl<F: JoltField> PhaseSums<F> {
     fn zero() -> Self {
         Self {
             raf: RafSums::zero(),
-            suffixes: vec![Vec::new(); LookupTableKind::<RISCV_XLEN>::COUNT],
+            suffixes: vec![None; LookupTableKind::<RISCV_XLEN>::COUNT],
         }
     }
 
     fn merge(mut self, other: Self) -> Self {
         self.raf = self.raf.merge(other.raf);
         for (sums, other) in self.suffixes.iter_mut().zip(other.suffixes) {
-            if sums.is_empty() {
-                *sums = other;
-            } else {
-                for (a, b) in sums.iter_mut().zip(&other) {
-                    *a += *b;
+            let Some(other) = other else {
+                continue;
+            };
+            match sums {
+                Some(sums) => {
+                    for (a, b) in sums.iter_mut().zip(&other) {
+                        *a += *b;
+                    }
                 }
+                None => *sums = Some(other),
             }
         }
         self
     }
 }
 
-/// One scan task's suffix accumulators for one lookup table: its `One`
-/// sums (the table's weight mass per chunk, shared by every `One` suffix)
-/// when it has a `One` suffix, then one row per other suffix.
+#[derive(Clone, Copy)]
+enum SuffixRow {
+    One,
+    ZeroOne(Suffixes),
+    General(Suffixes),
+}
+
+/// One scan task's suffix accumulators for one lookup table: one row per
+/// suffix, in `table.suffixes()` order.
 struct TableScan<F: JoltField> {
-    table: LookupTableKind<RISCV_XLEN>,
-    has_one: bool,
-    /// Non-`One` suffixes in `table.suffixes()` order, with their
-    /// {0,1}-valued classification.
-    row_suffixes: Vec<(Suffixes, bool)>,
+    suffixes: Vec<SuffixRow>,
     accumulators: Vec<F::Accumulator>,
 }
 
 impl<F: JoltField> TableScan<F> {
     fn new(table: LookupTableKind<RISCV_XLEN>) -> Self {
-        let suffixes = table.suffixes();
-        let has_one = suffixes
+        let suffixes: Vec<SuffixRow> = table
+            .suffixes()
             .iter()
-            .any(|suffix| matches!(suffix, Suffixes::One));
-        let row_suffixes: Vec<(Suffixes, bool)> = suffixes
-            .iter()
-            .filter(|suffix| !matches!(suffix, Suffixes::One))
-            .map(|&suffix| (suffix, suffix.is_01_valued()))
+            .map(|&suffix| {
+                if matches!(suffix, Suffixes::One) {
+                    SuffixRow::One
+                } else if suffix.is_01_valued() {
+                    SuffixRow::ZeroOne(suffix)
+                } else {
+                    SuffixRow::General(suffix)
+                }
+            })
             .collect();
-        let rows = usize::from(has_one) + row_suffixes.len();
+        let accumulators = vec![F::Accumulator::default(); suffixes.len() * CHUNK_SIZE];
         Self {
-            table,
-            has_one,
-            row_suffixes,
-            accumulators: vec![F::Accumulator::default(); rows * CHUNK_SIZE],
+            suffixes,
+            accumulators,
         }
     }
 
-    /// `One` adds the weight, {0,1}-valued suffixes add it conditionally,
-    /// general ones use the primitive-scalar multiply.
     #[inline]
     fn accumulate(&mut self, chunk: usize, suffix_bits: LookupBits, u: F) {
-        let (one, rows) = self
-            .accumulators
-            .split_at_mut(usize::from(self.has_one) * CHUNK_SIZE);
-        if self.has_one {
-            one[chunk].add(u);
-        }
-        for (&(suffix, zero_one_valued), row) in self
-            .row_suffixes
+        for (&suffix, row) in self
+            .suffixes
             .iter()
-            .zip(rows.chunks_exact_mut(CHUNK_SIZE))
+            .zip(self.accumulators.chunks_exact_mut(CHUNK_SIZE))
         {
-            if zero_one_valued {
-                if suffix.suffix_mle(suffix_bits) == 1 {
-                    row[chunk].add(u);
+            match suffix {
+                SuffixRow::One => row[chunk].add(u),
+                SuffixRow::ZeroOne(suffix) => {
+                    if suffix.suffix_mle(suffix_bits) == 1 {
+                        row[chunk].add(u);
+                    }
                 }
-            } else {
-                let value = suffix.suffix_mle(suffix_bits);
-                if value != 0 {
-                    row[chunk].fmadd_u64(u, value);
+                SuffixRow::General(suffix) => {
+                    let value = suffix.suffix_mle(suffix_bits);
+                    if value != 0 {
+                        row[chunk].fmadd_u64(u, value);
+                    }
                 }
             }
         }
@@ -657,24 +661,10 @@ impl<F: JoltField> TableScan<F> {
 
     /// The table's reduced suffix sums, in `table.suffixes()` order.
     fn reduce(self) -> Vec<F> {
-        let mut rows = self
-            .accumulators
-            .chunks_exact(CHUNK_SIZE)
-            .map(|row| row.iter().map(|accumulator| accumulator.reduce()));
-        let one: Vec<F> = if self.has_one {
-            rows.next().into_iter().flatten().collect()
-        } else {
-            Vec::new()
-        };
-        let mut sums = Vec::with_capacity(self.table.suffixes().len() * CHUNK_SIZE);
-        for suffix in self.table.suffixes() {
-            if matches!(suffix, Suffixes::One) {
-                sums.extend_from_slice(&one);
-            } else {
-                sums.extend(rows.next().into_iter().flatten());
-            }
-        }
-        sums
+        self.accumulators
+            .into_iter()
+            .map(|accumulator| accumulator.reduce())
+            .collect()
     }
 }
 
@@ -709,10 +699,6 @@ impl<F: JoltField> PhaseScan<'_, F> {
         }
     }
 
-    /// One task, a block at a time: condense the block's weights in cycle
-    /// order (streaming the block into cache), then accumulate each class
-    /// run — gathered from the cache-resident block under one table and
-    /// one RAF flag, so the dispatch stays predictable.
     fn scan(
         &self,
         blocks: &[ScanBlock],
@@ -748,13 +734,11 @@ impl<F: JoltField> PhaseScan<'_, F> {
             raf: raf.reduce(),
             suffixes: table_scans
                 .into_iter()
-                .map(|scan| scan.map_or_else(Vec::new, TableScan::reduce))
+                .map(|scan| scan.map(TableScan::reduce))
                 .collect(),
         }
     }
 
-    /// One class run: the RAF sums (deferred-reduction, primitive-scalar
-    /// multiplies) and, for a table's run, its suffix sums.
     #[inline]
     fn accumulate(
         &self,
@@ -816,9 +800,7 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     gamma: F,
     r_reduction: Vec<F>,
     rows: Arc<Vec<InstructionCycleRow>>,
-    /// The trace in blocks of `SCAN_BLOCK` cycles, each bucketed by
-    /// (lookup table, RAF flag).
-    buckets: Vec<ScanBlock>,
+    blocks: Vec<ScanBlock>,
     /// Condensed per-cycle eq weights (see the reference kernel).
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
@@ -919,7 +901,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .filter_map(|(index, present)| present.then_some(index))
             .collect();
 
-        let buckets = map_indices(rows.len().div_ceil(SCAN_BLOCK), |block| {
+        let blocks = map_indices(rows.len().div_ceil(SCAN_BLOCK), |block| {
             ScanBlock::new(&rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(rows.len())])
         });
         let mut kernel = Self {
@@ -927,7 +909,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             gamma,
             r_reduction: r_reduction.to_vec(),
             rows,
-            buckets,
+            blocks,
             u_evals: eq_table(r_reduction),
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
@@ -979,8 +961,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             upper_suffix_bits: suffix_len.saturating_sub(self.address_bits() / 2),
             tables: LookupTableKind::<RISCV_XLEN>::iter().collect(),
         };
-        let PhaseSums { raf, mut suffixes } =
-            scan.run(&self.buckets, &self.rows, &mut self.u_evals);
+        let PhaseSums { raf, suffixes } = scan.run(&self.blocks, &self.rows, &mut self.u_evals);
 
         let q_shift_half: Vec<F> = raf
             .shift_half
@@ -1039,15 +1020,13 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         }
 
         self.suffix_tables = LookupTableKind::<RISCV_XLEN>::iter()
-            .filter_map(|table| {
-                let sums = std::mem::take(&mut suffixes[table.index()]);
-                (!sums.is_empty()).then(|| {
-                    let polynomials = sums
-                        .chunks_exact(CHUNK_SIZE)
-                        .map(|coefficients| Polynomial::new(coefficients.to_vec()))
-                        .collect();
-                    (table, polynomials)
-                })
+            .zip(suffixes)
+            .filter_map(|(table, sums)| {
+                let polynomials = sums?
+                    .chunks_exact(CHUNK_SIZE)
+                    .map(|coefficients| Polynomial::new(coefficients.to_vec()))
+                    .collect();
+                Some((table, polynomials))
             })
             .collect();
 
@@ -1328,7 +1307,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         self.u_evals = Vec::new();
         self.prefix_tables = Vec::new();
         self.suffix_tables = Vec::new();
-        self.buckets = Vec::new();
+        self.blocks = Vec::new();
     }
 
     #[inline]
