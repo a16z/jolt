@@ -23,6 +23,7 @@ use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch};
 use jolt_verifier::VerifierError;
 
 use ids::{ChallengeId, DerivedId, Draw, FamilyExpr, OpeningId, RelationId, VirtualPolynomial};
+use proving::AliasSumchecks as LocalAliasSumchecks;
 
 pub mod ids {
     use super::{ComposedOpeningId, Expr, ExternalId, VerifierChallengeId, VerifierDerivedId};
@@ -448,6 +449,7 @@ impl<F: JoltField> Default for ToyKernels<F> {
 toy_sumchecks_members!(impl_stage_prover plane = ToyPlane,);
 
 mod proving {
+    use super::AliasSumchecks as ForeignAliasSumchecks;
     use super::{
         AliasChallenges, AliasInputClaims, AliasInputPoints, AliasOutputClaims, AliasOutputPoints,
         AliasRelation, FullRelation, ToyPlane,
@@ -456,10 +458,10 @@ mod proving {
     use jolt_field::JoltField;
     use jolt_prover::impl_stage_prover;
 
-    pub struct AliasSumchecks<F: JoltField>(pub super::AliasSumchecks<F>);
+    pub struct AliasSumchecks<F: JoltField>(pub ForeignAliasSumchecks<F>);
 
     impl<F: JoltField> Deref for AliasSumchecks<F> {
-        type Target = super::AliasSumchecks<F>;
+        type Target = ForeignAliasSumchecks<F>;
         fn deref(&self) -> &Self::Target {
             &self.0
         }
@@ -469,12 +471,12 @@ mod proving {
 }
 
 type ToyProof = Proved<F128, ToySumchecks<F128>, F128>;
-type AliasProof = Proved<F128, proving::AliasSumchecks<F128>, F128>;
+type AliasProof = Proved<F128, LocalAliasSumchecks<F128>, F128>;
 type BinaryTranscript = Blake2bTranscript<F128>;
 
 struct Fixture {
     batch: ToySumchecks<F128>,
-    aliases: proving::AliasSumchecks<F128>,
+    aliases: LocalAliasSumchecks<F128>,
     tables: ToyTables<F128>,
     kernels: ToyKernels<F128>,
     inputs: ToyInputClaims<F128>,
@@ -490,7 +492,7 @@ impl Fixture {
             tail: TailRelation::new(3),
             head: HeadRelation::new(3),
         };
-        let aliases = proving::AliasSumchecks(AliasSumchecks {
+        let aliases = LocalAliasSumchecks(AliasSumchecks {
             full: FullRelation::new(5),
             alias: AliasRelation::new(5),
         });
