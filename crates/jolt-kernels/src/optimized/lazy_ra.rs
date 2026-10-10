@@ -1,3 +1,36 @@
+//! Lazily bound address-folded one-hot selectors for the stage-6b RA
+//! virtualization kernels — the legacy `SharedRaPolynomials` /
+//! `RaPolynomial` round state machine, generalized over the hot-index
+//! source.
+//!
+//! The direct shape materializes every committed selector dense over the
+//! cycle domain at prepare: `N × T` field elements, the stage-6b memory wall
+//! at scale (the committed instruction RA family alone is `8 × T`). But an
+//! unbound selector column is a point mass — `ra_i(·, j)` is
+//! `eq(r_chunk_i, chunk_i(j))`, one scale-table lookup per cycle — and the
+//! first cycle binds preserve that structure: after `b < 4` binds the bound
+//! value at index `j` is the gather
+//!
+//! ```text
+//! value(i, j) = Σ_{offset < 2^b} branch_tables[i][offset][index(i, j·2^b + offset)]
+//! ```
+//!
+//! where branch table `offset` is the base scale table pre-scaled by that
+//! offset's bound-bit eq weight (legacy `SharedRaRound1→2→3` pre-scaling).
+//! Pre-scaling keeps the round-loop gathers multiplication-free — one table
+//! lookup and one addition per branch — because the eq weights are folded
+//! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
+//! instead of multiplied per cycle. Only the fourth bind materializes dense
+//! vectors, at `T/16` length, and drops the index source. Peak memory falls
+//! from `N·T` field elements to the index source plus `N·T/16`.
+//!
+//! Byte parity: every gathered value is the same polynomial of the same
+//! table entries and challenges as the iterated `lo + r·(hi − lo)` dense
+//! bind — identical monomials, exact field algebra (pre-scaling only
+//! reassociates the weight product) — so round messages and output claims
+//! are bit-identical. The consumers' in-module parity tests pin this
+//! against the naive dense path.
+//!
 //! Lazily bound one-hot columns for sumcheck kernels over any field.
 //!
 //! [`ChunkIndexSource`] supplies the table indices of each column. Validated
@@ -24,9 +57,14 @@ pub trait ChunkIndexSource: Send + Sync + 'static {
     /// Number of columns, unchanged throughout the source's lifetime.
     fn num_polys(&self) -> usize;
 
+    /// The unbound cycle-domain length.
+    ///
     /// Unbound cycle count, unchanged throughout the source's lifetime.
     fn cycles(&self) -> usize;
 
+    /// The scale-table index of polynomial `i`'s hot address at unbound
+    /// cycle `j`; `None` when the cycle is cold for that polynomial.
+    ///
     /// Table index for column `i` at unbound cycle `j`, or `None` for zero.
     ///
     /// Calls made by a valid bound-column sequence have `i < num_polys()` and
@@ -72,6 +110,9 @@ pub enum LazyRaError {
     },
 }
 
+/// `N` address-folded selector columns bound `LowToHigh`, lazily until the
+/// fourth bind materializes dense.
+///
 /// One-hot columns bound least significant bit first.
 ///
 /// Column `i` initially has value `tables[i][source.index(i, j)]`, or zero for
@@ -84,8 +125,15 @@ pub enum LazyRaError {
     allocative(bound = "F: JoltField, S: Allocative")
 )]
 pub enum LazyFoldedRa<F: JoltField, S> {
+    /// Fewer than four binds: per-polynomial branch scale tables (the base
+    /// table pre-scaled by each bound-bit pattern's eq weight), flattened
+    /// offset-major — `tables[i][offset · stride_i + k]` with
+    /// `stride_i = tables[i].len() / width` — plus the compact index source.
+    ///
     /// Branch tables with fewer than four bound variables.
     Lazy(LazyRaBranches<F, S>),
+    /// Four or more binds: plain dense multilinears (`T/16` at entry).
+    ///
     /// Dense columns after the fourth bind.
     Dense(LazyRaDense<F>),
 }
@@ -100,6 +148,7 @@ pub enum LazyFoldedRa<F: JoltField, S> {
 )]
 pub struct LazyRaBranches<F: JoltField, S> {
     pub(crate) tables: Vec<Vec<F>>,
+    /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
     pub(crate) width: usize,
     pub(crate) source: S,
 }
@@ -187,6 +236,10 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         }
     }
 
+    /// The current (bound) evaluation of polynomial `i` at index `j` —
+    /// exactly the value a dense representation would hold after the same
+    /// binds.
+    ///
     /// Current evaluation of column `i` at index `j` after low-to-high binds.
     ///
     /// Requires `i < num_polys()` and `j` below the current length. These
@@ -203,6 +256,9 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         }
     }
 
+    /// The `(lo, hi) = (value(i, 2·row), value(i, 2·row + 1))` pair the
+    /// round messages consume.
+    ///
     /// Adjacent current entries `(value(i, 2·row), value(i, 2·row + 1))`.
     ///
     /// Requires `i < num_polys()` and `row` below half the current length,
@@ -212,6 +268,11 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         (self.value(i, 2 * row), self.value(i, 2 * row + 1))
     }
 
+    /// All polynomials' `(lo, hi)` pairs at `row`, into `out` (when it has length
+    /// `num_polys`). One state dispatch per row instead of `2N`, with
+    /// per-polynomial table slices hoisted out of the gather loop — the
+    /// round-message hot path.
+    ///
     /// Write adjacent pairs for the first `min(out.len(), num_polys())` columns.
     ///
     /// Remaining output entries are unchanged. Requires `row` below half the
@@ -241,6 +302,9 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         }
     }
 
+    /// The fully bound claims after all binds, in polynomial order (any state, so short
+    /// cycle geometries extract correctly).
+    ///
     /// Entry zero of every column, in column order.
     ///
     /// These are the fully bound values after `log2(cycles())` binds; calling
@@ -249,6 +313,9 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         (0..self.num_polys()).map(|i| self.value(i, 0)).collect()
     }
 
+    /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
+    /// until the fourth bind materializes dense, then use plain multilinear binds.
+    ///
     /// Bind the next least significant variable by `lo + challenge·(hi − lo)`.
     ///
     /// The first three binds rescale branch tables; the fourth creates dense

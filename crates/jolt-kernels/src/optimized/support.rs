@@ -900,6 +900,19 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
     }
 }
 
+/// `LT(·, r) + constant` served from split tables and bound low-to-high
+/// (legacy `LtPolynomial` port).
+///
+/// Big-endian index `j = j_hi ‖ j_lo` with `r = r_hi ‖ r_lo`:
+/// `LT(j, r) = LT(j_hi, r_hi) + eq(j_hi, r_hi) · LT(j_lo, r_lo)`, so an
+/// additive constant folds into the `~√T` hi table and low-to-high binding
+/// touches only `lt_lo`; once the lo variables are exhausted the lo scalar
+/// folds into `lt_hi` and binding continues densely. Values equal the dense
+/// `LtPolynomial::evaluations(r)` table (plus the constant) bound identically
+/// — binding acts linearly on the `j_lo` tensor factor. (jolt-poly's
+/// `LtPolynomial` binds high-to-low only, so the low-to-high variant lives
+/// here.)
+///
 /// A less-than table, optionally plus a constant, bound least significant bit first.
 ///
 /// For a high-variable-first point `r` of `n` coordinates, entry `j` is
@@ -941,6 +954,8 @@ impl<F: JoltField> SplitLt<F> {
         Self::new_plus_constant(r_cycle, F::zero())
     }
 
+    /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
+    ///
     /// Construct `t[j] = Σ_{k > j} eq(k, r_cycle) + constant`.
     ///
     /// Coordinates are high variable first; an empty point gives `[constant]`.
@@ -969,6 +984,8 @@ impl<F: JoltField> SplitLt<F> {
         })
     }
 
+    /// `(LT[2y], LT[2y + 1])` under low-to-high pairing.
+    ///
     /// Adjacent entries `(t[2y], t[2y + 1])` of the current table.
     ///
     /// Requires `y` below half the current length, without checking it.

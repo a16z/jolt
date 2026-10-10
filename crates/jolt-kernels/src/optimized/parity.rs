@@ -1,3 +1,19 @@
+//! Parity-test harness of the optimized tier: a lockstep round runner that
+//! drives a reference kernel and an optimized kernel from identical
+//! [`ProverInputs`] over identical challenges and asserts byte-equal round
+//! polynomials (`UnivariatePoly` wire form) and equal typed output claims.
+//!
+//! The in-crate witness-backed tests use
+//! `jolt_witness::testing::with_sample_backend`, a real `TraceBackend` over a
+//! canned trace. Its known weaknesses are documented on the
+//! per-kernel tests.
+//!
+//! `run_lockstep` compares round coefficients and finishes both kernels; its
+//! caller compares output claims. `run_lockstep_checked` also compares canonical
+//! opening order and values, validates both derived tables and compares the
+//! relation's expected output with the final running claim. Kernel fixtures may
+//! supply their own inputs and witness plane.
+//!
 //! Lock-step comparison of reference and optimized sum-check kernels over any
 //! field supported by their relation, including binary fields.
 //!
@@ -87,6 +103,12 @@ pub(crate) fn probe_one_hot_family(
     (count, chunk_bits)
 }
 
+/// The initial claim of an honest reference kernel, recovered through its own round
+/// check: probe `prove_round` with a zero claim and read the true domain sum
+/// off the `RoundCheckFailed` error (an `Ok` means the claim really is zero).
+/// This requires the independent endpoint sum and repeatability conditions below;
+/// `prove_round(None, ..)` binds nothing but need not leave kernel state unchanged.
+///
 /// Probe the first round with a zero claim, returning the actual endpoint sum
 /// from `RoundCheckFailed`, or zero when the round succeeds.
 ///
@@ -109,6 +131,12 @@ where
     }
 }
 
+/// Drive both kernels through every round with shared challenges, asserting
+/// byte-equal round polynomials, then finish both kernels for output-claim
+/// comparison. `initial_claim` must be the honest input claim (see
+/// [`probe_input_claim`]). Fixture-specific nontriviality checks belong in
+/// callers: a zero claim can still yield nonzero round polynomials.
+///
 /// Compare every round's coefficient vector under shared challenges, then
 /// finish both kernels. `initial_claim` must be the honest input claim.
 ///
