@@ -19,6 +19,9 @@ use crate::{emulator::Emulator, instruction::Instruction, AdviceTape};
 /// The first PC stall emits one final row; termination stores do not stop tracing.
 /// Text spans above 256 MiB are rejected before emulator construction. The
 /// memory configuration must cover the loaded image, as for `TracerBackend`.
+/// In either decode mode, initial RAM must match the last `memory_init` entry
+/// at each image address, with addresses outside RAM compared with zero. Before
+/// emitting any row, a difference returns `ImageMismatch` at its lowest address.
 #[derive(Default, Debug, Clone)]
 pub struct SourceTracerBackend {
     row_capacity: usize,
@@ -38,8 +41,16 @@ impl SourceTracerBackend {
     /// Selects how executable sections containing data words are decoded.
     ///
     /// Rows index the instruction list returned by `decode_elf_with_mode` with
-    /// RV64I and this same mode. A fetch of an omitted word returns
-    /// `PcOutsideProgram`; loads still read its original image bytes.
+    /// RV64I and this same mode; consumers must resolve indices with that mode.
+    /// The mode matters only for an image rejected by strict decoding. A fetch
+    /// of an omitted word returns `PcOutsideProgram`, a guarantee of
+    /// `SourceTracerBackend`. Hole bytes are ordinary memory: loads read the
+    /// decoded image until a store changes it, and stores overlapping only holes
+    /// emit ordinary rows. The PC remains absent whatever was stored there.
+    ///
+    /// `DecodeMode` changes static decoding only. The emulator's own fetch,
+    /// `TracerBackend`, the native x86 backend and chunked replay do not consult
+    /// it and provide no such fetch guarantee.
     pub fn with_decode_mode(mut self, mode: DecodeMode) -> Self {
         self.decode_mode = mode;
         self

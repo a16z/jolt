@@ -15,9 +15,13 @@ pub enum TraceError {
     SourceTrace(#[from] SourceTraceError),
 }
 
-/// Unsupported architectural transitions, rejected before the failing instruction
-/// executes. Fetch, instruction kind, alignment, device cells, and text stores
-/// are checked in that order; the text span is bounded before emulator setup.
+/// Source execution setup errors and unsupported architectural transitions.
+/// Fetch, instruction kind, alignment, device cells, and text stores are checked
+/// in that order before the failing instruction executes; the text span is
+/// bounded before emulator setup.
+/// After setup and before any row, both decode modes check the last decoded
+/// image byte at each address against initial RAM, returning `ImageMismatch`
+/// at the lowest differing address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SourceTraceError {
     #[error("unsupported source instruction {kind:?} at {pc:#x}")]

@@ -32,11 +32,24 @@ pub struct Rv64ProgramImage {
 /// Selects how executable sections containing data are decoded.
 ///
 /// `Strict` validates the existing halfword instruction stream. `DataHoles`
-/// examines complete, four-byte-aligned slots only, omitting slots rejected by
-/// the selected profile and leading or trailing fragments. Every section byte
-/// remains in the memory image. A data word that decodes remains an instruction.
-/// `DataHoles` rejects profiles containing compressed instructions before ELF
-/// parsing; it does not distinguish data from code.
+/// examines complete, four-byte-aligned little-endian slots in each merged text
+/// range, in address order without resynchronising. A slot is retained exactly
+/// when instruction decoding under the selected profile succeeds; rejected
+/// slots and leading or trailing fragments are omitted. The instruction list
+/// stays dense and in address order.
+///
+/// Both modes preserve every section byte in `memory_init`, plus `program_end`
+/// and `entry_address`, and return the same errors for invalid ELF objects,
+/// ELF32 images, overflowing section extents and unreadable section data.
+/// Without compressed instructions, any image accepted by `Strict` has the same
+/// decoded image under `DataHoles`. A data word that decodes is an instruction.
+///
+/// `DataHoles` gives up detecting corrupted encodings, unsupported instructions
+/// and truncated intended code: it cannot distinguish data from damage, so an
+/// unreached fault stays undetected and a reached hole in `SourceTracerBackend`
+/// returns `PcOutsideProgram` instead of the suppressed decode error.
+/// `DataHoles` rejects profiles containing compressed instructions with
+/// `DecodeModeUnsupportedByProfile` before ELF parsing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DecodeMode {
     #[default]
