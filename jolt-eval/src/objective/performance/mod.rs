@@ -5,6 +5,8 @@ pub mod prover_time;
 pub mod source_trace_gen;
 pub mod trace_gen;
 
+use serde_json::Value;
+use source_trace_gen::PROGRAMS;
 use std::path::Path;
 
 /// Reads a Criterion mean in seconds for a benchmark and baseline.
@@ -15,21 +17,19 @@ use std::path::Path;
 /// writes its output under `{work_dir}/target/criterion/`.
 pub fn read_criterion_estimate(work_dir: &Path, bench_name: &str, baseline: &str) -> Option<f64> {
     if bench_name == "source_trace_gen" {
-        return source_trace_gen::PROGRAMS
-            .iter()
-            .try_fold(0.0, |total, (label, _, _)| {
-                // Criterion replaces the slash in each group name with an underscore.
-                let path = work_dir
-                    .join("target/criterion")
-                    .join(format!("source_trace_gen_{label}"))
-                    .join("source")
-                    .join(baseline)
-                    .join("estimates.json");
-                let data = std::fs::read_to_string(path).ok()?;
-                let json: serde_json::Value = serde_json::from_str(&data).ok()?;
-                let nanos = json.get("median")?.get("point_estimate")?.as_f64()?;
-                Some(total + nanos / 1e9)
-            });
+        return PROGRAMS.iter().try_fold(0.0, |total, (label, _, _)| {
+            // Criterion replaces the slash in each group name with an underscore.
+            let path = work_dir
+                .join("target/criterion")
+                .join(format!("source_trace_gen_{label}"))
+                .join("source")
+                .join(baseline)
+                .join("estimates.json");
+            let data = std::fs::read_to_string(path).ok()?;
+            let json: Value = serde_json::from_str(&data).ok()?;
+            let nanos = json.get("median")?.get("point_estimate")?.as_f64()?;
+            Some(total + nanos / 1e9)
+        });
     }
     let path = work_dir
         .join("target/criterion")
@@ -37,7 +37,7 @@ pub fn read_criterion_estimate(work_dir: &Path, bench_name: &str, baseline: &str
         .join(baseline)
         .join("estimates.json");
     let data = std::fs::read_to_string(path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
+    let json: Value = serde_json::from_str(&data).ok()?;
     let nanos = json.get("mean")?.get("point_estimate")?.as_f64()?;
     Some(nanos / 1e9)
 }

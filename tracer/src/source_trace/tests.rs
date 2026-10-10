@@ -256,9 +256,7 @@ impl Fixture {
             let registers = cpu.x;
             let pc = cpu.read_pc();
             let memory = cpu.mmu.memory.memory.materialized_nonzero_bytes();
-            let device = cpu.mmu.jolt_device.as_ref().unwrap();
-            let outputs = device.outputs.clone();
-            let panic = device.panic;
+            let device = cpu.mmu.jolt_device.as_ref().unwrap().clone();
             let trace_len = cpu.trace_len;
             let row_count = rows.len();
             match execution.step(&mut rows) {
@@ -269,9 +267,7 @@ impl Fixture {
                     assert_eq!(cpu.x, registers);
                     assert_eq!(cpu.read_pc(), pc);
                     assert_eq!(cpu.mmu.memory.memory.materialized_nonzero_bytes(), memory);
-                    let device = cpu.mmu.jolt_device.as_ref().unwrap();
-                    assert_eq!(device.outputs, outputs);
-                    assert_eq!(device.panic, panic);
+                    assert_eq!(cpu.mmu.jolt_device.as_ref().unwrap(), &device);
                     assert_eq!(cpu.trace_len, trace_len);
                     assert_eq!(rows.len(), row_count);
                     return;

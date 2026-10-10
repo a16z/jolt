@@ -7,6 +7,7 @@ pub mod synthesis;
 pub mod telemetry;
 
 use code_quality::PROOF_SYSTEM_CRATE_DIRS;
+use performance::source_trace_gen::SourceTraceGenObjective;
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -143,7 +144,7 @@ pub enum PerformanceObjective {
     MulI64(performance::field_mul::MulI64Objective),
     MulU128(performance::field_mul::MulU128Objective),
     MulI128(performance::field_mul::MulI128Objective),
-    SourceTraceGen(performance::source_trace_gen::SourceTraceGenObjective),
+    SourceTraceGen(SourceTraceGenObjective),
 }
 
 impl PerformanceObjective {
@@ -156,7 +157,7 @@ impl PerformanceObjective {
             Self::MulI64(performance::field_mul::MulI64Objective),
             Self::MulU128(performance::field_mul::MulU128Objective),
             Self::MulI128(performance::field_mul::MulI128Objective),
-            Self::SourceTraceGen(performance::source_trace_gen::SourceTraceGenObjective),
+            Self::SourceTraceGen(SourceTraceGenObjective),
         ]
     }
 
