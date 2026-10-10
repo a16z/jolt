@@ -71,6 +71,8 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
+#[cfg(test)]
+use super::lazy_ra::LazyRaDense;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, par_sum_pair_groups_reusing,
@@ -1936,7 +1938,7 @@ mod cycle_group_tests {
             let kernel = CycleKernel {
                 progress: RoundProgress::new(GROUPS.ilog2() as usize + 1),
                 degree,
-                ra: LazyFoldedRa::Dense(ra.clone()),
+                ra: LazyFoldedRa::Dense(LazyRaDense(ra.clone())),
                 combined: combined.clone(),
                 #[cfg(feature = "akita")]
                 fused_inc: LazyFusedInc::Dense(fused_inc.clone()),
