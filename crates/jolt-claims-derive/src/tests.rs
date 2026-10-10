@@ -4,7 +4,7 @@
 )]
 
 use proc_macro2::TokenStream as TokenStream2;
-use syn::{parse_quote, DeriveInput, File};
+use syn::{parse_quote, Attribute, DeriveInput, File};
 
 use crate::{expand_challenges, expand_input, expand_output};
 
@@ -276,4 +276,146 @@ fn challenges_reject_unannotated_fields() {
         },
         "every field needs a #[challenge(SubEnum::Variant)] annotation",
     );
+}
+
+#[test]
+fn protocol_ids_namespaces_all_three_derives() {
+    let output = pretty(
+        expand_output(parse_quote! {
+            #[protocol(ids = some::path)]
+            #[relation(Producer)]
+            struct Demo<C> {
+                #[opening(Value)]
+                value: C,
+                #[opening(committed = Column)]
+                column: C,
+            }
+        })
+        .expect("custom output namespace should expand"),
+    );
+    for path in [
+        "OutputClaims<F, some::path::OpeningId>",
+        "some::path::OpeningId::virtual_polynomial",
+        "some::path::VirtualPolynomial::Value",
+        "some::path::CommittedPolynomial::Column",
+        "some::path::RelationId::Producer",
+    ] {
+        assert!(
+            output.contains(path),
+            "missing output namespace path {path}"
+        );
+    }
+    assert!(!output.contains("::jolt_claims::protocols"));
+
+    let input = pretty(
+        expand_input(parse_quote! {
+            #[protocol(ids = some::path)]
+            struct Demo<C> {
+                #[opening(Value, from = Producer)]
+                value: C,
+                #[opening(committed = Column, from = Other)]
+                column: C,
+            }
+        })
+        .expect("custom input namespace should expand"),
+    );
+    for path in [
+        "InputClaims<F, some::path::OpeningId>",
+        "some::path::OpeningId::committed",
+        "some::path::VirtualPolynomial::Value",
+        "some::path::CommittedPolynomial::Column",
+        "some::path::RelationId::Producer",
+        "some::path::RelationId::Other",
+    ] {
+        assert!(input.contains(path), "missing input namespace path {path}");
+    }
+    assert!(!input.contains("::jolt_claims::protocols"));
+
+    let challenges = pretty(
+        expand_challenges(parse_quote! {
+            #[protocol(ids = some::path)]
+            struct Demo<F> {
+                #[challenge(Draw::First)]
+                first: F,
+            }
+        })
+        .expect("custom challenge namespace should expand"),
+    );
+    assert!(challenges.contains("SumcheckChallenges<F, some::path::ChallengeId>"));
+    assert!(challenges.contains("some::path::ChallengeId::from(Draw::First)"));
+    assert!(!challenges.contains("::jolt_claims::protocols"));
+}
+
+#[test]
+fn protocol_ids_preserves_derive_site_paths() {
+    for (attribute, prefix) in [
+        (parse_quote!(#[protocol(ids = crate::ids)]), "crate :: ids"),
+        (
+            parse_quote!(#[protocol(ids = ::family::ids)]),
+            ":: family :: ids",
+        ),
+    ] {
+        let namespace = crate::parse_namespace(&[attribute]).expect("module path should parse");
+        for (tokens, item) in [
+            (namespace.opening_id, "OpeningId"),
+            (namespace.relation_id, "RelationId"),
+            (namespace.virtual_polynomial, "VirtualPolynomial"),
+            (namespace.committed_polynomial, "CommittedPolynomial"),
+            (namespace.challenge_id, "ChallengeId"),
+        ] {
+            assert_eq!(tokens.to_string(), format!("{prefix} :: {item}"));
+        }
+        assert!(!namespace.allows_advice);
+    }
+}
+
+#[test]
+fn protocol_ids_rejects_advice_leaves() {
+    let openings: [Attribute; 2] = [
+        parse_quote!(#[opening(trusted_advice)]),
+        parse_quote!(#[opening(untrusted_advice)]),
+    ];
+    for opening in openings {
+        let input: DeriveInput = parse_quote! {
+            #[protocol(ids = some::path)]
+            #[relation(Producer)]
+            struct Demo<C> {
+                #opening
+                value: C,
+            }
+        };
+        expect_output_error(
+            input,
+            "advice openings are jolt-protocol ids; this protocol namespace has no advice variant",
+        );
+    }
+}
+
+#[test]
+fn protocol_ids_rejects_duplicate_attributes() {
+    expect_output_error(
+        parse_quote! {
+            #[protocol(ids = some::path)]
+            #[protocol(jolt)]
+            #[relation(Producer)]
+            struct Demo<C> {
+                #[opening(Value)]
+                value: C,
+            }
+        },
+        "duplicate #[protocol(..)] attribute",
+    );
+}
+
+#[test]
+fn protocol_namespace_diagnostics_identify_supported_syntax() {
+    for (attribute, message) in [
+        (parse_quote!(#[protocol(ids)]), "expected `ids = <path>` in #[protocol(..)]"),
+        (parse_quote!(#[protocol(other = x)]), "unknown protocol key `other` (expected `ids`)"),
+        (parse_quote!(#[protocol(ids = 1)]), "expected a module path after `ids =`"),
+        (parse_quote!(#[protocol(other)]), "unknown protocol namespace `other` (expected `jolt`, `field_inline`, or `ids = <path>`)"),
+    ] {
+        let error = crate::parse_namespace(&[attribute]).err().expect("invalid namespace should fail");
+        assert_eq!(error.to_string(), message);
+    }
 }
