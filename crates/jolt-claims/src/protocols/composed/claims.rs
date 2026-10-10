@@ -89,6 +89,7 @@ impl<F: JoltField, B: InputClaims<F>, E: InputClaims<F, FieldInlineOpeningId>>
         match id {
             ComposedOpeningId::Jolt(id) => self.base.resolve_input(id),
             ComposedOpeningId::FieldInline(id) => self.field_inline.resolve_input(id),
+            ComposedOpeningId::External(_) => None,
         }
     }
 }
@@ -112,6 +113,7 @@ impl<F: JoltField, B: OutputClaims<F>, E: OutputClaims<F, FieldInlineOpeningId>>
         match id {
             ComposedOpeningId::Jolt(id) => self.base.resolve_output(id),
             ComposedOpeningId::FieldInline(id) => self.field_inline.resolve_output(id),
+            ComposedOpeningId::External(_) => None,
         }
     }
     fn from_opening_values(
@@ -160,4 +162,23 @@ pub struct FieldInlineBytecodeReadRafInputs<C> {
     pub rs2_ra: C,
     #[opening(FieldRdWa, from = FieldRegistersValEvaluation)]
     pub rd_wa_val_evaluation: C,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocols::composed::ExternalId;
+    use jolt_field::Fr;
+
+    #[test]
+    fn composed_claims_do_not_resolve_external_openings() {
+        let id = ComposedOpeningId::External(ExternalId {
+            family: "external",
+            index: 0,
+        });
+        let inputs = OuterInputs::<Fr>::default();
+        let outputs = OuterOutputs::<Fr>::default();
+        assert_eq!(inputs.resolve_input(&id), None);
+        assert_eq!(outputs.resolve_output(&id), None);
+    }
 }

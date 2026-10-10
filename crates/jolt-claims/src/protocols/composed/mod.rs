@@ -7,7 +7,7 @@ pub mod geometry;
 pub mod r1cs;
 
 mod ids;
-pub use ids::ComposedOpeningId;
+pub use ids::{ComposedOpeningId, ExternalId};
 
 #[cfg(feature = "field-inline")]
 mod claims;

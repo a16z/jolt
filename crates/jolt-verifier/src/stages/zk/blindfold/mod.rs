@@ -454,7 +454,7 @@ fn composite_aliases<O: Into<ComposedOpeningId>>(
 #[cfg(feature = "fuzzing")]
 #[expect(
     clippy::unreachable,
-    reason = "mapping a Jolt expression cannot produce field-inline IDs or retain challenges"
+    reason = "mapping a Jolt expression cannot produce foreign opening IDs or retain challenges"
 )]
 pub fn evaluate_mapped_expression<F, Opening, Challenge, Derived>(
     expr: JoltExpr<F>,
@@ -473,6 +473,9 @@ where
             ComposedOpeningId::Jolt(id) => opening(id),
             ComposedOpeningId::FieldInline(_) => {
                 unreachable!("Jolt expressions do not contain field-inline openings")
+            }
+            ComposedOpeningId::External(_) => {
+                unreachable!("Jolt expressions do not contain external openings")
             }
         },
         |_| unreachable!("Jolt challenges map to BlindFold public inputs"),
@@ -1507,6 +1510,7 @@ mod field_inline_relation_parity {
             |id| match id {
                 ComposedOpeningId::FieldInline(id) => inputs.resolve_input(id).unwrap(),
                 ComposedOpeningId::Jolt(_) => panic!("unexpected Jolt opening"),
+                ComposedOpeningId::External(_) => panic!("unexpected external opening"),
             },
             |_| panic!("lowered expression retained a challenge"),
             resolve_challenge,
@@ -1520,6 +1524,7 @@ mod field_inline_relation_parity {
             |id| match id {
                 ComposedOpeningId::FieldInline(id) => outputs.resolve_output(id).unwrap(),
                 ComposedOpeningId::Jolt(_) => panic!("unexpected Jolt opening"),
+                ComposedOpeningId::External(_) => panic!("unexpected external opening"),
             },
             |_| panic!("lowered expression retained a challenge"),
             resolve_challenge,
