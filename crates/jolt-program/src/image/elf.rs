@@ -48,7 +48,11 @@ pub fn decode_elf(
         .filter(|section| section.address() >= RAM_START_ADDRESS)
     {
         let start = section.address();
-        let end = start + section.size();
+        let end = start
+            .checked_add(section.size())
+            .ok_or(ProgramError::MalformedImage(
+                "section extent overflows address space",
+            ))?;
         program_end = program_end.max(end);
 
         let raw_data = section
@@ -166,9 +170,11 @@ mod tests {
     const SHF_EXECINSTR: u64 = 0x4;
     const SHT_PROGBITS: u32 = 1;
     const SHT_STRTAB: u32 = 3;
+    const SHT_NOBITS: u32 = 8;
 
     struct TestSection {
         name_offset: u32,
+        section_type: u32,
         flags: u64,
         address: u64,
         data: Vec<u8>,
@@ -178,6 +184,7 @@ mod tests {
     fn text_section(address: u64, data: &[u8]) -> TestSection {
         TestSection {
             name_offset: TEXT_NAME,
+            section_type: SHT_PROGBITS,
             flags: SHF_ALLOC | SHF_EXECINSTR,
             address,
             data: data.to_vec(),
@@ -188,6 +195,7 @@ mod tests {
     fn data_section(address: u64, data: &[u8]) -> TestSection {
         TestSection {
             name_offset: DATA_NAME,
+            section_type: SHT_PROGBITS,
             flags: SHF_ALLOC | SHF_WRITE,
             address,
             data: data.to_vec(),
@@ -258,7 +266,7 @@ mod tests {
             push_section_header(
                 &mut out,
                 section.name_offset,
-                SHT_PROGBITS,
+                section.section_type,
                 section.flags,
                 section.address,
                 data_offset,
@@ -356,6 +364,22 @@ mod tests {
         assert!(matches!(
             decode_elf(&build_elf64(&[section]), RV64IMAC_JOLT),
             Err(ProgramError::MalformedImage("section data is not readable"))
+        ));
+    }
+
+    #[test]
+    fn decode_elf_rejects_overflowing_section_extent() {
+        let elf = build_elf64(&[TestSection {
+            name_offset: DATA_NAME,
+            section_type: SHT_NOBITS,
+            flags: SHF_ALLOC,
+            address: 0xffff_ffff_ffff_fffc,
+            data: Vec::new(),
+            size_override: Some(8),
+        }]);
+        assert!(matches!(
+            decode_elf(&elf, RV64I),
+            Err(ProgramError::MalformedImage(message)) if message.contains("section extent")
         ));
     }
 
