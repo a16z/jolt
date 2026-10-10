@@ -5,6 +5,7 @@
 //! outlive a single relation carry these composites so they can name ids from
 //! either family without collapsing the namespaces in jolt-claims.
 
+use jolt_claims::protocols::composed::ExternalId;
 use jolt_claims::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineRelationId,
 };
@@ -32,6 +33,7 @@ impl From<FieldInlineRelationId> for VerifierRelationId {
 pub enum VerifierDerivedId {
     Jolt(JoltDerivedId),
     FieldInline(FieldInlineDerivedId),
+    External(ExternalId),
 }
 
 impl From<JoltDerivedId> for VerifierDerivedId {
@@ -50,6 +52,7 @@ impl From<FieldInlineDerivedId> for VerifierDerivedId {
 pub enum VerifierChallengeId {
     Jolt(JoltChallengeId),
     FieldInline(FieldInlineChallengeId),
+    External(ExternalId),
 }
 
 impl From<JoltChallengeId> for VerifierChallengeId {
@@ -61,5 +64,37 @@ impl From<JoltChallengeId> for VerifierChallengeId {
 impl From<FieldInlineChallengeId> for VerifierChallengeId {
     fn from(id: FieldInlineChallengeId) -> Self {
         Self::FieldInline(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jolt_claims::protocols::field_inline::{
+        FieldRegistersReadWriteChallenge, FieldRegistersReadWritePublic,
+    };
+    use jolt_claims::protocols::jolt::{RamReadWriteChallenge, RamReadWritePublic};
+
+    #[test]
+    fn external_diagnostic_ids_sort_after_workspace_ids() {
+        let external = ExternalId {
+            family: "external",
+            index: 0,
+        };
+        let jolt_derived =
+            VerifierDerivedId::Jolt(JoltDerivedId::RamReadWrite(RamReadWritePublic::EqCycle));
+        let field_derived = VerifierDerivedId::FieldInline(
+            FieldInlineDerivedId::FieldRegistersReadWrite(FieldRegistersReadWritePublic::EqCycle),
+        );
+        assert!(jolt_derived < field_derived);
+        assert!(field_derived < VerifierDerivedId::External(external));
+        let jolt_challenge =
+            VerifierChallengeId::Jolt(JoltChallengeId::RamReadWrite(RamReadWriteChallenge::Gamma));
+        let field_challenge =
+            VerifierChallengeId::FieldInline(FieldInlineChallengeId::FieldRegistersReadWrite(
+                FieldRegistersReadWriteChallenge::Gamma,
+            ));
+        assert!(jolt_challenge < field_challenge);
+        assert!(field_challenge < VerifierChallengeId::External(external));
     }
 }

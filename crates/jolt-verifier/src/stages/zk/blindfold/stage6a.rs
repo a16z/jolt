@@ -239,6 +239,7 @@ mod field_inline_tests {
                     inputs.resolve_input(&(*id).into()).unwrap_or_else(|| fr(0))
                 }
                 ComposedOpeningId::FieldInline(id) => resolve_field_inline(id),
+                ComposedOpeningId::External(_) => fr(0),
             },
             |_| fr(0),
             |id| match id {
