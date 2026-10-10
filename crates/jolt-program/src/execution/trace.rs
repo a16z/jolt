@@ -6,6 +6,9 @@ use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 use super::{ExecutionBackend, TraceError, TraceSource};
 
 mod row;
+mod source_row;
+
+pub use source_row::SourceTraceRow;
 
 pub use row::{
     RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceRow,
@@ -132,7 +135,7 @@ impl JoltProgram {
         &self.elf_bytes
     }
 
-    pub fn trace_with<B: ExecutionBackend>(
+    pub fn trace_with<R, B: ExecutionBackend<R>>(
         &self,
         backend: &mut B,
         inputs: TraceInputs,
@@ -213,25 +216,43 @@ impl<T> TraceOutput<T> {
     }
 }
 
-#[derive(Default, Debug, Clone)]
-pub struct OwnedTrace {
-    rows: Arc<Vec<TraceRow>>,
+#[derive(Debug)]
+pub struct OwnedTrace<R = TraceRow> {
+    rows: Arc<Vec<R>>,
     next: usize,
 }
 
-impl OwnedTrace {
-    pub fn new(rows: Vec<TraceRow>) -> Self {
+impl<R> Clone for OwnedTrace<R> {
+    fn clone(&self) -> Self {
+        Self {
+            rows: Arc::clone(&self.rows),
+            next: self.next,
+        }
+    }
+}
+
+impl<R> Default for OwnedTrace<R> {
+    fn default() -> Self {
+        Self::new(Vec::new())
+    }
+}
+
+impl<R> OwnedTrace<R> {
+    pub fn new(rows: Vec<R>) -> Self {
         Self {
             rows: Arc::new(rows),
             next: 0,
         }
     }
 
-    pub fn rows(&self) -> &[TraceRow] {
+    pub fn rows(&self) -> &[R] {
         self.rows.as_slice()
     }
 
-    pub fn into_rows(self) -> Vec<TraceRow> {
+    pub fn into_rows(self) -> Vec<R>
+    where
+        R: Clone,
+    {
         match Arc::try_unwrap(self.rows) {
             Ok(rows) => rows,
             Err(rows) => rows.as_ref().clone(),
@@ -239,27 +260,95 @@ impl OwnedTrace {
     }
 }
 
-impl From<Vec<TraceRow>> for OwnedTrace {
-    fn from(rows: Vec<TraceRow>) -> Self {
+impl<R> From<Vec<R>> for OwnedTrace<R> {
+    fn from(rows: Vec<R>) -> Self {
         Self::new(rows)
     }
 }
 
-impl TraceSource for OwnedTrace {
-    fn next_row(&mut self) -> Option<TraceRow> {
-        #[cfg(not(feature = "field-inline"))]
-        let row = self.rows.get(self.next).copied();
-        #[cfg(feature = "field-inline")]
+impl<R: Clone> TraceSource<R> for OwnedTrace<R> {
+    fn next_row(&mut self) -> Option<R> {
         let row = self.rows.get(self.next).cloned();
         self.next += usize::from(row.is_some());
         row
     }
 
-    fn rows(&self) -> Option<&[TraceRow]> {
+    fn rows(&self) -> Option<&[R]> {
         (self.next == 0).then(|| self.rows.as_slice())
     }
 
-    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
+    fn shared_rows(&self) -> Option<Arc<Vec<R>>> {
         (self.next == 0).then(|| Arc::clone(&self.rows))
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trace_with_custom_row_backend() {
+        struct Backend;
+
+        impl ExecutionBackend<u64> for Backend {
+            type Trace = OwnedTrace<u64>;
+
+            fn trace(
+                &mut self,
+                _program: &JoltProgram,
+                _inputs: TraceInputs,
+            ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+                Ok(TraceOutput::new(
+                    OwnedTrace::new(vec![7, 11, 13]),
+                    JoltDevice::default(),
+                    None,
+                    None,
+                ))
+            }
+        }
+
+        let mut trace = JoltProgram::default()
+            .trace_with(&mut Backend, TraceInputs::default())
+            .unwrap()
+            .trace;
+        assert_eq!(trace.rows(), &[7, 11, 13]);
+        assert_eq!(TraceSource::rows(&trace), Some([7, 11, 13].as_slice()));
+        let shared = trace.shared_rows().unwrap();
+        assert_eq!(shared.as_slice(), &[7, 11, 13]);
+        assert_eq!(shared.as_ptr(), trace.rows().as_ptr());
+        assert_eq!(trace.next_row(), Some(7));
+        assert_eq!(OwnedTrace::rows(&trace), &[7, 11, 13]);
+        assert_eq!(TraceSource::rows(&trace), None);
+        assert_eq!(trace.shared_rows(), None);
+        assert_eq!(trace.next_row(), Some(11));
+        assert_eq!(trace.next_row(), Some(13));
+        assert_eq!(trace.next_row(), None);
+        assert_eq!(trace.next_row(), None);
+        assert_eq!(shared.as_slice(), &[7, 11, 13]);
+        assert_eq!(trace.into_rows(), vec![7, 11, 13]);
+    }
+
+    #[test]
+    fn owned_trace_storage_has_no_row_bounds() {
+        struct Row(u64);
+
+        assert!(OwnedTrace::<Row>::default().rows().is_empty());
+        assert_eq!(OwnedTrace::new(vec![Row(7)]).rows().len(), 1);
+        assert_eq!(OwnedTrace::from(vec![Row(7)]).rows().len(), 1);
+        let trace = OwnedTrace::new(vec![Row(7), Row(11)]);
+        let cloned = trace.clone();
+        assert!(trace.rows().iter().map(|row| row.0).eq([7, 11]));
+        assert!(cloned.rows().iter().map(|row| row.0).eq([7, 11]));
+        assert!(std::ptr::eq(trace.rows(), cloned.rows()));
+    }
+
+    #[test]
+    fn owned_trace_clones_non_copy_rows_when_shared() {
+        let mut trace = OwnedTrace::from(vec![String::from("row")]);
+        assert_eq!(trace.next_row(), Some(String::from("row")));
+        let shared = trace.clone();
+        assert_eq!(trace.into_rows(), vec![String::from("row")]);
+        assert_eq!(shared.into_rows(), vec![String::from("row")]);
     }
 }

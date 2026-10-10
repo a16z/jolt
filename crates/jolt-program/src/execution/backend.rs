@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use super::{MemoryImage, TraceError, TraceInputs, TraceOutput, TraceRow};
 
-pub trait ExecutionBackend {
-    type Trace: TraceSource;
+pub trait ExecutionBackend<R = TraceRow> {
+    type Trace: TraceSource<R>;
 
     fn trace(
         &mut self,
@@ -13,22 +13,22 @@ pub trait ExecutionBackend {
     ) -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
 
-pub trait TraceSource {
-    fn next_row(&mut self) -> Option<TraceRow>;
+pub trait TraceSource<R = TraceRow> {
+    fn next_row(&mut self) -> Option<R>;
 
     /// The full row sequence as one slice, if this source can serve it.
     ///
     /// Contract: the slice must equal exactly what the remaining `next_row`
     /// calls would yield — a partially consumed source must return `None`
     /// rather than a slice that includes already-consumed rows.
-    fn rows(&self) -> Option<&[TraceRow]> {
+    fn rows(&self) -> Option<&[R]> {
         None
     }
 
     /// The full row sequence as a shared allocation, under the same contract
     /// as [`Self::rows`]. Consumers that must retain the raw rows (the
     /// field-inline witness view) hold this instead of copying the trace.
-    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
+    fn shared_rows(&self) -> Option<Arc<Vec<R>>> {
         None
     }
 }

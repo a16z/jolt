@@ -2824,6 +2824,7 @@ dependencies = [
  "object",
  "paste",
  "postcard",
+ "rand 0.8.7",
  "rayon",
  "serde",
  "serde_json",

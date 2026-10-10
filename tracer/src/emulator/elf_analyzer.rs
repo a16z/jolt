@@ -490,9 +490,9 @@ impl ElfAnalyzer {
 /// Hand-assembled ELF64 fixtures for emulator tests. Field offsets follow the
 /// System V gABI ELF64 layout, so these bytes are an oracle independent of the
 /// analyzer under test.
-#[cfg(test)]
-pub(crate) mod test_elf {
-    pub(crate) struct TestSymbol {
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_elf {
+    pub struct TestSymbol {
         pub name: &'static str,
         pub value: u64,
         /// st_info (binding << 4 | type), e.g. 0x10 = GLOBAL|NOTYPE, 0x12 = GLOBAL|FUNC
@@ -502,7 +502,7 @@ pub(crate) mod test_elf {
 
     /// Order of the two `SHT_STRTAB` sections in the section header table.
     #[derive(Clone, Copy)]
-    pub(crate) enum StrtabOrder {
+    pub enum StrtabOrder {
         /// `.strtab` before `.shstrtab`, as GNU ld emits them.
         GnuLd,
         /// `.shstrtab` before `.strtab`, as LLD emits them.
@@ -512,7 +512,7 @@ pub(crate) mod test_elf {
     /// Builds a minimal but well-formed RV64 ELF: `.text` loaded at
     /// 0x8000_0000 with the given instruction words, plus a symbol table whose
     /// `sh_link` names `.strtab` in either section order.
-    pub(crate) fn build_elf64(text: &[u32], symbols: &[TestSymbol], order: StrtabOrder) -> Vec<u8> {
+    pub fn build_elf64(text: &[u32], symbols: &[TestSymbol], order: StrtabOrder) -> Vec<u8> {
         const TEXT_ADDR: u64 = 0x8000_0000;
         let text_bytes: Vec<u8> = text.iter().flat_map(|w| w.to_le_bytes()).collect();
 

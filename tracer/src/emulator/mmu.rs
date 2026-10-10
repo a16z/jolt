@@ -27,6 +27,7 @@ pub struct Mmu {
     /// Address translation can be affected `mstatus` (MPRV, MPP in machine mode)
     /// then `Mmu` has copy of it.
     mstatus: u64,
+    record_access: bool,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -52,7 +53,12 @@ impl Mmu {
             decode_cache: DecodeCache::empty(),
             jolt_device: None,
             mstatus: 0,
+            record_access: true,
         }
+    }
+
+    pub(crate) fn set_access_recording(&mut self, on: bool) {
+        self.record_access = on;
     }
 
     /// Set the executable address range covered by the pre-decoded
@@ -470,6 +476,9 @@ impl Mmu {
     }
 
     fn trace_load(&mut self, effective_address: u64) -> RAMRead {
+        if !self.record_access {
+            return RAMRead::default();
+        }
         let word_address = (effective_address >> 2) << 2;
         if word_address < DRAM_BASE {
             RAMRead {
@@ -497,6 +506,9 @@ impl Mmu {
 
     fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
+        if !self.record_access {
+            return RAMWrite::default();
+        }
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
@@ -522,6 +534,9 @@ impl Mmu {
 
     fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
+        if !self.record_access {
+            return RAMWrite::default();
+        }
         let word_address = (effective_address >> 2) << 2;
 
         let pre_value = if effective_address < DRAM_BASE {
@@ -547,6 +562,9 @@ impl Mmu {
 
     fn trace_store(&mut self, effective_address: u64, value: u64) -> RAMWrite {
         self.assert_effective_store_address(effective_address);
+        if !self.record_access {
+            return RAMWrite::default();
+        }
 
         let pre_value = if effective_address < DRAM_BASE {
             self.device_doubleword(effective_address)
@@ -893,6 +911,7 @@ impl Mmu {
             decode_cache: self.decode_cache.snapshot_with_empty_entries(),
             jolt_device: self.jolt_device.clone(),
             mstatus: self.mstatus,
+            record_access: self.record_access,
         }
     }
 
@@ -908,6 +927,7 @@ impl Mmu {
             memory: _,
             decode_cache: _,
             jolt_device: _,
+            record_access: _,
             mstatus,
         } = self;
         ChunkMmuState {

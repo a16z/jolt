@@ -356,7 +356,7 @@ pub use kind::{
 pub use profile::RV64IMAC_JOLT_FIELD_INLINE;
 pub use profile::{
     jolt_target_extension, source_extension, InlineExtension, JoltInstructionProfile,
-    JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64IMAC_JOLT,
+    JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64I, RV64IMAC_JOLT,
     RV64IMAC_JOLT_ALL_INLINES, RV64IM_JOLT,
 };
 pub use row::{JoltInstructionRow, NormalizedOperands, SourceInlineKey, SourceInstructionRow};

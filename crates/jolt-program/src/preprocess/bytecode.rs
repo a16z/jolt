@@ -299,8 +299,7 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::field_inline::FieldInlineInstructionError;
     use jolt_riscv::{
-        JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
-        SourceExtension, RV64IMAC_JOLT,
+        JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64I, RV64IMAC_JOLT,
     };
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
@@ -499,16 +498,10 @@ mod tests {
 
     #[test]
     fn rejects_profile_illegal_target_rows() {
-        const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
-            source_extensions: &[SourceExtension::Rv64I],
-            inline_extensions: &[],
-        };
-
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::MUL;
 
-        let err =
-            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64I_ONLY).unwrap_err();
+        let err = BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64I).unwrap_err();
         assert_eq!(
             err,
             PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::MUL)
