@@ -1,5 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 7 verification.
-
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::JoltField;
@@ -234,7 +232,6 @@ mod tests {
             )
         };
 
-        // Sentinels are sequential in canonical append order.
         let (trusted, untrusted, chunk1, chunk2, image, plain_last, committed_last) =
             (5, 6, 7, 8, 9, 6, 9);
         let hamming = HammingWeightClaimReductionOutputClaims {

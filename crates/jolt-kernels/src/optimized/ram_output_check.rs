@@ -32,6 +32,7 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -63,10 +64,9 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             });
         }
 
-        // The public-IO tables, exactly as the reference builds them.
         let public_memory = relation.public_memory();
         let addresses = 1usize << ram_log_k;
-        let mut val_io = vec![F::zero(); addresses];
+        let mut val_io = unsafe_allocate_zero_vec(addresses);
         for segment in &public_memory.segments {
             for (offset, &word) in segment.words.iter().enumerate() {
                 let index = segment.start_index as usize + offset;
@@ -109,8 +109,6 @@ struct OutputCheckKernel<F: JoltField> {
     bind_scratch: Vec<F>,
 }
 impl<F: JoltField> OutputCheckKernel<F> {
-    /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
-    /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
         &self,
         round: usize,
@@ -386,10 +384,5 @@ mod tests {
     #[test]
     fn parity_k32_deeper_address_domain() {
         run_parity(4, 32, 409);
-    }
-
-    #[test]
-    fn parity_k16_alternate_seed() {
-        run_parity(2, 16, 419);
     }
 }

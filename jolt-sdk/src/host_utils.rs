@@ -137,7 +137,7 @@ fn program_preprocessing(
     JoltProgramPreprocessing::new(
         bytecode,
         memory_init,
-        MemoryLayout::new(&memory_config),
+        MemoryLayout::try_new(&memory_config)?,
         entry_address,
         max_trace_length,
         source.instruction_profile(),
@@ -345,7 +345,8 @@ pub fn prove_program(
     #[cfg(not(feature = "field-inline"))]
     let witness = WitnessTraceBackend::<OwnedTrace>::from_compact(witness_config, witness_inputs);
     #[cfg(feature = "field-inline")]
-    let witness = WitnessTraceBackend::<OwnedTrace>::try_new(witness_config, witness_inputs)?;
+    let witness = WitnessTraceBackend::<OwnedTrace>::try_new(witness_config, witness_inputs)?
+        .with_field_inline()?;
     let trusted_advice = match (trusted_advice_commitment, trusted_advice_hint) {
         (Some(commitment), Some(hint)) => Some(TrustedAdviceCommitment { commitment, hint }),
         (None, None) => None,

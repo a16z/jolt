@@ -20,10 +20,9 @@
 //!   (complement-merged) patterns — no division, exact coefficients. After
 //!   the last startup challenge the bound table is read off a subset-sum
 //!   lookup indexed by pattern, and the dense Gruen rounds resume on it.
-//!   Dense rounds still invert `current_scalar · c_j`
-//!   (`gruen_poly_deg_3`), so a zero cycle coordinate past the startup
-//!   depth panics as before; the startup rounds themselves accept any
-//!   coordinate.
+//!   Dense rounds recover their missing endpoint from the retained `H`
+//!   table when the equality endpoint vanishes; a zero equality prefix
+//!   produces the degree-preserving zero round polynomial.
 //!
 //! Byte parity with the reference kernel holds because field arithmetic is
 //! exact: the Gruen-reconstructed evaluations equal the true round
@@ -46,7 +45,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 
 use super::support::{
     collect_rows, map_indices, map_reduce_chunks, pin_derived_term_if_derived, scan_chunk_size,
-    RoundProgress,
+    GruenRoundMessage, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -300,9 +299,6 @@ impl<F: JoltField> HammingStartup<F> {
         ]))
     }
 
-    /// Marginalize the 16-bit pattern histogram to the endpoint bits used by
-    /// this round before multiplying quadratic defects. The first four rounds
-    /// need only 2, 8, 128, and 32,768 complement classes respectively.
     fn marginalized_coefficients(&self, bound: usize, prefix: &[F], suffix: &[F]) -> [F; 3] {
         let endpoint_bits = 1usize << (bound + 1);
         let mask = (1usize << endpoint_bits) - 1;
@@ -352,9 +348,6 @@ impl<F: JoltField> HammingStartup<F> {
         [q_0, q_1, q_2]
     }
 
-    /// `H` bound at `s_{..depth}`: a pattern's multilinear extension is the
-    /// sum of `eq(s, u)` over its set bits, tabulated for every pattern by
-    /// peeling the lowest bit.
     fn materialize(&self) -> Polynomial<F> {
         let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
@@ -369,8 +362,6 @@ impl<F: JoltField> HammingStartup<F> {
     }
 }
 
-/// Histogram bin of a `width`-bit block pattern: the pattern or its
-/// complement, whichever has the top bit clear.
 fn canonical_bin(pattern: u16, width: usize) -> usize {
     let pattern = usize::from(pattern);
     if pattern >> (width - 1) & 1 == 1 {
@@ -411,7 +402,18 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
             |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
             |left, right| [left[0] + right[0], left[1] + right[1]],
         );
-        Ok(self.eq.gruen_poly_deg_3(constant, leading, previous_claim))
+        self.eq
+            .checked_cubic(constant, leading, previous_claim, round, || {
+                self.eq.par_fold_out_in(
+                    F::zero,
+                    |sum, row, _, weight| {
+                        let (_, high) = hamming.sumcheck_eval_pair(row, BindingOrder::LowToHigh);
+                        *sum += weight * (high * high - high);
+                    },
+                    |_, weight, sum| weight * sum,
+                    |a, b| a + b,
+                )
+            })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -463,6 +465,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
     use jolt_field::{Fr, One, Ring, Zero};
@@ -471,7 +474,7 @@ mod tests {
 
     use super::*;
     use crate::optimized::booleanity::testing::{
-        load_row, no_op_row, store_row, test_challenge, with_booleanity_backend, with_trace_backend,
+        load_row, no_op_row, store_row, test_challenge, with_trace_backend,
     };
     use crate::ReferenceBackend;
     use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
@@ -482,9 +485,6 @@ mod tests {
             .collect()
     }
 
-    /// Lockstep parity drive against the reference kernel: identical round
-    /// polynomials every round, identical output claims, and the split-eq
-    /// scalar passing the verifier's derived-term cross-check.
     fn parity(backend: &TraceBackend<OwnedTrace>, log_t: usize, stage1_cycle_binding: Vec<Fr>) {
         let relation = RamHammingBooleanity::new(TraceDimensions::new(log_t), stage1_cycle_binding);
         let claims = RamHammingBooleanityInputClaims::default();
@@ -553,8 +553,6 @@ mod tests {
             .collect()
     }
 
-    /// Parity over a trace whose first cycles carry `bits`; the backend pads
-    /// the rest with no-op rows.
     fn hamming_parity(log_t: usize, bits: &[bool], stage1_cycle_binding: Vec<Fr>) {
         with_trace_backend(log_t, 4, hamming_rows(bits), |backend, _| {
             let mut expected: Vec<Fr> = bits.iter().map(|&bit| Fr::from_bool(bit)).collect();
@@ -576,8 +574,6 @@ mod tests {
         (0..width).map(move |offset| pattern >> offset & 1 == 1)
     }
 
-    /// Compare marginalization against the direct pattern MLE formula, with
-    /// both low and high bits set across each round's endpoint windows.
     #[test]
     fn four_round_marginals_match_direct_pattern_formula() {
         let patterns = [
@@ -627,21 +623,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn matches_reference() {
-        with_booleanity_backend(2, 4, |backend, _| parity(backend, 2, generic_binding(2)));
-    }
-
-    #[test]
-    fn matches_reference_single_round() {
-        with_booleanity_backend(1, 4, |backend, _| parity(backend, 1, generic_binding(1)));
-    }
-
-    #[test]
-    fn matches_reference_with_padding_rows() {
-        with_booleanity_backend(3, 4, |backend, _| parity(backend, 3, generic_binding(3)));
-    }
-
     /// Short traces use startup messages through the final bind. Exercise
     /// every pattern through three rounds and representative 16-bit patterns
     /// at four; enumerating 65,536 full trace backends would obscure the
@@ -661,8 +642,6 @@ mod tests {
         }
     }
 
-    /// A trace longer than startup contains varied low and high halves of
-    /// 16-bit patterns, followed by dense rounds checked against reference.
     #[test]
     fn every_pattern_above_startup_depth() {
         let width = 1 << STARTUP_ROUNDS;
@@ -719,5 +698,22 @@ mod tests {
                     if expected == Fr::from_u64(1) && actual == Fr::from_u64(0)
             ));
         });
+    }
+    #[test]
+    fn matches_reference_at_exceptional_points_through_dense_rounds() {
+        let log_t = STARTUP_ROUNDS + 3;
+        let bits: Vec<bool> = (0..1 << log_t).map(|row| row % 5 < 2).collect();
+        for case in ExceptionalEq::ALL {
+            // `case.point` is the eq table's big-endian point, whose last
+            // coordinate binds first; the kernel reverses the stage-1 binding
+            // to get it.
+            let eq_point = case.point(log_t, test_challenge(0));
+            if matches!(case, ExceptionalEq::ZeroPrefix) {
+                let mut eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);
+                eq.bind(test_challenge(0));
+                assert_eq!(eq.current_scalar(), Fr::zero(), "round 0 zeroes the prefix");
+            }
+            hamming_parity(log_t, &bits, eq_point.into_iter().rev().collect());
+        }
     }
 }

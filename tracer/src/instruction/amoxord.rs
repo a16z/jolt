@@ -1,3 +1,4 @@
+use crate::instruction::registers::amo::RegisterStateAMO;
 use serde::{Deserialize, Serialize};
 
 use super::Instruction;
@@ -10,6 +11,7 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x2000302f,
     format = FormatAMO,
+    registers = RegisterStateAMO,
     ram    = RAMWrite
 );
 
@@ -18,20 +20,17 @@ impl AMOXORD {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let xor_value = cpu.x[self.operands.rs2 as usize] as u64;
 
-        // Load the original doubleword from memory
         let load_result = cpu.mmu.load_doubleword(address);
         let original_value = match load_result {
             Ok((doubleword, _)) => doubleword as i64,
             Err(_) => panic!("MMU load error"),
         };
 
-        // XOR the values and store back to memory
         let new_value = (original_value as u64) ^ xor_value;
         cpu.mmu
             .store_doubleword(address, new_value)
             .expect("MMU store error");
 
-        // Return the original value
         cpu.write_register(self.operands.rd as usize, original_value);
     }
 }

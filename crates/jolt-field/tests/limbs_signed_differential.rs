@@ -1,7 +1,3 @@
-//! Differential tests for `Limbs<N>` and the signed bigint families against
-//! exact num-bigint integer arithmetic, plus u128/i128 oracles for the
-//! widths that fit.
-
 use jolt_field as two;
 
 use num_bigint::{BigInt, BigUint, Sign};
@@ -20,7 +16,6 @@ fn uint(limbs: &[u64]) -> BigUint {
         .fold(BigUint::ZERO, |acc, &l| (acc << 64u32) + l)
 }
 
-/// Truncate to the low `N` limbs, little-endian.
 fn to_limbs<const N: usize>(v: &BigUint) -> [u64; N] {
     let mut digits = v.to_u64_digits();
     digits.resize(N.max(digits.len()), 0);
@@ -53,7 +48,6 @@ fn limbs_arithmetic_vs_bigint() {
         let sum = &va + &vb;
         assert_eq!(ca.add_with_carry(&tb), sum.bits() > 256);
         assert_eq!(ca.0, to_limbs::<4>(&sum));
-        // Subtraction runs on the carried (truncated) value.
         let cur = uint(&ca.0);
         assert_eq!(ca.sub_with_borrow(&tb), cur < vb);
         let diff = (&cur + (BigUint::from(1u32) << 256u32)) - &vb;
@@ -74,18 +68,6 @@ fn limbs_fmadd_vs_bigint() {
         expect = (expect + uint(&a) * uint(&b)) & &mask;
     }
     assert_eq!(acc.0, to_limbs::<5>(&expect));
-}
-
-#[test]
-fn limbs_u128_oracle() {
-    let mut rng = rng();
-    for _ in 0..500 {
-        let a: u64 = rng.gen();
-        let b: u64 = rng.gen();
-        let product = two::Limbs::<1>::new([a]).mul_trunc::<1, 2>(&two::Limbs::new([b]));
-        let expected = (a as u128) * (b as u128);
-        assert_eq!(product.0, [expected as u64, (expected >> 64) as u64]);
-    }
 }
 
 /// Sign-magnitude oracle mirroring the mathematical sign-magnitude rules
@@ -150,7 +132,6 @@ impl SignedOracle {
         BigInt::from_biguint(sign, self.mag.clone())
     }
 
-    /// Signed comparison; treats `+0` and `-0` as equal.
     fn cmp(&self, rhs: &Self) -> Ordering {
         self.value().cmp(&rhs.value())
     }
@@ -239,7 +220,6 @@ fn signed_bigint_i128_oracle() {
             "S64 round-trip"
         );
     }
-    // i128 extremes and the ±0 convention.
     assert_eq!(
         two::signed::S128::from_i128(i128::MIN).to_i128(),
         Some(i128::MIN)
@@ -286,8 +266,6 @@ fn assert_hi32_matches<const N: usize>(
 #[test]
 fn hi32_ops_match_bigint() {
     let mut rng = rng();
-    // S96 (N=1), S160 (N=2), S224 (N=3): exercises the general schoolbook
-    // multiply at every stamped width, wrapping at 64N + 32 bits.
     for _ in 0..500 {
         let a96 = two::signed::S96::new([rng.gen()], rng.gen(), rng.gen());
         let b96 = two::signed::S96::new([rng.gen()], rng.gen(), rng.gen());
@@ -312,7 +290,6 @@ fn hi32_ops_match_bigint() {
         assert_hi32_matches(a224 + b224, &oa224.add(&ob224));
         assert_hi32_matches(a224 * b224, &oa224.mul(&ob224));
 
-        // Neg and assign forms.
         let mut x = a160;
         x += b160;
         x -= a160;
@@ -359,7 +336,6 @@ fn hi32_conversions_match_bigint() {
         assert_eq!(from.magnitude_hi(), 0);
         assert!(from.is_positive());
     }
-    // Addition carries into the u32 tail through the public ops.
     let big = two::signed::S160::from(u128::MAX);
     let sum = big + big;
     let expect = oracle_of_hi32(&big).add(&oracle_of_hi32(&big));

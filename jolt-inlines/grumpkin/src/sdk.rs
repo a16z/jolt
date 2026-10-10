@@ -1,5 +1,3 @@
-//! grumpkin operations optimized for Jolt zkVM.
-
 use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
 use ark_grumpkin::{Fq, Fr};
 
@@ -262,11 +260,14 @@ impl<C: GrumpkinFieldConfig> GrumpkinField<C> {
             .ok_or(C::invalid_element_error())
     }
 
+    /// Builds an element from its Montgomery representation, as the curve
+    /// constants in this module are stored.
+    ///
     /// # Invariants
     /// `arr` must be a canonical value in `[0, modulus)`. Non-canonical limbs
     /// break the field inlines' operand contract and spoil the proof.
     #[inline(always)]
-    pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+    pub(crate) fn from_montgomery_limbs_unchecked(arr: &[u64; 4]) -> Self {
         Self::new(C::new_unchecked(BigInt(*arr)))
     }
 
@@ -470,7 +471,7 @@ impl ECField for GrumpkinFq {
     }
     #[inline(always)]
     fn to_u64_arr(&self) -> [u64; 4] {
-        self.e.0 .0
+        self.e.into_bigint().0
     }
     #[inline(always)]
     fn from_u64_arr(arr: &[u64; 4]) -> Result<Self, Self::Error> {
@@ -478,7 +479,7 @@ impl ECField for GrumpkinFq {
     }
     #[inline(always)]
     fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
-        Self::from_u64_arr_unchecked(arr)
+        Self::from_u64_arr(arr).unwrap_or_spoil_proof()
     }
 }
 
@@ -522,7 +523,7 @@ impl GrumpkinPointExt for GrumpkinPoint {
         if self.is_infinity() {
             Self::infinity()
         } else {
-            let beta = GrumpkinFq::from_u64_arr_unchecked(&GRUMPKIN_ENDO_BETA_LIMBS);
+            let beta = GrumpkinFq::from_montgomery_limbs_unchecked(&GRUMPKIN_ENDO_BETA_LIMBS);
             Self::new_unchecked(self.x().mul(&beta), self.y())
         }
     }
@@ -549,7 +550,7 @@ fn decompose_scalar_impl(k: &GrumpkinFr) -> [(bool, u128); 2] {
 
     let k1_sign = decode_glv_sign_word(out[0]).unwrap_or_spoil_proof();
     let k2_sign = decode_glv_sign_word(out[3]).unwrap_or_spoil_proof();
-    let lambda = GrumpkinFr::from_u64_arr_unchecked(&GRUMPKIN_GLV_LAMBDA_LIMBS);
+    let lambda = GrumpkinFr::from_montgomery_limbs_unchecked(&GRUMPKIN_GLV_LAMBDA_LIMBS);
     let mut k1 = GrumpkinFr::from_u64_arr(&[out[1], out[2], 0u64, 0u64]).unwrap_or_spoil_proof();
     if k1_sign {
         k1 = k1.neg();

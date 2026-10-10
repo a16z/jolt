@@ -6,7 +6,7 @@
 //!
 //! Scale 2^13 — fibonacci's minimum guest scale. Label coverage is
 //! scale-independent. Compiled with the `akita` feature the same run drives
-//! the packed prover and asserts its presence set (and the `_akita`-suffixed
+//! the Akita prover and asserts its presence set (and the `_akita`-suffixed
 //! artifact names).
 //!
 //! NOT wired into CI yet: the reference backend's naive RAM kernels retain
@@ -21,6 +21,8 @@
 #![cfg(feature = "profiling")]
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaChunkProfile;
 use jolt_profiling::summary::ProfileSummary;
 use jolt_profiling::taxonomy::{self, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
@@ -33,15 +35,12 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        #[cfg(feature = "akita")]
+        akita_chunk_profile: AkitaChunkProfile::Single,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");
-    // Artifacts are grouped into a per-run directory
-    // (benchmark-runs/{timestamp}_modular_fibonacci_13/, suffixed `_akita`
-    // on the packed build), with the `latest_` link pointing at this run;
-    // the directory name carries the run identity, so the files inside use
-    // fixed names.
     let stem = if cfg!(feature = "akita") {
         "modular_fibonacci_akita_13"
     } else {
@@ -80,7 +79,7 @@ fn profile_run_emits_conformant_artifacts() {
     // Every always-present current taxonomy label fired, for the mode this
     // prover was compiled in — the `zk` feature swaps the uni-skip and
     // stage-8 opening seams for their committed siblings, and the `akita`
-    // feature swaps the commitment seams for the packed set. (The advice
+    // feature swaps the commitment seams for the Akita set. (The advice
     // seams are exempt: fibonacci exercises no advice.)
     let mode = if cfg!(feature = "akita") {
         taxonomy::ProverMode::Akita
@@ -94,7 +93,13 @@ fn profile_run_emits_conformant_artifacts() {
         .filter(|e| e.get("ph").and_then(Value::as_str) == Some("B"))
         .filter_map(|e| e.get("name").and_then(Value::as_str))
         .collect();
-    let missing: Vec<&str> = taxonomy::always_present_spans(mode)
+    let labels = taxonomy::always_present_spans(mode);
+    #[cfg(feature = "field-inline")]
+    let labels: Vec<_> = labels
+        .into_iter()
+        .chain(taxonomy::field_inline_spans(mode).iter().copied())
+        .collect();
+    let missing: Vec<&str> = labels
         .into_iter()
         .filter(|label| !emitted.contains(label))
         .collect();
@@ -104,8 +109,6 @@ fn profile_run_emits_conformant_artifacts() {
         TAXONOMY_VERSION
     );
 
-    // Headline summary sanity: root present with a positive wall time and
-    // every stage rolled up with boundary RSS from the StageMemoryLayer.
     let root = summary.root.expect("root summary");
     assert_eq!(root.label, taxonomy::ROOT_SPAN);
     assert!(root.wall_time_ns > 0);
@@ -115,9 +118,8 @@ fn profile_run_emits_conformant_artifacts() {
     assert_eq!(summary.run.workload, "fibonacci");
     assert_eq!(summary.run.scale_log2, 13);
     assert!(summary.peak_rss_gib.is_some());
+    assert!(summary.peak_footprint_gib.is_some());
 
-    // The counter rewrite ran: no raw `counters.*` events survive in the
-    // trace, and the monitor's samples aggregated into the summary.
     assert!(trace.iter().all(|e| {
         e.get("args")
             .and_then(Value::as_object)

@@ -23,7 +23,7 @@ use super::super::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
 use super::super::dimensions::{
     CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
-use super::super::error::{require_len, require_opening_point_len, JoltFormulaPointError};
+use super::super::error::{require_len, require_opening_point_len, PointGeometryError};
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
@@ -39,7 +39,6 @@ pub const NUM_BYTECODE_VAL_STAGES: usize = 6;
 
 const REGISTER_COUNT: usize = 1 << REGISTER_ADDRESS_BITS;
 
-/// Total number of lanes encoded by committed-bytecode rows.
 pub const fn total_lanes() -> usize {
     3 * REGISTER_COUNT
         + 2
@@ -49,7 +48,6 @@ pub const fn total_lanes() -> usize {
         + 1
 }
 
-/// Fixed lane capacity for committed bytecode rows.
 pub const COMMITTED_BYTECODE_LANE_CAPACITY: usize = total_lanes().next_power_of_two();
 
 pub const fn committed_lane_vars() -> usize {
@@ -85,8 +83,6 @@ pub fn is_valid_committed_bytecode_chunking_for_len(
         && bytecode_len.is_multiple_of(chunk_count)
 }
 
-/// Chunk-count half of the chunking rules, shared with the formula
-/// constructors that validate a chunk count without the bytecode length.
 const fn is_valid_chunk_count(chunk_count: usize) -> bool {
     chunk_count > 0
         && chunk_count <= MAX_COMMITTED_BYTECODE_CHUNK_COUNT
@@ -148,9 +144,9 @@ pub const BYTECODE_LANE_LAYOUT: BytecodeLaneLayout = BytecodeLaneLayout::new();
 pub fn precommitted_candidate(
     bytecode_len: usize,
     chunk_count: usize,
-) -> Result<usize, JoltFormulaPointError> {
+) -> Result<usize, PointGeometryError> {
     if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-        return Err(JoltFormulaPointError::InvalidBytecodeChunking {
+        return Err(PointGeometryError::InvalidBytecodeChunking {
             bytecode_len,
             chunk_count,
         });
@@ -175,9 +171,9 @@ impl BytecodeClaimReductionLayout {
         scheduling_reference: PrecommittedSchedulingReference,
         bytecode_len: usize,
         chunk_count: usize,
-    ) -> Result<Self, JoltFormulaPointError> {
+    ) -> Result<Self, PointGeometryError> {
         if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-            return Err(JoltFormulaPointError::InvalidBytecodeChunking {
+            return Err(PointGeometryError::InvalidBytecodeChunking {
                 bytecode_len,
                 chunk_count,
             });
@@ -229,10 +225,10 @@ impl BytecodeClaimReductionLayout {
     pub fn split_address_point<F: JoltField>(
         &self,
         r_bc_full: &[F],
-    ) -> Result<BytecodeAddressPoint<F>, JoltFormulaPointError> {
+    ) -> Result<BytecodeAddressPoint<F>, PointGeometryError> {
         let expected = self.dropped_address_bits + self.log_bytecode_chunk_size;
         if r_bc_full.len() != expected {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected,
                 got: r_bc_full.len(),
             });
@@ -258,7 +254,7 @@ impl BytecodeClaimReductionLayout {
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
@@ -274,7 +270,7 @@ impl BytecodeClaimReductionLayout {
         inputs: BytecodeOutputWeightInputs<'_, F>,
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
@@ -290,36 +286,33 @@ impl BytecodeClaimReductionLayout {
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let scale = self.eq_combined(&inputs, opening_point)?
             * precommitted_skip_round_scale::<F>(&self.precommitted);
         self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
     }
 
-    /// Evaluate the gamma-weighted lane selector against the chunk opening
-    /// point: `(sum_lane lane_weights[lane] * eq(r_lane)[lane]) * eq(r_cycle,
-    /// r_bc)`, with the lane/cycle split determined by the trace layout.
     fn eq_combined<F: JoltField>(
         &self,
         inputs: &BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let lane_vars = committed_lane_vars();
         let expected = lane_vars + self.log_bytecode_chunk_size;
         if opening_point.len() != expected {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected,
                 got: opening_point.len(),
             });
         }
         if inputs.r_bc.len() != self.log_bytecode_chunk_size {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected: self.log_bytecode_chunk_size,
                 got: inputs.r_bc.len(),
             });
         }
         if inputs.lane_weights.len() != COMMITTED_BYTECODE_LANE_CAPACITY {
-            return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+            return Err(PointGeometryError::EvaluationDomainLengthMismatch {
                 expected: COMMITTED_BYTECODE_LANE_CAPACITY,
                 got: inputs.lane_weights.len(),
             });
@@ -349,9 +342,9 @@ impl BytecodeClaimReductionLayout {
         &self,
         chunk_rbc_weights: &[F],
         scale: F,
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if chunk_rbc_weights.len() != self.chunk_count {
-            return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+            return Err(PointGeometryError::EvaluationDomainLengthMismatch {
                 expected: self.chunk_count,
                 got: chunk_rbc_weights.len(),
             });
@@ -377,7 +370,6 @@ pub struct BytecodeAddressPoint<F> {
     pub r_bc: Vec<F>,
 }
 
-/// Stage-6b inputs to the final committed-bytecode output weights.
 pub struct BytecodeOutputWeightInputs<'a, F> {
     pub r_bc: &'a [F],
     pub chunk_rbc_weights: &'a [F],
@@ -406,7 +398,7 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
 /// `sum_stage eta^stage * stage_value(row)` for every bytecode row.
 pub fn lane_weights<F: JoltField>(
     inputs: BytecodeLaneWeightInputs<'_, F>,
-) -> Result<Vec<F>, JoltFormulaPointError> {
+) -> Result<Vec<F>, PointGeometryError> {
     require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
     require_len(inputs.stage2_gammas, BYTECODE_STAGE_GAMMA_COUNTS[1])?;
     require_len(inputs.stage3_gammas, BYTECODE_STAGE_GAMMA_COUNTS[2])?;
@@ -566,8 +558,7 @@ mod tests {
 
     use super::super::super::bytecode::{read_raf_public_values, BytecodeReadRafEvaluationInputs};
     use super::*;
-    use crate::protocols::jolt::JoltPolynomialId;
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::InstructionLookupTable;
     use jolt_riscv::{
         instructions::Noop, Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionKind,
@@ -712,7 +703,7 @@ mod tests {
         );
         assert_eq!(
             precommitted_candidate(1024, 3),
-            Err(JoltFormulaPointError::InvalidBytecodeChunking {
+            Err(PointGeometryError::InvalidBytecodeChunking {
                 bytecode_len: 1024,
                 chunk_count: 3,
             })
@@ -808,7 +799,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected: REGISTER_ADDRESS_BITS,
                 got: REGISTER_ADDRESS_BITS - 1,
             })
@@ -862,9 +853,6 @@ mod tests {
         assert_eq!(point.r_bc, r_bc_full);
     }
 
-    /// `eq_combined` must factorize the MLE of the coefficient grid
-    /// `lane_weights[lane] * eq(r_bc)[cycle]` laid out in the active trace
-    /// order, for any opening point of matching length.
     #[test]
     fn final_output_weights_match_naive_grid_evaluation() {
         for trace_order in [
@@ -930,46 +918,5 @@ mod tests {
                 vec![naive * precommitted_skip_round_scale::<Fr>(precommitted)]
             );
         }
-    }
-
-    #[test]
-    fn cycle_phase_output_openings_track_address_phase_presence() {
-        let with_address = PrecommittedReductionDimensions::new(4, 3, true);
-        assert_eq!(
-            cycle_phase_output_openings(with_address, 2),
-            vec![cycle_phase_intermediate_opening()]
-        );
-
-        let without_address = PrecommittedReductionDimensions::new(4, 3, false);
-        assert_eq!(
-            cycle_phase_output_openings(without_address, 2),
-            vec![
-                final_bytecode_chunk_opening(0),
-                final_bytecode_chunk_opening(1),
-            ]
-        );
-        assert!(matches!(
-            final_bytecode_chunk_opening(1),
-            JoltOpeningId::Polynomial {
-                polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeChunk(1)),
-                relation: JoltRelationId::BytecodeClaimReduction,
-            }
-        ));
-    }
-
-    #[test]
-    fn cycle_phase_skip_scale_matches_two_phase_gap() {
-        let layout = bytecode_layout(TracePolynomialOrder::CycleMajor, 2, 1);
-        let precommitted = layout.precommitted();
-        let two_inv = fr(2).inv_or_zero();
-        let gap = (precommitted.cycle_phase_total_rounds()
-            - precommitted.cycle_phase_rounds().len())
-            + (precommitted.address_phase_total_rounds()
-                - precommitted.address_phase_rounds().len());
-
-        assert_eq!(
-            precommitted_skip_round_scale::<Fr>(precommitted),
-            (0..gap).fold(fr(1), |scale, _| scale * two_inv)
-        );
     }
 }

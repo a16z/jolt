@@ -1,3 +1,4 @@
+use crate::instruction::registers::j::RegisterStateJ;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -7,7 +8,6 @@ use crate::{
 
 use super::{format::format_j::FormatJ, RISCVInstruction, RISCVTrace};
 
-// Special case for VirtualAdvice as it has an extra 'advice' field
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub struct VirtualAdvice {
     pub address: u64,
@@ -28,6 +28,7 @@ impl RISCVInstruction for VirtualAdvice {
     const MATCH: u32 = 0; // Virtual
 
     type Format = FormatJ;
+    type RegisterState = RegisterStateJ;
     type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {

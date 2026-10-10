@@ -50,7 +50,7 @@ const DEFAULT_MAX_WIDTH: usize = 8;
 /// Per-cycle hot indices of `N` point-mass columns (one per committed
 /// one-hot selector, or `factors` per factored polynomial) over a shared
 /// compact backing store (typed witness rows, packed columns).
-pub(crate) trait ChunkIndexSource: Send + Sync {
+pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     /// Number of point-mass columns served.
     fn num_columns(&self) -> usize;
 
@@ -204,8 +204,8 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// until the bind past `max_width` materializes dense (and drops the
-    /// source), then use plain multilinear binds.
+    /// until the bind past `max_width` materializes dense, then use plain
+    /// multilinear binds.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
@@ -227,9 +227,8 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
                     let dense = Self::Dense(materialize(&tables, factors, &source, width * 2));
-                    // Return branch tables and the final shared index handle.
-                    drop(tables);
-                    drop(source);
+                    crate::mem::drop_in_background_thread(tables);
+                    crate::mem::drop_in_background_thread(source);
                     crate::mem::purge_retained_memory(log_t);
                     dense
                 }

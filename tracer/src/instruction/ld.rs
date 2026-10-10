@@ -1,4 +1,5 @@
 use super::{RISCVInstruction, RISCVTrace};
+use crate::instruction::registers::load::RegisterStateLoad;
 use crate::{
     declare_riscv_instr, emulator::cpu::Cpu, instruction::format::format_load::FormatLoad,
 };
@@ -9,12 +10,12 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00003003,
     format = FormatLoad,
+    registers = RegisterStateLoad,
     ram    = super::RAMRead
 );
 
 impl LD {
     fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LD as RISCVInstruction>::RAMAccess) {
-        // The LD instruction loads a 64-bit value from memory into register rd for RV64I.
         let address = (cpu.x[self.operands.rs1 as usize] as u64)
             .wrapping_add(self.operands.imm as i32 as u64);
         let value = cpu.get_mut_mmu().load_doubleword(address);

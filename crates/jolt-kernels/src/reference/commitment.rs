@@ -20,6 +20,10 @@
 //! commits run, full matrix height included (its trailing identity rows are
 //! part of the wire hint).
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldIncrementColumn;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltPolynomialId, TracePolynomialOrder,
 };
@@ -27,8 +31,12 @@ use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
+#[cfg(feature = "field-inline")]
+use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 
+#[cfg(feature = "field-inline")]
+use crate::commitment::FieldInlineWitnessCommitment;
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
     CommittedColumnsWitness, ModeStreamingCommitment, WitnessCommitment,
@@ -57,7 +65,6 @@ where
         let row_width = grid.num_columns();
 
         if grid.order == TracePolynomialOrder::CycleMajor && row_width <= cycles {
-            // The streaming-friendly mode: one fused pass feeds every column.
             let mut consumers = (FusedColumns::<F, PCS>::begin(
                 &kinds, row_width, grid, setup,
             ),);
@@ -75,7 +82,6 @@ where
                 .collect());
         }
 
-        // Materializing modes: one pass and one grid table per column.
         kinds
             .into_iter()
             .zip(ids)
@@ -95,6 +101,19 @@ where
                 })
             })
             .collect()
+    }
+
+    // Instrumented at the stage-0 call boundary, like `commit_witness`.
+    #[cfg(feature = "field-inline")]
+    fn commit_field_inline_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn JoltWitnessPlane<F>,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
+        commit_field_inline_columns::<F, PCS>(session, source, ids, grid, setup)
     }
 
     // Instrumented at the stage-0 call boundary, like `commit_witness`.
@@ -174,7 +193,7 @@ pub(crate) fn column_kinds<F: JoltField>(
     grid: CommitmentGrid,
 ) -> Result<Vec<ColumnKind>, KernelError<F>> {
     let family_size = |matches: fn(JoltCommittedPolynomial) -> bool| {
-        ids.iter().copied().filter(|&id| matches(id)).count()
+        ids.iter().filter(|&&id| matches(id)).count()
     };
     let instruction_chunks =
         family_size(|id| matches!(id, JoltCommittedPolynomial::InstructionRa(_)));
@@ -205,8 +224,91 @@ pub(crate) fn column_kinds<F: JoltField>(
         .collect()
 }
 
-/// The fused cycle-major commit consumer: every column's in-progress
-/// commitment, advanced per row window.
+/// The shared field-inline commit pass, used by every `CommitWitness` tier: each
+/// field-inline column is dense over the trace domain and placed exactly like the jolt
+/// increment columns (contiguous cycle-major; address slot zero of each cycle block
+/// address-major), so the stage-8 embedding treats `FieldRdInc` like `RdInc`.
+#[cfg(feature = "field-inline")]
+pub(crate) fn commit_field_inline_columns<F, PCS>(
+    session: &mut ProofSession,
+    source: &dyn JoltWitnessPlane<F>,
+    ids: &[FieldInlineCommittedPolynomial],
+    grid: CommitmentGrid,
+    setup: &PCS::ProverSetup,
+) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
+{
+    let oracle = source.field_inline().ok_or(KernelError::Unsupported {
+        reason: "field-inline commit requires a witness plane serving the field-inline oracle",
+    })?;
+    let cycles = 1usize << grid.log_t;
+    ids.iter()
+        .map(|&id| {
+            let FieldInlineCommittedPolynomial::FieldRdInc = id;
+            let values = FieldIncrementColumn::resolve(session, oracle, cycles)?;
+            let mut partial = PCS::begin(setup);
+            let width = grid.num_columns();
+            match grid.order {
+                TracePolynomialOrder::CycleMajor => {
+                    let mut zero_rows = 0;
+                    let mut row = vec![F::zero(); width.min(cycles)];
+                    for start in (0..cycles).step_by(width) {
+                        for (offset, value) in row.iter_mut().enumerate() {
+                            *value = values.value(start + offset);
+                        }
+                        let row = &row;
+                        if row.iter().all(|value| value.is_zero()) {
+                            zero_rows += 1;
+                        } else {
+                            PCS::feed_zeros(&mut partial, width, zero_rows, setup);
+                            zero_rows = 0;
+                            PCS::feed(&mut partial, row, setup);
+                        }
+                    }
+                    PCS::feed_zeros(&mut partial, width, zero_rows, setup);
+                }
+                // Address-major: cycle `t` sits at grid index `t · stride`,
+                // everything else is zero. Stream the grid row by row without
+                // materializing the K·T table — the rows holding no cycle
+                // slot go through `feed_zeros`.
+                TracePolynomialOrder::AddressMajor => {
+                    let stride = grid.cycle_stride();
+                    let rows = (1usize << grid.total_vars) / width;
+                    let mut row: Vec<F> = vec![F::zero(); width];
+                    let mut zero_rows = 0usize;
+                    for row_index in 0..rows {
+                        let start = row_index * width;
+                        let first_cycle = start.div_ceil(stride).min(cycles);
+                        let end_cycle = ((start + width - 1) / stride + 1).min(cycles);
+                        if first_cycle >= end_cycle {
+                            zero_rows += 1;
+                            continue;
+                        }
+                        PCS::feed_zeros(&mut partial, width, zero_rows, setup);
+                        zero_rows = 0;
+                        for cycle in first_cycle..end_cycle {
+                            row[cycle * stride - start] = values.value(cycle);
+                        }
+                        PCS::feed(&mut partial, &row, setup);
+                        for cycle in first_cycle..end_cycle {
+                            row[cycle * stride - start] = F::zero();
+                        }
+                    }
+                    PCS::feed_zeros(&mut partial, width, zero_rows, setup);
+                }
+            }
+            let (commitment, hint) = finish_streamed::<PCS>(partial, setup);
+            Ok(FieldInlineWitnessCommitment {
+                id,
+                commitment,
+                hint,
+            })
+        })
+        .collect()
+}
+
 struct FusedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> {
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
@@ -217,9 +319,6 @@ struct FusedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStr
     hot_addresses: Vec<Option<usize>>,
 }
 
-/// One column's in-progress commitment: dense columns accumulate a partial
-/// commitment through the `feed` family; one-hot columns accumulate
-/// per-window chunk commitments through the column-major one-hot stream.
 enum ColumnCommitState<PCS: StreamingCommitment> {
     Increment {
         kind: ColumnKind,
@@ -317,9 +416,6 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
     }
 }
 
-/// A materializing per-column consumer: scatters one column into its full
-/// grid table (address-major strides, or the flat `(K × T)` layout on
-/// widened cycle-major grids), fed row-by-row afterwards.
 struct MaterializedColumn<F> {
     kind: ColumnKind,
     table: Vec<F>,
@@ -331,9 +427,6 @@ struct MaterializedColumn<F> {
 
 impl<F: JoltField> MaterializedColumn<F> {
     fn begin(kind: ColumnKind, grid: CommitmentGrid) -> Self {
-        // Widened cycle-major grids materialize one-hots as the flat (K × T)
-        // matrix and dense columns in the plain cycle-major layout;
-        // address-major grids materialize the full strided table.
         let (table_len, flat_cycles) = if grid.order == TracePolynomialOrder::CycleMajor {
             if kind.is_one_hot() {
                 (
@@ -384,5 +477,78 @@ impl<F: JoltField> StreamConsumer for MaterializedColumn<F> {
             }
             self.cycle += 1;
         }
+    }
+}
+
+#[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
+mod field_inline_tests {
+    #![expect(clippy::unwrap_used, reason = "test module")]
+
+    use jolt_claims::protocols::field_inline::{
+        FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
+    };
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_dory::DoryScheme;
+    use jolt_field::{Fr, Ring};
+    use jolt_openings::StreamingCommitment;
+    use jolt_witness::JoltWitnessOracle;
+
+    use super::{commit_field_inline_columns, finish_streamed};
+    use crate::commitment::CommitmentGrid;
+    use crate::optimized::field_registers_testing::structured_field_register_fixture;
+    use crate::ProofSession;
+
+    #[test]
+    fn field_inline_commit_matches_the_dense_grid_layout() {
+        let log_t = 4;
+        structured_field_register_fixture(12).with_plane(log_t, |backend| {
+            let values: Vec<Fr> = JoltWitnessOracle::<Fr>::field_inline(backend)
+                .unwrap()
+                .oracle_table(FieldInlinePolynomialId::Committed(
+                    FieldInlineCommittedPolynomial::FieldRdInc,
+                ))
+                .unwrap();
+            assert!(values.iter().any(|value| *value != Fr::from_u64(0)));
+            for order in [
+                TracePolynomialOrder::CycleMajor,
+                TracePolynomialOrder::AddressMajor,
+            ] {
+                let grid = CommitmentGrid {
+                    total_vars: 3 + log_t,
+                    log_t,
+                    log_k_chunk: 3,
+                    order,
+                };
+                let setup = DoryScheme::setup_prover(grid.total_vars);
+                let streamed = commit_field_inline_columns::<Fr, DoryScheme>(
+                    &mut ProofSession::default(),
+                    backend,
+                    &[FieldInlineCommittedPolynomial::FieldRdInc],
+                    grid,
+                    &setup,
+                )
+                .unwrap();
+
+                let table = match order {
+                    TracePolynomialOrder::CycleMajor => values.clone(),
+                    TracePolynomialOrder::AddressMajor => {
+                        let mut table = vec![Fr::from_u64(0); 1 << grid.total_vars];
+                        let stride = grid.cycle_stride();
+                        for (cycle, value) in values.iter().enumerate() {
+                            table[cycle * stride] = *value;
+                        }
+                        table
+                    }
+                };
+                let mut partial = DoryScheme::begin(&setup);
+                for row in table.chunks(grid.num_columns()) {
+                    DoryScheme::feed(&mut partial, row, &setup);
+                }
+                let (commitment, hint) = finish_streamed::<DoryScheme>(partial, &setup);
+                assert_eq!(streamed.len(), 1);
+                assert_eq!(streamed[0].commitment, commitment, "{order:?} commitment");
+                assert_eq!(streamed[0].hint, hint, "{order:?} hint");
+            }
+        });
     }
 }

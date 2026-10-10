@@ -1,6 +1,3 @@
-//! Typed inputs consumed and outputs produced by stage 6b (cycle-phase)
-//! verification.
-
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
@@ -20,6 +17,10 @@ pub use super::committed_reduction_cycle_phase::{
 pub use super::committed_reduction_cycle_phase::{
     TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
+#[cfg(feature = "field-inline")]
+pub use super::field_registers_inc_claim_reduction::{
+    FieldRegistersIncClaimReduction, FieldRegistersIncClaimReductionOutputClaims,
+};
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
 pub use super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
 pub use super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
@@ -27,6 +28,8 @@ pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::BytecodeReadRafCycle;
+#[cfg(feature = "akita")]
+use super::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims;
 use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
 };
@@ -37,6 +40,8 @@ use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims;
 
 /// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
 /// Fiat-Shamir batch order. `#[derive(SumcheckBatch)]` generates the
@@ -81,10 +86,16 @@ pub struct Stage6bSumchecks<F: JoltField> {
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
     pub ram_ra_virtualization: RamRaVirtualization<F>,
     pub instruction_ra_virtualization: InstructionRaVirtualization<F>,
-    /// Absent on the packed path: the inc claims are discharged inside the
+    /// Absent on the Akita path: the inc claims are discharged inside the
     /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
+    /// The field-register increment reduction. Declaration position (after the ordinary
+    /// increment reduction, before the optional advice cycle-phase members) is the spec's
+    /// stage-6 batch order and gamma draw order (`specs/field-inline-protocol.md`, "Stage 6
+    /// Composition").
+    #[cfg(feature = "field-inline")]
+    pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReduction<F>,
     /// On the prove side the precommitted reduction kernels span the 6b→7 batch
     /// boundary as `ProofSession` carries: each cycle kernel parks the shared
     /// two-phase state at prepare, and stage 7's address-phase members reclaim it.
@@ -126,7 +137,14 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
         &self.inc_claim_reduction.ram_inc
     }
 
-    /// The packed fused-inc opening point: the read-raf cycle suffix (the
+    /// The field-register increment claim-reduction opening point (the reversed cycle point of
+    /// the reduced `FieldRdInc` opening), consumed by the stage-8 joint opening.
+    #[cfg(feature = "field-inline")]
+    pub fn field_registers_inc_opening_point(&self) -> &[F] {
+        &self.field_registers_inc_claim_reduction.rd_inc
+    }
+
+    /// The Akita fused-inc opening point: the read-raf cycle suffix (the
     /// stage-6b cycle point).
     #[cfg(feature = "akita")]
     pub fn fused_inc_opening_point(&self) -> &[F] {
@@ -195,7 +213,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     /// is the derived, layout-independent claim count; the ZK path subtracts its
     /// runtime bytecode/booleanity point-alias dedup from it to size the committed
     /// output claims. ZK-only, hence base-only (no zk protocol exists over the
-    /// packed axis).
+    /// Akita axis).
     #[cfg(not(feature = "akita"))]
     #[expect(
         clippy::arithmetic_side_effects,
@@ -213,6 +231,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
                 .committed_instruction_ra
                 .len()
             + 2
+            + usize::from(cfg!(feature = "field-inline"))
             + usize::from(self.trusted_advice.is_some())
             + usize::from(self.untrusted_advice.is_some())
             + self.bytecode_reduction.as_ref().map_or(0, |reduction| {
@@ -223,6 +242,70 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
 }
 
 impl<F: JoltField> Stage6bOutputClaims<F> {
+    /// Construct the ordinary stage-6b claims. Producers without field-inline semantics use
+    /// this regardless of the build's feature set — the field-inline increment-reduction slot
+    /// defaults to an all-zero claim, inert because such producers' proofs never declare the
+    /// field-inline axis. Base wire shape only (the akita converter assembles its
+    /// lattice-shaped claims itself).
+    #[cfg(not(feature = "akita"))]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per batch member, mirroring the generated aggregate's shape"
+    )]
+    pub fn new(
+        bytecode_read_raf: BytecodeReadRafOutputClaims<F>,
+        booleanity: BooleanityOutputClaims<F>,
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
+        inc_claim_reduction: IncClaimReductionOutputClaims<F>,
+        trusted_advice: Option<TrustedAdviceCyclePhaseOutputClaims<F>>,
+        untrusted_advice: Option<UntrustedAdviceCyclePhaseOutputClaims<F>>,
+        bytecode_reduction: Option<BytecodeReductionCyclePhaseOutputClaims<F>>,
+        program_image_reduction: Option<ProgramImageReductionCyclePhaseOutputClaims<F>>,
+    ) -> Self {
+        Self {
+            bytecode_read_raf,
+            booleanity,
+            ram_hamming_booleanity,
+            ram_ra_virtualization,
+            instruction_ra_virtualization,
+            inc_claim_reduction,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: Default::default(),
+            trusted_advice,
+            untrusted_advice,
+            bytecode_reduction,
+            program_image_reduction,
+        }
+    }
+
+    /// The Akita-shape twin of [`Self::new`]: the lattice batch has no increment or advice
+    /// members, and the field-register increment-reduction slot again defaults to the inert
+    /// all-zero claim.
+    #[cfg(feature = "akita")]
+    pub fn new(
+        bytecode_read_raf: LatticeBytecodeReadRafOutputClaims<F>,
+        booleanity: LatticeBooleanityOutputClaims<F>,
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
+        bytecode_reduction: Option<BytecodeReductionCyclePhaseOutputClaims<F>>,
+        program_image_reduction: Option<ProgramImageReductionCyclePhaseOutputClaims<F>>,
+    ) -> Self {
+        Self {
+            bytecode_read_raf,
+            booleanity,
+            ram_hamming_booleanity,
+            ram_ra_virtualization,
+            instruction_ra_virtualization,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: Default::default(),
+            bytecode_reduction,
+            program_image_reduction,
+        }
+    }
+
     /// The consumed cycle-phase advice opening *value* for `kind` (the trusted /
     /// untrusted slot of that advice member), present only when the advice
     /// reduction ran a cycle phase. Read by stage 7's advice input wiring and stage
@@ -254,6 +337,10 @@ pub struct Stage6bCarriedChallenges<F: JoltField> {
     pub instruction_ra_gamma: F,
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
+    /// The field-register increment-reduction batching challenge (the spec's `eta`),
+    /// member-drawn after `inc_gamma`.
+    #[cfg(feature = "field-inline")]
+    pub field_registers_inc_gamma: F,
     /// Committed program mode only: bytecode claim-reduction batching
     /// challenge (the prover's `eta`).
     pub bytecode_reduction_eta: Option<F>,
@@ -289,8 +376,6 @@ pub struct Stage6bZkOutput<F: JoltField, C> {
     pub output_points: Stage6bOutputPoints<F>,
 }
 
-// The clear variant carries the located opening claims read on the hot path; the
-// ZK variant carries committed consistency plus the point-only `output_points`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Stage6bOutput<F: JoltField, C> {
     Clear(Stage6bClearOutput<F>),

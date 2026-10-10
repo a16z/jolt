@@ -1,22 +1,23 @@
 use std::{
+    borrow::Cow,
     fmt::{Debug, Formatter, Result as FmtResult},
     sync::Arc,
 };
 
 use akita_error::AkitaError;
-use akita_prover::compute::CommitInnerPlan;
-use akita_prover::{
-    AvailablePolynomialTypes, BackendKindId, CommitSourceClass, CommitSourceDescriptor,
-    CommitmentSource, ExternalInnerCommitmentCapability, PolynomialRepresentation,
-    PolynomialTypeSelection, PreparedExternalInnerCommitment, RootOpeningSource, RootPolyMeta,
-    RootPolyShape,
+use akita_pcs::custom_source::{
+    AvailablePolynomialTypes, BackendKindId, CommitInnerPlan, CommitSourceClass,
+    CommitSourceDescriptor, CommitmentSource, ExternalInnerCommitmentCapability,
+    PolynomialRepresentation, PolynomialTypeSelection, PreparedExternalInnerCommitment,
+    RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients,
 };
+use jolt_claims::protocols::jolt::lattice::strategy::MAX_ONE_HOT_TRACE_COLUMNS;
 
-use super::kernels::{trace_commitment_capability, TracePackedOneHotCommitOperation};
+use super::kernels::{trace_commitment_capability, TraceOneHotColumnCommitOperation};
 use super::NO_SELECTED_ROW;
 use crate::AkitaField;
 
-/// Row-major source for the semantic columns packed into `OneHotTrace`.
+/// Row-major source for the native columns in `OneHotTrace`.
 ///
 /// `fill_row` must overwrite all of `selected_rows`. Byte zero means no committed
 /// entry unless [`TraceOneHotRows::committed_digit_zero_mask`] marks the column.
@@ -53,40 +54,38 @@ pub const fn no_selected_row() -> u8 {
     NO_SELECTED_ROW
 }
 
-/// One physical one-hot polynomial containing all trace-derived semantic
-/// columns and zero padding up to a protocol-fixed selector capacity.
+/// A native column view retaining the shared trace owner.
 #[derive(Clone)]
-pub struct TracePackedOneHot {
+pub struct TraceOneHotColumn {
     pub(super) rows: Arc<dyn TraceOneHotRows>,
     pub(super) num_rows: usize,
     pub(super) num_columns: usize,
     pub(super) one_hot_k: usize,
-    pub(super) column_capacity: usize,
+    pub(super) column_index: usize,
     pub(super) num_vars: usize,
 }
 
-impl Debug for TracePackedOneHot {
+impl Debug for TraceOneHotColumn {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.debug_struct("TracePackedOneHot")
+        f.debug_struct("TraceOneHotColumn")
             .field("one_hot_k", &self.one_hot_k)
             .field("num_columns", &self.num_columns)
-            .field("column_capacity", &self.column_capacity)
+            .field("column_index", &self.column_index)
             .field("num_vars", &self.num_vars)
             .finish_non_exhaustive()
     }
 }
 
-impl TracePackedOneHot {
-    /// Constructs one prefix-packed source.
+impl TraceOneHotColumn {
+    /// Constructs the ordered native column views.
     ///
     /// `construction_ring_d` is metadata matching the configured Akita
     /// commitment dimension. Kernel views remain const-generic over `D`.
     pub fn new(
         one_hot_k: usize,
         construction_ring_d: usize,
-        column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
-    ) -> Result<Self, AkitaError> {
+    ) -> Result<Vec<Self>, AkitaError> {
         if !one_hot_k.is_power_of_two() || one_hot_k > 256 {
             return Err(AkitaError::InvalidInput(format!(
                 "trace one-hot K={one_hot_k} must be a power of two fitting u8 row indices"
@@ -97,44 +96,38 @@ impl TracePackedOneHot {
                 "trace one-hot construction D={construction_ring_d} must be a power of two"
             )));
         }
-        if !column_capacity.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot column capacity {column_capacity} must be a power of two"
-            )));
-        }
         let num_columns = rows.num_columns();
-        if num_columns > u64::BITS as usize {
+        if num_columns > MAX_ONE_HOT_TRACE_COLUMNS {
             return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot has {num_columns} semantic columns, above the 64-column mask limit"
+                "trace one-hot has {num_columns} semantic columns, above the {MAX_ONE_HOT_TRACE_COLUMNS}-column mask limit"
             )));
         }
-        if num_columns == 0 || num_columns > column_capacity {
-            return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot has {num_columns} semantic columns for capacity {column_capacity}"
-            )));
+        if num_columns == 0 {
+            return Err(AkitaError::InvalidInput(
+                "trace one-hot has no columns".into(),
+            ));
         }
         let num_rows = rows.num_rows();
-        let total_field_elems = num_rows
-            .checked_mul(one_hot_k)
-            .and_then(|segment| segment.checked_mul(column_capacity))
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("trace one-hot packed domain overflow".to_string())
-            })?;
+        let total_field_elems = num_rows.checked_mul(one_hot_k).ok_or_else(|| {
+            AkitaError::InvalidInput("trace one-hot column domain overflow".to_string())
+        })?;
         if !total_field_elems.is_power_of_two()
             || !total_field_elems.is_multiple_of(construction_ring_d)
         {
             return Err(AkitaError::InvalidInput(format!(
-                "trace one-hot packed domain {total_field_elems} must be a power of two divisible by construction D={construction_ring_d}"
+                "trace one-hot column domain {total_field_elems} must be a power of two divisible by construction D={construction_ring_d}"
             )));
         }
-        Ok(Self {
-            rows,
-            num_rows,
-            num_columns,
-            one_hot_k,
-            column_capacity,
-            num_vars: total_field_elems.trailing_zeros() as usize,
-        })
+        Ok((0..num_columns)
+            .map(|column_index| Self {
+                rows: Arc::clone(&rows),
+                num_rows,
+                num_columns,
+                one_hot_k,
+                column_index,
+                num_vars: total_field_elems.trailing_zeros() as usize,
+            })
+            .collect())
     }
 
     pub(super) fn total_field_elems(&self) -> usize {
@@ -155,27 +148,17 @@ impl TracePackedOneHot {
     }
 }
 
-pub struct TracePackedOneHotView<'a, const D: usize> {
-    pub(super) source: &'a TracePackedOneHot,
+pub struct TraceOneHotColumnBatchView<'a, const D: usize> {
+    pub(super) sources: &'a [&'a TraceOneHotColumn],
 }
 
-pub struct TracePackedOneHotBatchView<'a, const D: usize> {
-    pub(super) sources: &'a [&'a TracePackedOneHot],
-}
-
-impl<const D: usize> TracePackedOneHotView<'_, D> {
-    pub(super) fn source(&self) -> &TracePackedOneHot {
-        self.source
-    }
-}
-
-impl<const D: usize> TracePackedOneHotBatchView<'_, D> {
-    pub(super) fn source(&self) -> &TracePackedOneHot {
+impl<const D: usize> TraceOneHotColumnBatchView<'_, D> {
+    pub(super) fn source(&self) -> &TraceOneHotColumn {
         self.sources[0]
     }
 }
 
-impl RootPolyMeta<AkitaField> for TracePackedOneHot {
+impl RootPolyMeta<AkitaField> for TraceOneHotColumn {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -185,7 +168,7 @@ impl RootPolyMeta<AkitaField> for TracePackedOneHot {
     }
 }
 
-impl<const D: usize> RootPolyShape<AkitaField, D> for TracePackedOneHot {
+impl<const D: usize> RootPolyShape<AkitaField, D> for TraceOneHotColumn {
     fn num_ring_elems(&self) -> usize {
         self.total_field_elems().div_ceil(D)
     }
@@ -199,7 +182,18 @@ impl<const D: usize> RootPolyShape<AkitaField, D> for TracePackedOneHot {
     }
 }
 
-impl CommitmentSource<AkitaField> for TracePackedOneHot {
+/// The trace streams hot positions from its rows. The canonical
+/// coefficient table feeds only tensor-style extension openings, which
+/// Jolt's base-field configs (`ExtField = Field`) never schedule.
+impl SourceCoefficients<AkitaField> for TraceOneHotColumn {
+    fn source_coefficients(&self) -> Result<Cow<'_, [AkitaField]>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "trace one-hot sources stream their coefficients and expose no canonical table".into(),
+        ))
+    }
+}
+
+impl CommitmentSource<AkitaField> for TraceOneHotColumn {
     fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
         CommitSourceDescriptor::new(
             self.num_vars,
@@ -208,11 +202,11 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
             CommitSourceClass::OneHot {
                 chunk_size: self.one_hot_k,
             },
-            "jolt-trace-packed-one-hot",
+            "jolt-trace-one-hot-batch",
         )
     }
 
-    /// The packed trace stores hot positions, so every coefficient it commits is
+    /// The trace stores hot positions, so every coefficient it commits is
     /// `0` or `1` and no scan is possible or needed.
     fn committed_centered_reach(
         &self,
@@ -226,7 +220,7 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
         &self,
         _plan: &CommitInnerPlan,
     ) -> Result<AvailablePolynomialTypes, AkitaError> {
-        AvailablePolynomialTypes::new(Vec::new())
+        Ok(AvailablePolynomialTypes::external_only())
     }
 
     fn represent_as(
@@ -235,7 +229,7 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
         _plan: &CommitInnerPlan,
     ) -> Result<PolynomialRepresentation<'_, AkitaField>, AkitaError> {
         Err(AkitaError::InvalidInput(
-            "trace-packed one-hot sources require their sparse CPU commitment operation".into(),
+            "trace one-hot sources require their sparse CPU commitment operation".into(),
         ))
     }
 
@@ -255,46 +249,58 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
     ) -> Result<PreparedExternalInnerCommitment<'_, AkitaField>, AkitaError> {
         if selected != trace_commitment_capability()? {
             return Err(AkitaError::InvalidInput(
-                "trace-packed one-hot source selected a non-CPU commitment operation".into(),
+                "trace one-hot source selected a non-CPU commitment operation".into(),
             ));
         }
         PreparedExternalInnerCommitment::new(
             selected,
             self,
-            &TracePackedOneHotCommitOperation,
+            &TraceOneHotColumnCommitOperation,
             None,
         )
     }
 }
 
-impl<const D: usize> RootOpeningSource<AkitaField, D> for TracePackedOneHot {
+impl<const D: usize> RootOpeningSource<AkitaField, D> for TraceOneHotColumn {
     type OpeningView<'a>
-        = TracePackedOneHotView<'a, D>
+        = ()
     where
         Self: 'a;
     type OpeningBatchView<'a>
-        = TracePackedOneHotBatchView<'a, D>
+        = TraceOneHotColumnBatchView<'a, D>
     where
         Self: 'a;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        validate_dimension::<D>(self.one_hot_k)?;
-        Ok(TracePackedOneHotView { source: self })
+        Ok(())
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
-        validate_singleton_batch(polys)?;
+        validate_batch(polys)?;
         validate_dimension::<D>(polys[0].one_hot_k)?;
-        Ok(TracePackedOneHotBatchView { sources: polys })
+        Ok(TraceOneHotColumnBatchView { sources: polys })
     }
 }
 
-fn validate_singleton_batch(polys: &[&TracePackedOneHot]) -> Result<(), AkitaError> {
-    if polys.len() != 1 {
-        return Err(AkitaError::InvalidSize {
-            expected: 1,
-            actual: polys.len(),
-        });
+pub(super) fn validate_batch(polys: &[&TraceOneHotColumn]) -> Result<(), AkitaError> {
+    let first = polys
+        .first()
+        .ok_or_else(|| AkitaError::InvalidInput("empty trace batch".into()))?;
+    if first.rows.num_rows() != first.num_rows
+        || first.rows.num_columns() != first.num_columns
+        || polys.len() != first.num_columns
+        || polys.iter().enumerate().any(|(column, source)| {
+            !Arc::ptr_eq(&source.rows, &first.rows)
+                || source.column_index != column
+                || source.num_rows != first.num_rows
+                || source.num_columns != first.num_columns
+                || source.one_hot_k != first.one_hot_k
+                || source.num_vars != first.num_vars
+        })
+    {
+        return Err(AkitaError::InvalidInput(
+            "trace batch ownership, dimensions, or column order disagree".into(),
+        ));
     }
     Ok(())
 }

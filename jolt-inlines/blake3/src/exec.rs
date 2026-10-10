@@ -18,19 +18,19 @@ pub fn execute_blake3_compression(
     ];
     let mut block = *block_words;
 
-    round(&mut state, &block); // round 1
+    round(&mut state, &block);
     permute(&mut block);
-    round(&mut state, &block); // round 2
+    round(&mut state, &block);
     permute(&mut block);
-    round(&mut state, &block); // round 3
+    round(&mut state, &block);
     permute(&mut block);
-    round(&mut state, &block); // round 4
+    round(&mut state, &block);
     permute(&mut block);
-    round(&mut state, &block); // round 5
+    round(&mut state, &block);
     permute(&mut block);
-    round(&mut state, &block); // round 6
+    round(&mut state, &block);
     permute(&mut block);
-    round(&mut state, &block); // round 7
+    round(&mut state, &block);
 
     for i in 0..8 {
         state[i] ^= state[i + 8];
@@ -38,8 +38,6 @@ pub fn execute_blake3_compression(
     chaining_value.copy_from_slice(&state[..8]);
 }
 
-/// The mixing function G, which mixes either a column or a diagonal in the state matrix.
-/// This is the core operation of the BLAKE3 compression function.
 fn g(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, mx: u32, my: u32) {
     state[a] = state[a].wrapping_add(state[b]).wrapping_add(mx);
     state[d] = (state[d] ^ state[a]).rotate_right(16);
@@ -52,12 +50,10 @@ fn g(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, mx: u32, my:
 }
 
 fn round(state: &mut [u32; 16], m: &[u32; 16]) {
-    // Mix the columns.
     g(state, 0, 4, 8, 12, m[0], m[1]);
     g(state, 1, 5, 9, 13, m[2], m[3]);
     g(state, 2, 6, 10, 14, m[4], m[5]);
     g(state, 3, 7, 11, 15, m[6], m[7]);
-    // Mix the diagonals.
     g(state, 0, 5, 10, 15, m[8], m[9]);
     g(state, 1, 6, 11, 12, m[10], m[11]);
     g(state, 2, 7, 8, 13, m[12], m[13]);

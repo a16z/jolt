@@ -124,7 +124,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRaVirtualization<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRaVirtualization(RamRaVirtualizationPublic::EqCycle) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let log_t = self.dimensions.log_t();
         let point = output_points

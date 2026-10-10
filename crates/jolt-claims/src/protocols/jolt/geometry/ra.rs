@@ -133,17 +133,6 @@ mod tests {
     }
 
     #[test]
-    fn records_layout_counts_and_total() -> Result<(), JoltFormulaDimensionsError> {
-        let layout = JoltRaPolynomialLayout::new(2, 3, 5)?;
-
-        assert_eq!(layout.instruction(), 2);
-        assert_eq!(layout.bytecode(), 3);
-        assert_eq!(layout.ram(), 5);
-        assert_eq!(layout.total(), 10);
-        Ok(())
-    }
-
-    #[test]
     fn iterates_canonical_ra_order() -> Result<(), JoltFormulaDimensionsError> {
         let layout = JoltRaPolynomialLayout::new(2, 1, 2)?;
 

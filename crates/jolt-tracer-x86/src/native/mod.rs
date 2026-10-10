@@ -1,6 +1,3 @@
-//! Native (x86_64-linux) implementation: AOT compilation of expanded
-//! bytecode and the execution driver.
-
 mod compile;
 #[doc(hidden)]
 pub mod harness;
@@ -36,7 +33,6 @@ pub struct X86TracerBackend {
     min_checkpoint_spacing_rows: usize,
 }
 
-/// Default minimum spacing between checkpoint snapshots, in rows.
 const MIN_SPACING_ROWS: usize = 1 << 16;
 
 impl Default for X86TracerBackend {
@@ -89,7 +85,6 @@ impl CachedProgram {
     }
 }
 
-/// Result of a fast (non-recording) pass.
 pub struct FastRunOutput {
     pub trace_len: usize,
     pub device: JoltDevice,
@@ -173,12 +168,12 @@ impl X86TracerBackend {
             row_limit: u64::MAX,
             obs_cursor: obs_start,
             obs_end,
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
         compiled.run_record(&mut guest)?;
         guest.check_exit(&mut host)?;
 
-        // The cursor's advance is the recorded row count.
         let recorded =
             (guest.obs_cursor as usize - obs_start as usize) / core::mem::size_of::<Observation>();
         observations.truncate(recorded);
@@ -235,6 +230,7 @@ impl X86TracerBackend {
             row_limit: u64::MAX,
             obs_cursor: core::ptr::null_mut(),
             obs_end: core::ptr::null_mut(),
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
         compiled.run(&mut guest)?;
@@ -285,7 +281,6 @@ impl ExecutionBackend for X86TracerBackend {
     }
 }
 
-/// Result of a recording pass.
 struct RecordRunOutput {
     observations: Vec<Observation>,
     device: JoltDevice,
@@ -294,7 +289,6 @@ struct RecordRunOutput {
 }
 
 impl Observation {
-    /// Combines static bytecode with recorded values into validated rows.
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
         observations: &[Self],
@@ -373,7 +367,6 @@ pub struct X86Checkpoint {
     boundary: Arc<Boundary>,
     /// Rows to discard after resuming (the boundary may precede the mark).
     skip_rows: usize,
-    /// Rows this chunk emits.
     take_rows: usize,
     /// Longest source-instruction group in the program. Replay can only stop
     /// at a group boundary, so it may overshoot its window by up to this
@@ -391,7 +384,6 @@ impl X86Checkpoint {
         self.skip_rows
     }
 
-    /// Largest expansion of one source instruction in the static bytecode.
     fn max_group_rows(bytecode: &[JoltInstructionRow]) -> usize {
         let mut longest = 1usize;
         let mut current = 1usize;
@@ -407,11 +399,9 @@ impl X86Checkpoint {
     }
 }
 
-/// Guest state at a group boundary: everything a replay needs to resume.
 struct Boundary {
     registers: [u64; common::constants::REGISTER_COUNT as usize],
     pc: u64,
-    /// Full plane image at the boundary.
     memory: Vec<u8>,
     memory_config: common::jolt_device::MemoryConfig,
     device_inputs: Vec<u8>,
@@ -519,10 +509,9 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             row_limit: 0,
             obs_cursor: core::ptr::null_mut(),
             obs_end: core::ptr::null_mut(),
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
-        // Boundaries: (rows_before, snapshot). The first is the program's
-        // initial state, which every early chunk resumes from.
         let mut boundaries: Vec<(usize, Arc<Boundary>)> = Vec::new();
         let bytecode = Arc::new(program.expanded_bytecode.clone());
         let max_group_rows = X86Checkpoint::max_group_rows(&bytecode);
@@ -551,8 +540,6 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         }
         let trace_len = guest.trace_len as usize;
 
-        // One contract checkpoint per chunk mark, resuming from the latest
-        // boundary at or before it.
         let mut checkpoints = Vec::with_capacity(trace_len.div_ceil(chunk_size));
         let mut index = 0usize;
         for chunk in 0..trace_len.div_ceil(chunk_size) {
@@ -617,10 +604,10 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             host: &raw mut host,
             advice_slots: [0; crate::native::state::ADVICE_SLOTS],
             advice_jobs: checkpoint.compiled.advice_jobs_ptr(),
-            // Stop at the first group boundary at or past the window.
             row_limit: needed as u64,
             obs_cursor: obs_start,
             obs_end,
+            canary_offset: GuestState::canary_offset(&host.device.memory_layout),
         });
 
         checkpoint.compiled.run_record_pausable(&mut guest)?;
@@ -650,8 +637,6 @@ mod tests {
     use super::*;
     use jolt_riscv::{NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
 
-    /// A one-row program (an always-taken self-branch) that compiles under
-    /// any profile, with a fake ELF identity for cache-key tests.
     fn program_with_profile(profile: jolt_riscv::JoltInstructionProfile) -> JoltProgram {
         let terminal = JoltInstructionRow {
             instruction_kind: JoltInstructionKind::BEQ,
@@ -696,7 +681,6 @@ mod tests {
             !Arc::ptr_eq(&first, &second),
             "same-ELF program with a different profile reused the cached artifact"
         );
-        // Unchanged identity is a hit, not a recompile.
         let third = backend.compiled(&inlines).expect("compile failed");
         assert!(Arc::ptr_eq(&second, &third));
     }

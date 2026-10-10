@@ -21,7 +21,6 @@ use crate::Limbs;
 use core::cmp::Ordering;
 use num_traits::Zero;
 
-/// A signed big integer using `Limbs<N>` for magnitude and a sign bit.
 #[derive(Clone, Copy, Debug)]
 pub struct SignedBigInt<const N: usize> {
     pub magnitude: Limbs<N>,
@@ -33,7 +32,6 @@ pub type S128 = SignedBigInt<2>;
 pub type S192 = SignedBigInt<3>;
 pub type S256 = SignedBigInt<4>;
 
-/// Compact signed big integer with a `u32` top limb.
 #[derive(Clone, Copy, Debug)]
 pub struct SignedBigIntHi32<const N: usize> {
     magnitude_lo: [u64; N],
@@ -45,8 +43,6 @@ pub type S96 = SignedBigIntHi32<1>;
 pub type S160 = SignedBigIntHi32<2>;
 pub type S224 = SignedBigIntHi32<3>;
 
-/// Stamps one binary operator (owned rhs) plus its assign form, delegating
-/// to an in-place method.
 macro_rules! signed_binop {
     ($T:ident, $Op:ident, $method:ident, $OpAssign:ident, $assign_method:ident, $apply:ident) => {
         impl<const N: usize> core::ops::$Op for $T<N> {
@@ -66,11 +62,6 @@ macro_rules! signed_binop {
     };
 }
 
-/// Stamps the shared sign-magnitude state machine over a family providing
-/// normalized magnitude ops (`mag_is_zero`, `mag_cmp`, `mag_add`, `mag_sub`,
-/// `mag_mul`), a `zero()` constructor, and an `is_positive` field: the
-/// operator matrix, `Neg`, sign-aware `Eq`/`Ord`, `Zero`, `Default`, and
-/// `allocative` support.
 macro_rules! impl_signed_family {
     ($T:ident) => {
         impl<const N: usize> $T<N> {
@@ -97,7 +88,6 @@ macro_rules! impl_signed_family {
                 self.mag_mul(rhs);
             }
 
-            /// Flips this value's sign.
             #[inline]
             pub fn negate(mut self) -> Self {
                 self.is_positive = !self.is_positive;
@@ -360,7 +350,6 @@ impl<const N: usize> SignedBigIntHi32<N> {
             self.magnitude_lo[i] = sum as u64;
             carry = sum >> 64;
         }
-        // The u32 tail wraps at width, matching full-limb truncation semantics.
         self.magnitude_hi =
             ((self.magnitude_hi as u128) + (rhs.magnitude_hi as u128) + carry) as u32;
     }

@@ -134,28 +134,22 @@ impl Program {
     )]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
-            // Use jolt CLI to build the guest program
-            // JOLT_PATH can be set to override the jolt binary path
             let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
             let mut args = vec!["build".to_string()];
 
-            // Add package argument
             args.push("-p".to_string());
             args.push(self.guest.clone());
 
-            // Add --mode std flag if std mode is enabled
             if self.std {
                 args.push("--mode".to_string());
                 args.push("std".to_string());
             }
 
-            // Add --backtrace <mode> flag if backtrace is configured
             if let Some(mode) = &self.backtrace {
                 args.push("--backtrace".to_string());
                 args.push(mode.clone());
             }
 
-            // Pass memory layout parameters to cargo-jolt
             args.push("--stack-size".to_string());
             args.push(self.stack_size.to_string());
             args.push("--heap-size".to_string());
@@ -168,7 +162,6 @@ impl Program {
                 }
             }
 
-            // Add suffix to target dir if building with compute_advice feature
             let guest_target_dir = if features.iter().any(|feature| feature == "compute_advice") {
                 format!(
                     "{}/{}-{}-compute-advice",
@@ -188,8 +181,6 @@ impl Program {
             // Add separator for cargo passthrough args
             args.push("--".to_string());
 
-            // Cargo profile selection. Default to `--release` for backwards compatibility.
-            // If a profile is set, pass `--profile <name>` instead.
             if let Some(profile) = &self.profile {
                 args.push("--profile".to_string());
                 args.push(profile.clone());
@@ -257,7 +248,6 @@ impl Program {
                 assert!(output.status.success(), "failed to compile guest with jolt");
             }
 
-            // Determine the ELF path based on std mode
             let target_triple = if self.std {
                 "riscv64imac-zero-linux-musl"
             } else {
@@ -265,22 +255,18 @@ impl Program {
             };
 
             // ELF is built to guest_target_dir with standard cargo layout.
-            // Note: output directory includes the selected cargo profile (default: "release").
-            let out_profile = self.profile.as_deref().unwrap_or("release");
+            let out_profile = profile_output_dir(self.profile.as_deref());
             let elf_path = PathBuf::from(&guest_target_dir)
                 .join(target_triple)
                 .join(out_profile)
                 .join(&self.guest);
 
-            // Verify the ELF exists
             assert!(
                 elf_path.exists(),
                 "Built ELF not found at expected location: {}",
                 elf_path.display()
             );
 
-            // If extra_features contains "compute_advice", store in elf_compute_advice
-            // Otherwise store in elf
             if cargo_features
                 .iter()
                 .any(|feature| feature == "compute_advice")
@@ -356,7 +342,6 @@ impl Program {
         )
     }
 
-    // TODO(moodlezoup): Make this generic over InstructionSet
     #[tracing::instrument(skip_all, name = "Program::trace")]
     #[expect(
         clippy::expect_used,
@@ -498,6 +483,18 @@ impl Program {
     }
 }
 
+/// Directory name cargo writes artifacts to for `--profile <name>`.
+///
+/// The built-in `dev` and `test` profiles emit to `debug`, and `bench` emits to
+/// `release`; custom profiles use their own name.
+fn profile_output_dir(profile: Option<&str>) -> &str {
+    match profile {
+        None | Some("release" | "bench") => "release",
+        Some("dev" | "test") => "debug",
+        Some(custom) => custom,
+    }
+}
+
 fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -> String {
     fn has_ctrl(s: &str) -> bool {
         s.chars()
@@ -572,4 +569,19 @@ fn compose_command_line(program: &str, envs: &[(&str, String)], args: &[&str]) -
     }));
 
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::profile_output_dir;
+
+    #[test]
+    fn builtin_profiles_map_to_cargo_output_dirs() {
+        assert_eq!(profile_output_dir(None), "release");
+        assert_eq!(profile_output_dir(Some("release")), "release");
+        assert_eq!(profile_output_dir(Some("dev")), "debug");
+        assert_eq!(profile_output_dir(Some("test")), "debug");
+        assert_eq!(profile_output_dir(Some("bench")), "release");
+        assert_eq!(profile_output_dir(Some("guest")), "guest");
+    }
 }

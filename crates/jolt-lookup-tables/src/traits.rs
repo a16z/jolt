@@ -1,10 +1,8 @@
-//! Lookup-table-related traits.
-
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
-    FieldSub,
+    FieldAdd, FieldAssertEq, FieldAssertZero, FieldInv, FieldLoadAccumulateFromMemory,
+    FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul, FieldSub,
 };
 use jolt_riscv::{JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionRowData};
 use std::fmt::Debug;
@@ -13,7 +11,6 @@ use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::interleave::interleave_bits;
 use crate::tables::LookupTableKind;
 
-/// Materialize and MLE-evaluate a single lookup table.
 pub trait LookupTable: Clone + Debug + Send + Sync {
     fn materialize_entry(&self, index: u128) -> u64;
 
@@ -110,7 +107,6 @@ pub trait LookupQuery<const XLEN: usize> {
         interleave_bits(x, y as u64)
     }
 
-    /// Computes the output lookup entry for this instruction as a u64.
     fn to_lookup_output(&self) -> u64;
 }
 
@@ -137,6 +133,7 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
+// Only limb advice uses `RangeCheck`; other field-inline ops have no lookup.
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,
@@ -144,9 +141,10 @@ impl_field_inline_no_lookup!(
     FieldMul,
     FieldInv,
     FieldAssertEq,
-    FieldLoadFromX,
-    FieldStoreToX,
+    FieldAssertZero,
+    FieldLoadAccumulateFromRegister,
     FieldLoadImm,
+    FieldLoadAccumulateFromMemory,
 );
 
 /// Lookup-query adapter for dynamic final Jolt instruction rows.
@@ -244,7 +242,6 @@ jolt_riscv::for_each_jolt_instruction_kind!(impl_jolt_lookup_query);
 mod tests {
     use super::*;
     use jolt_riscv::{
-        instructions::{Add, Ld, Noop},
         Flags, InterleavedBitsMarker, JoltInstructionRow, JoltInstructionRowData,
         NormalizedOperands,
     };
@@ -350,9 +347,6 @@ mod tests {
                     $(
                         $(#[$meta])*
                         {
-                            // `$variant` is the concrete newtype, so flags and the
-                            // index come from the type; the row only supplies
-                            // operands.
                             let cycle = TestCycle {
                                 instruction: JoltInstructionRow {
                                     operands,
@@ -379,7 +373,6 @@ mod tests {
                         }
                     )*
                 }
-                // Guard against the assertion silently covering nothing.
                 assert!(
                     checked > 0,
                     "no non-interleaved instruction was exercised"
@@ -388,17 +381,6 @@ mod tests {
         };
     }
     jolt_riscv::for_each_jolt_instruction_kind!(assert_canonical_lookup_indices);
-
-    #[test]
-    fn aggregate_instruction_dispatches_lookup_table() {
-        let add = JoltInstruction::Add(Add(JoltInstructionRow::default()));
-        let load = JoltInstruction::Ld(Ld(JoltInstructionRow::default()));
-        let noop = JoltInstruction::Noop(Noop(JoltInstructionRow::default()));
-
-        assert!(InstructionLookupTable::<64>::lookup_table(&add).is_some());
-        assert!(InstructionLookupTable::<64>::lookup_table(&load).is_none());
-        assert!(InstructionLookupTable::<64>::lookup_table(&noop).is_none());
-    }
 
     #[test]
     fn dynamic_lookup_query_dispatches_to_instruction_impl() {

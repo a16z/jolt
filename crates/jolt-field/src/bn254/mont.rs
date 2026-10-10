@@ -1,10 +1,3 @@
-//! BN254 Fr Montgomery/Barrett arithmetic kernel and the wide accumulator.
-//!
-//! Ported from jolt-field's `arkworks/bn254_ops.rs` + `wide_accumulator.rs`
-//! with identical algorithms: Barrett folding for scalar multiplication,
-//! a compile-time Montgomery table for small-integer conversion, and the
-//! folded 4×4 product accumulator with deferred Montgomery reduction.
-
 use crate::{signed::S256, Accumulator, Limbs};
 use ark_bn254::FrConfig;
 use ark_ff::{BigInt, Fp, MontConfig};
@@ -22,7 +15,6 @@ const R: BigInt<N> = <FrConfig as MontConfig<N>>::R;
 const MODULUS_HAS_SPARE_BIT: bool = MODULUS[N - 1] >> 63 == 0;
 const MODULUS_NUM_SPARE_BITS: u32 = MODULUS[N - 1].leading_zeros();
 
-/// a + b * c + carry → (result, new carry)
 #[inline(always)]
 fn mac_with_carry(a: u64, b: u64, c: u64, carry: &mut u64) -> u64 {
     let tmp = (a as u128) + (b as u128) * (c as u128) + (*carry as u128);
@@ -30,7 +22,6 @@ fn mac_with_carry(a: u64, b: u64, c: u64, carry: &mut u64) -> u64 {
     tmp as u64
 }
 
-/// *a += b + carry → new carry
 #[inline(always)]
 fn adc(a: &mut u64, b: u64, carry: u64) -> u64 {
     let tmp = (*a as u128) + (b as u128) + (carry as u128);
@@ -38,7 +29,6 @@ fn adc(a: &mut u64, b: u64, carry: u64) -> u64 {
     (tmp >> 64) as u64
 }
 
-/// *a -= b + borrow → new borrow (1 if underflow)
 #[inline(always)]
 fn sbb(a: &mut u64, b: u64, borrow: u64) -> u64 {
     let tmp = (1u128 << 64) + (*a as u128) - (b as u128) - (borrow as u128);
@@ -46,7 +36,6 @@ fn sbb(a: &mut u64, b: u64, borrow: u64) -> u64 {
     u64::from(tmp >> 64 == 0)
 }
 
-/// `k * p` for small `k`, as (low N limbs, carry limb).
 const fn modulus_times(k: u64) -> ([u64; N], u64) {
     let mut lo = [0u64; N];
     let mut carry = 0u64;
@@ -77,7 +66,6 @@ const BARRETT_MU: u64 = {
     } else {
         MODULUS[2]
     };
-    // Normalized dividend top limbs are [1 << 63, 0].
     let dividend_top = (1u128 << 63) << 64;
     let mut q = dividend_top / (p_hi as u128);
     let mut r = dividend_top - q * (p_hi as u128);
@@ -88,7 +76,6 @@ const BARRETT_MU: u64 = {
     q as u64
 };
 
-/// `PRECOMP_TABLE[i]` = Montgomery form of `i`, for fast small-int conversion.
 const PRECOMP_TABLE_SIZE: usize = 1 << 14;
 static PRECOMP_TABLE: [InnerFr; PRECOMP_TABLE_SIZE] = {
     let mut table = [Fp::new_unchecked(BigInt([0u64; N])); PRECOMP_TABLE_SIZE];
@@ -102,7 +89,6 @@ static PRECOMP_TABLE: [InnerFr; PRECOMP_TABLE_SIZE] = {
     table
 };
 
-/// Compare two 4-limb numbers.
 #[inline(always)]
 fn compare_4(a: [u64; N], b: [u64; N]) -> core::cmp::Ordering {
     let mut i = N;
@@ -151,7 +137,6 @@ fn barrett_cond_subtract(r_tmp: BigInt<5>) -> BigInt<N> {
     }
 }
 
-/// Barrett reduction kernel: reduce 5 limbs → 4 limbs (mod p).
 #[inline(always)]
 fn barrett_reduce_5_to_4(c: BigInt<5>) -> BigInt<N> {
     let tilde_c: u64 = if MODULUS_HAS_SPARE_BIT {
@@ -161,7 +146,6 @@ fn barrett_reduce_5_to_4(c: BigInt<5>) -> BigInt<N> {
     };
     let m: u64 = ((tilde_c as u128 * BARRETT_MU as u128) >> 64) as u64;
 
-    // r_tmp = c - m * 2p
     let (m2p_lo, m2p_hi) = MODULUS_TIMES_2;
     let mut m2p = BigInt([m2p_lo[0], m2p_lo[1], m2p_lo[2], m2p_lo[3], m2p_hi]);
     let mut carry = 0u64;
@@ -237,7 +221,6 @@ pub(crate) fn from_montgomery_reduce<const L: usize>(unreduced: BigInt<L>) -> In
     result
 }
 
-/// Multiply BigInt<4> by u64, producing BigInt<5>.
 #[inline(always)]
 fn bigint4_mul_u64(a: &BigInt<N>, b: u64) -> BigInt<5> {
     let mut res = BigInt::<5>([0u64; 5]);
@@ -249,7 +232,6 @@ fn bigint4_mul_u64(a: &BigInt<N>, b: u64) -> BigInt<5> {
     res
 }
 
-/// Multiply BigInt<4> by u128, producing BigInt<6>.
 #[inline(always)]
 fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
     let (b_lo, b_hi) = (b as u64, (b >> 64) as u64);
@@ -267,7 +249,6 @@ fn bigint4_mul_u128(a: &BigInt<N>, b: u128) -> BigInt<6> {
     res
 }
 
-/// Barrett reduce BigInt<6> → Fr via two rounds.
 #[inline(always)]
 fn from_unchecked_nplus2(element: BigInt<6>) -> InnerFr {
     let c1 = BigInt::<5>([
@@ -282,7 +263,6 @@ fn from_unchecked_nplus2(element: BigInt<6>) -> InnerFr {
     Fp::new_unchecked(barrett_reduce_5_to_4(c2))
 }
 
-/// Multiply a field element by u64 via one Barrett round.
 #[inline(always)]
 pub(crate) fn mul_u64(a: InnerFr, b: u64) -> InnerFr {
     if b == 0 || Zero::is_zero(&a) {
@@ -294,7 +274,6 @@ pub(crate) fn mul_u64(a: InnerFr, b: u64) -> InnerFr {
     Fp::new_unchecked(barrett_reduce_5_to_4(bigint4_mul_u64(&a.0, b)))
 }
 
-/// Multiply a field element by u128 via up to two Barrett rounds.
 #[inline(always)]
 pub(crate) fn mul_u128(a: InnerFr, b: u128) -> InnerFr {
     if b >> 64 == 0 {
@@ -304,7 +283,6 @@ pub(crate) fn mul_u128(a: InnerFr, b: u128) -> InnerFr {
     }
 }
 
-/// Convert u64 → Fr: table lookup for small values, `mul_u64(R, n)` otherwise.
 #[inline(always)]
 pub(crate) fn from_u64(n: u64) -> InnerFr {
     if n < PRECOMP_TABLE_SIZE as u64 {
@@ -314,7 +292,6 @@ pub(crate) fn from_u64(n: u64) -> InnerFr {
     }
 }
 
-/// Convert u128 → Fr: table lookup for small values, `mul_u128(R, n)` otherwise.
 #[inline(always)]
 pub(crate) fn from_u128(n: u128) -> InnerFr {
     if n < PRECOMP_TABLE_SIZE as u128 {
@@ -442,7 +419,8 @@ impl Default for FrSignedProductAccumulator {
 
 impl FrSignedProductAccumulator {
     #[inline(always)]
-    fn fmadd_magnitude(slots: &mut [u128; 8], value: Fr, magnitude: Limbs<4>) {
+    fn fmadd_magnitude<const M: usize>(slots: &mut [u128; 8], value: Fr, magnitude: Limbs<M>) {
+        const { assert!(M <= 4, "magnitudes wider than 256 bits overflow the slots") }
         for (i, value_limb) in value.inner_limbs().into_iter().enumerate() {
             for (j, magnitude_limb) in magnitude.0.into_iter().enumerate() {
                 let product = (value_limb as u128) * (magnitude_limb as u128);
@@ -467,7 +445,7 @@ impl FrSignedProductAccumulator {
 
     #[inline(always)]
     fn fmadd_unsigned(&mut self, value: Fr, scalar: u64) {
-        Self::fmadd_magnitude(&mut self.pos, value, Limbs::from_u64(scalar));
+        Self::fmadd_magnitude(&mut self.pos, value, Limbs::<1>::from_u64(scalar));
     }
 }
 
@@ -518,7 +496,7 @@ impl Accumulator for FrSignedProductAccumulator {
 
     #[inline(always)]
     fn fmadd_i64(&mut self, value: Fr, scalar: i64) {
-        let magnitude = Limbs::from_u64(scalar.unsigned_abs());
+        let magnitude = Limbs::<1>::from_u64(scalar.unsigned_abs());
         if scalar >= 0 {
             Self::fmadd_magnitude(&mut self.pos, value, magnitude);
         } else {
@@ -527,8 +505,19 @@ impl Accumulator for FrSignedProductAccumulator {
     }
 
     #[inline(always)]
+    fn fmadd_i128(&mut self, value: Fr, scalar: i128) {
+        let value = if scalar < 0 { -value } else { value };
+        let magnitude = scalar.unsigned_abs();
+        Self::fmadd_magnitude(
+            &mut self.pos,
+            value,
+            Limbs([magnitude as u64, (magnitude >> 64) as u64]),
+        );
+    }
+
+    #[inline(always)]
     fn fmadd_signed_u64(&mut self, value: Fr, magnitude: u64, is_positive: bool) {
-        let magnitude = Limbs::from_u64(magnitude);
+        let magnitude = Limbs::<1>::from_u64(magnitude);
         if is_positive {
             Self::fmadd_magnitude(&mut self.pos, value, magnitude);
         } else {
@@ -557,7 +546,6 @@ impl Default for WideAccumulator {
 }
 
 impl WideAccumulator {
-    /// Carry-propagate the positional slots into a 9-limb integer.
     #[inline]
     fn normalize(self) -> BigInt<9> {
         let mut out = [0u64; 9];
@@ -630,6 +618,7 @@ mod tests {
     use ark_ff::UniformRand;
     use num_traits::One;
     use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
 
     fn spread(seed: u64) -> Fr {
         let a = Fr::from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
@@ -722,8 +711,24 @@ mod tests {
     }
 
     #[test]
+    fn signed_product_accumulator_i128_matches_field() {
+        let mut rng = ChaCha20Rng::seed_from_u64(9);
+        let mut accumulator = FrSignedProductAccumulator::default();
+        let mut expected = Fr::zero();
+        let scalars = (0..256)
+            .map(|_| rng.gen::<i128>())
+            .chain([i128::MIN, i128::MAX, -1, 0]);
+        for (seed, scalar) in scalars.enumerate() {
+            let value = spread(seed as u64);
+            accumulator.fmadd_i128(value, scalar);
+            expected += value * Fr::from_i128(scalar);
+        }
+        assert_eq!(accumulator.reduce(), expected);
+    }
+
+    #[test]
     fn kernel_matches_arkworks() {
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(7);
+        let mut rng = ChaCha20Rng::seed_from_u64(7);
         for _ in 0..500 {
             let a = InnerFr::rand(&mut rng);
             let b: u64 = rng.gen();
@@ -740,7 +745,7 @@ mod tests {
 
     #[test]
     fn montgomery_reduce_roundtrip() {
-        let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(8);
+        let mut rng = ChaCha20Rng::seed_from_u64(8);
         for _ in 0..200 {
             let a = InnerFr::rand(&mut rng);
             let b = InnerFr::rand(&mut rng);

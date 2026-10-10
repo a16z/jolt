@@ -1,7 +1,4 @@
-//! Sparse register entries: compact round-specific layouts, in-place binds,
-//! and quadratic round evaluation.
-
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -17,7 +14,6 @@ pub(super) struct CoeffLut<F> {
 }
 
 impl<F: JoltField> CoeffLut<F> {
-    /// One-past the largest table an entry's `u16` index can address.
     const MAX_VALUES: usize = 1 << 16;
 
     pub(super) fn new(values: Vec<F>) -> Self {
@@ -30,12 +26,10 @@ impl<F: JoltField> CoeffLut<F> {
         self.values.len().trailing_zeros()
     }
 
-    /// Whether one more bind would overflow the `u16` index domain.
     pub(super) fn saturated(&self) -> bool {
         self.values.len() * self.values.len() > Self::MAX_VALUES
     }
 
-    /// Apply `even + r·(odd − even)` to every value pair.
     pub(super) fn bind(&mut self, r: F) {
         debug_assert!(!self.saturated());
         let n = self.values.len();
@@ -53,7 +47,6 @@ impl<F: JoltField> CoeffLut<F> {
     }
 }
 
-/// `left * right`, skipping the multiply when either side is zero or one.
 #[inline(always)]
 fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
     if left.is_zero() || right.is_zero() {
@@ -67,7 +60,6 @@ fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
     }
 }
 
-/// One-hot coefficient stored directly or as a [`CoeffLut`] index.
 pub(super) trait OneHotCoeff<F: JoltField>: Copy + Send + Sync + 'static {
     /// Bind a vertically adjacent pair with `r`; a missing side is an
     /// implicit zero coefficient.
@@ -76,7 +68,6 @@ pub(super) trait OneHotCoeff<F: JoltField>: Copy + Send + Sync + 'static {
     /// The pair's `[value at t = 0, slope]` sumcheck evaluations.
     fn eval_pair(even: Option<Self>, odd: Option<Self>, lut: &CoeffLut<F>) -> [F; 2];
 
-    /// The coefficient's field value.
     fn value(self, lut: &CoeffLut<F>) -> F;
 }
 
@@ -115,7 +106,6 @@ pub(super) struct LutIndex(pub(super) u16);
 impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     #[inline]
     fn bind(even: Option<Self>, odd: Option<Self>, _r: F, lut: &CoeffLut<F>) -> Self {
-        // The table binds separately; index 0 represents an absent side.
         let bits = lut.bits();
         debug_assert!(bits <= 8, "coefficient LUT bound past u16 saturation");
         match (even, odd) {
@@ -148,16 +138,17 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     }
 }
 
-mod layout;
-mod ops;
+pub(crate) mod layout;
+pub(crate) mod ops;
 
 pub(super) use layout::SeedEntry;
-use layout::{merge_bind, split_pair_group, Cell, IndexedMeta, SparseEntry};
+use layout::{
+    load_indexed, merge_bind, split_pair_group, Cell, IndexedMeta, MatrixEntry, SparseEntry,
+};
 use ops::{
     bind_indexed_in_place_soa, bind_indexed_to_direct, bind_seed_entries_fused,
     bind_sparse_entries_in_place, sparse_quadratic, sparse_quadratic_fused, sparse_quadratic_soa,
 };
-/// Sparse-entry layout: compact seed, indexed SoA, then direct field values.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum CyclePhase<F: JoltField> {
     Seed {
@@ -166,8 +157,6 @@ enum CyclePhase<F: JoltField> {
         wa_lut: CoeffLut<F>,
         rd_inc: Vec<i128>,
     },
-    /// First challenge retained; round 1 rebuilds intermediates per 4-row
-    /// group instead of storing a `T/2` generation.
     SeedBound {
         entries: Vec<SeedEntry>,
         seed_ra_lut: CoeffLut<F>,
@@ -195,7 +184,6 @@ enum CyclePhase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CycleState<F: JoltField>(CyclePhase<F>);
 
-/// First-bind value at half-domain index `y`.
 #[inline]
 fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
     bound_pair(|j| F::from_i128(raw[j]), r1, y)
@@ -216,12 +204,10 @@ impl<F: JoltField> CycleState<F> {
         })
     }
 
-    /// Empty LUT for direct coefficients.
     pub(super) fn unused_lut() -> CoeffLut<F> {
         CoeffLut { values: Vec::new() }
     }
 
-    /// Cycle-round quadratic for the current physical layout.
     pub(super) fn quadratic(&self, e_in: &[F], e_out: &[F]) -> [F; 2] {
         match &self.0 {
             CyclePhase::Seed {
@@ -233,7 +219,6 @@ impl<F: JoltField> CycleState<F> {
                 let inc_0 = F::from_i128(rd_inc[2 * z]);
                 [inc_0, F::from_i128(rd_inc[2 * z + 1]) - inc_0]
             }),
-            // Round 1 rebuilds both first-bind intermediates per 4-row group.
             CyclePhase::SeedBound {
                 entries,
                 seed_ra_lut,
@@ -280,6 +265,73 @@ impl<F: JoltField> CycleState<F> {
         }
     }
 
+    pub(super) fn q_at_one(&self, e_in: &[F], e_out: &[F]) -> F {
+        match &self.0 {
+            CyclePhase::Seed {
+                entries,
+                ra_lut,
+                wa_lut,
+                rd_inc,
+            } => sparse_at_one(
+                entries.iter().copied(),
+                ra_lut,
+                wa_lut,
+                e_in,
+                e_out,
+                |row| F::from_i128(rd_inc[row]),
+            ),
+            CyclePhase::SeedBound {
+                entries,
+                seed_ra_lut,
+                seed_wa_lut,
+                ra_lut,
+                wa_lut,
+                r1,
+                rd_inc,
+            } => {
+                let mut scratch = ops::fused_scratch();
+                let mut sum = F::zero();
+                for group in entries.chunk_by(|a, b| a.row() / 4 == b.row() / 4) {
+                    ops::fused_intermediates(group, seed_ra_lut, seed_wa_lut, *r1, &mut scratch);
+                    sum += sparse_at_one(
+                        scratch.1.iter().copied(),
+                        ra_lut,
+                        wa_lut,
+                        e_in,
+                        e_out,
+                        |row| raw_bound_inc(rd_inc, *r1, row),
+                    );
+                }
+                sum
+            }
+            CyclePhase::Indexed {
+                vals,
+                metas,
+                ra_lut,
+                wa_lut,
+                inc,
+            } => sparse_at_one(
+                (0..metas.len()).map(|i| load_indexed((vals, metas), i)),
+                ra_lut,
+                wa_lut,
+                e_in,
+                e_out,
+                |row| inc.evals()[row],
+            ),
+            CyclePhase::Direct { entries, inc } => {
+                let unused = Self::unused_lut();
+                sparse_at_one(
+                    entries.iter().copied(),
+                    &unused,
+                    &unused,
+                    e_in,
+                    e_out,
+                    |row| inc.evals()[row],
+                )
+            }
+        }
+    }
+
     /// Bind once; return whether a full entry generation was replaced.
     pub(super) fn bind(&mut self, r: F) -> bool {
         match &mut self.0 {
@@ -314,7 +366,6 @@ impl<F: JoltField> CycleState<F> {
             },
         );
         let (next, freed_generation) = match state {
-            // First bind retains seeds and prepares both LUT levels.
             CyclePhase::Seed {
                 entries,
                 ra_lut,
@@ -338,7 +389,6 @@ impl<F: JoltField> CycleState<F> {
                     false,
                 )
             }
-            // Second bind materializes quarter-domain indexed columns.
             CyclePhase::SeedBound {
                 entries,
                 seed_ra_lut,
@@ -357,7 +407,7 @@ impl<F: JoltField> CycleState<F> {
                     r1,
                     r,
                 );
-                drop(entries);
+                crate::mem::drop_in_background_thread(entries);
                 ra_lut.bind(r);
                 wa_lut.bind(r);
                 (
@@ -410,7 +460,6 @@ impl<F: JoltField> CycleState<F> {
             CyclePhase::Seed { .. } => {
                 unreachable!("prepare requires log_t ≥ 1, so a cycle bind precedes the collapse")
             }
-            // At log_t=1, apply the retained challenge during conversion.
             CyclePhase::SeedBound {
                 entries,
                 seed_ra_lut,
@@ -461,4 +510,35 @@ impl<F: JoltField> CycleState<F> {
         };
         (ra, wa, val, inc)
     }
+}
+
+fn sparse_at_one<F: JoltField, E: MatrixEntry<F>>(
+    entries: impl IntoIterator<Item = E>,
+    ra_lut: &CoeffLut<F>,
+    wa_lut: &CoeffLut<F>,
+    e_in: &[F],
+    e_out: &[F],
+    inc_at: impl Fn(usize) -> F,
+) -> F {
+    let in_bits = e_in.len().trailing_zeros() as usize;
+    let mask = e_in.len() - 1;
+    let mut sum = F::Accumulator::default();
+    for entry in entries {
+        if entry.row().is_multiple_of(2) {
+            continue;
+        }
+        let pair = entry.row() / 2;
+        let weight = e_out[pair >> in_bits] * e_in[pair & mask];
+        let mut lanes = [F::Accumulator::default(), F::Accumulator::default()];
+        E::accumulate_pair_evals(
+            Some(&entry),
+            None,
+            [inc_at(entry.row()), F::zero()],
+            &mut lanes,
+            ra_lut,
+            wa_lut,
+        );
+        sum.fmadd(weight, lanes[0].reduce());
+    }
+    sum.reduce()
 }

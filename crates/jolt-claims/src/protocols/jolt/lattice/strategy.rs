@@ -1,27 +1,26 @@
-//! Canonical layout of the prefix-packed Akita `OneHotTrace` commitment.
-//!
-//! The protocol fixes the semantic column order and selector capacity. Every
-//! column has the same `(cycle || address)` point, so
-//! [`jolt_openings::PrefixPackedLayout`] reduces the columns directly to one
-//! opening of one physical polynomial.
+//! Canonical native Akita trace batch: ordered columns at one common point.
 
 use std::ops::Range;
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::Field;
-use jolt_openings::{OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
+use jolt_openings::OpeningsError;
 
 use super::super::JoltCommittedPolynomial;
-use super::packing::{one_hot_trace_column_capacity, one_hot_trace_columns, OneHotTraceShape};
+use super::geometry::{LatticeGeometryError, FUSED_INC_BITS};
+use super::packing::{one_hot_trace_columns, OneHotTraceShape};
 
-/// `OneHotTrace` is committed as one prefix-packed physical polynomial.
+/// `OneHotTrace` is committed as one native commitment group.
 pub const ONE_HOT_TRACE_LAYOUT: OneHotTraceLayout = OneHotTraceLayout;
+
+/// Capacity of the per-row mask distinguishing a selected zero from no selection.
+pub const MAX_ONE_HOT_TRACE_COLUMNS: usize = u64::BITS as usize;
 
 /// The one protocol layout for the per-proof `OneHotTrace` commitment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceLayout;
 
-/// Semantic column ranges in the packed selector domain.
+/// Semantic column ranges in the native batch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OneHotTraceColumnRanges {
     pub instruction: Range<usize>,
@@ -31,15 +30,15 @@ pub struct OneHotTraceColumnRanges {
     pub balanced_inc_carry: usize,
 }
 
-/// Canonical column order and packed geometry for one proof.
+/// Canonical column order and logical geometry for one proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OneHotTraceLayoutPlan {
-    packing: PrefixPackedLayout<JoltCommittedPolynomial>,
+    num_vars: usize,
+    columns: Vec<JoltCommittedPolynomial>,
     ranges: OneHotTraceColumnRanges,
     layout_digest: [u8; 32],
 }
 
-/// The commitment-object setup shape the layout requires.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceSetupShape {
     pub num_vars: usize,
@@ -47,37 +46,37 @@ pub struct OneHotTraceSetupShape {
 }
 
 impl OneHotTraceLayout {
-    /// The canonical object layout for `shape`.
     pub fn plan(&self, shape: &OneHotTraceShape) -> Result<OneHotTraceLayoutPlan, OpeningsError> {
         let columns = one_hot_trace_columns(shape)
             .map_err(|error| OpeningsError::InvalidBatch(error.to_string()))?;
-        let column_capacity = one_hot_trace_column_capacity(shape.log_k_chunk)
-            .map_err(|error| OpeningsError::InvalidBatch(error.to_string()))?;
-        if columns.len() > column_capacity {
+        if columns.len() > MAX_ONE_HOT_TRACE_COLUMNS {
             return Err(OpeningsError::InvalidBatch(
-                super::geometry::LatticeGeometryError::TooManyOneHotTraceColumns {
-                    chunk_width: shape.log_k_chunk,
+                LatticeGeometryError::TooManyOneHotTraceColumns {
                     actual: columns.len(),
-                    capacity: column_capacity,
+                    capacity: MAX_ONE_HOT_TRACE_COLUMNS,
                 }
                 .to_string(),
             ));
         }
-
         let instruction_end = shape.ra_layout.instruction();
-        let balanced_inc_end =
-            instruction_end + super::geometry::FUSED_INC_BITS / shape.log_k_chunk;
+        let balanced_inc_end = instruction_end + FUSED_INC_BITS / shape.log_k_chunk;
         let balanced_inc_carry = balanced_inc_end;
         let bytecode_start = balanced_inc_carry + 1;
         let bytecode_end = bytecode_start + shape.ra_layout.bytecode();
         let ram_end = bytecode_end + shape.ra_layout.ram();
         debug_assert_eq!(ram_end, columns.len());
 
-        let packing =
-            PrefixPackedLayout::new(shape.log_k_chunk + shape.log_t, column_capacity, columns)?;
-        let layout_digest = layout_digest(shape, &packing)?;
+        let num_vars = shape
+            .log_k_chunk
+            .checked_add(shape.log_t)
+            .filter(|&num_vars| num_vars < usize::BITS as usize)
+            .ok_or_else(|| {
+                OpeningsError::InvalidSetup("OneHotTrace column domain overflow".into())
+            })?;
+        let layout_digest = layout_digest(shape, num_vars, &columns)?;
         Ok(OneHotTraceLayoutPlan {
-            packing,
+            num_vars,
+            columns,
             ranges: OneHotTraceColumnRanges {
                 instruction: 0..instruction_end,
                 bytecode: bytecode_start..bytecode_end,
@@ -89,15 +88,14 @@ impl OneHotTraceLayout {
         })
     }
 
-    /// The commitment-object setup shape.
     pub fn setup_shape(
         &self,
         shape: &OneHotTraceShape,
     ) -> Result<OneHotTraceSetupShape, OpeningsError> {
         let plan = self.plan(shape)?;
         Ok(OneHotTraceSetupShape {
-            num_vars: plan.packing.packed_num_vars(),
-            num_polys: 1,
+            num_vars: plan.num_vars,
+            num_polys: plan.columns.len(),
         })
     }
 
@@ -143,12 +141,15 @@ impl OneHotTraceLayout {
 }
 
 impl OneHotTraceLayoutPlan {
-    /// Generic prefix layout with the protocol's ordered column identifiers.
-    pub const fn packing(&self) -> &PrefixPackedLayout<JoltCommittedPolynomial> {
-        &self.packing
+    pub const fn num_vars(&self) -> usize {
+        self.num_vars
     }
 
-    /// Column-family ranges used when constructing the packed witness.
+    pub fn ids(&self) -> &[JoltCommittedPolynomial] {
+        &self.columns
+    }
+
+    /// Column-family ranges used when constructing the trace witness.
     pub const fn ranges(&self) -> &OneHotTraceColumnRanges {
         &self.ranges
     }
@@ -157,34 +158,23 @@ impl OneHotTraceLayoutPlan {
     pub const fn layout_digest(&self) -> [u8; 32] {
         self.layout_digest
     }
-
-    /// Constructs the semantic statement consumed by the generic reduction.
-    pub fn packed_claims<F: Field>(
-        &self,
-        point: Vec<F>,
-        evaluations: Vec<F>,
-    ) -> PrefixPackedClaims<F> {
-        PrefixPackedClaims::new(self.layout_digest, point, evaluations)
-    }
 }
 
 fn layout_digest(
     shape: &OneHotTraceShape,
-    packing: &PrefixPackedLayout<JoltCommittedPolynomial>,
+    num_vars: usize,
+    columns: &[JoltCommittedPolynomial],
 ) -> Result<[u8; 32], OpeningsError> {
     let mut hasher = Blake2b::<U32>::new();
-    hasher.update(b"jolt/akita/one_hot_trace/digit-zero-mu-one-full-ram/v7");
-    append_usize(&mut hasher, packing.logical_num_vars());
-    append_usize(&mut hasher, packing.packed_num_vars());
-    append_usize(&mut hasher, packing.slot_capacity());
-    append_usize(&mut hasher, packing.selector_num_vars());
-    append_usize(&mut hasher, packing.ids().len());
+    hasher.update(b"jolt/akita/one_hot_trace/native-batch/v8");
+    append_usize(&mut hasher, num_vars);
+    append_usize(&mut hasher, columns.len());
     append_usize(&mut hasher, shape.log_t);
     append_usize(&mut hasher, shape.log_k_chunk);
     append_usize(&mut hasher, shape.ra_layout.instruction());
     append_usize(&mut hasher, shape.ra_layout.bytecode());
     append_usize(&mut hasher, shape.ra_layout.ram());
-    for column in packing.ids() {
+    for column in columns {
         match column {
             JoltCommittedPolynomial::InstructionRa(index) => {
                 hasher.update([0]);
@@ -205,7 +195,7 @@ fn layout_digest(
             JoltCommittedPolynomial::BalancedIncCarry => hasher.update([4]),
             other => {
                 return Err(OpeningsError::InvalidBatch(format!(
-                    "non-OneHotTrace polynomial {other:?} in packed one-hot layout"
+                    "non-OneHotTrace polynomial {other:?} in native one-hot layout"
                 )));
             }
         }
@@ -233,26 +223,21 @@ mod tests {
     }
 
     #[test]
-    fn packed_layout_has_fixed_capacity_and_is_digest_bound() {
+    fn native_layout_has_actual_batch_shape_and_is_digest_bound() {
         let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape(5)).unwrap();
-        assert_eq!(plan.packing().logical_num_vars(), 13);
-        assert_eq!(plan.packing().packed_num_vars(), 18);
-        assert_eq!(plan.packing().slot_capacity(), 32);
-        assert_eq!(plan.packing().selector_num_vars(), 5);
+        assert_eq!(plan.num_vars(), 13);
+        assert_eq!(plan.ids().len(), 27);
         assert_eq!(plan.ranges().instruction, 0..16);
         assert_eq!(plan.ranges().balanced_inc, 16..24);
         assert_eq!(plan.ranges().balanced_inc_carry, 24);
         assert_eq!(plan.ranges().bytecode, 25..26);
         assert_eq!(plan.ranges().ram, 26..27);
-        assert_eq!(
-            plan.packing().ids().last(),
-            Some(&JoltCommittedPolynomial::RamRa(0))
-        );
+        assert_eq!(plan.ids().last(), Some(&JoltCommittedPolynomial::RamRa(0)));
         assert_eq!(
             ONE_HOT_TRACE_LAYOUT.setup_shape(&shape(5)).unwrap(),
             OneHotTraceSetupShape {
-                num_vars: 18,
-                num_polys: 1,
+                num_vars: 13,
+                num_polys: 27,
             }
         );
 
@@ -261,6 +246,30 @@ mod tests {
         assert_ne!(
             digest,
             ONE_HOT_TRACE_LAYOUT.layout_digest(&shape(6)).unwrap()
+        );
+    }
+
+    #[test]
+    fn native_layout_enforces_the_row_mask_capacity() {
+        let mut shape = OneHotTraceShape {
+            ra_layout: JoltRaPolynomialLayout::new(32, 7, 8).unwrap(),
+            log_t: 12,
+            log_k_chunk: 4,
+        };
+        let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape).unwrap();
+        assert_eq!(plan.ids().len(), 64);
+        assert_eq!(plan.ranges().ram.end, 64);
+
+        shape.ra_layout = JoltRaPolynomialLayout::new(32, 8, 8).unwrap();
+        assert_eq!(
+            ONE_HOT_TRACE_LAYOUT.plan(&shape),
+            Err(OpeningsError::InvalidBatch(
+                LatticeGeometryError::TooManyOneHotTraceColumns {
+                    actual: 65,
+                    capacity: 64,
+                }
+                .to_string(),
+            ))
         );
     }
 

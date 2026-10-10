@@ -175,16 +175,6 @@ impl<const N: usize> Limbs<N> {
     pub fn mul_low(&self, other: &Self) -> Self {
         self.mul_trunc::<N, N>(other)
     }
-
-    /// Zero-extend a narrower `Limbs<M>` into `Limbs<N>`.
-    #[inline]
-    pub fn zero_extend_from<const M: usize>(smaller: &Limbs<M>) -> Limbs<N> {
-        debug_assert!(M <= N, "cannot zero-extend from a wider source");
-        let mut limbs = [0u64; N];
-        let copy_len = if M < N { M } else { N };
-        limbs[..copy_len].copy_from_slice(&smaller.0[..copy_len]);
-        Limbs(limbs)
-    }
 }
 
 impl<const N: usize> From<u64> for Limbs<N> {
@@ -261,8 +251,6 @@ impl<const N: usize> allocative::Allocative for Limbs<N> {
     }
 }
 
-/// Core schoolbook multiplication accumulator: `acc += a * b`, keeping only
-/// the low `P` limbs.
 #[inline(always)]
 fn fm_limbs_into<const N: usize, const M: usize, const P: usize>(
     a: &[u64; N],

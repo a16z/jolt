@@ -8,12 +8,9 @@ use std::{
     time::Instant,
 };
 
-// batches of size 5M (~400MB) Cycles (80 bytes each)
 const BATCH_SIZE: usize = 5_000_000;
-// total memory usage of the channel is BATCH * CHANNEL_DEPTH = ~2 GB
 const CHANNEL_DEPTH: usize = 64;
 
-/// Configuration for the trace writer
 #[derive(Debug, Clone)]
 pub struct TraceWriterConfig {
     /// Size of each batch in number of items
@@ -50,7 +47,6 @@ impl<T> TraceWriter<T>
 where
     T: serde::Serialize + Send + 'static,
 {
-    /// Create a new TraceWriter with the given configuration
     pub fn new(output_path: impl AsRef<Path>, config: TraceWriterConfig) -> std::io::Result<Self> {
         let (sender, receiver) = sync_channel::<Vec<T>>(config.channel_depth);
 
@@ -68,12 +64,10 @@ where
         })
     }
 
-    /// Create a new TraceWriter with default configuration
     pub fn with_defaults(output_path: impl AsRef<Path>) -> std::io::Result<Self> {
         Self::new(output_path, TraceWriterConfig::default())
     }
 
-    /// Spawn the background writer thread
     fn spawn_writer_thread(
         path: std::path::PathBuf,
         receiver: Receiver<Vec<T>>,

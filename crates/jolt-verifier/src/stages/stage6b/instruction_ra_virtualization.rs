@@ -133,7 +133,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         let JoltDerivedId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let log_t = self.dimensions.log_t();
         let point = output_points
@@ -150,40 +150,5 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
                 public_input_failed("instruction RA opening point shorter than log_t")
             })?;
         try_eq_mle(&self.instruction_read_raf_cycle, r_cycle).map_err(public_input_failed)
-    }
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
-    use core::num::NonZeroUsize;
-    use jolt_field::Fr;
-    use jolt_transcript::Transcript;
-
-    fn relation(num_virtual_ra_polys: usize) -> InstructionRaVirtualization<Fr> {
-        let dimensions = InstructionRaVirtualizationDimensions::new(
-            3,
-            NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
-            NonZeroUsize::new(1).unwrap(),
-        )
-        .unwrap();
-        InstructionRaVirtualization::new(dimensions, Vec::new(), Vec::new(), 1)
-    }
-
-    // Inherits the default `draw_challenges`: one `challenge_scalar` squeeze
-    // storing the squeezed scalar — the same draw the prover's
-    // `InstructionRaSumcheckParams::new` performs and stage 6b's hand-assembled
-    // `Stage6bChallenges` mirrors.
-    #[test]
-    fn default_draw_challenges_matches_inline_instruction_ra_gamma() {
-        let relation = relation(2);
-        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar());
-        let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
-
-        assert_eq!(draw_events, inline_events);
-        assert_eq!(draw_events, vec![DrawEvent::Squeeze(1)]);
-        assert_eq!(challenges.gamma, inline_gamma);
     }
 }

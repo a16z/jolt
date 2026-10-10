@@ -9,6 +9,8 @@
 //! witness-commitment kernel; only the absorbs happen here.
 
 use common::jolt_device::JoltDevice;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
@@ -19,11 +21,15 @@ use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment}
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltCommitments;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::proof::{FieldInlineCommitments, FieldRegistersCommitments};
 use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
     absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::{validate_servable, JoltWitnessOracle, RowSource, WitnessBundle};
+use jolt_witness::{
+    validate_servable, JoltWitnessOracle, JoltWitnessPlane, RowSource, WitnessBundle,
+};
 
 use crate::config::advice_total_vars;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -51,6 +57,10 @@ where
     pub commitments: JoltCommitments<PCS::Output>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub hints: Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>,
+    /// The field-inline opening hints, id-disjoint from the jolt hints; the
+    /// stage-8 joint opening splices them after `RdInc@IncClaimReduction`.
+    #[cfg(feature = "field-inline")]
+    pub field_inline_hints: Vec<(FieldInlineCommittedPolynomial, PCS::OpeningHint)>,
 }
 
 /// Validate inputs, seed the transcript, commit the witness (the untrusted
@@ -74,7 +84,7 @@ where
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessOracle<F> + RowSource,
+    W: JoltWitnessPlane<F>,
 {
     // Committed-program mode needs the prover-retained full program + hints;
     // require presence to agree with the verifier preprocessing's mode.
@@ -171,9 +181,6 @@ where
             )
         })
         .collect();
-    // Stage-0 validation: every id the proof will request — the committed
-    // set and each bundle's annotated set — must be servable by the backend
-    // before witness generation starts.
     let requested = ids
         .iter()
         .map(|&id| JoltPolynomialId::Committed(id))
@@ -210,6 +217,24 @@ where
         )
     })?;
     let (commitments, mut hints) = assemble_commitments::<PCS>(committed)?;
+
+    // The field-inline committed columns follow the base commitments and
+    // precede the advice commitments — the same appended-extension position
+    // `absorb_transcript_commitments` absorbs them in.
+    #[cfg(feature = "field-inline")]
+    let (commitments, field_inline_hints) = {
+        let (field_inline, field_inline_hints) = commit_field_inline::<F, PCS>(
+            backend,
+            session,
+            witness as &dyn JoltWitnessPlane<F>,
+            grid,
+            &preprocessing.pcs_setup,
+        )?;
+        (
+            commitments.with_field_inline(field_inline),
+            field_inline_hints,
+        )
+    };
 
     // The untrusted advice polynomial is committed at prove time in its OWN
     // balanced grid (its variable count comes from the memory layout's maximum
@@ -287,10 +312,73 @@ where
         commitments,
         untrusted_advice_commitment,
         hints,
+        #[cfg(feature = "field-inline")]
+        field_inline_hints,
     })
 }
 
-/// Split the kernel's flat id-ordered output into the proof's wire shape.
+/// Commit the field-inline columns off the plane's field-inline oracle and
+/// assemble the proof's field-inline commitment payload. Fails closed when the plane
+/// serves no field-inline oracle: a field-inline build proves only field-inline
+/// witnesses (a non-field-inline guest has no honest field-inline columns to commit).
+#[cfg(feature = "field-inline")]
+#[expect(
+    clippy::type_complexity,
+    reason = "the wire payload paired with its opening hints"
+)]
+fn commit_field_inline<F, PCS>(
+    backend: &JoltBackend<F, PCS>,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    grid: CommitmentGrid,
+    setup: &PCS::ProverSetup,
+) -> Result<
+    (
+        FieldInlineCommitments<PCS::Output>,
+        Vec<(FieldInlineCommittedPolynomial, PCS::OpeningHint)>,
+    ),
+    ProverError<F>,
+>
+where
+    F: JoltField,
+    PCS: CommitmentScheme<Field = F>,
+{
+    let Some(field_inline) = witness.field_inline() else {
+        return Err(ProverError::Unsupported {
+            reason: "field-inline proving requires a witness plane serving the field-inline \
+                     oracle (a field-inline guest)",
+        });
+    };
+    let ids = field_inline.committed_order();
+    // Backend-neutral seam span, like `commit_witness`.
+    let committed = tracing::info_span!("commit_field_inline_witness", columns = ids.len())
+        .in_scope(|| {
+            backend
+                .commit
+                .commit_field_inline_witness(session, witness, &ids, grid, setup)
+        })?;
+
+    let mut rd_inc = None;
+    let mut hints = Vec::with_capacity(committed.len());
+    for entry in committed {
+        match entry.id {
+            FieldInlineCommittedPolynomial::FieldRdInc => rd_inc = Some(entry.commitment),
+        }
+        hints.push((entry.id, entry.hint));
+    }
+    let Some(rd_inc) = rd_inc else {
+        return Err(ProverError::InvariantViolation {
+            reason: "witness did not produce the FieldRdInc commitment",
+        });
+    };
+    Ok((
+        FieldInlineCommitments {
+            field_registers: FieldRegistersCommitments { rd_inc },
+        },
+        hints,
+    ))
+}
+
 #[expect(
     clippy::type_complexity,
     reason = "the wire aggregate paired with its opening hints"
@@ -347,4 +435,149 @@ fn assemble_commitments<PCS: CommitmentScheme>(
         JoltCommitments::new(rd_inc, ram_inc, instruction, ram, bytecode),
         hints,
     ))
+}
+
+// Transparent mode only: the zk streaming finishes blind their commitments,
+// so two independent commits of the same column are not comparable.
+#[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod field_inline_tests {
+    use super::*;
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, LOG_T};
+    use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
+    use jolt_dory::{DoryCommitment, DoryScheme};
+    use jolt_field::{Fr, Ring};
+    use jolt_kernels::finish_streamed;
+    use jolt_openings::{CommitmentScheme, StreamingCommitment};
+    use jolt_transcript::LegacyBlake2bTranscript;
+
+    fn grid() -> CommitmentGrid {
+        CommitmentGrid {
+            total_vars: 4 + LOG_T,
+            log_t: LOG_T,
+            log_k_chunk: 4,
+            order: TracePolynomialOrder::CycleMajor,
+        }
+    }
+
+    fn direct_dense_commitment(
+        values: &[Fr],
+        setup: &<DoryScheme as CommitmentScheme>::ProverSetup,
+    ) -> DoryCommitment {
+        let mut partial = <DoryScheme as StreamingCommitment>::begin(setup);
+        for row in values.chunks(grid().num_columns()) {
+            <DoryScheme as StreamingCommitment>::feed(&mut partial, row, setup);
+        }
+        finish_streamed::<DoryScheme>(partial, setup).0
+    }
+
+    /// The prover attaches the field-inline payload and absorbs it through the
+    /// verifier's own `absorb_transcript_commitments` — pinned by asserting
+    /// the payload is `Some`, that both sides' absorbs agree byte-for-byte
+    /// (equal challenge streams), and that stripping the payload diverges
+    /// (the field-inline commitment is Fiat-Shamir-bound).
+    #[test]
+    fn stage0_attaches_and_absorbs_the_field_inline_payload() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
+        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let mut session = backend.begin_proof();
+        let setup = DoryScheme::setup_prover(grid().total_vars);
+
+        let ids: Vec<JoltCommittedPolynomial> = witness.committed_polynomial_order().unwrap();
+        let committed = backend
+            .commit
+            .commit_witness(
+                &mut session,
+                &witness as &dyn JoltWitnessPlane<Fr>,
+                &ids,
+                grid(),
+                &setup,
+            )
+            .unwrap();
+        let (commitments, _hints) = assemble_commitments::<DoryScheme>(committed).unwrap();
+
+        let (field_inline, field_inline_hints) = commit_field_inline::<Fr, DoryScheme>(
+            &backend,
+            &mut session,
+            &witness as &dyn JoltWitnessPlane<Fr>,
+            grid(),
+            &setup,
+        )
+        .unwrap();
+        let commitments = commitments.with_field_inline(field_inline);
+
+        assert!(commitments.field_inline.is_some());
+        assert_eq!(
+            field_inline_hints
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            vec![FieldInlineCommittedPolynomial::FieldRdInc]
+        );
+
+        // The field-inline commitment is the dense trace-domain column committed with
+        // the same placement as the jolt increment columns.
+        let column = witness
+            .field_inline_witness()
+            .unwrap()
+            .oracle_table::<Fr>(FieldInlinePolynomialId::Committed(
+                FieldInlineCommittedPolynomial::FieldRdInc,
+            ))
+            .unwrap();
+        assert_eq!(
+            column,
+            [13u64, 17, 221, 0, 0, 0, 0, 0].map(Fr::from_u64).to_vec(),
+            "fixture column"
+        );
+        assert_eq!(
+            commitments
+                .field_inline
+                .as_ref()
+                .unwrap()
+                .field_registers
+                .rd_inc,
+            direct_dense_commitment(&column, &setup)
+        );
+
+        let mut prover_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
+        absorb_transcript_commitments(&commitments, None, None, &mut prover_transcript);
+        let mut verifier_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
+        jolt_verifier::absorb_transcript_commitments(
+            &commitments,
+            None,
+            None,
+            &mut verifier_transcript,
+        );
+        assert_eq!(
+            prover_transcript.challenge(),
+            verifier_transcript.challenge()
+        );
+
+        let mut stripped = commitments.clone();
+        stripped.field_inline = None;
+        let mut stripped_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
+        absorb_transcript_commitments(&stripped, None, None, &mut stripped_transcript);
+        assert_ne!(
+            prover_transcript.challenge(),
+            stripped_transcript.challenge(),
+            "the field-inline payload must be Fiat-Shamir-bound"
+        );
+    }
+
+    #[test]
+    fn stage0_fails_closed_without_the_field_inline_oracle() {
+        let witness = field_arithmetic_backend();
+        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let mut session = backend.begin_proof();
+        let setup = DoryScheme::setup_prover(grid().total_vars);
+
+        let result = commit_field_inline::<Fr, DoryScheme>(
+            &backend,
+            &mut session,
+            &witness as &dyn JoltWitnessPlane<Fr>,
+            grid(),
+            &setup,
+        );
+        assert!(matches!(result, Err(ProverError::Unsupported { .. })));
+    }
 }

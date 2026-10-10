@@ -1,9 +1,12 @@
+use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
     AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
-    AkitaVerifierSetup, PrecommittedScheduleParams,
+    AkitaVerifierSetup, DenseGroupLayout, GroupedScheduleParams,
 };
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
@@ -62,10 +65,10 @@ pub fn preprocess_full_with_advice(
     })
 }
 
-/// The grouped packed setup: the canonical `OneHotTrace` object plus every
-/// precommitted object (advice, then direct program objects) opened in one
-/// batch. Building it provisions the grouped schedule rows that commit,
-/// prove, and verify later resolve without planning.
+/// The grouped Akita setup: the canonical `OneHotTrace` object plus every
+/// auxiliary object (advice, field increments, then direct program objects)
+/// opened in one batch. Building it provisions the grouped schedule rows that
+/// commit, prove, and verify later resolve without planning.
 fn grouped_setup(
     schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: &JoltProgramPreprocessing,
@@ -74,6 +77,24 @@ fn grouped_setup(
     trusted_advice: bool,
     direct_program_physical_vars: &[usize],
 ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), PreprocessingError> {
+    Ok(AkitaScheme::setup(grouped_setup_params(
+        schedule_artifacts,
+        program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        direct_program_physical_vars,
+    )?)?)
+}
+
+pub(crate) fn grouped_setup_params(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: &JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+    direct_program_physical_vars: &[usize],
+) -> Result<AkitaSetupParams, PreprocessingError> {
     let (shape, layout_digest, one_hot_k) =
         one_hot_trace_setup_shape(config, program.bytecode.code_size).map_err(|error| {
             PreprocessingError::InvalidConfiguration {
@@ -86,27 +107,40 @@ fn grouped_setup(
     let trusted_physical_vars = trusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Trusted))
         .transpose()?;
-    let precommitted_count = usize::from(untrusted_physical_vars.is_some())
+    let mut mandatory_dense_layouts = Vec::with_capacity(
+        usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
+    );
+    #[cfg(feature = "field-inline")]
+    mandatory_dense_layouts.push(DenseGroupLayout::FullWidth {
+        num_vars: FieldIncLayout::new(config.trace_length.ilog2() as usize).num_vars(),
+    });
+    mandatory_dense_layouts.extend(
+        direct_program_physical_vars
+            .iter()
+            .map(|&num_vars| DenseGroupLayout::Bounded { num_vars }),
+    );
+    let group_count = usize::from(untrusted_physical_vars.is_some())
         + usize::from(trusted_physical_vars.is_some())
-        + direct_program_physical_vars.len();
-    let precommitted_schedule = (precommitted_count > 0).then(|| {
-        PrecommittedScheduleParams::new(
+        + mandatory_dense_layouts.len();
+    let grouped_schedule = (group_count > 0).then(|| {
+        GroupedScheduleParams::new(
             untrusted_physical_vars,
             trusted_physical_vars,
-            shape.num_vars,
+            mandatory_dense_layouts,
+            PolynomialGroupLayout::new(shape.num_vars, shape.num_polys),
         )
-        .with_direct_program_physical_arities(direct_program_physical_vars.to_vec())
     });
     let params = AkitaSetupParams::one_hot_only_grouped(
         shape.num_vars,
         shape.num_polys,
-        shape.num_polys + precommitted_count,
+        shape.num_polys + group_count,
         layout_digest,
         one_hot_k,
-        precommitted_schedule,
+        grouped_schedule,
         Arc::clone(schedule_artifacts),
-    );
-    Ok(AkitaScheme::setup(params)?)
+    )
+    .with_akita_chunk_profile(config.akita_chunk_profile);
+    Ok(params)
 }
 
 pub fn preprocess_committed(
@@ -133,6 +167,7 @@ pub fn preprocess_committed_with_advice(
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    crate::preprocessing::validate_committed_mode()?;
     validate_trace_order(config)?;
     let metadata =
         program
@@ -216,7 +251,6 @@ pub fn commit_trusted_advice(
     })
 }
 
-/// The physical arity of an advice object sized to the program's advice capacity.
 fn advice_physical_num_vars(
     program: &JoltProgramPreprocessing,
     kind: JoltAdviceKind,

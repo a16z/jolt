@@ -9,6 +9,8 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+# Enables field-inline schedule coverage alongside the prover's field profile.
+field-inline = []
 profiling = []
 
 [dependencies]
@@ -18,11 +20,13 @@ akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
-akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
 akita-types.workspace = true
+akita-params.workspace = true
+# Canonical trace geometry without selecting the Akita PIOP feature.
+jolt-claims.workspace = true
 jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
   "parallel",
 ] }

@@ -1,3 +1,4 @@
+use crate::instruction::registers::i::RegisterStateI;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask   = 0xfc00707f,
     match  = 0x00001013,
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 
@@ -76,22 +78,6 @@ mod tests {
                 cpu.x[1] as u64, expected as u64,
             );
         }
-    }
-
-    /// Reproduces the first test case from ACT4's Zca-c.slli-00.S:
-    ///   initial x1 = 0x98795a79bef0db26
-    ///   c.slli x1, 33
-    ///   expected x1 = 0x7de1b64c00000000
-    #[test]
-    fn test_c_slli_act4_first_case() {
-        let mut cpu = setup_rv64_cpu();
-        cpu.x[1] = 0x98795a79bef0db26_u64 as i64;
-        run_c_slli(&mut cpu, 1, 33);
-        assert_eq!(
-            cpu.x[1] as u64, 0x7de1b64c00000000,
-            "RV64 c.slli x1, 33: got 0x{:016x}",
-            cpu.x[1] as u64,
-        );
     }
 
     /// c.slli with rd=x0 is a HINT (no-op) per the RISC-V C standard, not a

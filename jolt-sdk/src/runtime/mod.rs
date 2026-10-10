@@ -52,9 +52,7 @@ cfg_if::cfg_if! {
 pub unsafe extern "C" fn __platform_stdout_write(msg: *const u8, len: usize) {
     if !msg.is_null() && len > 0 {
         let slice = core::slice::from_raw_parts(msg, len);
-        for &byte in slice {
-            jolt_platform::putchar(byte);
-        }
+        jolt_platform::write_bytes(slice);
     }
 }
 

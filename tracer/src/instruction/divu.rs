@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask   = 0xfe00707f,
     match  = 0x02005033,
     format = FormatR,
+    registers = RegisterStateR,
     ram    = ()
 );
 
@@ -29,7 +31,6 @@ impl DIVU {
 
 impl RISCVTrace for DIVU {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        // DIV operands
         let x = cpu.x[self.operands.rs1 as usize] as u64;
         let y = cpu.x[self.operands.rs2 as usize] as u64;
 

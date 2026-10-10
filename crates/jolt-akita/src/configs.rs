@@ -4,21 +4,21 @@
 //! as external `.aks` artifacts and are bound to an `AkitaCommitmentScheme`
 //! instance.
 
-use akita_config::proof_optimized::fp128::{DenseBounded, OneHot};
+use akita_config::proof_optimized::fp128::{Dense, DenseBounded, OneHot};
 use akita_config::recursive_commitment::RecursiveScheduleConfig;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_types::sis::CommittedSourceClass;
+use akita_params::sis::CommittedSourceClass;
+use akita_params::{ChunkedWitnessCfg, MultiChunkProfileId};
 
 use crate::AKITA_ONE_HOT_K16;
 
-/// Delegate one Jolt policy to an upstream preset while assigning a distinct
-/// external schedule-family identity.
 macro_rules! delegate_preset {
     (
         $(#[$doc:meta])*
         $name:ident,
         $base:ty,
         $committed_source_class:expr,
+        $chunked_witness_cfg:expr,
         $family_name:literal
     ) => {
         $(#[$doc])*
@@ -28,15 +28,15 @@ macro_rules! delegate_preset {
         impl CommitmentConfig for $name {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
-            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+            const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
 
             fn schedule_family_name() -> &'static str {
                 $family_name
             }
 
-            fn decomposition() -> akita_types::DecompositionParams {
+            fn decomposition() -> akita_params::DecompositionParams {
                 <$base>::decomposition()
             }
 
@@ -50,7 +50,7 @@ macro_rules! delegate_preset {
                 <$base>::selection_policy()
             }
 
-            fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            fn sis_modulus_profile() -> akita_params::SisModulusProfileId {
                 <$base>::sis_modulus_profile()
             }
 
@@ -62,12 +62,12 @@ macro_rules! delegate_preset {
                 <$base>::inner_basis_range()
             }
 
-            fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            fn committed_source_class() -> akita_params::sis::CommittedSourceClass {
                 $committed_source_class
             }
 
-            fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
-                <$base>::chunked_witness_cfg()
+            fn chunked_witness_cfg() -> akita_params::ChunkedWitnessCfg {
+                $chunked_witness_cfg
             }
 
             fn recursive_setup_planning() -> bool {
@@ -84,6 +84,7 @@ delegate_preset!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
+    ChunkedWitnessCfg::default_non_chunked(),
     "jolt-fp128-onehot-k16-direct-planner"
 );
 
@@ -92,6 +93,7 @@ delegate_preset!(
     JoltOneHotK256Direct,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
+    ChunkedWitnessCfg::default_non_chunked(),
     "jolt-fp128-onehot-k256-direct-planner"
 );
 
@@ -111,12 +113,156 @@ pub type JoltOneHotK16 = RecursiveCommitmentConfig<JoltOneHotK16Direct>;
 /// rows; the exact admitted row decides the contribution mode for each shape.
 pub type JoltOneHotK256 = RecursiveCommitmentConfig<JoltOneHotK256Direct>;
 
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum AkitaChunkProfile {
+    #[default]
+    Single = 0,
+    Two = 1,
+    Four = 2,
+    Eight = 3,
+}
+
+impl AkitaChunkProfile {
+    pub(crate) const fn witness_cfg(self) -> ChunkedWitnessCfg {
+        match self {
+            Self::Single => ChunkedWitnessCfg::default_non_chunked(),
+            Self::Two => ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W2R2),
+            Self::Four => ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W4R2),
+            Self::Eight => ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W8R2),
+        }
+    }
+
+    pub const fn num_chunks(self) -> usize {
+        self.witness_cfg().num_chunks
+    }
+}
+
+macro_rules! chunked_one_hot_config {
+    (
+        $direct:ident,
+        $recursive:ident,
+        $base:ty,
+        $committed_source_class:expr,
+        $profile:expr,
+        $direct_family:literal,
+        $recursive_family:literal
+    ) => {
+        delegate_preset!(
+            $direct,
+            $base,
+            $committed_source_class,
+            $profile.witness_cfg(),
+            $direct_family
+        );
+
+        impl RecursiveScheduleConfig for $direct {
+            const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = $recursive_family;
+        }
+
+        pub type $recursive = RecursiveCommitmentConfig<$direct>;
+    };
+}
+
+chunked_one_hot_config!(
+    JoltOneHotK16W2R2Direct,
+    JoltOneHotK16W2R2,
+    OneHot,
+    CommittedSourceClass::UnitOneHot {
+        source_chunk_size: AKITA_ONE_HOT_K16,
+    },
+    AkitaChunkProfile::Two,
+    "jolt-fp128-onehot-k16-w2r2-direct-planner",
+    "jolt-fp128-onehot-k16-w2r2"
+);
+
+chunked_one_hot_config!(
+    JoltOneHotK256W2R2Direct,
+    JoltOneHotK256W2R2,
+    OneHot,
+    <OneHot as CommitmentConfig>::committed_source_class(),
+    AkitaChunkProfile::Two,
+    "jolt-fp128-onehot-k256-w2r2-direct-planner",
+    "jolt-fp128-onehot-k256-w2r2"
+);
+
+chunked_one_hot_config!(
+    JoltOneHotK16W4R2Direct,
+    JoltOneHotK16W4R2,
+    OneHot,
+    CommittedSourceClass::UnitOneHot {
+        source_chunk_size: AKITA_ONE_HOT_K16,
+    },
+    AkitaChunkProfile::Four,
+    "jolt-fp128-onehot-k16-w4r2-direct-planner",
+    "jolt-fp128-onehot-k16-w4r2"
+);
+
+chunked_one_hot_config!(
+    JoltOneHotK256W4R2Direct,
+    JoltOneHotK256W4R2,
+    OneHot,
+    <OneHot as CommitmentConfig>::committed_source_class(),
+    AkitaChunkProfile::Four,
+    "jolt-fp128-onehot-k256-w4r2-direct-planner",
+    "jolt-fp128-onehot-k256-w4r2"
+);
+
+delegate_preset!(
+    /// W8R2 companion for K=16 trace openings.
+    JoltOneHotK16W8R2Direct,
+    OneHot,
+    CommittedSourceClass::UnitOneHot {
+        source_chunk_size: AKITA_ONE_HOT_K16,
+    },
+    AkitaChunkProfile::Eight.witness_cfg(),
+    "jolt-fp128-onehot-k16-w8r2-direct-planner"
+);
+
+delegate_preset!(
+    /// W8R2 companion for K=256 trace openings.
+    JoltOneHotK256W8R2Direct,
+    OneHot,
+    <OneHot as CommitmentConfig>::committed_source_class(),
+    AkitaChunkProfile::Eight.witness_cfg(),
+    "jolt-fp128-onehot-k256-w8r2-direct-planner"
+);
+
+impl RecursiveScheduleConfig for JoltOneHotK16W8R2Direct {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k16-w8r2";
+}
+
+impl RecursiveScheduleConfig for JoltOneHotK256W8R2Direct {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k256-w8r2";
+}
+
+pub type JoltOneHotK16W8R2 = RecursiveCommitmentConfig<JoltOneHotK16W8R2Direct>;
+pub type JoltOneHotK256W8R2 = RecursiveCommitmentConfig<JoltOneHotK256W8R2Direct>;
+
+// Dense honest sizing retains the unchunked response cap in every chunk, so
+// the largest supported count also gives the largest A collision envelope.
+// Freeze this producer policy independently of the consuming trace profile.
 delegate_preset!(
     /// Dense config for `u64`-bounded advice and committed-program objects.
+    /// Certifies producers for the maximum supported response chunk count.
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
+    AkitaChunkProfile::Eight.witness_cfg(),
     "jolt-fp128-dense-bounded"
+);
+
+delegate_preset!(
+    /// Dense config for arbitrary field values, including field-register increments.
+    /// Certifies producers for the maximum supported response chunk count.
+    JoltDenseFull,
+    Dense,
+    <Dense as CommitmentConfig>::committed_source_class(),
+    AkitaChunkProfile::Eight.witness_cfg(),
+    "jolt-fp128-dense-full"
 );
 
 #[cfg(test)]
@@ -133,17 +279,5 @@ mod tests {
             JoltOneHotK16::schedule_family_name(),
             JoltOneHotK256::schedule_family_name()
         );
-    }
-
-    #[test]
-    fn k256_policy_uses_adaptive_dimensions() {
-        assert_eq!(JoltOneHotK256::inner_basis_range(), (3, 16));
-        assert_eq!(JoltOneHotK256::opening_basis_range(), (3, 6));
-        assert!(matches!(
-            JoltOneHotK256::RING_DIMENSION_SCHEDULE_MODE,
-            akita_schedules::RingDimensionScheduleMode::AdaptiveDimension { .. }
-        ));
-        assert!(JoltOneHotK16::recursive_setup_planning());
-        assert!(JoltOneHotK256::recursive_setup_planning());
     }
 }

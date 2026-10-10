@@ -189,7 +189,6 @@ fn validate_fs_scope(scope: &Ident) -> syn::Result<()> {
             | "Stage6a"
             | "Stage6b"
             | "Stage7"
-            | "Reconstruction"
             | "Stage8"
             | "BlindFold"
     );
@@ -229,9 +228,6 @@ pub fn derive_sumcheck_batch(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// One instance field of the source struct: its name and `ConcreteSumcheck`
-/// instance type. `is_option` records a conditional instance (`Option<Instance>`),
-/// whose projections become `Option<..>` and chain only when present.
 struct InstanceField {
     ident: Ident,
     instance: Type,
@@ -284,7 +280,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 "a #[derive(SumcheckBatch)] struct must be named `<Stage>Sumchecks`",
             )
         })?;
-    // The batch's string label for stage-level sumcheck errors.
     let base_lit = syn::LitStr::new(&base, name.span());
     let input_claims_name = format_ident!("{base}InputClaims");
     let input_points_name = format_ident!("{base}InputPoints");
@@ -509,7 +504,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     }
                 });
 
-        // Pack the drawn coefficients into the named aggregate, in member order.
         let coeff_fields = plans.iter().zip(&coeff_idents).map(|(plan, coeff)| {
             let id = &plan.ident;
             quote!(#id: #coeff)
@@ -813,20 +807,30 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // Always generated and run by `expected_final_claim` (the fold is where the
     // aliased values get consumed), so declaring a pair on a relation enforces it
     // everywhere: the check cannot be skipped by a stage.
+    //
+    // The resolver closure is keyed by the composite `ComposedOpeningId` and each
+    // member's arm downcasts to its own family (`relations::resolve_member_opening`),
+    // so a batch may mix protocol families; alias pairs themselves stay
+    // family-local (see `relations::validate_member_aliases`).
     let validate_aliases_method = {
         let resolve_arms = plans.iter().map(|plan| {
             let id = &plan.ident;
+            let instance = &plan.instance;
             if plan.is_option {
                 quote! {
                     .or_else(|| {
-                        output_values
-                            .#id
-                            .as_ref()
-                            .and_then(|__claims| __claims.resolve_output(__id))
+                        output_values.#id.as_ref().and_then(|__claims| {
+                            #relations::resolve_member_opening::<#f, #instance>(__claims, __id)
+                        })
                     })
                 }
             } else {
-                quote!(.or_else(|| output_values.#id.resolve_output(__id)))
+                quote! {
+                    .or_else(|| #relations::resolve_member_opening::<#f, #instance>(
+                        &output_values.#id,
+                        __id,
+                    ))
+                }
             }
         });
         let claims_cell_ident = format_ident!("__claims_cell");
@@ -858,8 +862,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 &self,
                 output_values: &#output_claims_name<#f>,
             ) -> ::core::result::Result<(), #krate::VerifierError> {
-                use ::jolt_claims::OutputClaims as _;
-                let __resolve = |__id: &::jolt_claims::protocols::jolt::JoltOpeningId| {
+                let __resolve = |__id: &#relations::ComposedOpeningId| {
                     ::core::option::Option::<#f>::None
                         #(#resolve_arms)*
                 };
@@ -1238,9 +1241,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-/// Struct-level `#[sumcheck_batch(...)]` configuration. Parsed from the source
-/// struct's attributes; recognizes only the flags below and errors clearly on
-/// anything else.
 #[derive(Default)]
 struct StageOptions {
     /// `#[sumcheck_batch(no_opening_values)]`: skip emitting the generated
@@ -1274,10 +1274,6 @@ impl StageOptions {
             if !attr.path().is_ident("sumcheck_batch") {
                 continue;
             }
-            // `#[sumcheck_batch(flag, ..., crate = "path")]` — a
-            // comma-separated list of bare-word flags (`Meta::Path`) plus the
-            // optional crate-path override. Reject any other form or unknown
-            // flag with a span-pointed error.
             let flags = attr.parse_args_with(
                 syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated,
             )?;
@@ -1384,8 +1380,6 @@ fn plan_field(field: &syn::Field) -> syn::Result<InstanceField> {
     })
 }
 
-/// `CamelCase` → `snake_case` for the emitted member-list macro's name
-/// (`Stage1BatchSumchecks` → `stage1_batch_sumchecks`).
 fn snake_case(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 4);
     for (index, ch) in name.chars().enumerate() {
@@ -1419,7 +1413,6 @@ fn relation_path(instance: &Type) -> syn::Result<syn::Path> {
     Ok(path)
 }
 
-/// If `ty` is syntactically `Option<Inner>`, return `Inner`.
 fn option_inner(ty: &Type) -> Option<&Type> {
     let Type::Path(path) = ty else {
         return None;

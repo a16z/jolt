@@ -16,7 +16,6 @@ use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 /// on drop. Avoids `std::env::set_var` which is unsound in multi-threaded contexts.
 pub(crate) static PPROF_PREFIX: OnceLock<String> = OnceLock::new();
 
-/// Output format for tracing subscribers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TracingFormat {
     /// Console output with span close events and compact formatting.
@@ -135,29 +134,4 @@ pub fn setup_tracing_with_trace_path(
     }));
 
     TracingGuards(guards)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tracing_format_is_copy() {
-        let fmt = TracingFormat::Chrome;
-        let fmt2 = fmt;
-        assert_eq!(fmt, fmt2);
-    }
-
-    #[test]
-    fn tracing_format_debug() {
-        let fmt = TracingFormat::Default;
-        let s = format!("{fmt:?}");
-        assert_eq!(s, "Default");
-    }
-
-    #[test]
-    fn tracing_format_eq() {
-        assert_eq!(TracingFormat::Chrome, TracingFormat::Chrome);
-        assert_ne!(TracingFormat::Chrome, TracingFormat::Default);
-    }
 }

@@ -27,7 +27,6 @@ pub fn main() {
         0x06d6364bd78467c1,
         0x4847be4ac21fe68a,
     ];
-    // signature (r, s)
     let r = [
         0x61ba8a2e970ae87c,
         0xf81746f8e6b05ab8,

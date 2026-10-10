@@ -35,6 +35,8 @@ mod shape;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use backend::fixed::FixedBackend;
+#[cfg(all(any(test, feature = "test-utils"), feature = "field-inline"))]
+pub use backend::fixed::FixedFieldInline;
 pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 pub use backend::{
     validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, ProgramSource,
@@ -55,8 +57,6 @@ pub mod __private {
     pub use jolt_riscv::JoltTraceRow as TraceRow;
 }
 
-/// XLEN of the RV64 Jolt VM this crate derives witnesses for.
 pub const RV64_XLEN: usize = 64;
 
-/// Error label for the Jolt VM witness backend.
 pub(crate) const JOLT_VM_LABEL: &str = "jolt_vm";

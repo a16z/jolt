@@ -15,8 +15,8 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_poly::try_eq_mle;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::{
     stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints},
@@ -114,9 +114,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for IncClaimReduction<F> {
         sumcheck_point: &[F],
         _input_points: &IncClaimReductionInputClaims<Vec<F>>,
     ) -> Result<IncClaimReductionOutputClaims<Vec<F>>, VerifierError> {
-        // Both reduced openings share the cycle opening point (the reversed
-        // sumcheck point).
-        let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
+        let opening_point = derivations::reversed(sumcheck_point);
         Ok(IncClaimReductionOutputClaims {
             ram_inc: opening_point.clone(),
             rd_inc: opening_point,
@@ -131,7 +129,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for IncClaimReduction<F> {
         _challenges: &IncClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::IncClaimReduction(public) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let opening_point = output_points.ram_inc();
         let cycle = match public {
@@ -142,6 +140,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for IncClaimReduction<F> {
                 &self.registers_val_evaluation_cycle
             }
         };
-        try_eq_mle(opening_point, cycle).map_err(public_input_failed)
+        derivations::eq_at_point(opening_point, cycle).map_err(public_input_failed)
     }
 }

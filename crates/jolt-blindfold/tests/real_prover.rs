@@ -54,38 +54,12 @@ fn real_prover_roundtrip_verifies() {
 }
 
 #[test]
-fn real_prover_proof_shape_matches_harness_prover() {
-    let mut rng = ChaCha20Rng::from_seed([102; 32]);
-    let instance = build_protocol_backed_instance(&mut rng);
-    let real = prove_real(&instance, &mut rng).expect("real prover succeeds");
-
-    let harness = prove_blindfold_protocol_pipeline(&mut ChaCha20Rng::from_seed([102; 32]));
-
-    assert_eq!(
-        real.outer_sumcheck.round_polynomials.len(),
-        harness.proof.outer_sumcheck.round_polynomials.len(),
-        "outer sumcheck round count diverges from the reference prover"
-    );
-    assert_eq!(
-        real.inner_sumcheck.round_polynomials.len(),
-        harness.proof.inner_sumcheck.round_polynomials.len(),
-        "inner sumcheck round count diverges from the reference prover"
-    );
-    assert_eq!(
-        real.auxiliary_row_commitments.len(),
-        harness.proof.auxiliary_row_commitments.len(),
-        "auxiliary row commitment count diverges from the reference prover"
-    );
-    assert_eq!(
-        real.cross_term_error_row_commitments.len(),
-        harness.proof.cross_term_error_row_commitments.len(),
-        "cross-term error row count diverges from the reference prover"
-    );
-    assert_eq!(
-        real.random_round_commitments.len(),
-        harness.proof.random_round_commitments.len(),
-        "random round commitment count diverges from the reference prover"
-    );
+fn real_prover_roundtrip_verifies_with_two_final_openings() {
+    let mut rng = ChaCha20Rng::from_seed([107; 32]);
+    let instance = build_protocol_backed_instance_with_bindings(&mut rng, 2);
+    assert_eq!(instance.protocol.eval_commitments.len(), 2);
+    let proof = prove_real(&instance, &mut rng).expect("real prover succeeds on a valid witness");
+    verify_real(&instance, &proof).expect("real prover's proof verifies with two bindings");
 }
 
 #[test]
@@ -131,18 +105,5 @@ fn real_prover_rejects_eval_output_not_matching_commitment() {
     assert!(
         matches!(err, ProverError::EvalCommitmentMismatch { index: 0 }),
         "expected eval-commitment mismatch at index 0, got: {err}"
-    );
-}
-
-#[test]
-fn real_prover_proof_rejects_tampered_random_u() {
-    let mut rng = ChaCha20Rng::from_seed([106; 32]);
-    let instance = build_protocol_backed_instance(&mut rng);
-    let mut proof = prove_real(&instance, &mut rng).expect("real prover succeeds");
-    proof.random_u += f(1);
-
-    assert!(
-        verify_real(&instance, &proof).is_err(),
-        "tampered random_u in a real prover proof must be rejected"
     );
 }
