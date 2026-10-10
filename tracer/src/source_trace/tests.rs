@@ -101,10 +101,17 @@ fn write(address: u64, pre_value: u64, post_value: u64) -> RamAccess {
     })
 }
 
+struct TextSections {
+    first_address: u64,
+    split: usize,
+    second_address: u64,
+}
+
 struct Fixture {
     words: Vec<u32>,
     expected: Vec<SourceTraceRow>,
     inputs: TraceInputs,
+    text_sections: Option<TextSections>,
 }
 
 impl Fixture {
@@ -112,6 +119,7 @@ impl Fixture {
         Self {
             words: Vec::new(),
             expected: Vec::new(),
+            text_sections: None,
             inputs: TraceInputs::new(
                 Vec::new(),
                 Vec::new(),
@@ -134,7 +142,13 @@ impl Fixture {
     }
 
     fn pc(&self) -> u64 {
-        ENTRY + 4 * self.words.len() as u64
+        match &self.text_sections {
+            Some(sections) if self.words.len() >= sections.split => {
+                sections.second_address + 4 * (self.words.len() - sections.split) as u64
+            }
+            Some(sections) => sections.first_address + 4 * self.words.len() as u64,
+            None => ENTRY + 4 * self.words.len() as u64,
+        }
     }
 
     fn emit(&mut self, word: u32, registers: RegisterState, ram: RamAccess) {
@@ -212,10 +226,28 @@ impl Fixture {
     }
 
     fn program(&self) -> JoltProgram {
-        JoltProgram::from_elf_bytes_with_profile(
-            build_elf64(&self.words, &[], StrtabOrder::GnuLd),
-            RV64I,
-        )
+        let mut elf = build_elf64(&self.words, &[], StrtabOrder::GnuLd);
+        if let Some(sections) = &self.text_sections {
+            // System V gABI ELF64: e_entry/e_shoff/e_shnum at 24/40/60;
+            // sh_addr/sh_offset/sh_size at 16/24/32 in each 64-byte header.
+            let shoff = u64::from_le_bytes(elf[40..48].try_into().unwrap()) as usize;
+            let text_header = shoff + 64;
+            let mut second_header = elf[text_header..text_header + 64].to_vec();
+            let text_offset = u64::from_le_bytes(second_header[24..32].try_into().unwrap());
+            let first_size = 4 * sections.split as u64;
+            let second_size = 4 * (self.words.len() - sections.split) as u64;
+            elf[24..32].copy_from_slice(&sections.first_address.to_le_bytes());
+            elf[text_header + 16..text_header + 24]
+                .copy_from_slice(&sections.first_address.to_le_bytes());
+            elf[text_header + 32..text_header + 40].copy_from_slice(&first_size.to_le_bytes());
+            second_header[16..24].copy_from_slice(&sections.second_address.to_le_bytes());
+            second_header[24..32].copy_from_slice(&(text_offset + first_size).to_le_bytes());
+            second_header[32..40].copy_from_slice(&second_size.to_le_bytes());
+            let count = u16::from_le_bytes(elf[60..62].try_into().unwrap());
+            elf[60..62].copy_from_slice(&(count + 1).to_le_bytes());
+            elf.extend_from_slice(&second_header);
+        }
+        JoltProgram::from_elf_bytes_with_profile(elf, RV64I)
     }
 
     fn complete(self) -> TraceOutput<OwnedTrace<SourceTraceRow>> {
@@ -1019,6 +1051,17 @@ fn loads() {
         f.halt();
         f.complete();
     }
+    for (funct3, post) in [(0, 0xffff_ffff_ffff_ff81), (3, 0xf8e7_d6c5_b4a3_9281)] {
+        let (mut f, base) = initialized_heap();
+        assert_eq!(base, 0x8000_4070);
+        f.emit(
+            i(0x03, funct3, 5, 5, 0),
+            registers(Some((5, 0x8000_4070)), None, Some((5, 0x8000_4070, post))),
+            read(0x8000_4070, 0xf8e7_d6c5_b4a3_9281),
+        );
+        f.halt();
+        f.complete();
+    }
 }
 
 fn initialized_heap() -> (Fixture, u64) {
@@ -1096,6 +1139,17 @@ fn stores() {
     );
     f.halt();
     f.complete();
+    for (funct3, offset, post) in [(0, 1, 0xf8e7_d6c5_b4a3_7081), (3, 0, 0x0000_0000_8000_4070)] {
+        let (mut f, base) = initialized_heap();
+        assert_eq!(base, 0x8000_4070);
+        f.emit(
+            s(funct3, 5, 5, offset),
+            registers(Some((5, 0x8000_4070)), Some((5, 0x8000_4070)), None),
+            write(0x8000_4070, 0xf8e7_d6c5_b4a3_9281, post),
+        );
+        f.halt();
+        f.complete();
+    }
 }
 
 #[test]
@@ -1249,6 +1303,65 @@ fn text_stores() {
         f.halt();
         if rejected {
             f.error(SourceTraceError::StoreToProgramText { pc, address });
+        } else {
+            f.complete();
+        }
+    }
+}
+
+#[test]
+fn sparse_text_stores() {
+    // B7 protects decoded instruction bytes, not the holes inside the text span.
+    for (address, pre, rejected) in [
+        (0x8000_0040, 0x0000_006f_0000_0000, true),
+        (0x8000_0000, 0, false),
+        (0x8000_0048, 0, false),
+        (0x8000_0038, 0, false),
+    ] {
+        let mut f = Fixture::new();
+        f.text_sections = Some(TextSections {
+            first_address: 0x8000_0008,
+            split: 7,
+            second_address: 0x8000_0044,
+        });
+        f.address(5, address);
+        f.addi(6, 0, 0, 0, 1, 1);
+        f.emit(
+            s(3, 5, 6, 0),
+            registers(Some((5, address)), Some((6, 1)), None),
+            write(address, pre, 1),
+        );
+        f.emit_to(
+            0x0240_006f,
+            registers(None, None, Some((0, 0, 0))),
+            RamAccess::NoOp,
+            0x8000_0044,
+        );
+        f.halt();
+        let program = f.program();
+        let image = decode_elf(program.elf_bytes(), RV64I).unwrap();
+        assert_eq!(
+            image
+                .instructions
+                .iter()
+                .map(|instruction| instruction.row().address)
+                .collect::<Vec<_>>(),
+            [
+                0x8000_0008,
+                0x8000_000c,
+                0x8000_0010,
+                0x8000_0014,
+                0x8000_0018,
+                0x8000_001c,
+                0x8000_0020,
+                0x8000_0044,
+            ],
+        );
+        if rejected {
+            f.error(SourceTraceError::StoreToProgramText {
+                pc: 0x8000_001c,
+                address: 0x8000_0040,
+            });
         } else {
             f.complete();
         }

@@ -6,6 +6,8 @@ use jolt_eval::Objective as _;
 
 fn bench(c: &mut Criterion) {
     std::env::remove_var("TRACER_PARALLEL");
+    std::env::remove_var("JOLT_BACKTRACE");
+    std::env::remove_var("JOLT_TRACER_CAPACITY_ROWS");
     std::env::set_var("RAYON_NUM_THREADS", "1");
     let objective = SourceTraceGenObjective;
     for setup in objective.setup() {

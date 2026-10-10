@@ -216,7 +216,7 @@ At trace start the backend decodes, builds a dense table of `u32` slots over the
 2. captures `x[rs1]`, `x[rs2]` and `x[rd]`;
 3. for a load or store, computes `ea`, applies B8 and B9, and for a store compares `[ea, ea + w)` with the text span, consulting the one or two covered slots only inside it; then reads the doubleword at `ea & !7`, except in a control cell;
 4. sets `cpu.pc = pc.wrapping_add(4)`, calls `execute_direct`, resets x0;
-5. pushes the row with `next_pc = cpu.pc` and the new `x[rd]`, adds one to `cpu.trace_len` and `cpu.executed_instrs` (panic diagnostics then count source instructions), and stops if `next_pc == pc`.
+5. pushes the row with `next_pc = cpu.pc` and the new `x[rd]`, adds one to `cpu.trace_len` so panic diagnostics count source instructions, and stops if `next_pc == pc`.
 
 The step replaces `Cpu::tick`. What it omits (trap entry, the pending-interrupt check, `wfi`) is unreachable without ECALL, CSR and WFI instructions. Teardown is `finish_emulator`, and the device, final memory and advice tape are returned as `TracerBackend` returns them. Kind, immediate and operand layout stay in the decoded image, referenced by `instruction_index`.
 
