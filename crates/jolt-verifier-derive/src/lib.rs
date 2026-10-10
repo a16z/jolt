@@ -45,7 +45,8 @@
 //! - `begin_batch` — the batched-sumcheck *head*, shared by `verify_clear` and
 //!   the prove-side stage recipes: per-member `input_claim` (declaration order)
 //!   → `recorder.absorb_input_claims` → one batching-coefficient draw per
-//!   present member → the `2^(max − rounds)`-padded random linear combination.
+//!   present member → the random linear combination under `BatchPrelude`'s
+//!   padding rule.
 //!   Generic over `jolt_sumcheck::SumcheckRecorder`, the clear/ZK seam: whether
 //!   the claim absorb writes transcript bytes is decided by the recorder TYPE
 //!   (clear appends, committed no-ops), never by a runtime flag. Returns the
@@ -78,7 +79,8 @@
 //!   Takes the challenge vector as `&[F]`, so the clear and ZK paths each pass
 //!   their own.
 //! - `expected_final_claim` — run `validate_aliases`, then fold the members'
-//!   `ConcreteSumcheck::expected_output` with the batch coefficients.
+//!   native `ConcreteSumcheck::expected_output` with the batch coefficients and
+//!   `BatchPrelude`'s output scales.
 //! - `validate_aliases` — each member's declared `(aliased, source)` opening pairs,
 //!   via `relations::validate_member_aliases` against the batch-wide resolver. Run
 //!   unskippably by `expected_final_claim`, so declaring a pair on a relation
@@ -509,10 +511,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             quote!(#id: #coeff)
         });
 
-        // Each present member's engine-form entry `{ input_claim, coefficient,
-        // rounds }`, in declaration order. `BatchPrelude::new` folds these into
-        // the combined claim `Σ coeff · sum · 2^(max − rounds)` (the front-loaded
-        // padding scale).
+        // Declaration order also fixes the correspondence with the output scales
+        // supplied by BatchPrelude in expected_final_claim.
         let member_pushes =
             plans
                 .iter()
@@ -551,9 +551,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// The batched-sumcheck head, shared by `verify_clear` and the
             /// prove-side stage recipes: per-member `input_claim` (declaration
             /// order) → `recorder.absorb_input_claims` → one batching-coefficient
-            /// draw per present member → the `2^(max − rounds)`-padded random
-            /// linear combination. Whether the claim absorb writes transcript
-            /// bytes is decided by the recorder type (clear appends, committed
+            /// draw per present member → the random linear combination under
+            /// `jolt_sumcheck::BatchPrelude`'s padding rule. Whether the claim
+            /// absorb writes transcript bytes is decided by the recorder type
+            /// (clear appends, committed
             /// no-ops), never by a runtime flag. Returns the engine-form
             /// `jolt_sumcheck::BatchPrelude` paired with the stage's named
             /// batching coefficients.
@@ -652,6 +653,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             let __output_points =
                 self.derive_opening_points(__reduction.point.as_slice(), input_points)?;
             let __expected_final_claim = self.expected_final_claim(
+                &__batch,
+                __reduction.point.as_slice(),
                 &__coefficients,
                 input_points,
                 claims,
@@ -697,6 +700,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         });
 
         quote! {
+            /// Check committed consistency; this path assumes constant extension.
             pub fn verify_zk<__C, __T>(
                 &self,
                 proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
@@ -872,8 +876,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    // Fold the members' expected output claims with the batch coefficients into the
-    // final claim the reduction is checked against: `Σ coeff_m * expected_output_m`.
     // A present `Option` member with any absent cell errors rather than silently
     // dropping its term (which would surface as an opaque final-claim mismatch).
     let expected_final_claim_method = {
@@ -924,8 +926,14 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
         quote! {
+            /// Fold native member outputs with the coefficients and output scales
+            /// of `jolt_sumcheck::BatchPrelude`'s padding rule. Present members must
+            /// correspond to the prelude's members in declaration order.
+            #[expect(clippy::too_many_arguments, reason = "the batch padding context and typed member aggregates determine the final claim")]
             pub fn expected_final_claim(
                 &self,
+                batch: &::jolt_sumcheck::BatchPrelude<#f>,
+                batch_point: &[#f],
                 coefficients: &#batching_coefficients_name<#f>,
                 input_points: &#input_points_name<#f>,
                 output_values: &#output_claims_name<#f>,
@@ -936,9 +944,23 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 // The fold consumes the aliased wire copies, so their equality
                 // with the canonical sources is enforced here, unskippably.
                 self.validate_aliases(output_values)?;
+                let __scales = batch.member_output_scales(batch_point)
+                    .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
+                        stage: #base_lit.to_string(),
+                        reason: error.to_string(),
+                    })?;
                 let mut __terms = ::std::vec::Vec::new();
                 #(#output_terms)*
-                let __expected: #f = __terms.into_iter().sum();
+                if __terms.len() != __scales.len() {
+                    return ::core::result::Result::Err(
+                        #krate::VerifierError::StageClaimSumcheckFailed {
+                            stage: #base_lit.to_string(),
+                            reason: "final-claim terms do not match the batch members".to_string(),
+                        },
+                    );
+                }
+                let __expected: #f = __terms.into_iter().zip(__scales)
+                    .map(|(__term, __scale)| __term * __scale).sum();
                 ::core::result::Result::Ok(__expected)
             }
         }

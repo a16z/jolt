@@ -4,7 +4,7 @@
     reason = "tests may panic on assertion failures"
 )]
 
-use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
+use jolt_field::{Field, Fr, JoltField, One, Ring, Zero, F128, F64};
 use jolt_poly::{CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
@@ -718,4 +718,96 @@ fn odd_characteristic_output_scales_are_one() {
             Fr::one()
         );
     }
+}
+
+fn three_window_prelude<F: JoltField>() -> BatchPrelude<F> {
+    let members = [(4, 0), (2, 2), (2, 0)]
+        .into_iter()
+        .map(|(rounds, offset)| BatchMember {
+            input_claim: F::one(),
+            coefficient: F::one(),
+            rounds,
+            offset,
+        })
+        .collect();
+    BatchPrelude::try_new(members, 4, 1).unwrap()
+}
+
+#[test]
+fn binary_member_output_scales_follow_each_window() {
+    let prelude = three_window_prelude::<F128>();
+    let r = [
+        F128::sample(701),
+        F128::sample(702),
+        F128::sample(703),
+        F128::sample(704),
+    ];
+    assert_eq!(
+        prelude.member_output_scales(&r).unwrap(),
+        vec![
+            F128::one(),
+            (F128::one() - r[0]) * (F128::one() - r[1]),
+            (F128::one() - r[2]) * (F128::one() - r[3]),
+        ]
+    );
+}
+
+#[test]
+fn binary_member_output_scales_zero_only_the_excluded_window() {
+    let prelude = three_window_prelude::<F128>();
+    let r = [
+        F128::one(),
+        F128::sample(702),
+        F128::sample(703),
+        F128::sample(704),
+    ];
+    let head_scale = (F128::one() - r[2]) * (F128::one() - r[3]);
+    assert!(!head_scale.is_zero());
+    assert_eq!(
+        prelude.member_output_scales(&r).unwrap(),
+        vec![F128::one(), F128::zero(), head_scale]
+    );
+}
+
+#[test]
+fn odd_characteristic_member_output_scales_are_one() {
+    let prelude = three_window_prelude::<Fr>();
+    let r = [Fr::one(), Fr::from_u64(3), Fr::from_u64(5), Fr::from_u64(7)];
+    assert_eq!(
+        prelude.member_output_scales(&r).unwrap(),
+        vec![Fr::one(); 3]
+    );
+}
+
+#[test]
+fn member_output_scales_reject_wrong_round_count_with_index_precedence() {
+    let prelude = three_window_prelude::<F128>();
+    let r = [F128::sample(701); 3];
+    assert!(matches!(
+        prelude.member_output_scales(&r),
+        Err(SumcheckError::WrongNumberOfRounds {
+            expected: 4,
+            got: 3
+        })
+    ));
+    assert!(matches!(
+        prelude.member_output_scale(0, &r),
+        Err(SumcheckError::WrongNumberOfRounds {
+            expected: 4,
+            got: 3
+        })
+    ));
+    assert!(matches!(
+        prelude.member_output_scale(3, &r),
+        Err(SumcheckError::RoundMemberIndexOutOfRange {
+            member: 3,
+            members: 3
+        })
+    ));
+    let mut invalid = prelude;
+    invalid.members[0].rounds = 5;
+    assert!(matches!(
+        invalid.member_output_scales(&r),
+        Err(SumcheckError::BatchMemberRoundsOutOfRange { member: 0, .. })
+    ));
 }
