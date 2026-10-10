@@ -406,6 +406,15 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Computes the cubic `s = l*q` from `q(0)`, its leading coefficient,
     /// and the sumcheck hint. The missing endpoint is evaluated only when
     /// `l(1)` vanishes. An error carries the actual endpoint sum.
+    ///
+    /// Integer nodes `0, 1, 2, 3` must be distinct in `F`, requiring field
+    /// characteristic greater than three. In characteristic two, use
+    /// [`Self::recover_q_one`] and [`Self::round_poly_from_q_coeffs`].
+    ///
+    /// # Panics
+    ///
+    /// If interpolation is reached with repeated integer nodes,
+    /// [`UnivariatePoly::interpolate`] panics when a node difference has no inverse.
     pub fn gruen_poly_deg_3(
         &self,
         q_constant: F,
@@ -439,6 +448,18 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.
     /// `q_evals` must contain at least two entries.
     /// The missing `q(0)` is evaluated only when `l(0)` vanishes.
+    ///
+    /// The finite integer nodes `0, 1, ..., d-1` must be distinct in `F`.
+    /// With three or more finite samples, the factorials through `(d-1)!`
+    /// must be invertible, requiring field characteristic greater than `d-1`.
+    /// Two finite samples use only `0, 1` and work in characteristic two;
+    /// for more samples there, use [`Self::recover_q_one`] and
+    /// [`Self::round_poly_from_q_coeffs`].
+    ///
+    /// # Panics
+    ///
+    /// If Toom interpolation is reached without these conditions,
+    /// [`UnivariatePoly::from_evals`] panics when a required factorial has no inverse.
     pub fn gruen_poly_from_evals(
         &self,
         q_evals: &[F],
