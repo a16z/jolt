@@ -28,8 +28,8 @@ macro_rules! delegate_preset {
         impl CommitmentConfig for $name {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
-            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+            const RING_DIMENSION_SCHEDULE: akita_schedules::RingDimensionSchedule =
+                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
 
             fn schedule_family_name() -> &'static str {
