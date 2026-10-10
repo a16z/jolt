@@ -34,6 +34,7 @@ use std::collections::BTreeMap;
 
 use jolt_claims::{InputClaims, OutputClaims, Source, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
+use jolt_poly::lagrange::{interpolate_nodes_to_coeffs, validate_nodes};
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -46,8 +47,12 @@ use rayon::prelude::*;
 
 use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
-/// Shared dense reference round driver: evaluate each integer sample independently
-/// over the Boolean remainder, enforce the running claim, then interpolate.
+/// Shared dense reference round driver: evaluate the summand at `degree + 1`
+/// checked nodes (`0`, `1`, then the canonical images of `2, 3, ...`) over the
+/// Boolean remainder, enforce the running claim, then interpolate.
+///
+/// Requires degree at least one. Node availability and distinctness are checked
+/// before evaluating any summand; the message retains `degree + 1` coefficients.
 pub(crate) fn sample_dense_round<F: JoltField>(
     half: usize,
     degree: usize,
@@ -55,9 +60,22 @@ pub(crate) fn sample_dense_round<F: JoltField>(
     previous_claim: F,
     term: impl Fn(usize, F) -> Result<F, SumcheckError<F>> + Sync,
 ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-    let mut evals = Vec::with_capacity(degree + 1);
-    for sample in 0..=degree {
-        let point = F::from_u64(sample as u64);
+    let domain_size = degree
+        .checked_add(1)
+        .ok_or(SumcheckError::DegreeOverflow { degree })?;
+    let mut nodes = Vec::with_capacity(domain_size);
+    for sample in 0..domain_size {
+        let point = match sample {
+            0 => F::zero(),
+            1 => F::one(),
+            _ => F::from_u128_checked(sample as u128)
+                .ok_or(SumcheckError::IntegerDomainNotDistinct { domain_size })?,
+        };
+        nodes.push(point);
+    }
+    validate_nodes(&nodes).map_err(|_| SumcheckError::IntegerDomainNotDistinct { domain_size })?;
+    let mut evals = Vec::with_capacity(domain_size);
+    for &point in &nodes {
         #[cfg(feature = "parallel")]
         let sum = (0..half)
             .into_par_iter()
@@ -75,7 +93,9 @@ pub(crate) fn sample_dense_round<F: JoltField>(
             actual,
         });
     }
-    Ok(UnivariatePoly::from_evals(&evals))
+    let coefficients = interpolate_nodes_to_coeffs(&nodes, &evals)
+        .map_err(|_| SumcheckError::IntegerDomainNotDistinct { domain_size })?;
+    Ok(UnivariatePoly::new(coefficients))
 }
 
 /// See the module docs. Construct with every leaf table the relation's output
@@ -438,6 +458,7 @@ where
 mod tests {
     use jolt_verifier::stages::ids::VerifierDerivedId;
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use jolt_claims::protocols::jolt::{
         InstructionReadRafChallenge, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
@@ -446,20 +467,142 @@ mod tests {
     use jolt_claims::{
         challenge, derived, opening, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
     };
-    use jolt_field::{Fr, JoltField, Ring};
+    use jolt_field::{Fr, JoltField, Ring, F128, F64, F8};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
-        ProveRounds, SequentialRounds, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+        ProveRounds, SequentialRounds, SumcheckError, SumcheckRecorder,
+        OPENING_CLAIM_TRANSCRIPT_LABEL,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::VerifierError;
 
-    use super::NaiveSumcheckProver;
+    use super::{sample_dense_round, NaiveSumcheckProver};
     use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
     const TOY_RELATION: JoltRelationId = JoltRelationId::RegistersValEvaluation;
+
+    fn check_binary_round_nodes<F: JoltField>() {
+        for degree in 1..=7 {
+            let tables: Vec<Polynomial<F>> = (0..degree)
+                .map(|factor| {
+                    Polynomial::new(
+                        (0..8)
+                            .map(|row| {
+                                F::from_u128_checked(
+                                    0x9a37_12de_7800_0000
+                                        + 0x12f3 * factor as u128
+                                        + 0x73 * row as u128,
+                                )
+                                .unwrap()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+            let claim: F = (0..8)
+                .map(|row| tables.iter().map(|table| table.evals()[row]).product::<F>())
+                .sum();
+            let message = sample_dense_round(4, degree, 0, claim, |row, point| {
+                Ok(tables
+                    .iter()
+                    .map(|table| {
+                        table.sumcheck_round_eval_with_order(row, point, BindingOrder::HighToLow)
+                    })
+                    .product())
+            })
+            .unwrap();
+            assert_eq!(message.coefficients().len(), degree + 1);
+            for k in 0..=degree {
+                let node = F::from_u128_checked(k as u128).unwrap();
+                let expected: F = (0..4)
+                    .map(|row| {
+                        let point = [node, F::from_u64((row >> 1) & 1), F::from_u64(row & 1)];
+                        tables
+                            .iter()
+                            .map(|table| table.evaluate(&point))
+                            .product::<F>()
+                    })
+                    .sum();
+                assert_eq!(
+                    message.evaluate(node),
+                    expected,
+                    "degree {degree}, node {k}"
+                );
+            }
+            assert_eq!(
+                message.evaluate(F::zero()) + message.evaluate(F::one()),
+                claim
+            );
+        }
+    }
+
+    #[test]
+    fn dense_round_f128_samples_multilinear_products() {
+        check_binary_round_nodes::<F128>();
+    }
+
+    #[test]
+    fn dense_round_f64_samples_multilinear_products() {
+        check_binary_round_nodes::<F64>();
+    }
+
+    #[test]
+    fn dense_round_retains_declared_degree_trailing_zeros() {
+        fn check<F: JoltField>() {
+            let c_0 = F::from_u128_checked(0x7135).unwrap();
+            let c_1 = F::from_u128_checked(0x9a42).unwrap();
+            let message =
+                sample_dense_round(1, 4, 0, c_0 + c_0 + c_1, |_, x| Ok(c_0 + c_1 * x)).unwrap();
+            assert_eq!(
+                message.coefficients(),
+                &[c_0, c_1, F::zero(), F::zero(), F::zero()]
+            );
+        }
+        check::<Fr>();
+        check::<F128>();
+    }
+
+    #[test]
+    fn dense_round_binary_rejects_wrong_running_claim() {
+        let expected = F128::from_raw(0x1234);
+        let actual = F128::from_raw(0x5678);
+        let result = sample_dense_round(1, 3, 2, expected, |_, x| Ok(actual * x));
+        assert!(matches!(
+            result,
+            Err(SumcheckError::RoundCheckFailed { round: 2, expected: e, actual: a })
+                if e == expected && a == actual
+        ));
+    }
+
+    #[test]
+    fn dense_round_unavailable_node_precedes_sampling() {
+        let called = AtomicBool::new(false);
+        let result = sample_dense_round(1, 256, 0, F8::from_raw(1), |_, _| {
+            called.store(true, Ordering::Relaxed);
+            Ok(F8::from_raw(0))
+        });
+        assert!(matches!(
+            result,
+            Err(SumcheckError::IntegerDomainNotDistinct { domain_size: 257 })
+        ));
+        assert!(!called.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn dense_round_degree_overflow_precedes_sampling() {
+        let called = AtomicBool::new(false);
+        let result = sample_dense_round(1, usize::MAX, 0, F128::from_raw(1), |_, _| {
+            called.store(true, Ordering::Relaxed);
+            Ok(F128::from_raw(0))
+        });
+        assert!(matches!(
+            result,
+            Err(SumcheckError::DegreeOverflow { degree: usize::MAX })
+        ));
+        assert!(!called.load(Ordering::Relaxed));
+    }
 
     fn virt(polynomial: JoltVirtualPolynomial) -> JoltOpeningId {
         JoltOpeningId::virtual_polynomial(polynomial, TOY_RELATION)

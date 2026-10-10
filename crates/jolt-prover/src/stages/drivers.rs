@@ -1,5 +1,5 @@
 //! The per-stage [`StageProver`](crate::driver::StageProver) /
-//! [`KernelSource`](crate::driver::KernelSource) impl expansions: one
+//! [`StageAggregates`](crate::driver::StageAggregates) impl expansions: one
 //! member-list callback invocation per stage batch, each in a module that
 //! imports the batch's relation and aggregate names so the derive-emitted
 //! tokens resolve. This file is the prove side's complete stage-driver
@@ -186,15 +186,17 @@ mod twin_tests {
         JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
-    use jolt_field::{Fr, JoltField, Ring};
+    use jolt_field::{Fr, JoltField, One, Ring, Zero, F128};
     use jolt_kernels::{
-        KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
-        SumcheckKernelError,
+        JoltPlane, KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs,
+        SumcheckKernel, SumcheckKernelError,
     };
-    use jolt_poly::UnivariatePoly;
+    use jolt_poly::{Polynomial, UnivariatePoly};
     use jolt_sumcheck::{ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckError};
     use jolt_transcript::{Blake2bTranscript, Transcript};
-    use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
+    use jolt_verifier::stages::relations::{
+        ConcreteSumcheck, SumcheckBatch, SumcheckInputClaims, SumcheckOutputClaims,
+    };
     use jolt_verifier::VerifierError;
     use jolt_witness::{
         ChunkVisitor, JoltWitnessOracle, JoltWitnessPlane, ProgramSource, RowSource, Shape,
@@ -209,6 +211,7 @@ mod twin_tests {
             $symbolic:ident, $relation:ident, $inputs:ident, $outputs:ident,
             rel = $rel:ident, output = $output:ident, input = $input:ident
             $(, head_pad = $head_pad:expr)?
+            $(, head = $head:expr)?
         ) => {
             #[derive(Clone, Debug, Default, PartialEq, Eq, jolt_claims::InputClaims)]
             struct $inputs<C> {
@@ -313,6 +316,8 @@ mod twin_tests {
                     })
                 }
 
+                $(toy_relation!(@head $head);)?
+
                 $(
                     fn instance_point_offset(
                         &self,
@@ -336,6 +341,14 @@ mod twin_tests {
                         Ok(output_values.value * scale)
                     }
                 )?
+            }
+        };
+        (@head $head:expr) => {
+            fn instance_point_offset(
+                &self,
+                _batch_num_vars: usize,
+            ) -> Result<usize, VerifierError> {
+                Ok(0)
             }
         };
     }
@@ -648,6 +661,123 @@ mod twin_tests {
         delta: Box<dyn PrepareKernel<Fr, ToyDelta<Fr>>>,
     }
 
+    toy_relation!(
+        EpsilonSymbolic,
+        ToyEpsilon,
+        ToyEpsilonInputs,
+        ToyEpsilonOutputs,
+        rel = RegistersReadWriteChecking,
+        output = RegistersVal,
+        input = UnexpandedPC,
+        head = true
+    );
+
+    #[derive(SumcheckBatch)]
+    struct ToyBinarySumchecks<F: JoltField> {
+        alpha: ToyAlpha<F>,
+        beta: Option<ToyBeta<F>>,
+        epsilon: ToyEpsilon<F>,
+    }
+
+    toy_binary_sumchecks_members!(impl_stage_prover);
+
+    #[cfg_attr(
+        feature = "allocative",
+        derive(allocative::Allocative),
+        allocative(bound = "F: JoltField, R")
+    )]
+    struct TableKernel<F: JoltField, R> {
+        evals: Vec<F>,
+        num_rounds: usize,
+        _relation: PhantomData<fn() -> R>,
+    }
+
+    impl<F: JoltField, R> TableKernel<F, R> {
+        fn bind(&mut self, challenge: F) {
+            let half = self.evals.len() / 2;
+            for i in 0..half {
+                let low = self.evals[i];
+                let high = self.evals[i + half];
+                self.evals[i] = low + challenge * (high - low);
+            }
+            self.evals.truncate(half);
+        }
+    }
+
+    impl<F: JoltField, R> ProveRounds<F> for TableKernel<F, R> {
+        fn num_rounds(&self) -> usize {
+            self.num_rounds
+        }
+
+        fn prove_round(
+            &mut self,
+            bind: Option<F>,
+            round: usize,
+            previous_claim: F,
+        ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+            if let Some(challenge) = bind {
+                self.bind(challenge);
+            }
+            let half = self.evals.len() / 2;
+            let eval_0: F = self.evals[..half].iter().copied().sum();
+            let eval_1: F = self.evals[half..].iter().copied().sum();
+            let actual = eval_0 + eval_1;
+            if actual != previous_claim {
+                return Err(SumcheckError::RoundCheckFailed {
+                    round,
+                    expected: previous_claim,
+                    actual,
+                });
+            }
+            Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
+        }
+
+        fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+            self.bind(bind);
+            Ok(())
+        }
+    }
+
+    impl<F: JoltField, R: ConcreteSumcheck<F>> SumcheckKernel<F> for TableKernel<F, R> {
+        type Relation = R;
+
+        fn output_claims(
+            &mut self,
+            _inputs: &SumcheckInputClaims<F, R>,
+        ) -> Result<SumcheckOutputClaims<F, R>, SumcheckKernelError<F>> {
+            assert_eq!(self.evals.len(), 1);
+            SumcheckOutputClaims::<F, R>::from_opening_values(|_| Some(self.evals[0]))
+                .map_err(SumcheckKernelError::from)
+        }
+    }
+
+    struct TablePrepare<F> {
+        alpha: Vec<F>,
+        beta: Vec<F>,
+        epsilon: Vec<F>,
+    }
+
+    macro_rules! table_prepare {
+        ($($relation:ident => $table:ident),+ $(,)?) => {$(
+            impl<F: JoltField> PrepareKernel<F, $relation<F>> for TablePrepare<F> {
+                fn prepare(
+                    &self,
+                    _session: &mut ProofSession,
+                    _witness: &dyn JoltWitnessPlane<F>,
+                    inputs: ProverInputs<'_, F, $relation<F>>,
+                ) -> Result<Box<dyn SumcheckKernel<F, Relation = $relation<F>>>, KernelError<F>> {
+                    Ok(Box::new(TableKernel {
+                        evals: self.$table.clone(),
+                        num_rounds: inputs.relation.rounds(),
+                        _relation: PhantomData,
+                    }))
+                }
+            }
+        )+};
+    }
+
+    table_prepare!(ToyAlpha => alpha, ToyBeta => beta, ToyEpsilon => epsilon);
+
     struct NoWitness;
 
     impl NoWitness {
@@ -658,7 +788,7 @@ mod twin_tests {
         }
     }
 
-    impl JoltWitnessOracle<Fr> for NoWitness {
+    impl<F: JoltField> JoltWitnessOracle<F> for NoWitness {
         fn shape(
             &self,
             _id: jolt_claims::protocols::jolt::JoltPolynomialId,
@@ -669,7 +799,7 @@ mod twin_tests {
         fn oracle_table(
             &self,
             _id: jolt_claims::protocols::jolt::JoltPolynomialId,
-        ) -> Result<Vec<Fr>, WitnessError> {
+        ) -> Result<Vec<F>, WitnessError> {
             Err(Self::unavailable())
         }
 
@@ -945,7 +1075,7 @@ mod twin_tests {
             claimed_sum: Vec::new(),
         };
 
-        let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, _>(
+        let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, JoltPlane, _>(
             &kernels,
             None,
             &mut session,
@@ -961,5 +1091,165 @@ mod twin_tests {
             panic!("expected the populated-cell wiring error, got {error:?}");
         };
         assert_eq!(*stage, format!("{:?}", JoltRelationId::RamValCheck));
+    }
+
+    fn drive_binary(beta: bool) {
+        const LABEL: &[u8] = b"prove-driver-binary-twin";
+        let tables = TablePrepare {
+            alpha: [
+                0xc763_925a_819b_064e_758c_e429_37f1_d2b0,
+                0x1947_bdef_523a_816c_e298_6f03_b571_da42,
+                0xa938_712d_04fc_56be_8371_c29a_d564_0fbe,
+                0x6bd4_e103_892c_7afe_d912_34cb_56ea_807f,
+                0xf37c_98a2_51e6_d0b4_7ab3_0e19_c428_65df,
+                0x8291_6fda_c473_0b5e_3d86_e2ac_7059_41bf,
+                0x4ab7_2e90_d615_38fc_9a01_7c63_e8b2_f54d,
+                0x93e1_a47c_06bd_5f28_c731_9de2_84a0_6bf5,
+            ]
+            .map(F128::from_raw)
+            .to_vec(),
+            beta: [
+                0xd127_8c6e_935a_0bf4_68e2_a9c7_301f_5db6,
+                0x307e_d8a1_b4c6_92f5_7a63_0e19_d52b_84cf,
+                0x75ac_9e20_d318_6bf4_0297_fa61_8dce_53b9,
+                0xe631_4a8d_7b09_c2f5_946e_13ba_50c7_8df2,
+            ]
+            .map(F128::from_raw)
+            .to_vec(),
+            epsilon: [
+                0x5f19_c6ae_82db_3407_a698_1de3_7b42_f0c5,
+                0x826b_0d94_37fe_a152_c410_8e6d_b975_23af,
+                0xb573_29e1_6c0a_8df4_327b_f691_0eac_45d8,
+                0x39e4_a2c8_70bd_165f_ca83_9b21_e64d_057a,
+            ]
+            .map(F128::from_raw)
+            .to_vec(),
+        };
+        let sumchecks = ToyBinarySumchecks {
+            alpha: ToyAlpha::new(3),
+            beta: beta.then(|| ToyBeta::new(2)),
+            epsilon: ToyEpsilon::new(2),
+        };
+        let inputs = ToyBinaryInputClaims {
+            alpha: ToyAlphaInputs {
+                claimed_sum: tables.alpha.iter().copied().sum(),
+            },
+            beta: beta.then(|| ToyBetaInputs {
+                claimed_sum: tables.beta.iter().copied().sum(),
+            }),
+            epsilon: ToyEpsilonInputs {
+                claimed_sum: tables.epsilon.iter().copied().sum(),
+            },
+        };
+        let input_points = sumchecks.empty_input_points();
+        let mut prover_transcript = Blake2bTranscript::new(LABEL);
+        let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
+        let proved = sumchecks
+            .prove(
+                &tables,
+                &mut ProofSession::default(),
+                &mut SequentialRounds,
+                &NoWitness,
+                &inputs,
+                &input_points,
+                &challenges,
+                ClearSumcheckRecorder::<F128, F128>::new(),
+                &mut prover_transcript,
+            )
+            .unwrap();
+
+        let mut verifier_transcript = Blake2bTranscript::new(LABEL);
+        let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
+        let verified_points = sumchecks
+            .verify_clear(
+                &inputs,
+                &input_points,
+                &verifier_challenges,
+                &proved.output_claims,
+                &proved.recorded.proof,
+                &mut verifier_transcript,
+                0,
+            )
+            .unwrap();
+        sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
+        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(verified_points, proved.output_points);
+
+        let mut head_transcript = Blake2bTranscript::new(LABEL);
+        let head_challenges = sumchecks.draw_challenges(&mut head_transcript).unwrap();
+        let (_, coefficients) = sumchecks
+            .begin_batch(
+                &inputs,
+                &head_challenges,
+                &mut ClearSumcheckRecorder::<F128, F128>::new(),
+                &mut head_transcript,
+            )
+            .unwrap();
+        let r = &proved.output_points.alpha.value;
+        assert_eq!(r.len(), 3);
+        assert_eq!(proved.output_points.epsilon.value, r[..2]);
+        let alpha_value = Polynomial::new(tables.alpha).evaluate(r);
+        let epsilon_value = Polynomial::new(tables.epsilon).evaluate(&r[..2]);
+        let epsilon_scale = F128::one() - r[2];
+        let mut expected =
+            coefficients.alpha * alpha_value + coefficients.epsilon * epsilon_scale * epsilon_value;
+        assert_eq!(proved.output_claims.alpha.value, alpha_value);
+        assert_eq!(proved.output_claims.epsilon.value, epsilon_value);
+        if beta {
+            let beta_value = Polynomial::new(tables.beta).evaluate(&r[1..]);
+            let beta_scale = F128::one() - r[0];
+            expected += coefficients.beta.unwrap() * beta_scale * beta_value;
+            assert_eq!(
+                proved.output_claims.beta.as_ref().unwrap().value,
+                beta_value
+            );
+            assert_eq!(proved.output_points.beta.as_ref().unwrap().value, r[1..]);
+        } else {
+            assert!(proved.output_claims.beta.is_none());
+            assert!(proved.output_points.beta.is_none());
+        }
+        assert_eq!(proved.final_claim, expected);
+
+        let verify_changed =
+            |changed_inputs: &ToyBinaryInputClaims<F128>,
+             changed_outputs: &ToyBinaryOutputClaims<F128>| {
+                let mut transcript = Blake2bTranscript::new(LABEL);
+                let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
+                sumchecks.verify_clear(
+                    changed_inputs,
+                    &input_points,
+                    &challenges,
+                    changed_outputs,
+                    &proved.recorded.proof,
+                    &mut transcript,
+                    0,
+                )
+            };
+        let mut changed_inputs = inputs.clone();
+        changed_inputs.epsilon.claimed_sum += F128::one();
+        assert!(verify_changed(&changed_inputs, &proved.output_claims).is_err());
+
+        assert!(!coefficients.epsilon.is_zero());
+        assert!(!epsilon_scale.is_zero());
+        let mut changed_outputs = proved.output_claims.clone();
+        changed_outputs.epsilon.value += F128::one();
+        assert!(verify_changed(&inputs, &changed_outputs).is_err());
+
+        assert!(!coefficients.alpha.is_zero());
+        let alpha_scale = F128::one();
+        assert!(!alpha_scale.is_zero());
+        let mut changed_outputs = proved.output_claims.clone();
+        changed_outputs.alpha.value += F128::one();
+        assert!(verify_changed(&inputs, &changed_outputs).is_err());
+    }
+
+    #[test]
+    fn binary_driver_twin_with_present_option_member() {
+        drive_binary(true);
+    }
+
+    #[test]
+    fn binary_driver_twin_with_absent_option_member() {
+        drive_binary(false);
     }
 }

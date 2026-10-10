@@ -275,6 +275,7 @@ mod tests {
                 }
                 #[cfg(not(feature = "field-inline"))]
                 ComposedOpeningId::FieldInline(_) => None,
+                ComposedOpeningId::External(_) => None,
             };
             assert_eq!(
                 resolved,

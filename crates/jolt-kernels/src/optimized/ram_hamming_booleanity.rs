@@ -497,7 +497,11 @@ mod tests {
             challenges: &challenges,
         };
         let mut reference = ReferenceBackend
-            .prepare(&mut ProofSession::default(), backend, inputs())
+            .prepare(
+                &mut ProofSession::default(),
+                backend as &dyn JoltWitnessPlane<Fr>,
+                inputs(),
+            )
             .unwrap();
         let mut optimized = OptimizedRamHammingBooleanity
             .prepare(&mut ProofSession::default(), backend, inputs())

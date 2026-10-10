@@ -56,7 +56,8 @@ pub struct BatchMember<F> {
 /// Neither value is recovered by division: both may be zero. The returned
 /// member claim is `p * m`.
 ///
-/// [`Self::member_output_scale`] exposes the output multiplier to verifiers.
+/// [`Self::member_output_scale`] and [`Self::member_output_scales`] expose
+/// the output multipliers to verifiers.
 /// Its `challenges` are in temporal batch-round order: `challenges[j] = r_j`,
 /// with a member opening at the slice for `W`. The multiplier can be zero.
 /// It rejects invalid batch dimensions, an out-of-range member index, or a
@@ -74,6 +75,21 @@ pub struct BatchPrelude<F> {
 impl<F> BatchMember<F> {
     pub(crate) fn is_active(&self, round: usize) -> bool {
         round >= self.offset && round < self.offset + self.rounds
+    }
+}
+
+impl<F: Field> BatchMember<F> {
+    fn output_scale(&self, challenges: &[F], zero_extension: bool) -> F {
+        if zero_extension {
+            challenges
+                .iter()
+                .enumerate()
+                .filter(|(round, _)| !self.is_active(*round))
+                .map(|(_, challenge)| F::one() - challenge)
+                .product()
+        } else {
+            F::one()
+        }
     }
 }
 
@@ -140,21 +156,32 @@ impl<F: Field> BatchPrelude<F> {
                     member,
                     members: self.members.len(),
                 })?;
+        self.validate_challenges(challenges)?;
+        Ok(described.output_scale(challenges, PaddingRule::<F>::is_zero_extension()))
+    }
+
+    /// One output scale per member, in member order, under the [padding rule](Self).
+    /// Validates batch dimensions before the challenge count. Challenges must
+    /// be in temporal batch-round order and have length `max_num_vars`.
+    pub fn member_output_scales(&self, challenges: &[F]) -> Result<Vec<F>, SumcheckError<F>> {
+        self.validate()?;
+        self.validate_challenges(challenges)?;
+        let zero_extension = PaddingRule::<F>::is_zero_extension();
+        Ok(self
+            .members
+            .iter()
+            .map(|member| member.output_scale(challenges, zero_extension))
+            .collect())
+    }
+
+    fn validate_challenges(&self, challenges: &[F]) -> Result<(), SumcheckError<F>> {
         if challenges.len() != self.max_num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
                 expected: self.max_num_vars,
                 got: challenges.len(),
             });
         }
-        Ok(match PaddingRule::<F>::for_field() {
-            PaddingRule::ConstantExtension { .. } => F::one(),
-            PaddingRule::ZeroExtension => challenges
-                .iter()
-                .enumerate()
-                .filter(|(round, _)| !described.is_active(*round))
-                .map(|(_, challenge)| F::one() - challenge)
-                .product(),
-        })
+        Ok(())
     }
 
     pub(crate) fn validate(&self) -> Result<(), SumcheckError<F>> {
@@ -168,10 +195,18 @@ pub(crate) enum PaddingRule<F> {
 }
 
 impl<F: Field> PaddingRule<F> {
+    pub(crate) fn is_zero_extension() -> bool {
+        F::from_u64(2).is_zero()
+    }
+
     pub(crate) fn for_field() -> Self {
-        match F::from_u64(2).inverse() {
-            Some(two_inv) => Self::ConstantExtension { two_inv },
-            None => Self::ZeroExtension,
+        if Self::is_zero_extension() {
+            Self::ZeroExtension
+        } else {
+            match F::from_u64(2).inverse() {
+                Some(two_inv) => Self::ConstantExtension { two_inv },
+                None => Self::ZeroExtension,
+            }
         }
     }
 

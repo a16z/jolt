@@ -59,9 +59,9 @@ Key abstractions introduced or modified:
   carriers — which is what lets the generated driver construct the bundle mechanically per
   member. Backend context (`session`, `witness`) stays outside the bundle, as positional
   arguments: it is compute plumbing, not protocol input.
-- **`PrepareKernel<F, R: ConcreteSumcheck<F>>`** (jolt-kernels): the universal backend
-  trait — `prepare(&self, session: &mut ProofSession, witness: &dyn WitnessProvider<F,
-  JoltVmNamespace>, inputs: ProverInputs<'_, F, R>)
+- **`PrepareKernel<F, R: ConcreteSumcheck<F>, P = JoltPlane>`** (jolt-kernels): the universal backend
+  trait — `prepare(&self, session: &mut ProofSession, witness: P::Ref<'_>,
+  inputs: ProverInputs<'_, F, R>)
   → Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>` — serving **every**
   batch member of every stage. Naming follows std's `BuildHasher` shape (the stored
   verb-phrase trait mints the worker that does the compute): `JoltBackend` holds one
@@ -69,6 +69,11 @@ Key abstractions introduced or modified:
   IS the typed request: the verifier constructs each relation with full geometry, and kernels
   read dimensions/points/carried vectors off the relation's public accessors (established in
   v1; kept — see §Alternatives on pub fields) instead of restated constructor arguments.
+  `P: WitnessPlane<F>` selects the copyable prepare-time reference type through its
+  associated `Ref<'w>`. The default `JoltPlane` selects `&dyn JoltWitnessPlane<F>`;
+  a family can select borrowed tables, packed words, or another witness view through its
+  own plane. The returned kernel has a `'static` object bound, so data retained for the
+  round loop must be owned or held through a shared handle obtained during `prepare`.
   Members whose kernels cannot be minted from oracle data alone conform via the two
   non-`ProverInputs` channels `prepare` already receives:
   - *Typed witness rows* (stage-5 instruction read-RAF, stage-6 bytecode indices): fetched
@@ -110,42 +115,54 @@ Key abstractions introduced or modified:
   written by hand: it stays a **plainly declared struct** carrying `#[derive(KernelSlots)]`
   (proc-macro crate `jolt-kernels-derive`, following the
   `jolt-claims-derive`/`jolt-verifier-derive` pattern), which emits one delegating
-  `PrepareKernel<F, R>` impl per field of type `Box<dyn PrepareKernel<F, R>>` and skips
+  `PrepareKernel<F, R, P>` impl per field of type `Box<dyn PrepareKernel<F, R, P>>`,
+  with `P = JoltPlane` for a two-argument slot, and skips
   all other fields (`commit`, `joint_opening`, the fronts). The field's own type IS the
   relation→slot mapping — declared once, restated nowhere; a missing or mis-typed slot
   surfaces as a missing-`PrepareKernel` bound error at the stage impl. This replaces v1's
   `BackendPreparer` (and the interim `HasKernel` lookup trait, folded into `PrepareKernel`);
   any other registry (a partial backend, a test double) implements `PrepareKernel` by hand.
-- **`StageProver<F>`** (jolt-prover): the driver trait, implemented for each stage batch
-  struct (local trait, foreign type — orphan-rule clean):
+- **`StageAggregates<F>` and `StageProver<F, B>`** (jolt-prover): the aggregate contract
+  and driver trait, implemented for each stage batch struct:
   ```rust
-  pub trait StageProver<F: Field>: Sized {
+  pub trait StageAggregates<F: JoltField>: Sized {
+      type Plane: WitnessPlane<F>;
       type InputClaims; type InputPoints; type Challenges;
-      type OutputClaims; type OutputPoints;
-      fn prove<B, Rec, T>(
+      type OutputClaims; type OutputPoints; type Kernels;
+      fn curate_opening_values(
+          &self, claims: &Self::OutputClaims, points: &Self::OutputPoints,
+      ) -> Result<Vec<F>, ProverError<F>>;
+  }
+  pub trait StageProver<F: JoltField, B: ?Sized>: StageAggregates<F> {
+      fn prove<Rec, T>(
           &self, kernels: &B, session: &mut ProofSession,
-          witness: &dyn WitnessProvider<F, JoltVmNamespace>,
+          scheduler: &mut dyn RoundScheduler<F>,
+          witness: <Self::Plane as WitnessPlane<F>>::Ref<'_>,
           inputs: &Self::InputClaims, input_points: &Self::InputPoints,
           challenges: &Self::Challenges, recorder: Rec, transcript: &mut T,
       ) -> Result<Proved<F, Self, Rec::Commitment>, ProverError<F>>
-      where B: KernelSource<F, Self>, Rec: SumcheckRecorder<F>,
-            T: Transcript<Challenge = F>;
+      where Rec: SumcheckRecorder<F>, T: Transcript<Challenge = F>;
   }
   ```
   ONE recorder-generic `prove` — no `prove_clear`/`prove_zk` split. The driver is
   mode-agnostic by construction (the recorder is the clear/committed seam, exactly like
   `begin_batch`); the genuinely zk-divergent code (uni-skip clear vs committed arms, wire
   assembly, BlindFold witness carry) lives in the stage fronts and is PR C's scope.
-  `KernelSource<F, S>` is the per-stage bound collector: the consumer macro emits one
-  blanket impl per stage — `impl<B> KernelSource<F, Stage3Sumchecks<F>> for B where
-  B: PrepareKernel<F, SpartanShift<F>> + PrepareKernel<F, InstructionInput<F>> + ...` — so
-  the trait method's `B` bound is uniform while each stage demands exactly its members'
-  slots.
+  The consumer macro emits `impl<F: JoltField, B> StageProver<F, B> for Stage3Sumchecks<F>`
+  with `B: ?Sized + PrepareKernel<F, SpartanShift<F>, P>
+  + PrepareKernel<F, InstructionInput<F>, P> + ...`, one bound per member. Each stage
+  demands exactly its members' slots through this impl's where-clause, and prepares the
+  members inline in `prove`. Both generated impls are for the batch type and for no
+  uncovered type parameter, so the orphan rule admits the expansion in jolt-prover, which
+  owns the two traits, for any batch, and in another crate wherever the batch name
+  resolves to a local type: the crate that declares the batch, or a crate that wraps a
+  foreign batch in a local type of the same name with `Deref` to it (the expansion
+  reaches the batch only through `self` and member fields).
   `Proved<F, S, C>` is one generic carrier in jolt-prover
   `{ recorded, output_claims: S::OutputClaims, output_points: S::OutputPoints, final_claim }`
   (replaces v1's per-stage generated `ProvedStageN`).
   Output curation (stage-6b's dedup'd absorb order) is a per-impl
-  `curate_opening_values(&self, claims: &mut Self::OutputClaims, points:
+  `StageAggregates::curate_opening_values(&self, claims: &Self::OutputClaims, points:
   &Self::OutputPoints) -> Result<Vec<F>, _>` hook: the macro emits the default body
   (`self.opening_values(claims)`, the derive-generated canonical order) and accepts an
   override block at the invocation site for the curated stages (6b passes the promoted
@@ -153,11 +170,11 @@ Key abstractions introduced or modified:
 - **Member-list callback macros** (emitted by `#[derive(SumcheckBatch)]`): for each batch
   struct, an inert `#[macro_export] macro_rules! <snake_case_struct>_members` that forwards
   a structured token list to a caller-chosen macro:
-  `{ batch = Stage3Sumchecks, flags = [..per-batch opt-outs..], members = [ { name: shift,
-  relation: ::jolt_verifier::stages::stage3::outputs::SpartanShift, presence: required },
-  { name: ..., presence: optional }, ... ] }` (fully-qualified relation paths; exact token
-  grammar settled in implementation). This is the single-sourcing handoff: jolt-prover's
-  consumer `macro_rules! impl_stage_prover` expands the `StageProver` + `KernelSource`
+  `{ batch = Stage3Sumchecks, label = "Stage3", aggregates = { ... }, shape = checked,
+  members = [ { name: spartan_shift, relation: SpartanShift, presence: required },
+  { name: ..., relation: ..., presence: optional }, ... ] }`. Names resolve in the
+  consumer's scope. This is the single-sourcing handoff: jolt-prover's
+  consumer `macro_rules! impl_stage_prover` expands the `StageAggregates` + `StageProver<F, B>`
   impls from it, so no stage's member list, order, or presence is ever restated. The
   invocations are argument-free — `stage3_sumchecks_members!(impl_stage_prover);` — because
   slot resolution rides on the `PrepareKernel` bounds the compiler discharges; only 6b's
@@ -167,6 +184,23 @@ Key abstractions introduced or modified:
   `macro_rules!` (it should not — the aggregate-level calls remain ordinary generated
   methods on the batch struct), a function-like proc macro consuming the same token list is
   the fallback, in its own crate.
+  `impl_stage_prover!` is exported at `jolt_prover::impl_stage_prover!` and re-exported
+  from `jolt_prover::driver`. Its optional arguments precede the member list: `plane = P,`
+  then `curate = |batch, claims, points| { ... },`; omitted arguments select `JoltPlane`
+  and canonical opening order. A custom-plane invocation is
+  `<batch>_members!(impl_stage_prover plane = ToyPlane,)`.
+  The expanding crate needs a dependency on `jolt-prover`, reached through `$crate`, and
+  direct dependencies under their own names on `jolt-field`, `jolt-kernels`,
+  `jolt-sumcheck`, `jolt-transcript`, `jolt-verifier`, and `tracing`; batch, aggregates,
+  and relation names must be in scope. The batch and its relations have one
+  `F: JoltField` parameter, and the plane implements `WitnessPlane<F>` for every such `F`.
+  Declaring the claims and batch also needs `jolt-claims` and `serde`; dense polynomial
+  tables need `jolt-poly`. If the expanding crate declares an `allocative` feature, each
+  member's output-claims struct and challenges struct need `Allocative`, with a direct
+  `allocative` dependency under that feature: the batch derive derives it on the
+  output-value, output-point and challenge aggregates. The stage driver's expansion has
+  no feature predicates: its heap-snapshot helper is selected by `jolt-prover`'s
+  `allocative` feature.
 - **Fused round API** (jolt-sumcheck; done in v1, unchanged):
   `ProveRounds::{compute_message, ingest_challenge}` became
   `prove_round(&mut self, bind: Option<F>, round: usize, previous_claim: F)
@@ -335,23 +369,34 @@ jolt-sumcheck        ProveRounds (fused), prove_batch, recorders            [eng
 jolt-verifier        ConcreteSumcheck + relations (with accessor blocks),
                      generated begin_batch + verify_clear + aggregates +
                      member-list callback macros                            [protocol; prover-free]
-jolt-kernels         SumcheckKernel, ProverInputs, PrepareKernel,
+jolt-kernels         SumcheckKernel, ProverInputs, PrepareKernel, WitnessPlane,
+                     JoltPlane,
                      plain JoltBackend + #[derive(KernelSlots)]
                      (jolt-kernels-derive), ProofSession,
                      commit/joint_opening slots, reference/ impls           [compute]
-jolt-prover          StageProver + KernelSource + Proved + consumer macro
+jolt-prover          StageAggregates + StageProver<F, B> + Proved + consumer macro
                      (impls expanded per stage), stage fronts, stage 0/8    [orchestration]
 ```
 
-Driver expansion shape (schematic; exact token grammar settled in implementation):
+Driver expansion shape (schematic):
 
 ```rust
 // jolt-verifier (emitted by the derive; inert):
 #[macro_export]
-macro_rules! stage3_sumchecks_members { ($cb:path) => { $cb! {
-    batch = ::jolt_verifier::stages::stage3::outputs::Stage3Sumchecks,
+macro_rules! stage3_sumchecks_members { ($cb:ident $($extra:tt)*) => { $cb! {
+    $($extra)*
+    batch = Stage3Sumchecks,
+    label = "Stage3",
+    aggregates = {
+        input_claims = Stage3InputClaims,
+        input_points = Stage3InputPoints,
+        output_claims = Stage3OutputClaims,
+        output_points = Stage3OutputPoints,
+        challenges = Stage3Challenges,
+    },
+    shape = checked,
     members = [
-        { name: shift, relation: ::jolt_verifier::stages::stage3::outputs::SpartanShift, presence: required },
+        { name: spartan_shift, relation: SpartanShift, presence: required },
         { name: instruction_input, relation: ..., presence: required },
         { name: registers_claim_reduction, relation: ..., presence: required },
     ]
@@ -361,10 +406,10 @@ macro_rules! stage3_sumchecks_members { ($cb:path) => { $cb! {
 stage3_sumchecks_members!(impl_stage_prover);
 ```
 
-`impl_stage_prover` expands: the `KernelSource<F, Stage3Sumchecks<F>>` blanket impl
-(collecting `PrepareKernel` bounds), and `impl StageProver<F> for Stage3Sumchecks<F>` whose
-`prove` runs: `begin_batch` (existing generated head) → per-member
-`PrepareKernel::<F, R>::prepare(kernels, session, witness, ProverInputs { .. })` in declaration order
+`impl_stage_prover` expands `StageAggregates<F>` for the batch, assigning its plane and
+aggregate types, and `StageProver<F, B>` with one `PrepareKernel<F, R, P>` bound on `B`
+per member. Its `prove` runs: `begin_batch` (existing generated head) → per-member
+`PrepareKernel::<F, R, P>::prepare(kernels, session, witness, ProverInputs { .. })` in declaration order
 (`Option` members gated on presence, mismatched presence attributed to the member's relation
 id) → `prove_batch` → `derive_opening_points` → per-member `validate_derived_tables` → typed
 `output_claims()` into the aggregate → per-member `park_residue` (cross-batch residues into
@@ -498,7 +543,7 @@ below is gated by the stage-granular byte-diff run.
       `Stage6aPrepareContext`/remaining context plumbing.
 2. **Derive swap**: emit member-list callback macros; delete `prove_clear`/`ProvedStageN`/
    `ExternalMembers`/`#[sumcheck(external)]` emission (no member is external anymore).
-3. **jolt-prover driver**: `StageProver`, `KernelSource`, `Proved`, consumer
+3. **jolt-prover driver**: `StageAggregates`, `StageProver<F, B>`, `Proved`, consumer
    `impl_stage_prover` macro; `HasKernel` + `jolt-kernels-derive` with
    `#[derive(KernelSlots)]` on the plain `JoltBackend`; migrate stages 3 → 5 → 4 → 1 →
    2 → 6a → 7 → 6b (curation override), byte-diff after each; move

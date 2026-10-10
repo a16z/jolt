@@ -1,7 +1,8 @@
 //! Derive macros for `jolt-kernels` backend registries.
 //!
 //! [`macro@KernelSlots`] turns a plainly declared kernel registry — a struct
-//! whose sumcheck slots are `Box<dyn PrepareKernel<F, R>>` fields — into its
+//! whose sumcheck slots are `Box<dyn PrepareKernel<F, R>>` or
+//! `Box<dyn PrepareKernel<F, R, P>>` fields — into its
 //! type-indexed resolution: one `jolt_kernels::PrepareKernel<F, R>` impl per
 //! slot, delegating `prepare` to `self.<field>`. The field's own type IS the
 //! relation→slot mapping — declared once, restated nowhere. Every other
@@ -26,7 +27,8 @@ use syn::{
 };
 
 /// Emit one `jolt_kernels::PrepareKernel<F, R>` impl per `Box<dyn
-/// PrepareKernel<F, R>>` field of the registry struct, delegating `prepare`
+/// PrepareKernel<F, R>>` or `Box<dyn PrepareKernel<F, R, P>>` field of the
+/// registry struct, delegating `prepare`
 /// to that field. Fields of any other type are skipped silently.
 /// `#[kernel_slots(crate = "...")]` overrides the `::jolt_kernels` path the
 /// impls name the trait crate by (the defining crate passes `"crate"`). See
@@ -64,15 +66,16 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let impls = fields.iter().filter_map(|field| {
         let ident = field.ident.as_ref()?;
-        let (f, r) = prepare_kernel_args(&field.ty)?;
+        let (f, r, p) = prepare_kernel_args(&field.ty)?;
+        let p = p.map_or_else(|| quote!(#krate::JoltPlane), |p| quote!(#p));
         Some(quote! {
-            impl #impl_generics #krate::PrepareKernel<#f, #r> for #name #ty_generics
+            impl #impl_generics #krate::PrepareKernel<#f, #r, #p> for #name #ty_generics
             #where_clause
             {
                 fn prepare(
                     &self,
                     session: &mut #krate::ProofSession,
-                    witness: &dyn ::jolt_witness::JoltWitnessPlane<#f>,
+                    witness: <#p as #krate::WitnessPlane<#f>>::Ref<'_>,
                     inputs: #krate::ProverInputs<'_, #f, #r>,
                 ) -> ::core::result::Result<
                     ::std::boxed::Box<dyn #krate::SumcheckKernel<#f, Relation = #r>>,
@@ -125,7 +128,7 @@ fn crate_path(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Path>> {
     Ok(krate)
 }
 
-fn prepare_kernel_args(ty: &Type) -> Option<(&Type, &Type)> {
+fn prepare_kernel_args(ty: &Type) -> Option<(&Type, &Type, Option<&Type>)> {
     let Type::Path(path) = ty else {
         return None;
     };
@@ -152,7 +155,10 @@ fn prepare_kernel_args(ty: &Type) -> Option<(&Type, &Type)> {
         return None;
     };
     match args.args.iter().collect::<Vec<_>>()[..] {
-        [GenericArgument::Type(f), GenericArgument::Type(r)] => Some((f, r)),
+        [GenericArgument::Type(f), GenericArgument::Type(r)] => Some((f, r, None)),
+        [GenericArgument::Type(f), GenericArgument::Type(r), GenericArgument::Type(p)] => {
+            Some((f, r, Some(p)))
+        }
         _ => None,
     }
 }

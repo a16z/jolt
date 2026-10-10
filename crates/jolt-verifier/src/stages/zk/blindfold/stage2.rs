@@ -480,6 +480,7 @@ mod tests {
                     .or_else(|| appendage.resolve_output(id)),
                 #[cfg(not(feature = "field-inline"))]
                 ComposedOpeningId::FieldInline(_) => None,
+                ComposedOpeningId::External(_) => None,
             }
         };
 
@@ -570,6 +571,7 @@ mod tests {
                         fr(0)
                     }
                 }
+                ComposedOpeningId::External(_) => fr(0),
             },
             |_| fr(0),
             |_| fr(0),
@@ -656,6 +658,7 @@ mod tests {
                 ComposedOpeningId::FieldInline(id) => {
                     appendage.resolve_output(id).unwrap_or_else(|| fr(0))
                 }
+                ComposedOpeningId::External(_) => fr(0),
             },
             |_| fr(0),
             |_| fr(0),
