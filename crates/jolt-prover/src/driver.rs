@@ -556,6 +556,8 @@ macro_rules! impl_stage_prover {
                 $crate::driver::__stage_shape_check!($shape, self, __output_claims);
 
                 let __expected = self.expected_final_claim(
+                    &__batch,
+                    &__proved.challenges,
                     &__coefficients,
                     input_points,
                     &__output_claims,

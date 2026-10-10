@@ -135,6 +135,7 @@ serde = { workspace = true, features = ["derive"] }
 tracer = { workspace = true, optional = true }
 
 [dev-dependencies]
+jolt-field = { workspace = true, features = ["binary"] }
 bincode.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
