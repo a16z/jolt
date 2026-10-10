@@ -94,6 +94,38 @@ pub trait BuildRoundScheduler<F: JoltField> {
     fn build(&self, session: &mut ProofSession) -> Box<dyn RoundScheduler<F>>;
 }
 
+/// Selects the witness view passed to a family's kernel preparers.
+/// Preparers return kernels with a `'static` object bound, so data retained
+/// beyond `prepare` must be owned or shared rather than borrowed through this view.
+pub trait WitnessPlane<F: JoltField> {
+    type Witness<'w>: ?Sized + 'w
+    where
+        F: 'w;
+    type Ref<'w>: Copy
+    where
+        F: 'w;
+
+    fn view<'w, 'a: 'w>(witness: &'w Self::Witness<'a>) -> Self::Ref<'w>;
+}
+
+/// The witness view for Jolt's kernel slots; the default of [`PrepareKernel`].
+pub struct JoltPlane;
+
+impl<F: JoltField> WitnessPlane<F> for JoltPlane {
+    type Witness<'w>
+        = dyn JoltWitnessPlane<F> + 'w
+    where
+        F: 'w;
+    type Ref<'w>
+        = &'w (dyn JoltWitnessPlane<F> + 'w)
+    where
+        F: 'w;
+
+    fn view<'w, 'a: 'w>(witness: &'w Self::Witness<'a>) -> Self::Ref<'w> {
+        witness
+    }
+}
+
 /// The universal backend trait behind [`JoltBackend`]'s naive-served slots:
 /// mint the [`SumcheckKernel`] that proves `R`, from the proof session, the
 /// witness plane, and the member's protocol inputs. The relation instance
@@ -122,15 +154,16 @@ pub trait BuildRoundScheduler<F: JoltField> {
 // No claim-trait where-clauses: `R: ConcreteSumcheck<F>` already implies them
 // (the ConcreteSumcheck where-clauses are elaborated at every use site), and
 // the relation-family-generic spellings would restate them for nothing.
-pub trait PrepareKernel<F, R>
+pub trait PrepareKernel<F, R, P = JoltPlane>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
+    P: WitnessPlane<F>,
 {
     fn prepare(
         &self,
         session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
+        witness: P::Ref<'_>,
         inputs: ProverInputs<'_, F, R>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>;
 }
@@ -215,9 +248,9 @@ where
 /// The witness is mandatory and private; only kernel implementations receive it.
 /// Full proving consumes this binding and its session; the registry remains
 /// reusable across independent executions.
-pub struct KernelContext<'a, F: JoltField, B: ?Sized> {
+pub struct KernelContext<'a, F: JoltField, B: ?Sized, P: WitnessPlane<F> = JoltPlane> {
     registry: &'a B,
-    witness: Box<dyn JoltWitnessPlane<F> + 'a>,
+    witness: Box<P::Witness<'a>>,
     session: ProofSession,
 }
 
@@ -230,9 +263,30 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
         witness: impl JoltWitnessPlane<F> + 'a,
         session: ProofSession,
     ) -> Self {
+        Self::with_plane(registry, Box::new(witness), session)
+    }
+
+    /// Check the bound witness's declared polynomial support before dispatch.
+    /// This queries shapes only, without requesting polynomial tables or trace rows.
+    pub fn validate_servable(
+        &self,
+        ids: impl IntoIterator<Item = JoltPolynomialId>,
+    ) -> Result<(), WitnessError> {
+        jolt_witness::validate_servable(self.witness.as_ref(), ids)
+    }
+}
+
+impl<'a, F: JoltField, B: ?Sized, P: WitnessPlane<F>> KernelContext<'a, F, B, P> {
+    /// Bind a family's execution data and its initial proof state.
+    /// The witness and session remain private for the lifetime of this binding.
+    pub fn with_plane(
+        registry: &'a B,
+        witness: Box<P::Witness<'a>>,
+        session: ProofSession,
+    ) -> Self {
         Self {
             registry,
-            witness: Box::new(witness),
+            witness,
             session,
         }
     }
@@ -254,15 +308,6 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
         kernel.park_residue(&mut self.session);
     }
 
-    /// Check the bound witness's declared polynomial support before dispatch.
-    /// This queries shapes only, without requesting polynomial tables or trace rows.
-    pub fn validate_servable(
-        &self,
-        ids: impl IntoIterator<Item = JoltPolynomialId>,
-    ) -> Result<(), WitnessError> {
-        jolt_witness::validate_servable(self.witness.as_ref(), ids)
-    }
-
     /// Prepare a kernel using this proof's execution data.
     pub fn prepare<R>(
         &mut self,
@@ -270,10 +315,10 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>
     where
         R: ConcreteSumcheck<F>,
-        B: PrepareKernel<F, R>,
+        B: PrepareKernel<F, R, P>,
     {
         self.registry
-            .prepare(&mut self.session, self.witness.as_ref(), inputs)
+            .prepare(&mut self.session, P::view(self.witness.as_ref()), inputs)
     }
 }
 

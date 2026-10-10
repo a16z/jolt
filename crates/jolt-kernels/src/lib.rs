@@ -58,7 +58,8 @@ pub mod uniskip;
 #[cfg(feature = "akita")]
 pub use akita::commitment::{CommitWitness, WitnessCommitRequest, WitnessCommitment};
 pub use backend::{
-    BuildRoundScheduler, JoltBackend, KernelContext, MaybeAllocative, PrepareKernel, ProofSession,
+    BuildRoundScheduler, JoltBackend, JoltPlane, KernelContext, MaybeAllocative, PrepareKernel,
+    ProofSession, WitnessPlane,
 };
 #[cfg(not(feature = "akita"))]
 pub use commitment::finish_streamed;

@@ -43,6 +43,7 @@ Parts are numbered in commit order. Notation is that of `specs/binary-sumcheck.m
   - `crates/jolt-prover/src/stages/drivers.rs:948`: the turbofish becomes `prepare_optional::<Fr, ToyBeta<Fr>, JoltPlane, _>`, with the import of `JoltPlane` (part 4). The arguments and the assertion are unchanged.
   - `crates/jolt-prover/src/stages/drivers.rs:661`: `impl JoltWitnessOracle<Fr> for NoWitness` becomes `impl<F: JoltField> JoltWitnessOracle<F> for NoWitness`, so the binary fixture of part 1 can pass `&NoWitness`. Every method returns the error it returns today.
   - `toy_relation!` in the same file gains an optional `head` key that emits only `instance_point_offset → Ok(0)` (part 1). The expansions of its four existing invocations are unchanged.
+  - Seven `ReferenceBackend.prepare` test call sites explicitly coerce the witness to `&dyn JoltWitnessPlane<Fr>` because the parameter type is now an associated type and no longer a coercion site (part 4): four in `crates/jolt-kernels/src/optimized/booleanity.rs`, and one each in `crates/jolt-kernels/src/optimized/ram_hamming_booleanity.rs`, `crates/jolt-kernels/src/optimized/bytecode_read_raf.rs` and `crates/jolt-kernels/src/optimized/hamming_weight_claim_reduction.rs`.
   - The ten `match` expressions of 2.2 that sit in test helpers gain their `External` arm.
 - **G2. One definition.** No derive, driver, id enum or interpolation routine gains a second copy. Each part names its single source under Architecture.
 - **G3. Verifier closure.** No panic, unchecked index or unbounded allocation reachable from verifier input is added. Lint levels of the verifier-closure crates do not change.
@@ -139,11 +140,17 @@ pub enum VerifierChallengeId { Jolt(..), FieldInline(..), External(ExternalId) }
 ```rust
 // crates/jolt-kernels/src/backend.rs, exported from the crate root
 pub trait WitnessPlane<F: JoltField> {
+    type Witness<'w>: ?Sized + 'w where F: 'w;
     type Ref<'w>: Copy where F: 'w;
+    fn view<'w, 'a: 'w>(witness: &'w Self::Witness<'a>) -> Self::Ref<'w>;
 }
 pub struct JoltPlane;
 impl<F: JoltField> WitnessPlane<F> for JoltPlane {
+    type Witness<'w> = dyn JoltWitnessPlane<F> + 'w where F: 'w;
     type Ref<'w> = &'w (dyn JoltWitnessPlane<F> + 'w) where F: 'w;
+    fn view<'w, 'a: 'w>(witness: &'w Self::Witness<'a>) -> Self::Ref<'w> {
+        witness
+    }
 }
 
 pub trait PrepareKernel<F, R, P = JoltPlane>
@@ -172,31 +179,29 @@ pub trait StageAggregates<F: JoltField>: Sized {
 pub trait StageProver<F: JoltField, B: ?Sized>: StageAggregates<F> {
     fn prove<Rec, T>(
         &self,
-        kernels: &B,
-        session: &mut ProofSession,
+        kernels: &mut KernelContext<'_, F, B, Self::Plane>,
         scheduler: &mut dyn RoundScheduler<F>,
-        witness: <Self::Plane as WitnessPlane<F>>::Ref<'_>,
         inputs: &Self::InputClaims,
         input_points: &Self::InputPoints,
         challenges: &Self::Challenges,
         recorder: Rec,
         transcript: &mut T,
-    ) -> Result<Proved<F, Self, Rec::Commitment>, ProverError<F>>
+    ) -> Result<Proved<F, Self, Rec::Proof>, ProverError<F>>
     where
         Rec: SumcheckRecorder<F>,
         T: Transcript<Challenge = F>;
 }
-pub struct Proved<F: JoltField, S: StageAggregates<F>, C> { /* fields unchanged */ }
+pub struct Proved<F: JoltField, S: StageAggregates<F>, P> { /* fields unchanged */ }
 
 // F: JoltField, R: ConcreteSumcheck<F>, P: WitnessPlane<F>, B: PrepareKernel<F, R, P> + ?Sized
-pub fn prepare_required<F, R, P, B>(/* .., witness: P::Ref<'_>, .. */);
+pub fn prepare_required<F, R, P, B>(/* kernels: &mut KernelContext<'_, F, B, P>, .. */);
 pub fn prepare_optional<F, R, P, B>(/* likewise */);
 
 // #[macro_export]; also reachable as jolt_prover::driver::impl_stage_prover
 impl_stage_prover! { [plane = <type>,] [curate = |b, c, p| { .. },] batch = .., /* list from <batch>_members! */ }
 ```
 
-- **4.1 Plane.** `WitnessPlane<F>` selects a type and has no methods; `Ref<'w>` is the type passed as `witness`. With `JoltPlane`, `Ref<'w>` is the reference type used today, so the existing `impl PrepareKernel<F, R> for X` items (64 under `crates/jolt-kernels/src/{optimized,reference}`), their `witness: &dyn JoltWitnessPlane<F>` arguments, the `Box<dyn PrepareKernel<F, R>>` slot fields of `JoltBackend`, the stage fronts and the eight stage invocations of the macro compile with no textual change. The one call that spells the helpers' generic arguments is the first adaptation of G1. The borrow a plane hands out ends with `prepare`: the returned `Box<dyn SumcheckKernel<F, Relation = R>>` has the default `'static` object bound (`backend.rs:121`) and `park_residue` requires `Self: 'static` (`crates/jolt-kernels/src/kernel.rs:130–134`), so a kernel that reads plane data during the round loop holds an owning or shared handle taken from the plane, not the reference.
+- **4.1 Plane.** `WitnessPlane<F>` selects the owned witness storage through `Witness<'w>` and the copyable prepare-time view through `Ref<'w>`; `view` reborrows that storage. `KernelContext<'a, F, B, P>` keeps the boxed witness and proof session private and bound together, and `StageProver::prove` borrows this context mutably. External families construct the binding with `KernelContext::with_plane`; Jolt keeps its existing `KernelContext::new` constructor. With `JoltPlane`, `Ref<'w>` is the reference type used today, so the existing `impl PrepareKernel<F, R> for X` items (64 under `crates/jolt-kernels/src/{optimized,reference}`), their `witness: &dyn JoltWitnessPlane<F>` arguments, the `Box<dyn PrepareKernel<F, R>>` slot fields of `JoltBackend`, the stage fronts and the eight stage invocations of the macro compile with no textual change. The one call that spells the helpers' generic arguments is the first adaptation of G1. The borrow a plane hands out ends with `prepare`: the returned `Box<dyn SumcheckKernel<F, Relation = R>>` has the default `'static` object bound (`backend.rs:121`) and `park_residue` requires `Self: 'static` (`crates/jolt-kernels/src/kernel.rs:130–134`), so a kernel that reads plane data during the round loop holds an owning or shared handle taken from the plane, not the reference.
 - **4.2 Generated impls.** The macro emits `impl<F: JoltField> StageAggregates<F> for $batch<F>` with `type Plane = $plane`, and `impl<F: JoltField, B> StageProver<F, B> for $batch<F> where B: ?Sized + PrepareKernel<F, $relation<F>, $plane>` with one bound per member. Both implement a trait for a type local to the expanding crate. Member preparation is inline in `prove`. `KernelSource` is removed; the where-clause on `B` carries the bounds it collected.
 - **4.3 Body.** The sequence in `prove` (begin, prepare, round loop, opening points, validation, extraction, parking, curation, shape check, final-claim self-check, finish) is unchanged apart from the arguments of part 1.
 - **4.4 Macro arguments.** `plane` defaults to `::jolt_kernels::JoltPlane`; `curate` defaults as today. The order is `plane`, then `curate`, then the list.
