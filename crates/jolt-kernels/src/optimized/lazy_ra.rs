@@ -30,97 +30,261 @@
 //! reassociates the weight product) — so round messages and output claims
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
+//!
+//! Lazily bound one-hot columns for sumcheck kernels over any field.
+//!
+//! [`ChunkIndexSource`] supplies the table indices of each column. Validated
+//! construction uses [`LazyFoldedRa::try_new`]; binding proceeds least
+//! significant bit first. The first three binds rescale branch tables, and
+//! the fourth materializes dense columns of one sixteenth the original length.
+//! The tables and source are then dropped in a background thread, with retained
+//! memory purged through the memory helpers.
 
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use thiserror::Error;
 
-pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
+/// Stable table indices for one-hot columns.
+///
+/// The column count, cycle count and indices must remain unchanged while the
+/// source is held by [`LazyFoldedRa`]. Neither construction nor reads check
+/// this stability; state such as a call counter may change without changing returned values.
+pub trait ChunkIndexSource: Send + Sync + 'static {
+    /// Number of columns, unchanged throughout the source's lifetime.
     fn num_polys(&self) -> usize;
 
     /// The unbound cycle-domain length.
+    ///
+    /// Unbound cycle count, unchanged throughout the source's lifetime.
     fn cycles(&self) -> usize;
 
     /// The scale-table index of polynomial `i`'s hot address at unbound
     /// cycle `j`; `None` when the cycle is cold for that polynomial.
+    ///
+    /// Table index for column `i` at unbound cycle `j`, or `None` for zero.
+    ///
+    /// Calls made by a valid bound-column sequence have `i < num_polys()` and
+    /// `j < cycles()`. The returned index must remain unchanged on repeated calls.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
+
+    /// Optional exclusive bound on every index of column `i`.
+    ///
+    /// `Some(bound)` promises every returned `Some(index)` has `index < bound`.
+    /// Construction trusts this promise without scanning; a false promise can
+    /// cause reads to panic or access an entry of another branch table.
+    fn index_bound(&self, _i: usize) -> Option<usize> {
+        None
+    }
+}
+
+/// Construction failure for lazily bound one-hot columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum LazyRaError {
+    /// The table count differs from the source's column count.
+    #[error("{tables} tables supplied for {polys} columns")]
+    TableCount { tables: usize, polys: usize },
+    /// A family must contain a column to enforce exhaustion during dense binds.
+    #[error("at least one column is required")]
+    NoColumns,
+    /// The unbound cycle count is zero or is not a power of two.
+    #[error("cycle count {cycles} is not a power of two")]
+    CyclesNotPowerOfTwo { cycles: usize },
+    /// A promised exclusive index bound exceeds its table's length.
+    #[error("column {poly} index bound {bound} exceeds table length {len}")]
+    IndexBoundExceedsTable {
+        poly: usize,
+        bound: usize,
+        len: usize,
+    },
+    /// The least failing cycle of a scanned column names an invalid table index.
+    #[error("column {poly}, cycle {cycle}: index {index} exceeds table length {len}")]
+    IndexOutOfRange {
+        poly: usize,
+        cycle: usize,
+        index: usize,
+        len: usize,
+    },
 }
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily until the
 /// fourth bind materializes dense.
+///
+/// One-hot columns bound least significant bit first.
+///
+/// Column `i` initially has value `tables[i][source.index(i, j)]`, or zero for
+/// `None`. Reads require a valid column and an index below the current length;
+/// at most `log2(source.cycles())` binds are permitted. Source stability and
+/// promised index bounds are the caller's responsibility.
 #[cfg_attr(
     feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField, S: allocative::Allocative")
+    derive(Allocative),
+    allocative(bound = "F: JoltField, S: Allocative")
 )]
-pub(crate) enum LazyFoldedRa<F: JoltField, S> {
+pub enum LazyFoldedRa<F: JoltField, S> {
     /// Fewer than four binds: per-polynomial branch scale tables (the base
     /// table pre-scaled by each bound-bit pattern's eq weight), flattened
     /// offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
-    Lazy {
-        tables: Vec<Vec<F>>,
-        /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
-        width: usize,
-        source: S,
-    },
+    ///
+    /// Branch tables with fewer than four bound variables.
+    Lazy(LazyRaBranches<F, S>),
     /// Four or more binds: plain dense multilinears (`T/16` at entry).
-    Dense(Vec<Polynomial<F>>),
+    ///
+    /// Dense columns after the fourth bind.
+    Dense(LazyRaDense<F>),
 }
+
+/// Opaque branch tables and stable source of a lazy one-hot column family.
+///
+/// Instances are produced by [`LazyFoldedRa::try_new`] and its binds.
+#[cfg_attr(
+    feature = "allocative",
+    derive(Allocative),
+    allocative(bound = "F: JoltField, S: Allocative")
+)]
+pub struct LazyRaBranches<F: JoltField, S> {
+    pub(crate) tables: Vec<Vec<F>>,
+    /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
+    pub(crate) width: usize,
+    pub(crate) source: S,
+}
+
+/// Opaque dense columns reached after four binds of a lazy family.
+#[cfg_attr(
+    feature = "allocative",
+    derive(Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub struct LazyRaDense<F: JoltField>(pub(crate) Vec<Polynomial<F>>);
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     /// One scale table per selector polynomial, in polynomial order.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
         debug_assert_eq!(tables.len(), source.num_polys());
-        Self::Lazy {
+        Self::Lazy(LazyRaBranches {
             tables,
             width: 1,
             source,
-        }
+        })
     }
 
-    pub(crate) fn num_polys(&self) -> usize {
+    /// Validate tables and their stable index source before constructing columns.
+    ///
+    /// Checks table count, a nonzero column count, a power-of-two cycle count,
+    /// then each column's indices in order. A supplied `index_bound` is trusted
+    /// and avoids a scan; otherwise the least out-of-range cycle is reported.
+    /// Tables need no particular length, and an empty table is accepted when
+    /// its column has no index. Stability of the source and the truth of its
+    /// index-bound promises cannot be checked here.
+    pub fn try_new(tables: Vec<Vec<F>>, source: S) -> Result<Self, LazyRaError> {
+        let polys = source.num_polys();
+        if tables.len() != polys {
+            return Err(LazyRaError::TableCount {
+                tables: tables.len(),
+                polys,
+            });
+        }
+        if polys == 0 {
+            return Err(LazyRaError::NoColumns);
+        }
+        let cycles = source.cycles();
+        if !cycles.is_power_of_two() {
+            return Err(LazyRaError::CyclesNotPowerOfTwo { cycles });
+        }
+        for (poly, table) in tables.iter().enumerate() {
+            let len = table.len();
+            if let Some(bound) = source.index_bound(poly) {
+                if bound > len {
+                    return Err(LazyRaError::IndexBoundExceedsTable { poly, bound, len });
+                }
+            } else {
+                let invalid = |cycle| {
+                    source
+                        .index(poly, cycle)
+                        .filter(|&index| index >= len)
+                        .map(|index| (cycle, index))
+                };
+                #[cfg(feature = "parallel")]
+                let first = (0..cycles)
+                    .into_par_iter()
+                    .filter_map(invalid)
+                    .find_first(|_| true);
+                #[cfg(not(feature = "parallel"))]
+                let first = (0..cycles).find_map(invalid);
+                if let Some((cycle, index)) = first {
+                    return Err(LazyRaError::IndexOutOfRange {
+                        poly,
+                        cycle,
+                        index,
+                        len,
+                    });
+                }
+            }
+        }
+        Ok(Self::new(tables, source))
+    }
+
+    /// Number of columns in this family.
+    pub fn num_polys(&self) -> usize {
         match self {
-            Self::Lazy { tables, .. } => tables.len(),
-            Self::Dense(polys) => polys.len(),
+            Self::Lazy(LazyRaBranches { tables, .. }) => tables.len(),
+            Self::Dense(LazyRaDense(polys)) => polys.len(),
         }
     }
 
     /// The current (bound) evaluation of polynomial `i` at index `j` —
     /// exactly the value a dense representation would hold after the same
     /// binds.
+    ///
+    /// Current evaluation of column `i` at index `j` after low-to-high binds.
+    ///
+    /// Requires `i < num_polys()` and `j` below the current length. These
+    /// conditions are not explicitly checked; invalid indices may panic.
     #[inline]
-    pub(crate) fn value(&self, i: usize, j: usize) -> F {
+    pub fn value(&self, i: usize, j: usize) -> F {
         match self {
-            Self::Lazy {
+            Self::Lazy(LazyRaBranches {
                 tables,
                 width,
                 source,
-            } => gather(&tables[i], *width, source, i, j),
-            Self::Dense(polys) => polys[i].evals()[j],
+            }) => gather(&tables[i], *width, source, i, j),
+            Self::Dense(LazyRaDense(polys)) => polys[i].evals()[j],
         }
     }
 
     /// The `(lo, hi) = (value(i, 2·row), value(i, 2·row + 1))` pair the
     /// round messages consume.
+    ///
+    /// Adjacent current entries `(value(i, 2·row), value(i, 2·row + 1))`.
+    ///
+    /// Requires `i < num_polys()` and `row` below half the current length,
+    /// without an explicit precondition check.
     #[inline]
-    pub(crate) fn lo_hi(&self, i: usize, row: usize) -> (F, F) {
+    pub fn lo_hi(&self, i: usize, row: usize) -> (F, F) {
         (self.value(i, 2 * row), self.value(i, 2 * row + 1))
     }
 
-    /// All polynomials' `(lo, hi)` pairs at `row`, into `out` (length
+    /// All polynomials' `(lo, hi)` pairs at `row`, into `out` (when it has length
     /// `num_polys`). One state dispatch per row instead of `2N`, with
     /// per-polynomial table slices hoisted out of the gather loop — the
     /// round-message hot path.
+    ///
+    /// Write adjacent pairs for the first `min(out.len(), num_polys())` columns.
+    ///
+    /// Remaining output entries are unchanged. Requires `row` below half the
+    /// current length, without an explicit precondition check.
     #[inline]
-    pub(crate) fn lo_hi_all(&self, row: usize, out: &mut [(F, F)]) {
+    pub fn lo_hi_all(&self, row: usize, out: &mut [(F, F)]) {
         match self {
-            Self::Lazy {
+            Self::Lazy(LazyRaBranches {
                 tables,
                 width,
                 source,
-            } => {
+            }) => {
                 let width = *width;
                 for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
                     *out = (
@@ -129,7 +293,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     );
                 }
             }
-            Self::Dense(polys) => {
+            Self::Dense(LazyRaDense(polys)) => {
                 for (out, poly) in out.iter_mut().zip(polys) {
                     let evals = poly.evals();
                     *out = (evals[2 * row], evals[2 * row + 1]);
@@ -138,42 +302,57 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
         }
     }
 
-    /// The fully bound claims, in polynomial order (any state, so short
+    /// The fully bound claims after all binds, in polynomial order (any state, so short
     /// cycle geometries extract correctly).
-    pub(crate) fn final_values(&self) -> Vec<F> {
+    ///
+    /// Entry zero of every column, in column order.
+    ///
+    /// These are the fully bound values after `log2(cycles())` binds; calling
+    /// earlier returns the current entry zero without checking completion.
+    pub fn final_values(&self) -> Vec<F> {
         (0..self.num_polys()).map(|i| self.value(i, 0)).collect()
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
     /// until the fourth bind materializes dense, then use plain multilinear binds.
-    pub(crate) fn bind(&mut self, challenge: F) {
-        *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
-            Self::Lazy {
+    ///
+    /// Bind the next least significant variable by `lo + challenge·(hi − lo)`.
+    ///
+    /// The first three binds rescale branch tables; the fourth creates dense
+    /// columns and drops the tables and source in a background thread.
+    ///
+    /// # Panics
+    ///
+    /// Panics in release builds if all `log2(cycles())` variables are bound.
+    pub fn bind(&mut self, challenge: F) {
+        *self = match std::mem::replace(self, Self::Dense(LazyRaDense(Vec::new()))) {
+            Self::Lazy(LazyRaBranches {
                 tables,
                 width,
                 source,
-            } => {
+            }) => {
+                assert!(width < source.cycles(), "no variables left to bind");
                 let tables = double_branches(tables, challenge);
                 if width < 8 {
-                    Self::Lazy {
+                    Self::Lazy(LazyRaBranches {
                         tables,
                         width: width * 2,
                         source,
-                    }
+                    })
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
-                    let dense = Self::Dense(materialize(&tables, &source, width * 2));
+                    let dense = Self::Dense(LazyRaDense(materialize(&tables, &source, width * 2)));
                     crate::mem::drop_in_background_thread(tables);
                     crate::mem::drop_in_background_thread(source);
                     crate::mem::purge_retained_memory(log_t);
                     dense
                 }
             }
-            Self::Dense(mut polys) => {
+            Self::Dense(LazyRaDense(mut polys)) => {
                 for poly in &mut polys {
                     poly.bind_with_order(challenge, BindingOrder::LowToHigh);
                 }
-                Self::Dense(polys)
+                Self::Dense(LazyRaDense(polys))
             }
         };
     }
@@ -193,7 +372,7 @@ fn gather<F: JoltField, S: ChunkIndexSource>(
     if width == 1 {
         return source.index(i, j).map_or_else(F::zero, |k| table[k]);
     }
-    let stride = table.len() / width;
+    let stride = table.len() >> width.trailing_zeros();
     let mut sum = F::zero();
     let mut base = 0;
     for offset in 0..width {

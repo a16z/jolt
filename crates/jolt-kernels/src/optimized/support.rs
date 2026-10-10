@@ -1,5 +1,8 @@
 use std::ops::Range;
 
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
+
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
@@ -909,52 +912,96 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
 /// — binding acts linearly on the `j_lo` tensor factor. (jolt-poly's
 /// `LtPolynomial` binds high-to-low only, so the low-to-high variant lives
 /// here.)
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) enum SplitLt<F> {
-    Split {
-        lt_lo: Vec<F>,
-        lt_hi: Vec<F>,
-        eq_hi: Vec<F>,
-    },
-    Dense(Vec<F>),
+///
+/// A less-than table, optionally plus a constant, bound least significant bit first.
+///
+/// For a high-variable-first point `r` of `n` coordinates, entry `j` is
+/// `Σ_{k > j} eq(k, r) + constant`. Constructors require `n < usize::BITS`
+/// without checking it. For `n >= 2`, split storage holds
+/// `2·2^ceil(n/2) + 2^floor(n/2)` field elements; allocation limits still apply.
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+pub enum SplitLt<F> {
+    /// Split high and low tables while low variables remain unbound.
+    Split(SplitLtTables<F>),
+    /// Dense remaining entries once the low variables are exhausted.
+    Dense(SplitLtDense<F>),
 }
 
+/// Opaque high and low less-than tables of a split state.
+///
+/// Constructors and low-to-high binds of [`SplitLt`] maintain these tables.
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+pub struct SplitLtTables<F> {
+    lt_lo: Vec<F>,
+    lt_hi: Vec<F>,
+    eq_hi: Vec<F>,
+}
+
+/// Opaque entries of a dense less-than table after its low variables are bound.
+///
+/// Binding a one-entry dense table produces an empty table.
+#[cfg_attr(feature = "allocative", derive(Allocative))]
+pub struct SplitLtDense<F>(Vec<F>);
+
 impl<F: JoltField> SplitLt<F> {
-    pub(crate) fn new(r_cycle: &[F]) -> Self {
+    /// Construct `t[j] = Σ_{k > j} eq(k, r_cycle)` on the Boolean cube.
+    ///
+    /// Coordinates are high variable first. Requires `r_cycle.len() < usize::BITS`
+    /// without checking it; an empty point gives `[0]`. For at least two
+    /// coordinates, only the high and low halves are passed to the underlying
+    /// table constructor, whose dimension checks therefore apply to each half.
+    pub fn new(r_cycle: &[F]) -> Self {
         Self::new_plus_constant(r_cycle, F::zero())
     }
 
     /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
-    pub(crate) fn new_plus_constant(r_cycle: &[F], constant: F) -> Self {
+    ///
+    /// Construct `t[j] = Σ_{k > j} eq(k, r_cycle) + constant`.
+    ///
+    /// Coordinates are high variable first; an empty point gives `[constant]`.
+    /// Requires `r_cycle.len() < usize::BITS` without checking it. For at least
+    /// two coordinates, table dimensions are checked separately for the high
+    /// `ceil(n/2)` and low `floor(n/2)` halves; for at most one the whole point
+    /// is passed to the table constructor. Allocation is a further limit.
+    pub fn new_plus_constant(r_cycle: &[F], constant: F) -> Self {
         let mid = r_cycle.len() / 2;
         let (r_hi, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
         if r_lo.is_empty() {
-            return Self::Dense(
+            return Self::Dense(SplitLtDense(
                 LtPolynomial::evaluations(r_hi)
                     .into_iter()
                     .map(|lt| lt + constant)
                     .collect(),
-            );
+            ));
         }
-        Self::Split {
+        Self::Split(SplitLtTables {
             lt_lo: LtPolynomial::evaluations(r_lo),
             lt_hi: LtPolynomial::evaluations(r_hi)
                 .into_iter()
                 .map(|lt| lt + constant)
                 .collect(),
             eq_hi: EqPolynomial::<F>::evals(r_hi, None),
-        }
+        })
     }
 
     /// `(LT[2y], LT[2y + 1])` under low-to-high pairing.
+    ///
+    /// Adjacent entries `(t[2y], t[2y + 1])` of the current table.
+    ///
+    /// Requires `y` below half the current length, without checking it.
+    ///
+    /// # Panics
+    ///
+    /// Panics for `y` at or above half the length when `2y + 1` fits `usize`.
+    /// No behavior is promised for larger `y`.
     #[inline]
-    pub(crate) fn pair(&self, y: usize) -> (F, F) {
+    pub fn pair(&self, y: usize) -> (F, F) {
         match self {
-            Self::Split {
+            Self::Split(SplitLtTables {
                 lt_lo,
                 lt_hi,
                 eq_hi,
-            } => {
+            }) => {
                 let lo_len = lt_lo.len();
                 let j = 2 * y;
                 let hi = j / lo_len;
@@ -966,17 +1013,21 @@ impl<F: JoltField> SplitLt<F> {
                     base + scale * lt_lo[(j + 1) % lo_len],
                 )
             }
-            Self::Dense(table) => (table[2 * y], table[2 * y + 1]),
+            Self::Dense(SplitLtDense(table)) => (table[2 * y], table[2 * y + 1]),
         }
     }
 
-    pub(crate) fn bind(&mut self, r: F) {
+    /// Bind the next least significant variable by `t[y] = lo + r·(hi − lo)`.
+    ///
+    /// A one-entry table becomes empty; every pair read then panics and
+    /// [`Self::bound_value`] returns `None`.
+    pub fn bind(&mut self, r: F) {
         match self {
-            Self::Split {
+            Self::Split(SplitLtTables {
                 lt_lo,
                 lt_hi,
                 eq_hi,
-            } => {
+            }) => {
                 bind_pairs(lt_lo, r);
                 if lt_lo.len() == 1 {
                     let lo_scalar = lt_lo[0];
@@ -985,20 +1036,34 @@ impl<F: JoltField> SplitLt<F> {
                         .zip(eq_hi.iter())
                         .map(|(&lt, &eq)| lt + eq * lo_scalar)
                         .collect();
-                    *self = Self::Dense(dense);
+                    *self = Self::Dense(SplitLtDense(dense));
                 }
             }
-            Self::Dense(table) => bind_pairs(table, r),
+            Self::Dense(SplitLtDense(table)) => bind_pairs(table, r),
+        }
+    }
+
+    /// The remaining value exactly when one entry is left, otherwise `None`.
+    ///
+    /// This occurs after as many binds as the original point's coordinates;
+    /// an empty point is already bound. One further bind leaves an empty table.
+    pub fn bound_value(&self) -> Option<F> {
+        match self {
+            Self::Dense(SplitLtDense(table)) => match table.as_slice() {
+                [value] => Some(*value),
+                _ => None,
+            },
+            Self::Split(_) => None,
         }
     }
 
     pub(crate) fn final_value(&self) -> F {
         match self {
-            Self::Dense(table) => {
+            Self::Dense(SplitLtDense(table)) => {
                 debug_assert_eq!(table.len(), 1);
                 table[0]
             }
-            Self::Split { .. } => unreachable!("split state always has lo variables to bind"),
+            Self::Split(_) => unreachable!("split state always has lo variables to bind"),
         }
     }
 }

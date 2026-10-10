@@ -55,7 +55,7 @@ pub mod instruction_claim_reduction;
 pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
-mod lazy_ra;
+pub mod lazy_ra;
 pub mod opening;
 pub mod precommitted_reduction;
 pub mod ram_hamming_booleanity;
@@ -80,6 +80,7 @@ pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeRe
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 pub use inc_claim_reduction::OptimizedIncClaimReduction;
 pub use precommitted_reduction::{OptimizedPrecommittedAddress, OptimizedPrecommittedCycle};
+pub use support::{SplitLt, SplitLtDense, SplitLtTables};
 
 /// The optimized implementations' marker type: implements the RAM-family
 /// [`PrepareKernel`](crate::PrepareKernel) slots (each module here hosts its
@@ -182,7 +183,7 @@ where
 
 #[cfg(all(test, feature = "field-inline"))]
 pub(crate) mod field_registers_testing;
-#[cfg(test)]
-pub(crate) mod parity;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod parity;
 #[cfg(test)]
 pub(crate) mod testing;
