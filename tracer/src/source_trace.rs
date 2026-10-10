@@ -1,3 +1,4 @@
+use common::constants::RAM_START_ADDRESS;
 use jolt_program::execution::{
     ExecutionBackend, JoltProgram, MemoryImage, OwnedTrace, RamAccess, RamRead, RamWrite,
     RegisterRead, RegisterState, RegisterWrite, SourceTraceError, SourceTraceRow, TraceError,
@@ -181,7 +182,8 @@ impl SourceExecution {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
-        let (instructions, _, _, _) = crate::decode_with_mode(program.elf_bytes(), RV64I, mode)?;
+        let (instructions, memory_init, _, _) =
+            crate::decode_with_mode(program.elf_bytes(), RV64I, mode)?;
         let table = InstructionTable::new(&instructions)?;
         let mut emulator = crate::create_emulator(
             program.elf_bytes(),
@@ -193,6 +195,27 @@ impl SourceExecution {
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
         let mmu = &mut emulator.get_mut_cpu().mmu;
+        // Original positions break address ties so later sections win. Sorting
+        // indices avoids allocating over gaps in the image's address space.
+        let mut image_order: Vec<usize> = (0..memory_init.len()).collect();
+        image_order.sort_unstable_by_key(|&index| (memory_init[index].0, index));
+        for (position, &index) in image_order.iter().enumerate() {
+            let (address, expected) = memory_init[index];
+            if image_order
+                .get(position + 1)
+                .is_some_and(|&next| memory_init[next].0 == address)
+            {
+                continue;
+            }
+            let actual = if mmu.memory.validate_address(address) {
+                mmu.memory.memory.get_byte(address - RAM_START_ADDRESS)
+            } else {
+                0
+            };
+            if actual != expected {
+                return Err(SourceTraceError::ImageMismatch { address }.into());
+            }
+        }
         mmu.set_access_recording(false);
         if let Some(device) = mmu.jolt_device.as_mut() {
             device
