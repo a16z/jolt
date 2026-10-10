@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use jolt_field::{Fr, JoltField, F128};
 use jolt_kernels::optimized::lazy_ra::{ChunkIndexSource, LazyFoldedRa, LazyRaError};
+use jolt_kernels::optimized::SplitLt;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -262,4 +263,77 @@ fn lazy_construction_prime() {
 #[test]
 fn lazy_construction_binary() {
     lazy_construction::<F128>();
+}
+
+fn split_less_than<F: JoltField>() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x17_128);
+    for n in [0, 1, 2, 3, 6, 7] {
+        let point: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        let challenges: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+        for with_constant in [false, true] {
+            let constant = if with_constant {
+                F::random(&mut rng)
+            } else {
+                F::zero()
+            };
+            let mut lt = if with_constant {
+                SplitLt::new_plus_constant(&point, constant)
+            } else {
+                SplitLt::new(&point)
+            };
+            let original: Vec<F> = (0..1 << n)
+                .map(|j| {
+                    (j + 1..1 << n).fold(constant, |sum, k| {
+                        let equality =
+                            point
+                                .iter()
+                                .enumerate()
+                                .fold(F::one(), |weight, (bit, &r)| {
+                                    weight
+                                        * if k >> (n - bit - 1) & 1 == 1 {
+                                            r
+                                        } else {
+                                            F::one() - r
+                                        }
+                                });
+                        sum + equality
+                    })
+                })
+                .collect();
+            for bound in 0..=n {
+                let current_len = original.len() >> bound;
+                let expected: Vec<F> = (0..current_len)
+                    .map(|j| partial_evaluation(&original, &challenges[..bound], j))
+                    .collect();
+                for y in 0..current_len / 2 {
+                    assert_eq!(
+                        lt.pair(y),
+                        (expected[2 * y], expected[2 * y + 1]),
+                        "n={n}, bound={bound}, y={y}, with_constant={with_constant}"
+                    );
+                }
+                assert_eq!(
+                    lt.bound_value(),
+                    if bound == n { Some(expected[0]) } else { None }
+                );
+                assert!(catch_unwind(AssertUnwindSafe(|| lt.pair(current_len / 2))).is_err());
+                if bound < n {
+                    lt.bind(challenges[bound]);
+                }
+            }
+            lt.bind(F::one());
+            assert_eq!(lt.bound_value(), None);
+            assert!(catch_unwind(AssertUnwindSafe(|| lt.pair(0))).is_err());
+        }
+    }
+}
+
+#[test]
+fn split_less_than_prime() {
+    split_less_than::<Fr>();
+}
+
+#[test]
+fn split_less_than_binary() {
+    split_less_than::<F128>();
 }

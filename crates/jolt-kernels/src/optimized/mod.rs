@@ -80,6 +80,7 @@ pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeRe
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 pub use inc_claim_reduction::OptimizedIncClaimReduction;
 pub use precommitted_reduction::{OptimizedPrecommittedAddress, OptimizedPrecommittedCycle};
+pub use support::{SplitLt, SplitLtDense, SplitLtTables};
 
 /// The optimized implementations' marker type: implements the RAM-family
 /// [`PrepareKernel`](crate::PrepareKernel) slots (each module here hosts its
