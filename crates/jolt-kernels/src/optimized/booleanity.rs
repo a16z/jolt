@@ -562,7 +562,7 @@ struct BooleanityChunks {
 }
 
 impl ChunkIndexSource for BooleanityChunks {
-    fn num_polys(&self) -> usize {
+    fn num_columns(&self) -> usize {
         self.selectors.len()
     }
 
@@ -752,7 +752,9 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         if let LazyFoldedRa::Lazy {
             tables,
             width,
+            factors: 1,
             source,
+            ..
         } = &self.tables
         {
             if !tables.is_empty()
@@ -1573,7 +1575,7 @@ mod categorical_tests {
     struct Source(Vec<Vec<Option<usize>>>);
 
     impl ChunkIndexSource for Source {
-        fn num_polys(&self) -> usize {
+        fn num_columns(&self) -> usize {
             self.0.len()
         }
         fn cycles(&self) -> usize {
@@ -1672,7 +1674,9 @@ mod categorical_tests {
                     let LazyFoldedRa::Lazy {
                         tables,
                         width,
+                        factors: 1,
                         source,
+                        ..
                     } = &lazy
                     else {
                         unreachable!()
