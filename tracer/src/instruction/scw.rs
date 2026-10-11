@@ -23,9 +23,8 @@ impl SCW {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let value = cpu.x[self.operands.rs2 as usize] as u32;
 
-        // Per RISC-V A spec, SC.W succeeds if the reservation set covers the 4
-        // bytes being written. An LR.D reservation (8 bytes) at the same
-        // address qualifies; an LR.W reservation (4 bytes) does too.
+        // Jolt deterministically succeeds for a matching word or doubleword
+        // reservation; it does not model RISC-V's permitted spurious failures.
         if cpu.reservation_covers(address, ReservationWidth::Word) {
             let result = cpu.mmu.store_word(address, value);
 
@@ -46,30 +45,7 @@ impl SCW {
 
 impl RISCVTrace for SCW {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let address = cpu.x[self.operands.rs1 as usize] as u64;
-        // See SCW::exec — SC.W succeeds for any reservation (word or
-        // doubleword) whose set covers the 4 bytes being written.
-        let success = cpu.reservation_covers(address, ReservationWidth::Word);
-
-        // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
-        // in the sequence, on a per-execution copy of the row. Locating it by
-        // type avoids fragility against changes to the sequence's prelude.
-        let mut trace = trace;
-        let mut patched = false;
-        cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
-            for instr in rows {
-                let mut instr = *instr;
-                if !patched {
-                    if let Instruction::VirtualAdvice(v) = &mut instr {
-                        v.advice = success as u64;
-                        patched = true;
-                    }
-                }
-                instr.trace(cpu, trace.as_deref_mut());
-            }
-        });
-        assert!(patched, "SC.W inline sequence must contain a VirtualAdvice");
-
+        super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
         cpu.clear_reservation();
     }
 }
@@ -349,11 +325,7 @@ mod tests {
         scw.trace(&mut cpu, Some(&mut trace));
     }
 
-    /// Regression test: SC.W with rd=x0 must still succeed when a reservation
-    /// is held. Before the fix, dispatching through the generic rd=x0 rewrite
-    /// path bypassed VirtualAdvice patching, so the prover-supplied success
-    /// flag was always 0 (failure) — causing the store to be a no-op even with
-    /// a valid reservation.
+    /// Discarding the status with rd=x0 must preserve the conditional store.
     #[test]
     fn test_scw_rd_x0_preserves_reservation_semantics() {
         let mut cpu = setup_cpu();
