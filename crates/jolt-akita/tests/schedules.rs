@@ -13,7 +13,10 @@ use akita_params::{
     FoldSchedule, FoldSuccessor, GroupOpenPhaseParams, MultiChunkProfileId, PolynomialGroupLayout,
     PrecommittedGroupAdmissionPolicy, ScheduleLookupKey,
 };
-use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
+use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
+use akita_schedules::{
+    expanded_schedule_proof_estimate_bytes, ResolvedScheduleRow, ValidatedScheduleCatalog,
+};
 use jolt_akita::configs::{
     JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16W2R2, JoltOneHotK16W4R2,
     JoltOneHotK16W8R2, JoltOneHotK256, JoltOneHotK256W2R2, JoltOneHotK256W4R2, JoltOneHotK256W8R2,
@@ -177,7 +180,7 @@ fn k16_catalogs_cover_production_trace_geometry() {
             {
                 continue;
             }
-            for log_t in 12..=30 {
+            for log_t in 12..=31 {
                 shape.log_t = log_t;
                 let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape).expect("trace layout");
                 let _ = expected.insert((plan.num_vars(), plan.ids().len()));
@@ -678,6 +681,70 @@ fn catalogs_have_exact_emitted_keys() {
     }
 }
 
+/// Plans every emitted key at or above the arity of a `2^30` K=16 trace
+/// through the generator's own family specs, independent of the checked-in
+/// catalogs, and reports each row's fold levels, estimated proof bytes, and
+/// setup capacity. `AKITA_SCHEDULE_GEN_JOBS` sets the worker count:
+///
+/// ```text
+/// cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored ignored-only \
+///   --no-capture -E 'test(jolt_scale_shapes_plan_for_every_chunk_profile)'
+/// ```
+#[test]
+#[ignore = "plans every Jolt-scale catalog key; takes minutes"]
+#[expect(clippy::print_stderr, reason = "reports each planned Jolt-scale row")]
+fn jolt_scale_shapes_plan_for_every_chunk_profile() {
+    const JOLT_SCALE_LOG_T: usize = 30;
+    let shapes = family_specs(PathBuf::new())
+        .expect("emit specs")
+        .into_iter()
+        .flat_map(|spec| {
+            spec.keys
+                .into_iter()
+                .filter(|key| key.num_vars() >= JOLT_SCALE_LOG_T + K16_COLUMN_VARIABLES)
+                .map(move |key| (spec.family_name, spec.policy, spec.regen, key))
+        })
+        .collect::<Vec<_>>();
+    assert!(!shapes.is_empty());
+    let outcomes = bounded_parallel_filter_map(
+        &shapes,
+        offline_planning_worker_count(shapes.len()),
+        |&(family_name, policy, regen, key)| {
+            let label = format!(
+                "{family_name} nv={} polys={}",
+                key.num_vars(),
+                key.num_polynomials()
+            );
+            let report = regen(key).and_then(|schedule| {
+                let proof = expanded_schedule_proof_estimate_bytes(
+                    &ScheduleLookupKey::single(key),
+                    &schedule,
+                    &policy,
+                )?;
+                let setup = setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
+                Ok(format!(
+                    "levels={} proof={proof} setup={setup}",
+                    schedule.num_fold_levels()
+                ))
+            });
+            Ok(Some(
+                report
+                    .map(|report| format!("{label}: {report}"))
+                    .map_err(|error| format!("{label}: {error}")),
+            ))
+        },
+    )
+    .expect("planning workers");
+    let mut failures = Vec::new();
+    for outcome in outcomes {
+        match outcome {
+            Ok(report) => eprintln!("{report}"),
+            Err(failure) => failures.push(failure),
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 #[cfg(feature = "field-inline")]
 mod field_inc {
     #![expect(
@@ -756,7 +823,7 @@ mod field_inc {
             .into_iter()
             .filter(|group| group.num_polynomials() > 2)
             .collect::<Vec<_>>();
-        assert_eq!(groups.len(), 266);
+        assert_eq!(groups.len(), 280);
         field_inline_rows_plan_and_resolve(AKITA_ONE_HOT_K16, profile, groups);
     }
 
@@ -767,7 +834,7 @@ mod field_inc {
 
     fn assert_k16_chunked_boundary_coverage(profile: AkitaChunkProfile) {
         let groups = [51, 64].into_iter().flat_map(|width| {
-            [16, 25, 34]
+            [16, 25, 35]
                 .into_iter()
                 .map(move |arity| PolynomialGroupLayout::new(arity, width))
         });

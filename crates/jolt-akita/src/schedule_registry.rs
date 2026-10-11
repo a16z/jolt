@@ -415,7 +415,7 @@ mod tests {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let dense = artifacts.dense_catalog().unwrap();
         let full_dense = artifacts.full_dense_catalog().unwrap();
-        for (k, last_scalar_arity) in [(AKITA_ONE_HOT_K16, 15), (AKITA_ONE_HOT_K256, 16)] {
+        for (k, last_scalar_arity) in [(AKITA_ONE_HOT_K16, 17), (AKITA_ONE_HOT_K256, 17)] {
             let base = artifacts.one_hot_catalog(k).unwrap();
             for final_arity in 12..=last_scalar_arity {
                 let params = GroupedScheduleParams::new(
