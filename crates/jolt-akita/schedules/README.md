@@ -38,9 +38,12 @@ backward compatibility. Compatible catalogs can be reused without regeneration.
 The legacy `Single` verifier-setup encoding remains unchanged.
 
 The one-hot artifacts are hybrid catalogs. A logical trace shorter than
-`2^21` uses a direct schedule. A trace of `2^21` cycles or longer uses a
-setup-offloaded schedule. Akita uses K=16 committed chunks at every trace
-length, with catalog coverage through `2^30`. Virtual lookup chunks are 16 bits
+`2^21` uses a direct schedule. Rows for `2^21` cycles or longer are planned
+with setup offloading available, and the planner selects it for every Single
+row. Next to the cutover it keeps some multi-chunk rows direct, at every
+width: W2R2 at `2^22`, W4R2 at `2^21` and `2^22`, and W8R2 at `2^21`.
+Akita uses K=16 committed chunks at every trace
+length, with catalog coverage through `2^31`. Virtual lookup chunks are 16 bits
 below `2^25` and 32 bits at or above it. The K=256 catalogs retain explicit native trace test and benchmark keys plus
 the scalar adapter/planner grid; they do not provide a general native trace range.
 This is an offline catalog policy: proving and verification simply
@@ -49,7 +52,7 @@ resolve the exact admitted row and never choose a mode dynamically.
 Each K=16 and K=256 family has W2R2, W4R2, and W8R2 multi-chunk companion
 catalogs. The selected profile splits the root and first recursive fold into
 two, four, or eight chunks, while later folds remain single-chunk. Native K=16
-trace groups cover column arities 16–34 and widths 51–64 in every profile.
+trace groups cover column arities 16–35 and widths 51–64 in every profile.
 The adapter and grouped-planner diagnostic grids retain the base branch's
 one- and two-polynomial rows, with these minimum physical arities for both K values:
 
@@ -60,7 +63,7 @@ one- and two-polynomial rows, with these minimum physical arities for both K val
 | Four (W4R2) | 13 | 12 |
 | Eight (W8R2) | 14 | 13 |
 
-The scalar diagnostic upper arity is 40 for K=16 and 43 for K=256. These are
+The scalar diagnostic upper arity is 44 for both K values. These are
 physical scalar shapes, not selector-packed Jolt traces. Setup and grouped
 provisioning check the profile floors before constructing backend matrices
 and resolve the exact native group shape, including its column count.
@@ -74,7 +77,7 @@ keep their fixed profiles.
 ### Field-inline provisioning coverage
 
 PR CI resolves every K=16 production key under Single and the six
-width 51/64 × arity 16/25/34 boundary shapes under each of W2R2, W4R2,
+width 51/64 × arity 16/25/35 boundary shapes under each of W2R2, W4R2,
 and W8R2. The three exhaustive chunked-grid tests remain available for
 catalog/provisioner changes but are excluded from the PR CI invocation:
 
@@ -83,7 +86,7 @@ cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline \
   -E 'test(/field_inline_rows_cover_k16_w[248]r2_production_grid/)' --cargo-quiet
 ```
 
-These tests run real schedule adaptation for 266 keys per profile and can
+These tests run real schedule adaptation for 280 keys per profile and can
 consume tens of minutes. They are separate from catalog freshness checking
 with `gen_jolt_schedules … --check`.
 
@@ -106,8 +109,8 @@ rejection matching the provisioner's Single-profile scalar-guide error for that
 K and final arity. Other schedule rejections count as `provisioning_failed`,
 including all chunked-profile rejections. For bounded-only `Single` requests,
 Jolt requires the selected scalar row to have a recursive child fold. The
-smallest Single scalar rows reach their terminal immediately (K=16 arities
-12–15 and K=256 arities 12–16), so preprocessing rejects these requests before
+smallest Single scalar rows reach their terminal immediately (arities 12–17
+for both K values), so preprocessing rejects these requests before
 either guided or full search, naming K, profile, final arity, and the requested
 groups. This is a Jolt admission rule; it does not establish that full planning
 could never find a grouped schedule. Scalar-only setups and full-width producer
@@ -135,7 +138,7 @@ Apple M4 Max host:
 shape to clear it while keeping total prover time within the 10% budget.
 
 These timings were measured on the rows that preceded the catalog
-regeneration under akita `db5efa20`. The regenerated hybrid catalogs switch
+regeneration under akita `db5efa20`. The regenerated Single catalogs switch
 from direct to setup-offloaded rows at the same logical trace length; the
 table was not re-measured.
 
@@ -191,13 +194,15 @@ file. Ordinary catalog tests check admitted keys and coverage of production
 trace geometry; key agreement alone does not establish schedule freshness.
 
 Trace groups use native columns with arity `log_T + log_K`, without selector
-variables. Production trace keys cover K=16 arities 16–34 with 51–64 columns.
+variables. Production trace keys cover K=16 arities 16–35 with 51–64 columns.
 The bounds follow the 32-bit bytecode PCs, 61-bit remapped RAM word addresses,
 and 64-column row mask. The K=256 single-chunk keys `(num_vars, num_polys)` are
 `(14,1)`, `(15,1)`, `(16,1)`, `(20,1)`, `(20,29)`, `(25,1)`,
 `(28,27)`, `(29,27)`, and `(34,27)`, retained for adapter, benchmark, cutover,
 advice, and forced-K tests. Each K=256 multi-chunk catalog retains the `(16,1)` roundtrip fixture alongside
-the scalar diagnostic grid described above. K=16 fixtures also remain explicit
+the scalar diagnostic grid described above. Every K=256 profile also contains the
+narrowest and widest native traces, 27 and 37 columns, at `2^30` and `2^31`
+(arities 38 and 39). K=16 fixtures also remain explicit
 in `one_hot_keys`.
 These K=256 keys are fixture and benchmark coverage, not a supported general
 trace range. Other explicit configurations require a deployment-owned catalog
@@ -205,8 +210,10 @@ containing that exact shape. Grouped preprocessing rejects a missing final shape
 during setup and reports the requested K, arity, and column count.
 
 The catalogs match Akita revision
-`318c322113dc66aeed31f9f3c640e84099ba043f`, as verified by the complete
-artifact freshness check above.
+`fe40c85b220fd113f76df4743bb3d7f69e58084f`, as verified by the complete
+artifact freshness check above. Every catalog binds Akita's planner policy
+digest, which includes the SIS security policy and its estimator tables.
+Catalogs planned under an earlier policy are rejected at load time.
 Native trace batching establishes first-fold cycle locality. Recursive folds
 inherit chunk ownership, align chunk bodies to the successor's source block
 width, and keep the shared tail in the last owner. A reduction in chunk count
