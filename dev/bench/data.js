@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791825941804,
+  "lastUpdate": 1791828763311,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -186010,6 +186010,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866976,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a104dc63aa11a19915301cd73650511ac72355e8",
+          "message": "refactor: unify execution and proof trace rows (#1996)\n\n* docs: specify unified execution and proof trace rows\n\n* refactor(riscv): unify execution and proof trace row storage\n\n* refactor(trace): emit program-bound rows into shared trace storage\n\n* refactor(witness): share unified rows and consume sparse field events\n\n* refactor(host): stream versioned archives of unified trace rows\n\n* fix(profiling): version the unified configuration span schema\n\n* perf(witness): inline the shared proof-row view in cycle windows\n\n* docs: record unified trace validation and measurements\n\n* refactor(host): make program summaries write-only\n\nProgramSummary is a debugging and analysis output that nothing reads back.\nDrop its Deserialize impl along with the reader-only machinery: the\nmagic/version/field-format header, TraceDataSeed, the TraceData, TraceEvent,\nand JoltTraceRow deserializers, TraceError::BytecodeMismatch, and the archive\ntests. write_to_file keeps the derived bincode encoding.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(tracer): use jolt-riscv RAM access types\n\nThe tracer defined RAMRead, RAMWrite, and RAMAccess with the same fields as\njolt_riscv::{RamRead, RamWrite, RamAccess}, then copied between them when\nbuilding trace rows. Use the jolt-riscv types directly, including for the\nRISCVInstruction associated type, and move the read, write, and no-op From\nconversions next to RamAccess. Field names and order are unchanged, so the\nserialized Cycle encoding is unchanged.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(witness): allocate sparse field-inline columns zeroed\n\nmaterialize_cycle zero-filled its column twice: vec! cloned F::zero() into\nevery slot serially, then each chunk was filled with zero again before the\nsparse field events were scattered. Allocate with unsafe_allocate_zero_vec\nand scatter onto it; fill_rd_increments keeps the explicit fill because it\nwrites into a caller-provided window. The register grids and the Akita\nincrement column use the same zeroed allocation.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(execution): hand off traces as Arc<TraceData>\n\nProduction never drove the OwnedTrace cursor: every caller took the\nwhole trace, and the only next_row/rows/shared_data users were tests.\nDelete OwnedTrace and the TraceSource trait, drop ExecutionBackend's\nassociated Trace type, and make TraceOutput and JoltVmWitnessInputs\nnon-generic with the trace held as Arc<TraceData>.\nChunkedExecutionBackend::replay_chunk now returns each chunk as\nTraceData.\n\nWith no cursor there is nothing to partially consume, so\nTraceError::PartiallyConsumed, OwnedTrace::into_data and its .expect in\njolt-host, the unused From<Vec<JoltTraceRow>>, the partial-consumption\ntest, and the SDK re-exports of OwnedTrace and TraceSource go too.\nTraceBackend still retains the producer's Arc without copying rows; the\npointer-identity tests cover that. Callers, fixtures, examples, and\nspecs are updated.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(riscv): drop unused trace-row views\n\nRemove CapturedState and its NonMemoryState/LoadState/StoreState\npayloads, captured_state(), address(), and the test-only JoltCycle impl\non JoltTraceRow. JoltTraceRow::new now packs the four value slots\ndirectly with the same per-class aliasing, so the 64-byte layout,\naccessor results, and proof bytes are unchanged. no_op() folds into\nDefault.\n\nJoltInstruction now converts from JoltInstructionRow through an\ninfallible From: the old TryFrom matched exhaustively over the same kind\nenum and could not fail. That drops TraceRowError::UnsupportedInstruction,\nthe witness decode error path, and the Noop fallbacks at each call site.\nThe unified-trace-row spec is updated to match.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(trace): store field payloads inline in sparse events\n\nFieldInlineTraceData is Copy, and Arc<TraceData> is now the only sharing\nhandle, so nothing shares a per-event payload Arc. FieldEvent and the\ntransient TraceEvent now hold the payload by value: the tracer's\nArc::new sites, as_ref() reads, and Arc::make_mut test edits are gone,\nalong with one heap allocation and reference count per field event.\n\nParallel tracer collection pre-sizes the combined event vector from the\nsummed batch lengths so combining copies each 192-byte event once\ninstead of regrowing. The spec records the per-event size and scopes\nthe single-copy claim to the combine step.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(trace): build TraceData from rows and sparse events\n\nRemove TraceEvent, TraceData::push, with_capacity, the\nFromIterator<TraceEvent> impl and From<JoltTraceRow> for TraceEvent.\nThe per-row append path kept its own copy of the proof-length and\nevent-order rules. Every producer now hands over owned buffers through\nTraceData::new (rows) or TraceData::from_parts (rows plus sorted sparse\nfield events), so those two constructors are the only owners of both\nrules.\n\nUnder field-inline, the tracer's small-trace path is now the one-batch\ncase of the batched collector. Fixtures and tests build rows and\nevents, then call new or from_parts. The serialization shim is renamed\nto CycleRecord, and specs/unified-trace-row.md is updated.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(field-inline): derive the payload op from the row and drop the bridge\n\nFieldInlineTraceData now holds only the field-register effects (rs1,\nrs2, rd). Its op field duplicated the row's JoltInstructionKind, whose\nonly reader was an equality check; witness validation already derived\nthe operand shape from the row's kind, so it keeps the per-op\nrs1/rs2/rd presence and register checks without it. FieldInlineBridge copied row operands,\nrow captures, or the payload's own rd/rs1, and its only reader was\nvalidate_bridge, so both are removed together with the tracer code that\nbuilt it (and its production expects) and the field_inline_source_op\nlookup that filled op. Bridge rows' integer side stays in the row's\ncaptures, bound by the register and bridge constraints. The unused\nDefault derive is dropped; fixtures now name every field, and the\nkernel fixture takes the instruction kind directly. A FieldEvent\nshrinks from 192 to 144 bytes; specs are updated to match.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test: prune new tests without an independent failure signal\n\nApply the test policy to the tests this branch adds. Removed:\n- layout_is_64_bytes_and_copy: duplicates the compile-time size assert;\n  Copy and alignment are fixed by the type.\n- cycles_convert_to_rows_with_their_bytecode_pc_and_captured_values and\n  trace_data_from_cycles_carries_field_inline_payload: restate converter\n  output already pinned at the Cycle and row levels.\n- backend_rejects_proof_rows_beyond_cycle_domain and\n  backend_shares_full_trace_allocation_and_bounds_the_proof_view: a\n  guard unreachable from the SDK path and a pointer-identity check that\n  fails only on refactor.\n- field_rd_inc_materializes_field_deltas_and_padding: pruned on main in\n  #1998 and restored by the merge; duplicates the public provider views.\n- from_parts_rejects_misplaced_events_and_proves_through_the_last_event:\n  guards a prover-side constructor whose only caller builds sorted events.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs(spec): describe row layout and ownership guarantees after test pruning\n\nThe row's Copy and 64-byte size are pinned by the type and a compile-time\nassertion, and retaining the producer's rows follows from moving the\nArc<TraceData> into the backend with no Clone on TraceData; the spec no\nlonger claims tests for either.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(witness): pre-size field-inline Spartan rows\n\nfield_inline_spartan_rows emits exactly one row per field event, so\nallocate the vector at that length instead of growing it by push.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-12T10:18:38-07:00",
+          "tree_id": "58041b89560d33efaa2ce80e75f137ec5a4ba036",
+          "url": "https://github.com/a16z/jolt/commit/a104dc63aa11a19915301cd73650511ac72355e8"
+        },
+        "date": 1791828757243,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.2576,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4933,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 500564,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 504648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.9169,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500588,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999536,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.7502,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 504368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.6615,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.085,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 237680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.7646,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 860244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.7786,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5896,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.4218,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500852,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8028,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 504368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 34.1545,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1956740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.6316,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 636516,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 76.775,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1134224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6241,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.8571,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.3737,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861828,
             "unit": "KB",
             "extra": ""
           }
