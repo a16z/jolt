@@ -210,7 +210,7 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
     fn field_inline_spartan_rows(
         &self,
     ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
-        let mut rows = Vec::new();
+        let mut rows = Vec::with_capacity(self.trace_data.field_events().len());
         for event in self.trace_data.field_events() {
             let cycle = event.cycle;
             let data = &event.data;
