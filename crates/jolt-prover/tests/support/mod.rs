@@ -9,21 +9,12 @@ use std::thread::Builder;
 
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_host::{JoltProgramSource, Program};
-#[cfg(feature = "field-inline")]
-use jolt_program::execution::{ExecutionBackend, OwnedTrace};
-use jolt_program::execution::{JoltProgram, TraceInputs, TraceOutput};
+use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
-#[cfg(not(feature = "field-inline"))]
-use jolt_riscv::JoltTraceRow;
 use tracer::execution_backend::TracerBackend;
 
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
-
-#[cfg(not(feature = "field-inline"))]
-type GuestTrace = Arc<Vec<JoltTraceRow>>;
-#[cfg(feature = "field-inline")]
-type GuestTrace = OwnedTrace;
 
 /// One guest execution to prove: the example crate, its entry point, memory
 /// overrides, the postcard-encoded inputs and advice, and the postcard-encoded
@@ -83,7 +74,7 @@ impl GuestCase {
 pub struct PreparedGuest {
     pub program: Arc<JoltProgram>,
     pub preprocessing: JoltProgramPreprocessing,
-    pub trace: TraceOutput<GuestTrace>,
+    pub trace: TraceOutput,
 }
 
 fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
@@ -141,23 +132,13 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
         case.trusted_advice.clone(),
         memory_config(&layout),
     );
-    #[cfg(not(feature = "field-inline"))]
-    let trace = TracerBackend::new()
-        .trace_compact(&program, inputs, &preprocessing.bytecode)
-        .expect("modular trace");
-    // Field witnesses still consume the field-register payloads on rich rows.
-    #[cfg(feature = "field-inline")]
     let trace = TracerBackend::new()
         .trace(&program, inputs)
-        .expect("modular field-inline trace");
+        .expect("modular trace");
     case.assert_output(&trace.device);
     #[cfg(feature = "field-inline")]
     assert_eq!(
-        trace
-            .trace
-            .rows()
-            .iter()
-            .any(|row| row.field_inline.is_some()),
+        !trace.trace.field_events().is_empty(),
         case.field_inline_active,
         "{}: unexpected field-register activity",
         case.name,

@@ -6,7 +6,7 @@
 //!
 //! Scope today is the **fast pass**, which is what the AOT backend
 //! implements: total row count, `JoltDevice` (outputs and panic flag), final
-//! memory, and the captured advice tape. Full `TraceRow`-stream equality
+//! memory, and the captured advice tape. Full `JoltTraceRow`-stream equality
 //! joins when the backend grows record mode (spec slice 3's record half);
 //! the row *count* already catches control-flow divergence, and final memory
 //! catches value divergence that reaches RAM.

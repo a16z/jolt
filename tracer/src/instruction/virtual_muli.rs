@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualMULI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMULI as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMULI as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             cpu.sign_extend(

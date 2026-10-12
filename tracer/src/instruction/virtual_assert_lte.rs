@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertLTE {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertLTE as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertLTE as RISCVInstruction>::RamAccess) {
         assert!(
             cpu.x[self.operands.rs1 as usize] as u64 <= cpu.x[self.operands.rs2 as usize] as u64
         );

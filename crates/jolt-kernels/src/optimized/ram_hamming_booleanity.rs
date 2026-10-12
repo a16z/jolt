@@ -469,7 +469,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
     use jolt_field::{Fr, One, Ring, Zero};
-    use jolt_program::execution::{OwnedTrace, TraceRow};
+    use jolt_riscv::JoltTraceRow as TraceRow;
     use jolt_witness::{JoltWitnessOracle, TraceBackend};
 
     use super::*;
@@ -485,7 +485,7 @@ mod tests {
             .collect()
     }
 
-    fn parity(backend: &TraceBackend<OwnedTrace>, log_t: usize, stage1_cycle_binding: Vec<Fr>) {
+    fn parity(backend: &TraceBackend, log_t: usize, stage1_cycle_binding: Vec<Fr>) {
         let relation = RamHammingBooleanity::new(TraceDimensions::new(log_t), stage1_cycle_binding);
         let claims = RamHammingBooleanityInputClaims::default();
         let points = RamHammingBooleanityInputClaims::default();

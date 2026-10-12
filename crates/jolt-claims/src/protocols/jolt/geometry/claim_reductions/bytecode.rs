@@ -561,8 +561,8 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::InstructionLookupTable;
     use jolt_riscv::{
-        instructions::Noop, Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionKind,
-        JoltInstructionRow, NormalizedOperands, CIRCUIT_FLAGS,
+        Flags, InterleavedBitsMarker, JoltInstruction, JoltInstructionKind, JoltInstructionRow,
+        NormalizedOperands, CIRCUIT_FLAGS,
     };
 
     const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
@@ -592,8 +592,7 @@ mod tests {
     /// Sparse `(lane, value)` encoding of one committed bytecode row, mirroring
     /// core's `for_each_active_lane_value`.
     fn lane_values(instruction: &JoltInstructionRow) -> Vec<(usize, Fr)> {
-        let decoded = JoltInstruction::try_from(*instruction)
-            .unwrap_or(JoltInstruction::Noop(Noop(*instruction)));
+        let decoded = JoltInstruction::from(*instruction);
         let circuit_flags = decoded.circuit_flags();
         let instruction_flags = decoded.instruction_flags();
         let layout = BYTECODE_LANE_LAYOUT;

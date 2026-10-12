@@ -3723,6 +3723,7 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-utils",
  "jolt-verifier",
  "jolt-witness",
  "postcard",

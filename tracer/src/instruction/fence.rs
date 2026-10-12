@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl FENCE {
-    fn exec(&self, _: &mut Cpu, _: &mut <FENCE as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, _: &mut Cpu, _: &mut <FENCE as RISCVInstruction>::RamAccess) {
         // no-op
     }
 }

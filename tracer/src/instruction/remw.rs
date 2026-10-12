@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl REMW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <REMW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <REMW as RISCVInstruction>::RamAccess) {
         // REMW and REMUW are RV64 instructions that provide the corresponding signed and unsigned
         // remainder operations. Both REMW and REMUW always sign-extend the 32-bit result to 64 bits,
         // including on a divide by zero.

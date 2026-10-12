@@ -249,8 +249,7 @@ impl JoltState {
         let row = instr
             .try_jolt_instruction_row()
             .expect("Z3 instruction constraints require a final Jolt row");
-        let instruction = JoltInstruction::try_from(row)
-            .expect("final Jolt row has a recognized instruction kind");
+        let instruction = JoltInstruction::from(row);
         let flags = instruction.circuit_flags();
         let instruction_flags = instruction.instruction_flags();
 

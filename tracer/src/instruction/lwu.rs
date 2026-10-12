@@ -1,6 +1,6 @@
 use super::format::format_load::FormatLoad;
 use super::Instruction;
-use super::{Cycle, RISCVInstruction, RISCVTrace};
+use super::{Cycle, RISCVInstruction, RISCVTrace, RamRead};
 use crate::instruction::registers::load::RegisterStateLoad;
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
@@ -11,11 +11,11 @@ declare_riscv_instr!(
     match  = 0x00006003,
     format = FormatLoad,
     registers = RegisterStateLoad,
-    ram    = super::RAMRead
+    ram    = RamRead
 );
 
 impl LWU {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LWU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <LWU as RISCVInstruction>::RamAccess) {
         // The LWU instruction, on the other hand, zero-extends the 32-bit value from memory for
         // RV64I.
         let address = cpu.x[self.operands.rs1 as usize].wrapping_add(self.operands.imm) as u64;

@@ -394,7 +394,7 @@ impl MacroBuilder {
         });
         quote! {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
-            pub fn #trace_fn_name(#inputs) -> ::core::result::Result<jolt::TraceOutput<jolt::OwnedTrace>, jolt::TraceError> {
+            pub fn #trace_fn_name(#inputs) -> ::core::result::Result<jolt::TraceOutput, jolt::TraceError> {
                 let mut __jolt_backend = jolt::TracerBackend::new();
                 #trace_with_backend_fn_name(&mut __jolt_backend, #(#all_names),*)
             }
@@ -403,7 +403,7 @@ impl MacroBuilder {
             pub fn #trace_with_backend_fn_name<__B: jolt::ExecutionBackend>(
                 __jolt_backend: &mut __B,
                 #inputs
-            ) -> ::core::result::Result<jolt::TraceOutput<__B::Trace>, jolt::TraceError> {
+            ) -> ::core::result::Result<jolt::TraceOutput, jolt::TraceError> {
                 let mut __jolt_program = jolt::host::Program::new(#guest_name);
                 __jolt_program.set_func(#fn_name_str);
                 #set_std

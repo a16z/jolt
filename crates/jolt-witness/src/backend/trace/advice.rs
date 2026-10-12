@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<T: TraceSource> TraceBackend<T> {
+impl TraceBackend {
     pub(crate) fn materialize_trusted_advice<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         materialize_advice(
             "trusted",
