@@ -86,7 +86,7 @@ pub struct PreparedGuest {
     pub trace: TraceOutput<GuestTrace>,
 }
 
-fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
+pub fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
     MemoryConfig {
         max_untrusted_advice_size: layout.max_untrusted_advice_size,
         max_trusted_advice_size: layout.max_trusted_advice_size,

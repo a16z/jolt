@@ -192,8 +192,8 @@ mod matrix {
     fn field_limbs() -> GuestCase {
         let p_minus_one = canonical_limbs::<Field, 6>(Field::from_u64(0) - Field::from_u64(1))
             .expect("the proof field fits six limbs");
-        let mut inputs = postcard::to_stdvec(&p_minus_one).expect("serialize value");
-        inputs.extend(postcard::to_stdvec(&6u8).expect("serialize readout width"));
+        let inputs = postcard::to_stdvec(&(Some(p_minus_one), Some(6u8)))
+            .expect("serialize conversion request");
         GuestCase {
             inputs,
             expected_output: Some(postcard::to_stdvec(&p_minus_one).expect("serialize output")),

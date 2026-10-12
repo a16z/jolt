@@ -117,3 +117,14 @@ cargo nextest run -p jolt-akita --cargo-quiet
 Failures at the 128-row or 260-group shape limit are protocol-capacity
 failures. Do not work around them by lowering the public 256-chunk limit or
 selecting a different committed-program encoding.
+
+### Field-inline conversion boundaries
+
+`python3 jolt-sdk/tests/field_limb_compile.py` compiles the actual SDK and then
+code-generates separate macro call sites. It checks zero-width and out-of-range
+register rejection after monomorphization, alongside valid boundary calls.
+
+The `field_inline_limbs` prover test binary exercises both matching and foreign
+modulus guest ELFs in the Dory and Akita field-inline lanes. The Dory
+`field_inline_e2e` suite also attempts to prove a trace that advises the modulus
+as the limb representation of zero; the proof path must reject it.

@@ -285,6 +285,15 @@ macro_rules! field_to_limbs {
 /// jolt::field_from_limbs!(3, [low, high]);
 /// ```
 ///
+/// Mix field arithmetic with ordinary integer code in a Jolt guest:
+///
+/// ```ignore
+/// jolt::field_from_limbs!(0, [7u64]);
+/// jolt::field_mul!(0, 0, 0);
+/// let [square] = jolt::field_to_limbs!(0, 1);
+/// assert_eq!(square, 49);
+/// ```
+///
 /// `$register` is a constant `u32` expression below 16, and `$limbs` is an
 /// array of at least one `u64`, evaluated once.
 ///

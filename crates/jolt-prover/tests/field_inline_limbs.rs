@@ -16,6 +16,7 @@
 #![expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::process::Command;
 
 use common::jolt_device::JoltDevice;
 #[cfg(feature = "akita")]
@@ -25,8 +26,10 @@ use jolt_field::CanonicalBytes;
 use jolt_field::Fr as Field;
 use jolt_field::Ring;
 use jolt_host::field_inline::canonical_limbs;
-use jolt_host::Program;
+use jolt_host::{default_target_dir, Program};
+use jolt_platform::{FieldInlineModulus, FIELD_INLINE_MODULUS_ENV};
 use tracer::instruction::field_inline::advice_limb::inject_advice_limbs;
+use tracer::instruction::field_inline::FIELD_INLINE_MODULUS;
 use tracer::instruction::Cycle;
 
 /// Limb width of the proof field's modulus.
@@ -51,8 +54,8 @@ impl Run {
 fn trace(value: [u64; 6], readout_width: u8) -> Run {
     let mut program = Program::new("field-limbs-guest");
     program.enable_field_inline();
-    let mut inputs = postcard::to_stdvec(&value).expect("serialize value");
-    inputs.extend(postcard::to_stdvec(&readout_width).expect("serialize readout width"));
+    let inputs = postcard::to_stdvec(&(Some(value), Some(readout_width)))
+        .expect("serialize conversion request");
     let (_, trace, _, device) = program.trace(&inputs, &[], &[]);
     // Honest VirtualAssertEQ rows panic the tracer on unequal operands, so an
     // unequal row is spoil_proof's.
@@ -99,9 +102,12 @@ fn noncanonical_imports_panic_without_spoiling() {
 
 #[test]
 fn narrow_readouts_reject_values_that_do_not_fit() {
-    let fits = trace([5, 0, 0, 0, 0, 0], 1);
-    assert!(!fits.device.panic);
-    assert_eq!(fits.output(), [5, 0, 0, 0, 0, 0]);
+    for low in [0, 5, u64::MAX] {
+        let value = [low, 0, 0, 0, 0, 0];
+        let fits = trace(value, 1);
+        assert!(!fits.device.panic);
+        assert_eq!(fits.output(), value);
+    }
 
     let wide = trace(limb_at(1), 1);
     assert!(wide.device.panic, "2^64 does not fit one limb");
@@ -145,10 +151,73 @@ fn wrong_limbs_leave_a_nonzero_residual() {
 fn noncanonical_advice_spoils_the_proof() {
     let five = [5, 0, 0, 0, 0, 0];
     for (value, limbs) in [([0; 6], modulus_plus(0)), (five, modulus_plus(5))] {
-        let injection = inject_advice_limbs(&limbs[..MODULUS_LIMBS]);
-        let run = trace(value, 6);
-        assert_eq!(injection.consumed_addresses().len(), MODULUS_LIMBS);
-        assert!(run.spoiled, "{limbs:x?} must spoil the proof");
-        assert!(run.device.panic);
+        // Even a narrow readout must reject noncanonical advice before its fit check.
+        for width in [1, 6] {
+            let injection = inject_advice_limbs(&limbs[..MODULUS_LIMBS]);
+            let run = trace(value, width);
+            assert_eq!(injection.consumed_addresses().len(), MODULUS_LIMBS);
+            assert!(run.spoiled, "{limbs:x?} must spoil the proof");
+            assert!(run.device.panic);
+        }
     }
+}
+
+#[test]
+fn foreign_field_guest_rejects_import_and_readout() {
+    let other = match FIELD_INLINE_MODULUS {
+        FieldInlineModulus::Bn254 => FieldInlineModulus::Fp128,
+        FieldInlineModulus::Fp128 => FieldInlineModulus::Bn254,
+    };
+    let target = default_target_dir().join(format!("field-limbs-foreign-{}", other.name()));
+    // Bypass Program's automatic field selection to build a genuinely foreign ELF.
+    let output = Command::new(std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".into()))
+        .args([
+            "build",
+            "-p",
+            "field-limbs-guest",
+            "--backtrace",
+            "off",
+            "--",
+            "--locked",
+            "--release",
+            "--features",
+            "guest,field-inline",
+            "--target-dir",
+        ])
+        .arg(&target)
+        .env(FIELD_INLINE_MODULUS_ENV, other.name())
+        .output()
+        .expect("build foreign-field guest");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut program = Program::new("field-limbs-guest");
+    program.enable_field_inline();
+    program.elf = Some(target.join("riscv64imac-unknown-none-elf/release/field-limbs-guest"));
+    assert!(program.elf.as_ref().expect("ELF path").exists());
+    for request in [(Some([0u64; 6]), None), (None, Some(6u8))] {
+        let inputs = postcard::to_stdvec(&request).expect("serialize isolated conversion");
+        let failure = catch_unwind(AssertUnwindSafe(|| {
+            let _ = program.trace(&inputs, &[], &[]);
+        }))
+        .expect_err("a foreign modulus must fail its binding");
+        let message = failure
+            .downcast_ref::<String>()
+            .expect("tracer assertion message");
+        assert!(
+            message.contains("FIELD_ASSERT_ZERO of nonzero field register 15"),
+            "{message}"
+        );
+    }
+    // Invalid input still follows the ordinary panic policy before the binding.
+    let inputs =
+        postcard::to_stdvec(&(Some([u64::MAX; 6]), None::<u8>)).expect("serialize invalid import");
+    let (_, trace, _, device) = program.trace(&inputs, &[], &[]);
+    assert!(device.panic);
+    assert!(!trace
+        .iter()
+        .any(|cycle| matches!(cycle, Cycle::VirtualAssertEQ(row)
+        if row.register_state.rs1 != row.register_state.rs2)));
 }

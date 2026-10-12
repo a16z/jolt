@@ -796,7 +796,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo nextest run -p jolt-claims \
+          cargo nextest run -p jolt-claims -p jolt-host \
             -p jolt-verifier -p jolt-witness -p jolt-kernels \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
@@ -937,6 +937,8 @@ jobs:
       # The Akita chain's two-limb field value encoding on the tracer side.
       - name: Run tracer tests with field-inline,fp128-field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
+      - name: Check field limb macro compile-time bounds
+        run: python3 jolt-sdk/tests/field_limb_compile.py
       # The guest platform crate the tracer shares with guests, including the
       # field-inline modulus table and canonicality predicate.
       - name: Run jolt-platform tests

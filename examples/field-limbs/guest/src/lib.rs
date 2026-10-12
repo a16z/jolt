@@ -6,19 +6,22 @@
 
 use jolt::field_inline::{FieldInlineModulus, MODULUS};
 
-/// Imports `value`, wider than either modulus, into a field register and reads
-/// it back `readout_width` limbs wide, zero-extended to six; then runs the
-/// fixed checks. Hosts drive the import-policy, width, and dishonest-advice
-/// cases through the inputs: this readout is the guest's first, so injected
-/// advice lands on it.
+/// Imports `value` when present, otherwise initializes a raw field zero.
+/// A missing readout width returns after import, so mismatch tests can isolate
+/// each binding. Readouts run the fixed conformance checks afterward.
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
-fn check_limb_conversions(value: [u64; 6], readout_width: u8) -> [u64; 6] {
-    jolt::field_from_limbs!(15, value);
+fn check_limb_conversions(value: Option<[u64; 6]>, readout_width: Option<u8>) -> [u64; 6] {
+    if let Some(value) = value {
+        jolt::field_from_limbs!(15, value);
+    } else {
+        jolt::field_load_imm!(15, 0);
+    }
     let readout = match readout_width {
-        1 => widen(jolt::field_to_limbs!(15, 1)),
-        2 => widen(jolt::field_to_limbs!(15, 2)),
-        4 => widen(jolt::field_to_limbs!(15, 4)),
-        6 => jolt::field_to_limbs!(15),
+        None => return [0; 6],
+        Some(1) => widen(jolt::field_to_limbs!(15, 1)),
+        Some(2) => widen(jolt::field_to_limbs!(15, 2)),
+        Some(4) => widen(jolt::field_to_limbs!(15, 4)),
+        Some(6) => jolt::field_to_limbs!(15),
         _ => panic!("unsupported readout width"),
     };
     round_trips();

@@ -3725,6 +3725,7 @@ dependencies = [
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
+ "jolt-platform",
  "jolt-poly",
  "jolt-profiling",
  "jolt-program",
