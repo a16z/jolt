@@ -50,7 +50,9 @@ jobs:
         with:
           shared-key: fs-obligations
       - name: Install nextest
-        uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Check transcript and verifier-source inventories
         run: >
           cargo nextest run
@@ -107,7 +109,9 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
       - name: Run live Fiat-Shamir attacks
         run: >
           cargo nextest run

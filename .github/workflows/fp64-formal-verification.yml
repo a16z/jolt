@@ -59,7 +59,7 @@ jobs:
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: cargo-fuzz
       - name: Compare field operations with the integer oracle
@@ -76,7 +76,7 @@ jobs:
         with:
           toolchain: nightly
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         with:
           tool: cargo-fuzz
       - name: Require BMI2
