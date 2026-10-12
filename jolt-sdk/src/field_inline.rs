@@ -32,10 +32,11 @@ use crate::{
 ///
 /// jolt-host's field-inline guest builds receive the tracer's execution field
 /// through [`FIELD_INLINE_MODULUS_ENV`](crate::FIELD_INLINE_MODULUS_ENV); builds
-/// without it assume BN254, the field of the SDK's Dory prover. Every limb
-/// conversion proves in-guest that this is the field executing the guest, so
-/// no proof exists for a guest built for the wrong field that runs one. Reading
-/// this constant directly proves nothing about the executing field.
+/// without it assume BN254, the field of the SDK's Dory prover. Every successful
+/// limb conversion proves in-guest that this is the field executing the guest.
+/// An invalid import can panic before the binding, producing a provable guest
+/// panic even under a different field. Reading this constant directly proves
+/// nothing about the executing field.
 // `option_env!` takes a literal: this spells `FIELD_INLINE_MODULUS_ENV`. A
 // misspelling would make Akita guests assume BN254 and fail that binding.
 pub const MODULUS: FieldInlineModulus = match option_env!("JOLT_FIELD_INLINE_MODULUS") {

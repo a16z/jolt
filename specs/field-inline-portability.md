@@ -109,9 +109,9 @@ The verifier checks instruction-profile legality and operand shapes on these
 rows. Proof configuration binds the field-inline and commitment modes; the
 commitment mode selects the proof field. Guests see that field as
 `jolt::field_inline::MODULUS`: jolt-host passes the tracer's execution field
-to field-inline guest builds, and every SDK limb conversion proves in-guest
-that the guest's modulus is the proof field's (protocol spec, "Guest Field
-Selection").
+to field-inline guest builds, and every successful SDK limb conversion proves
+in-guest that the guest's modulus is the proof field's. Invalid imports may
+panic before this binding (protocol spec, "Guest Field Selection").
 
 Guest ingress and readout still use u64 limbs because the integer register
 file is RV64; these instruction operands are independent of the commitment

@@ -1014,10 +1014,12 @@ The guest-visible modulus has one owner chain:
   gives each field its own cargo target directory.
 - jolt-sdk reads the variable at compile time into
   `jolt::field_inline::MODULUS`, defaulting to BN254, the SDK's Dory field.
-- Every conversion's binding proves the guest's choice. A guest built for the
-  other field, for example by `jolt build` without the variable and then
-  traced for Akita, fails the binding's `FIELD_ASSERT_ZERO` at trace time and
-  has no proof. It cannot silently accept noncanonical limbs.
+- Every successful conversion binds the guest's choice. A conversion that
+  reaches the binding under the other field, for example after `jolt build`
+  without the variable and then tracing for Akita, fails the binding's
+  `FIELD_ASSERT_ZERO` and has no proof. Invalid imports can panic before the
+  binding; that ordinary guest panic is provable even under a different field.
+  No successful conversion can silently accept noncanonical limbs.
 
 The binding runs per conversion rather than once at guest entry: an entry-time
 check would add field rows to every field-inline guest, including those with no

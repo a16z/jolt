@@ -2,8 +2,8 @@
 //!
 //! The tracer names the field it executes over, jolt-host forwards that name to
 //! field-inline guest builds through [`FIELD_INLINE_MODULUS_ENV`], and every
-//! jolt-sdk limb conversion proves in-guest that the field the guest was
-//! compiled for is the executing field.
+//! successful jolt-sdk limb conversion proves in-guest that the guest's selected
+//! field is the executing field.
 
 /// Environment variable through which jolt-host tells a guest build which
 /// proof field executes its field instructions.

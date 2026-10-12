@@ -297,9 +297,11 @@ macro_rules! field_to_limbs {
 /// [`field_load_imm!`] and accumulate with
 /// [`field_load_accumulate_from_register!`].
 ///
-/// The macro resets the register to zero, proves the guest was built for the
-/// executing proof field (see [`field_inline::MODULUS`]), and accumulates the
-/// limbs most significant first, so repeated imports replace the value.
+/// Invalid imports panic before the field binding; that panic is provable even
+/// under a different proof field. For canonical inputs, the macro resets the
+/// register to zero, proves the guest was built for the executing proof field
+/// (see [`field_inline::MODULUS`]), and accumulates the limbs most significant
+/// first, so repeated imports replace the value.
 ///
 /// # Cost and clobbers
 ///
