@@ -123,7 +123,7 @@ impl Invariant for SoundnessInvariant {
             "For any deterministic guest program (no advice inputs or runtime advice) \
              and fixed input, there is only one (output, panic) pair that the \
              verifier accepts. The guest must not read advice via \
-             VirtualAdviceLoad or VirtualAdviceLen instructions. \
+             VirtualAdviceLoad instructions. \
              A counterexample is a guest patch + input + dishonest (output, panic) \
              claim that the verifier incorrectly accepts. \
              For full context, read the invariant file: jolt-eval/src/invariant/soundness.rs \n\n\
@@ -168,7 +168,7 @@ impl Invariant for SoundnessInvariant {
 
         if let Some(pos) = trace
             .iter()
-            .position(|c| matches!(c, Cycle::VirtualAdviceLoad(_) | Cycle::VirtualAdviceLen(_)))
+            .position(|c| matches!(c, Cycle::VirtualAdviceLoad(_)))
         {
             return Err(CheckError::InvalidInput(format!(
                 "guest uses runtime advice (cycle {pos}): \

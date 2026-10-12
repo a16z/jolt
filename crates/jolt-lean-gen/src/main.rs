@@ -100,8 +100,7 @@ fn imm_width(name: &str) -> u32 {
         "BEQ" | "BNE" | "BLT" | "BGE" | "BLTU" | "BGEU" | "VirtualAssertEQ" => 13,
         "AUIPC" => 20,
         "JAL" => 21,
-        "LUI" | "VirtualMULI" | "VirtualMULIW" | "VirtualAdvice" | "VirtualAdviceLoad"
-        | "VirtualAdviceLen" => 64,
+        "LUI" | "VirtualMULI" | "VirtualMULIW" | "VirtualAdvice" | "VirtualAdviceLoad" => 64,
         _ => 12,
     }
 }
@@ -170,7 +169,7 @@ fn lean_instr(
             format!("{} {imm} {align_fault}", regidx(o.rs1))
         }
         "SD" | "SB" | "SH" | "SW" => format!("{rs1} {rs2} {imm}"),
-        "VirtualAdvice" | "VirtualAdviceLoad" | "VirtualAdviceLen" => format!("{rd} {imm}"),
+        "VirtualAdvice" | "VirtualAdviceLoad" => format!("{rd} {imm}"),
         "AUIPC" | "JAL" | "LUI" => format!("{rd} {imm}"),
         "JALR" => format!("{rd} {rs1} {imm}"),
         "VirtualAssertValidDiv0"
@@ -445,10 +444,7 @@ fn load_class_and_align_fault(kind: SourceInstructionKind) -> (&'static str, &'s
 }
 
 fn is_advice_row(name: &str) -> bool {
-    matches!(
-        name,
-        "VirtualAdvice" | "VirtualAdviceLoad" | "VirtualAdviceLen"
-    )
+    matches!(name, "VirtualAdvice" | "VirtualAdviceLoad")
 }
 
 fn render_rows(

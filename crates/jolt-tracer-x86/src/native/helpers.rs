@@ -356,12 +356,6 @@ pub extern "sysv64" fn advice_compute(state: *mut GuestState, job_index: u64) ->
     }
 }
 
-/// `VirtualAdviceLen`: bytes left on the advice tape.
-pub extern "sysv64" fn advice_remaining(state: *mut GuestState) -> u64 {
-    let (_state, host) = host_context(state);
-    host.advice_tape.len().saturating_sub(host.advice_cursor) as u64
-}
-
 /// `VirtualAdviceLoad`: read `num_bytes` (1/2/4/8) little-endian from the
 /// tape, zero-filled; exhaustion is a helper error (the interpreter panics).
 pub extern "sysv64" fn advice_read(state: *mut GuestState, num_bytes: u64) -> u64 {

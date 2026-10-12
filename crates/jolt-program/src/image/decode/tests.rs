@@ -393,6 +393,7 @@ fn rejects_invalid_encodings_with_exact_messages() {
             (0b00010 << 27) | (0b11 << 25) | (31 << 20) | (0b011 << 12) | 0x2f,
             "invalid LR rs2",
         ),
+        (0x0800_00db, "invalid custom instruction"),
         ((0x3f << 25) | 0x5b, "invalid custom instruction"),
         (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),
         (0x0f | (0b010 << 12), "invalid MISC-MEM funct3"),

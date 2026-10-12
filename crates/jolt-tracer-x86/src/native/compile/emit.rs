@@ -1082,10 +1082,6 @@ impl DynasmEmitter {
                 );
                 e.store_rd(RAX, row.operands.rd);
             }
-            K::VirtualAdviceLen(_) => {
-                e.call_helper(helpers::advice_remaining as *const () as usize);
-                e.store_rd(RAX, row.operands.rd);
-            }
             K::VirtualAdviceLoad(_) => {
                 // num_bytes is a static row immediate (1, 2, 4 or 8); the helper
                 // errors on tape exhaustion (interpreter panics there).

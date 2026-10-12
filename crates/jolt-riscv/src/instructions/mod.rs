@@ -120,7 +120,6 @@ pub use virt::ShiftDataB;
 pub use virt::ShiftDataH;
 pub use virt::ShiftDataW;
 pub use virt::VirtualAdvice;
-pub use virt::VirtualAdviceLen;
 pub use virt::VirtualAdviceLoad;
 pub use virt::VirtualHostIO;
 pub use virt::VirtualNegateIf;
@@ -435,7 +434,6 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     ShiftDataW(ShiftDataW<T>),
     VirtualXorRotL1(VirtualXorRotL1<T>),
     VirtualAdvice(VirtualAdvice<T>),
-    VirtualAdviceLen(VirtualAdviceLen<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
     #[cfg(feature = "field-inline")]
@@ -661,7 +659,6 @@ impl_jolt_instructions_flags! {
     ShiftDataW => VirtualShiftDataW,
     VirtualXorRotL1 => VirtualXORROTL1,
     VirtualAdvice => VirtualAdvice,
-    VirtualAdviceLen => VirtualAdviceLen,
     VirtualAdviceLoad => VirtualAdviceLoad,
     VirtualHostIO => VirtualHostIO,
     #[cfg(feature = "field-inline")]

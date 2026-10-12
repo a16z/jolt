@@ -107,7 +107,6 @@ const SUPPORTED: &[&str] = &[
     "AssertValidUnsignedRemainder",
     "AssertMulUNoOverflow",
     "VirtualNegateIf",
-    "VirtualAdviceLen",
     "VirtualAdviceLoad",
     "AddW",
     "AddiW",
@@ -536,14 +535,6 @@ fn negate_if(rng: &mut StdRng) -> Instance {
     i
 }
 
-fn advice_len(rng: &mut StdRng) -> Instance {
-    let mut i = base_instance(rng, kind_by_name("VirtualAdviceLen"));
-    i.row.operands.rs1 = Some(reg(rng));
-    i.row.operands.rd = Some(rd(rng));
-    i.advice = (0..rng.gen_range(0..64)).map(|_| rng.gen()).collect();
-    i
-}
-
 fn advice_load(rng: &mut StdRng) -> Instance {
     let mut i = base_instance(rng, kind_by_name("VirtualAdviceLoad"));
     i.row.operands.rd = Some(rd(rng));
@@ -737,7 +728,6 @@ difftests! {
     diff_assert_valid_unsigned_remainder => assert_valid_unsigned_remainder;
     diff_assert_mulu_no_overflow => assert_mulu_no_overflow;
     diff_negate_if => negate_if;
-    diff_advice_len => advice_len;
     diff_advice_load => advice_load;
     diff_addw => |r| alu_rr(r, K::ADDW);
     diff_subw => |r| alu_rr(r, K::SUBW);
@@ -772,5 +762,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 88);
+    assert_eq!(SUPPORTED.len(), 87);
 }

@@ -16,8 +16,6 @@ pub const FUNCT7_ADVICE_LH: u32 = 0x01;
 pub const FUNCT7_ADVICE_LW: u32 = 0x02;
 #[doc(hidden)]
 pub const FUNCT7_ADVICE_LD: u32 = 0x03;
-#[doc(hidden)]
-pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get number of remaining bytes in advice tape
 
 #[doc(hidden)]
 pub const FIELD_INLINE_OPCODE: u32 = 0x7b;
@@ -539,25 +537,6 @@ impl AdviceReader {
     }
     #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
     pub fn read_u64(&mut self) -> u64 {
-        panic!("Advice tape I/O is not supported on non-RISC-V targets");
-    }
-    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-    pub fn bytes_remaining(&mut self) -> u64 {
-        let remaining: u64;
-        unsafe {
-            core::arch::asm!(
-                ".insn r {opcode}, {funct3}, {funct7}, {rd}, x0, x0",
-                opcode = const CUSTOM_OPCODE,
-                funct3 = const FUNCT3_VIRTUAL_R,
-                funct7 = const FUNCT7_ADVICE_LEN,
-                rd = out(reg) remaining,
-                options(nostack)
-            );
-        }
-        remaining
-    }
-    #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-    pub fn bytes_remaining(&mut self) -> u64 {
         panic!("Advice tape I/O is not supported on non-RISC-V targets");
     }
     // Fill the provided buffer with advice data read from the advice tape
