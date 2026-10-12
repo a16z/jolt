@@ -26,7 +26,7 @@ use jolt_akita::schedule_registry::{
 };
 use jolt_akita::schedules::emit::{
     family_specs, one_hot_keys, K16_COLUMN_VARIABLES, K16_NUM_VARS, K256_COLUMN_VARIABLES,
-    RECURSIVE_TRACE_LOG_T_CUTOVER,
+    ONE_HOT_SCALAR_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
 };
 use jolt_akita::{
     AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
@@ -330,31 +330,46 @@ fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
         .any(|fold| fold.params.setup_prefix().is_some())
 }
 
+/// Below the cutover every trace row is direct; at or above it every Single
+/// trace row offloads its setup. Multi-chunk rows above the cutover follow the
+/// planner's objective and are not constrained here.
 #[test]
 fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
-    for (catalog, column_variables, num_polys) in [
-        (
-            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single),
-            K16_COLUMN_VARIABLES,
-            51,
-        ),
-        (
-            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaChunkProfile::Single),
-            K256_COLUMN_VARIABLES,
-            27,
-        ),
+    for (one_hot_k, column_variables) in [
+        (AKITA_ONE_HOT_K16, K16_COLUMN_VARIABLES),
+        (AKITA_ONE_HOT_K256, K256_COLUMN_VARIABLES),
     ] {
         let cutover_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + column_variables;
-        assert!(!uses_setup_offloading(&trace_schedule(
-            &catalog,
-            cutover_num_vars - 1,
-            num_polys,
-        )));
-        assert!(uses_setup_offloading(&trace_schedule(
-            &catalog,
-            cutover_num_vars,
-            num_polys,
-        )));
+        for profile in [
+            AkitaChunkProfile::Single,
+            AkitaChunkProfile::Two,
+            AkitaChunkProfile::Four,
+            AkitaChunkProfile::Eight,
+        ] {
+            let catalog = one_hot_catalog(one_hot_k, profile);
+            let trace_keys = one_hot_keys(one_hot_k, profile)
+                .expect("one-hot keys")
+                .into_iter()
+                .filter(|key| !ONE_HOT_SCALAR_NUM_POLYS.contains(&key.num_polynomials()));
+            for key in trace_keys {
+                let offloaded = uses_setup_offloading(&trace_schedule(
+                    &catalog,
+                    key.num_vars(),
+                    key.num_polynomials(),
+                ));
+                if key.num_vars() < cutover_num_vars {
+                    assert!(
+                        !offloaded,
+                        "K={one_hot_k} {profile:?} {key:?} offloads below the cutover"
+                    );
+                } else if profile == AkitaChunkProfile::Single {
+                    assert!(
+                        offloaded,
+                        "K={one_hot_k} Single {key:?} stays direct at or above the cutover"
+                    );
+                }
+            }
+        }
     }
 }
 

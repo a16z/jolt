@@ -39,11 +39,11 @@ The legacy `Single` verifier-setup encoding remains unchanged.
 
 The one-hot artifacts are hybrid catalogs. A logical trace shorter than
 `2^21` uses a direct schedule. Rows for `2^21` cycles or longer are planned
-with setup offloading available, and the planner selects it for every Single
-row. Next to the cutover it keeps some multi-chunk rows direct, at every
-width: W2R2 at `2^22`, W4R2 at `2^21` and `2^22`, and W8R2 at `2^21`.
-Akita uses K=16 committed chunks at every trace
-length, with catalog coverage through `2^31`. Virtual lookup chunks are 16 bits
+with setup offloading available: every Single trace row uses it, and the
+planner may keep multi-chunk trace rows next to the cutover direct.
+`one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover` checks both
+rules for every emitted trace key. Akita uses K=16 committed chunks at every
+trace length, with catalog coverage through `2^31`. Virtual lookup chunks are 16 bits
 below `2^25` and 32 bits at or above it. The K=256 catalogs retain explicit native trace test and benchmark keys plus
 the scalar adapter/planner grid; they do not provide a general native trace range.
 This is an offline catalog policy: proving and verification simply
