@@ -23,8 +23,8 @@ impl SCD {
         let address = cpu.x[self.operands.rs1 as usize] as u64;
         let value = cpu.x[self.operands.rs2 as usize] as u64;
 
-        // Per RISC-V A spec, SC.D needs the reservation set to cover the 8
-        // bytes being written. LR.D (8-byte) qualifies; LR.W (4-byte) does not.
+        // Jolt deterministically succeeds for a matching doubleword reservation;
+        // a word reservation is too narrow, and spurious failures are not modeled.
         if cpu.reservation_covers(address, ReservationWidth::Doubleword) {
             let result = cpu.mmu.store_doubleword(address, value);
 
@@ -45,29 +45,7 @@ impl SCD {
 
 impl RISCVTrace for SCD {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let address = cpu.x[self.operands.rs1 as usize] as u64;
-        // See SCD::exec — SC.D needs an 8-byte reservation set.
-        let success = cpu.reservation_covers(address, ReservationWidth::Doubleword);
-
-        // Patch v_success (1=success, 0=failure) into the first VirtualAdvice
-        // in the sequence, on a per-execution copy of the row. Locating it by
-        // type avoids fragility against changes to the sequence's prelude.
-        let mut trace = trace;
-        let mut patched = false;
-        cpu.with_cached_inline_sequence(&Instruction::from(*self), |cpu, rows| {
-            for instr in rows {
-                let mut instr = *instr;
-                if !patched {
-                    if let Instruction::VirtualAdvice(v) = &mut instr {
-                        v.advice = success as u64;
-                        patched = true;
-                    }
-                }
-                instr.trace(cpu, trace.as_deref_mut());
-            }
-        });
-        assert!(patched, "SC.D inline sequence must contain a VirtualAdvice");
-
+        super::trace_inline_sequence(&Instruction::from(*self), cpu, trace);
         cpu.clear_reservation();
     }
 }
