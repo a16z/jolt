@@ -181,7 +181,21 @@ Two PRs, landed together. Akita pins the Jolt PR's revision.
 - Grinding: tests for accept, reject, an out-of-range nonce, and a wrong seed.
 - `cargo tree -e features` contains no `yolocrypto` in either workspace.
 
+## Cost
+
+Squeeze-then-grind costs the verifier more hashing than a preview did. Each
+grinding site with nonzero difficulty squeezes a seed from the live state,
+absorbs the nonce, builds and squeezes one fork, and then squeezes the
+protected challenge; a preview squeezed the predicate and the challenge from
+one live squeeze phase. On the spongefish Blake2b sponge that is about five
+more compressions per site. Akita's proofs carry several hundred such sites,
+which measures at 0.4 ms (about 20%) of single-threaded Akita verification
+for an fp64 dense opening at 2^16 to 2^20 coefficients (Akita
+`specs/transcript-grinding.md`, Cost). It is the price of keeping
+spongefish's duplex state private. Squeezes split into 32-byte blocks, then
+8-byte words, then bytes; the split never changes the output stream.
+
 ## Unverified
 
-- Prover cost of squeeze-then-grind versus the current transition. Both hash
-  one block per candidate, so parity is expected.
+- Prover cost of squeeze-then-grind versus the preview transition. Both hash
+  one block per candidate, so parity is expected; not measured.

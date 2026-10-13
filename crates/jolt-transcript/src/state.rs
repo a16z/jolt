@@ -17,6 +17,9 @@ pub(crate) const SMALL_CHALLENGE_BYTES: usize = 16;
 /// Width of the squeeze blocks a challenge is drawn in.
 const SQUEEZE_BLOCK: usize = 32;
 
+/// Width of the squeezes that follow the whole blocks.
+const SQUEEZE_WORD: usize = 8;
+
 /// Width of the blocks a known-length byte message is sent and read in. Both
 /// roles split identically, then the remainder byte by byte, so every sponge
 /// sees the same absorb calls on both sides.
@@ -77,15 +80,21 @@ pub(crate) trait Squeeze {
     }
 }
 
-/// Squeezes `out` in whole blocks, then single bytes; both roles squeeze
-/// through here, so they make the same squeeze calls.
+/// Squeezes `out` in whole blocks, then words, then single bytes; both roles
+/// squeeze through here, so they make the same squeeze calls. Every sponge's
+/// output stream is independent of how its squeezes are split, so the split
+/// only sets the per-call overhead: exact challenges draw `u64` words.
 macro_rules! squeeze_blocks {
     ($state:expr, $out:expr) => {{
         let mut blocks = $out.chunks_exact_mut(SQUEEZE_BLOCK);
         for block in &mut blocks {
             block.copy_from_slice(&$state.verifier_message::<[u8; SQUEEZE_BLOCK]>());
         }
-        for byte in blocks.into_remainder() {
+        let mut words = blocks.into_remainder().chunks_exact_mut(SQUEEZE_WORD);
+        for word in &mut words {
+            word.copy_from_slice(&$state.verifier_message::<[u8; SQUEEZE_WORD]>());
+        }
+        for byte in words.into_remainder() {
             [*byte] = $state.verifier_message::<[u8; 1]>();
         }
     }};
