@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::{
-    CircuitFlags, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow, RV64IMAC_JOLT,
-};
+use jolt_riscv::{CircuitFlags, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -256,30 +254,8 @@ impl ExecutionDimensions {
     /// Summarize existing rows. Execution backends can instead collect
     /// these facts while producing rows and return them with an opaque handle.
     pub fn from_rows(rows: &[JoltTraceRow]) -> Self {
-        Self::summarize(
-            rows,
-            rows.last()
-                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
-            |row| (row.is_load() || row.is_store()).then(|| row.ram_address()),
-        )
-    }
-
-    pub fn from_compact(rows: &[JoltTraceRow]) -> Self {
-        Self::summarize(
-            rows,
-            rows.last()
-                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
-            |row| (row.is_load() || row.is_store()).then(|| row.ram_address()),
-        )
-    }
-
-    fn summarize<R: Sync>(
-        rows: &[R],
-        ends_in_jump: bool,
-        ram_address: impl Fn(&R) -> Option<u64> + Sync,
-    ) -> Self {
-        let observe = |mut bounds: RamAddressBounds, row: &R| {
-            bounds.observe(ram_address(row).unwrap_or(0));
+        let observe = |mut bounds: RamAddressBounds, row: &JoltTraceRow| {
+            bounds.observe(row.ram_address());
             bounds
         };
         #[cfg(feature = "parallel")]
@@ -294,7 +270,9 @@ impl ExecutionDimensions {
         let ram_bounds = rows.iter().fold(RamAddressBounds::default(), observe);
         Self {
             trace_length: rows.len(),
-            ends_in_jump,
+            ends_in_jump: rows
+                .last()
+                .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
             ram_bounds,
         }
     }

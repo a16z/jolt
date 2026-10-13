@@ -252,15 +252,13 @@ mod dimension_tests {
     use super::*;
     use common::jolt_device::MemoryConfig;
     use jolt_field::Fr;
-    use jolt_program::execution::{JoltTraceRow, RamAccess, RamAddressBounds};
+    use jolt_program::execution::RamAddressBounds;
+    use jolt_riscv::{JoltTraceRow, RamAccess};
 
     #[test]
     fn execution_summaries_preserve_address_validation() {
-        use jolt_program::execution::{RamRead, RamWrite};
-        use jolt_riscv::{
-            CapturedState, JoltInstructionKind, JoltInstructionRow, JoltTraceRow, LoadState,
-            StoreState,
-        };
+        use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
+        use jolt_riscv::{RamRead, RamWrite};
         let layout = MemoryLayout::new(&MemoryConfig {
             program_size: Some(1024),
             ..Default::default()
@@ -273,7 +271,7 @@ mod dimension_tests {
                 [lowest - 1, lowest + 64, 0],
                 [lowest + 64, lowest - 1, 0],
             ] {
-                let (mut rows, mut compact): (Vec<_>, Vec<_>) = (0..length)
+                let mut rows: Vec<_> = (0..length)
                     .map(|index| {
                         let address = addresses[index % addresses.len()];
                         let store = index % 2 == 1;
@@ -285,34 +283,18 @@ mod dimension_tests {
                             },
                             ..Default::default()
                         };
-                        let (ram, state) = if store {
-                            (
-                                RamAccess::Write(RamWrite {
-                                    address,
-                                    ..Default::default()
-                                }),
-                                CapturedState::Store(StoreState {
-                                    ram_address: address,
-                                    ..Default::default()
-                                }),
-                            )
+                        let ram = if store {
+                            RamAccess::Write(RamWrite {
+                                address,
+                                ..Default::default()
+                            })
                         } else {
-                            (
-                                RamAccess::Read(RamRead { address, value: 0 }),
-                                CapturedState::Load(LoadState {
-                                    ram_address: address,
-                                    ..Default::default()
-                                }),
-                            )
+                            RamAccess::Read(RamRead { address, value: 0 })
                         };
-                        (
-                            JoltTraceRow::new(instruction, Default::default(), ram, 1)
-                                .expect("valid row"),
-                            JoltTraceRow::from_components(state, &instruction, 1)
-                                .expect("valid compact row"),
-                        )
+                        JoltTraceRow::new(instruction, Default::default(), ram, 1)
+                            .expect("valid row")
                     })
-                    .unzip();
+                    .collect();
                 let jump = JoltInstructionRow {
                     instruction_kind: JoltInstructionKind::JAL,
                     ..Default::default()
@@ -321,12 +303,7 @@ mod dimension_tests {
                     JoltTraceRow::new(jump, Default::default(), RamAccess::NoOp, 1)
                         .expect("jump row"),
                 );
-                compact.push(
-                    JoltTraceRow::from_components(CapturedState::default(), &jump, 1)
-                        .expect("compact jump"),
-                );
                 let dimensions = ExecutionDimensions::from_rows(&rows);
-                assert_eq!(dimensions, ExecutionDimensions::from_compact(&compact));
                 assert_eq!(
                     dimensions.ram_bounds.min(),
                     addresses.iter().copied().filter(|a| *a != 0).min()
@@ -443,9 +420,7 @@ mod tests {
     use jolt_field::Fr;
     use jolt_program::execution::ExecutionDimensions;
     use jolt_riscv::JoltInstructionKind as Kind;
-    use jolt_riscv::{
-        CapturedState, JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess,
-    };
+    use jolt_riscv::{JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess};
 
     use super::ProverConfig;
     use crate::ProverError;
@@ -461,32 +436,19 @@ mod tests {
         }
     }
 
-    fn derive_both(trace: &[JoltInstructionRow]) -> [Result<ProverConfig, ProverError<Fr>>; 2] {
+    fn derive(trace: &[JoltInstructionRow]) -> Result<ProverConfig, ProverError<Fr>> {
         let rows: Vec<JoltTraceRow> = trace
             .iter()
             .map(|&row| JoltTraceRow::new(row, Default::default(), RamAccess::NoOp, 1).unwrap())
             .collect();
-        let compact: Vec<JoltTraceRow> = trace
-            .iter()
-            .map(|row| JoltTraceRow::from_components(CapturedState::default(), row, 1).unwrap())
-            .collect();
         let layout = MemoryLayout::default();
-        [
-            ProverConfig::derive_from_dimensions(
-                ExecutionDimensions::from_rows(&rows),
-                &layout,
-                TEXT_BASE,
-                0,
-                1 << 12,
-            ),
-            ProverConfig::derive_from_dimensions(
-                ExecutionDimensions::from_compact(&compact),
-                &layout,
-                TEXT_BASE,
-                0,
-                1 << 12,
-            ),
-        ]
+        ProverConfig::derive_from_dimensions(
+            ExecutionDimensions::from_rows(&rows),
+            &layout,
+            TEXT_BASE,
+            0,
+            1 << 12,
+        )
     }
 
     fn addi() -> JoltInstructionRow {
@@ -513,13 +475,12 @@ mod tests {
         );
         // A taken self-branch, and the last row before a trap that emitted none.
         for last in [self_branch, addi()] {
-            for result in derive_both(&[addi(), last]) {
-                assert!(
-                    matches!(result, Err(ProverError::TraceDoesNotEndInJump)),
-                    "{:?}: {result:?}",
-                    last.instruction_kind
-                );
-            }
+            let result = derive(&[addi(), last]);
+            assert!(
+                matches!(result, Err(ProverError::TraceDoesNotEndInJump)),
+                "{:?}: {result:?}",
+                last.instruction_kind
+            );
         }
     }
 
@@ -534,9 +495,8 @@ mod tests {
             },
         );
         for last in [jal, jalr] {
-            for result in derive_both(&[addi(), last]) {
-                assert!(result.is_ok(), "{:?}: {result:?}", last.instruction_kind);
-            }
+            let result = derive(&[addi(), last]);
+            assert!(result.is_ok(), "{:?}: {result:?}", last.instruction_kind);
         }
     }
 }
