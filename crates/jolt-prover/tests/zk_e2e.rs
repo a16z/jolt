@@ -27,7 +27,6 @@ mod zk {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, Ring};
-    use jolt_program::execution::OwnedTrace;
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_riscv::JoltTraceRow;
@@ -55,8 +54,8 @@ mod zk {
     }
 
     fn derive_config(run: &PreparedGuest) -> ProverConfig {
-        ProverConfig::derive_compact::<Fr>(
-            run.trace.trace.as_slice(),
+        ProverConfig::derive::<Fr>(
+            run.trace.trace.proof_rows(),
             &run.preprocessing.memory_layout,
             run.preprocessing.ram.min_bytecode_address,
             run.preprocessing.ram.bytecode_words.len(),
@@ -71,7 +70,7 @@ mod zk {
         inspect_trace: impl FnOnce(&[JoltTraceRow]),
     ) -> ProvedGuest {
         let run = support::prepare(&case);
-        inspect_trace(run.trace.trace.as_slice());
+        inspect_trace(run.trace.trace.proof_rows());
         let mut config = derive_config(&run);
         // Exercise inactive cycle rounds and RAF claim scaling through BlindFold.
         config.rw_config.ram_rw_phase1_num_rounds = 0;
@@ -83,7 +82,7 @@ mod zk {
             .program_arc()
             .expect("full program preprocessing");
         let public_io = run.trace.device.clone();
-        let witness = TraceBackend::<OwnedTrace>::from_compact(
+        let witness = TraceBackend::new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
@@ -160,7 +159,7 @@ mod zk {
                 .expect("committed preprocessing");
             let program_preprocessing = preprocessing.program_arc().expect("retained full program");
             let public_io = run.trace.device.clone();
-            let witness = TraceBackend::<OwnedTrace>::from_compact(
+            let witness = TraceBackend::new(
                 JoltVmWitnessConfig::new(
                     config.trace_length.ilog2() as usize,
                     config.ram_K,

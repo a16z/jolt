@@ -4,11 +4,11 @@
 //!
 //! Field-inline witness values are decoded field elements, so the newtypes
 //! carry `F` and the value accessor is [`FieldValue`] (the analog of the
-//! scalar witnesses' `ToField`). Rows without a field-inline payload
-//! extract to zero / false.
+//! scalar witnesses' `ToField`). The trace view supplies zero for cycles
+//! without a field-inline payload.
 
 use jolt_field::{CanonicalEncoding, JoltField};
-use jolt_program::{execution::TraceRow, field_inline::FieldEncodedValue};
+use jolt_program::field_inline::{FieldEncodedValue, FieldInlineTraceData};
 
 use crate::witnesses::{Extract, WitnessEnv};
 use crate::WitnessError;
@@ -63,55 +63,48 @@ field_value!(
     FieldRdInc,
 );
 
-impl<F: JoltField> Extract<TraceRow> for FieldRs1Value<F> {
+impl<F: JoltField> Extract<FieldInlineTraceData> for FieldRs1Value<F> {
     fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
+        row: &FieldInlineTraceData,
+        _next: Option<&FieldInlineTraceData>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.field_inline.as_deref().map_or_else(F::zero, {
-            |data| {
-                data.rs1
-                    .map_or_else(F::zero, |read| decode_value(read.value))
-            }
+        Ok(Self(
+            row.rs1
+                .map_or_else(F::zero, |read| decode_value(read.value)),
+        ))
+    }
+}
+
+impl<F: JoltField> Extract<FieldInlineTraceData> for FieldRs2Value<F> {
+    fn extract(
+        row: &FieldInlineTraceData,
+        _next: Option<&FieldInlineTraceData>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(
+            row.rs2
+                .map_or_else(F::zero, |read| decode_value(read.value)),
+        ))
+    }
+}
+
+impl<F: JoltField> Extract<FieldInlineTraceData> for FieldRdValue<F> {
+    fn extract(
+        row: &FieldInlineTraceData,
+        _next: Option<&FieldInlineTraceData>,
+        _env: &WitnessEnv<'_>,
+    ) -> Result<Self, WitnessError> {
+        Ok(Self(row.rd.map_or_else(F::zero, |write| {
+            decode_value(write.post_value)
         })))
     }
 }
 
-impl<F: JoltField> Extract<TraceRow> for FieldRs2Value<F> {
+impl<F: JoltField> Extract<FieldInlineTraceData> for FieldProduct<F> {
     fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        Ok(Self(row.field_inline.as_deref().map_or_else(F::zero, {
-            |data| {
-                data.rs2
-                    .map_or_else(F::zero, |read| decode_value(read.value))
-            }
-        })))
-    }
-}
-
-impl<F: JoltField> Extract<TraceRow> for FieldRdValue<F> {
-    fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        Ok(Self(row.field_inline.as_deref().map_or_else(F::zero, {
-            |data| {
-                data.rd
-                    .map_or_else(F::zero, |write| decode_value(write.post_value))
-            }
-        })))
-    }
-}
-
-impl<F: JoltField> Extract<TraceRow> for FieldProduct<F> {
-    fn extract(
-        row: &TraceRow,
-        next: Option<&TraceRow>,
+        row: &FieldInlineTraceData,
+        next: Option<&FieldInlineTraceData>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let rs1 = FieldRs1Value::<F>::extract(row, next, env)?.0;
@@ -120,10 +113,10 @@ impl<F: JoltField> Extract<TraceRow> for FieldProduct<F> {
     }
 }
 
-impl<F: JoltField> Extract<TraceRow> for FieldInvProduct<F> {
+impl<F: JoltField> Extract<FieldInlineTraceData> for FieldInvProduct<F> {
     fn extract(
-        row: &TraceRow,
-        next: Option<&TraceRow>,
+        row: &FieldInlineTraceData,
+        next: Option<&FieldInlineTraceData>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         let rs1 = FieldRs1Value::<F>::extract(row, next, env)?.0;
@@ -132,20 +125,15 @@ impl<F: JoltField> Extract<TraceRow> for FieldInvProduct<F> {
     }
 }
 
-impl<F: JoltField> Extract<TraceRow> for FieldRdInc<F> {
+impl<F: JoltField> Extract<FieldInlineTraceData> for FieldRdInc<F> {
     fn extract(
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
+        row: &FieldInlineTraceData,
+        _next: Option<&FieldInlineTraceData>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(
-            row.field_inline
-                .as_deref()
-                .and_then(|data| data.rd)
-                .map_or_else(F::zero, |write| {
-                    decode_value::<F>(write.post_value) - decode_value::<F>(write.pre_value)
-                }),
-        ))
+        Ok(Self(row.rd.map_or_else(F::zero, |write| {
+            decode_value::<F>(write.post_value) - decode_value::<F>(write.pre_value)
+        })))
     }
 }
 

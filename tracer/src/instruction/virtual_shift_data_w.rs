@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualShiftDataW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualShiftDataW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualShiftDataW as RISCVInstruction>::RamAccess) {
         // Store word moved into its lane within the containing doubleword:
         // rs1 holds the store value, rs2 the effective address.
         let x = cpu.x[self.operands.rs1 as usize] as u64;

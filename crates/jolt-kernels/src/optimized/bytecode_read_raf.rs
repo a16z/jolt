@@ -1037,7 +1037,7 @@ struct BytecodePcChunks {
 }
 
 impl ChunkIndexSource for BytecodePcChunks {
-    fn num_polys(&self) -> usize {
+    fn num_columns(&self) -> usize {
         self.selectors.len()
     }
 
@@ -1364,7 +1364,6 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
     use jolt_field::{Fr, Ring};
-    use jolt_program::execution::OwnedTrace;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use jolt_verifier::stages::relations::SumcheckInputPoints;
@@ -1400,13 +1399,13 @@ mod tests {
     /// the reference and optimized field-inline folds surfaces here rather than only at
     /// the e2e.
     #[cfg(feature = "field-inline")]
-    fn run_pair_with_field_inline_program(f: impl FnOnce(&TraceBackend<OwnedTrace>)) {
+    fn run_pair_with_field_inline_program(f: impl FnOnce(&TraceBackend)) {
         structured_field_register_fixture(12).with_plane(4, |backend| {
             f(backend);
         });
     }
 
-    fn run_pair_on(backend: &TraceBackend<OwnedTrace>, committed_program: bool) {
+    fn run_pair_on(backend: &TraceBackend, committed_program: bool) {
         {
             let log_t = JoltWitnessOracle::<Fr>::shape(
                 backend,

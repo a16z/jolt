@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualMULIW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMULIW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualMULIW as RISCVInstruction>::RamAccess) {
         let product = cpu.x[self.operands.rs1 as usize].wrapping_mul(self.operands.imm as i64);
         cpu.write_register(self.operands.rd as usize, product as u32 as i32 as i64);
     }

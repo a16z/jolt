@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl SLTIU {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <SLTIU as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <SLTIU as RISCVInstruction>::RamAccess) {
         cpu.write_register(
             self.operands.rd as usize,
             match cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])

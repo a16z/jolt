@@ -79,6 +79,11 @@
 /// Version of the span label set documented in this module.
 pub const TAXONOMY_VERSION: u32 = 4;
 
+/// Proof configuration derived by the SDK and profile harness before entering
+/// [`ROOT_SPAN`]. Callers may supply their own configuration, so this is outside
+/// [`always_present_spans`]' per-prove presence contract.
+pub const CONFIG_DERIVATION_SPAN: &str = "ProverConfig::derive";
+
 /// The whole-run root span emitted by the Dory and Akita provers. Named
 /// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an
 /// inner opening-proof span. Carries `trace_length`; the dark-time and

@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualWindowMaskB {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualWindowMaskB as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualWindowMaskB as RISCVInstruction>::RamAccess) {
         let ea =
             cpu.x[self.operands.rs1 as usize].wrapping_add(normalize_imm(self.operands.imm)) as u64;
         let mask = 0xFFu64 << (8 * (ea & 7));

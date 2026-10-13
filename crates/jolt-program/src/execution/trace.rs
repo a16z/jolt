@@ -3,14 +3,13 @@ use std::sync::Arc;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 
-use super::{ExecutionBackend, TraceError, TraceSource};
+use super::{ExecutionBackend, TraceError};
 
-mod row;
+mod data;
 
-pub use row::{
-    RamAccess, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite, TraceRow,
-    TraceRowError,
-};
+#[cfg(feature = "field-inline")]
+pub use data::FieldEvent;
+pub use data::TraceData;
 
 /// A Jolt-ready program built from an RV64 ELF image.
 ///
@@ -136,7 +135,7 @@ impl JoltProgram {
         &self,
         backend: &mut B,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput<B::Trace>, TraceError> {
+    ) -> Result<TraceOutput, TraceError> {
         backend.trace(self, inputs)
     }
 }
@@ -185,8 +184,8 @@ pub struct MemoryImage {
 }
 
 #[derive(Debug, Clone)]
-pub struct TraceOutput<T> {
-    pub trace: T,
+pub struct TraceOutput {
+    pub trace: Arc<TraceData>,
     pub device: JoltDevice,
     pub final_memory: Option<MemoryImage>,
     /// The populated runtime advice tape captured at guest termination
@@ -194,72 +193,20 @@ pub struct TraceOutput<T> {
     pub advice_tape: Option<Vec<u8>>,
 }
 
-impl<T> TraceOutput<T> {
-    /// `advice_tape` is a required parameter so that a backend (or a
-    /// rebuild of an existing output) cannot silently discard a populated
-    /// tape — the seam this field exists to plug.
+impl TraceOutput {
+    /// `advice_tape` is a required parameter so that a backend cannot
+    /// silently discard a populated tape — the seam this field exists to plug.
     pub fn new(
-        trace: T,
+        trace: TraceData,
         device: JoltDevice,
         final_memory: Option<MemoryImage>,
         advice_tape: Option<Vec<u8>>,
     ) -> Self {
         Self {
-            trace,
+            trace: Arc::new(trace),
             device,
             final_memory,
             advice_tape,
         }
-    }
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct OwnedTrace {
-    rows: Arc<Vec<TraceRow>>,
-    next: usize,
-}
-
-impl OwnedTrace {
-    pub fn new(rows: Vec<TraceRow>) -> Self {
-        Self {
-            rows: Arc::new(rows),
-            next: 0,
-        }
-    }
-
-    pub fn rows(&self) -> &[TraceRow] {
-        self.rows.as_slice()
-    }
-
-    pub fn into_rows(self) -> Vec<TraceRow> {
-        match Arc::try_unwrap(self.rows) {
-            Ok(rows) => rows,
-            Err(rows) => rows.as_ref().clone(),
-        }
-    }
-}
-
-impl From<Vec<TraceRow>> for OwnedTrace {
-    fn from(rows: Vec<TraceRow>) -> Self {
-        Self::new(rows)
-    }
-}
-
-impl TraceSource for OwnedTrace {
-    fn next_row(&mut self) -> Option<TraceRow> {
-        #[cfg(not(feature = "field-inline"))]
-        let row = self.rows.get(self.next).copied();
-        #[cfg(feature = "field-inline")]
-        let row = self.rows.get(self.next).cloned();
-        self.next += usize::from(row.is_some());
-        row
-    }
-
-    fn rows(&self) -> Option<&[TraceRow]> {
-        (self.next == 0).then(|| self.rows.as_slice())
-    }
-
-    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
-        (self.next == 0).then(|| Arc::clone(&self.rows))
     }
 }

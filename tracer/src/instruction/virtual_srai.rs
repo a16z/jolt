@@ -18,7 +18,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualSRAI {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRAI as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRAI as RISCVInstruction>::RamAccess) {
         let shift = self.operands.imm.trailing_zeros();
         cpu.write_register(
             self.operands.rd as usize,

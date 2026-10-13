@@ -22,7 +22,7 @@ declare_riscv_instr!(
 );
 
 impl FIELD_ASSERT_EQ {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_ASSERT_EQ as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_ASSERT_EQ as RISCVInstruction>::RamAccess) {
         let rs1_register = self.operands.rs1.unwrap_or(0);
         let rs2_register = self.operands.rs2.unwrap_or(0);
         let rs1_value = cpu.field_registers.read(rs1_register);
