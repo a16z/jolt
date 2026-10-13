@@ -60,7 +60,7 @@ impl Extract for TableIndex {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let instruction = decode_instruction(row)?;
+        let instruction = decode_instruction(row);
         Ok(Self(
             <JoltInstruction as InstructionLookupTable<RV64_XLEN>>::lookup_table(&instruction)
                 .map(|kind| kind.index()),

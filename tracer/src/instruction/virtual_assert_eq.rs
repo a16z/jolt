@@ -15,7 +15,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualAssertEQ {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertEQ as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAssertEQ as RISCVInstruction>::RamAccess) {
         if self.operands.imm == 0 {
             assert_eq!(
                 cpu.x[self.operands.rs1 as usize],

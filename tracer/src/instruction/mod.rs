@@ -174,12 +174,17 @@ use virtual_zero_extend_word::VirtualZeroExtendWord;
 
 use self::inline::INLINE;
 
+use std::fmt::Debug;
+
 use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, NormalizedOperands};
 pub use jolt_riscv::JoltInstructionRow;
-use jolt_riscv::{JoltInstructionKind, SourceInlineKey, SourceInstructionKind, RV64IMAC_JOLT};
+use jolt_riscv::{
+    JoltInstructionKind, RamAccess, RamRead, RamWrite, SourceInlineKey, SourceInstructionKind,
+    RV64IMAC_JOLT,
+};
 pub use jolt_riscv::{SourceInstruction, SourceInstructionRow};
 #[cfg(any(feature = "test-utils", test))]
 use rand::rngs::StdRng;
@@ -382,60 +387,13 @@ pub mod xori;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test;
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RAMRead {
-    pub address: u64,
-    pub value: u64,
-}
-
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RAMWrite {
-    pub address: u64,
-    pub pre_value: u64,
-    pub post_value: u64,
-}
-
-pub enum RAMAccess {
-    Read(RAMRead),
-    Write(RAMWrite),
-    NoOp,
-}
-
-impl RAMAccess {
-    pub fn address(&self) -> usize {
-        match self {
-            RAMAccess::Read(read) => read.address as usize,
-            RAMAccess::Write(write) => write.address as usize,
-            RAMAccess::NoOp => 0,
-        }
-    }
-}
-
-impl From<RAMRead> for RAMAccess {
-    fn from(read: RAMRead) -> Self {
-        Self::Read(read)
-    }
-}
-
-impl From<RAMWrite> for RAMAccess {
-    fn from(write: RAMWrite) -> Self {
-        Self::Write(write)
-    }
-}
-
-impl From<()> for RAMAccess {
-    fn from(_: ()) -> Self {
-        Self::NoOp
-    }
-}
-
-pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
+pub trait RISCVInstruction: Debug + Sized + Copy + Into<Instruction> {
     const MASK: u32;
     const MATCH: u32;
 
     type Format: InstructionFormat;
     type RegisterState: RegisterSnapshot<Self> + PartialEq;
-    type RAMAccess: Default + Into<RAMAccess> + Copy + std::fmt::Debug;
+    type RamAccess: Default + Into<RamAccess> + Copy + Debug;
 
     fn operands(&self) -> &Self::Format;
     fn source_kind(&self) -> SourceInstructionKind;
@@ -458,7 +416,7 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
         RISCVCycle {
             instruction,
             register_state,
-            ram_access: Self::RAMAccess::default(),
+            ram_access: Self::RamAccess::default(),
         }
     }
 
@@ -466,7 +424,7 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
     #[cfg(any(feature = "test-utils", test))]
     fn initialize_test_cpu(_cycle: &RISCVCycle<Self>, _cpu: &mut Cpu) {}
 
-    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
+    fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RamAccess);
 
     fn has_side_effects(&self) -> bool {
         self.source_kind().has_side_effects()
@@ -478,7 +436,7 @@ where
     RISCVCycle<Self>: Into<Cycle>,
 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let mut ram_access = Self::RAMAccess::default();
+        let mut ram_access = Self::RamAccess::default();
         match trace {
             Some(trace_vec) => {
                 let mut register_state = Self::RegisterState::capture_pre(self, cpu);
@@ -532,9 +490,9 @@ macro_rules! define_rv64imac_enums {
         }
 
         impl Cycle {
-            pub fn ram_access(&self) -> RAMAccess {
+            pub fn ram_access(&self) -> RamAccess {
                 match self {
-                    Cycle::NoOp => RAMAccess::NoOp,
+                    Cycle::NoOp => RamAccess::NoOp,
                     $(
                         $(#[$meta])*
                         Cycle::$instr(cycle) => cycle.ram_access.into(),
@@ -1993,7 +1951,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: T::RegisterState,
-    pub ram_access: T::RAMAccess,
+    pub ram_access: T::RamAccess,
 }
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
@@ -2011,7 +1969,7 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::emulator::default_terminal::DefaultTerminal;
     #[cfg(feature = "field-inline")]
-    use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
+    use jolt_program::field_inline::{FieldEncodedValue, FieldRegisterRead, FieldRegisterWrite};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
 
@@ -2060,17 +2018,12 @@ mod tests {
         );
         assert_eq!(load_cycle.rs1_read(), Some((5, 7)));
         assert_eq!(load_cycle.rd_write(), None);
-        let load_trace = load_cycle.field_inline_trace().unwrap();
         assert_eq!(
-            load_trace.op,
-            Some(FieldInlineOp::LoadAccumulateFromRegister)
-        );
-        assert_eq!(
-            load_trace.bridge,
-            Some(FieldInlineBridge::LoadAccumulateFromRegister {
-                x_register: 5,
-                x_value: 7,
-                field_value: FieldEncodedValue::from_u64(7),
+            load_cycle.field_inline_trace().unwrap().rd,
+            Some(FieldRegisterWrite {
+                register: 1,
+                pre_value: FieldEncodedValue::zero(),
+                post_value: FieldEncodedValue::from_u64(7),
             })
         );
 
@@ -2093,7 +2046,6 @@ mod tests {
         assert_eq!(mul_cycle.rs2_read(), None);
         assert_eq!(mul_cycle.rd_write(), None);
         let mul_trace = mul_cycle.field_inline_trace().unwrap();
-        assert_eq!(mul_trace.op, Some(FieldInlineOp::Mul));
         assert_eq!(mul_trace.rs1.unwrap().value, FieldEncodedValue::from_u64(7));
         assert_eq!(mul_trace.rs2.unwrap().value, FieldEncodedValue::from_u64(3));
         assert_eq!(
@@ -2107,14 +2059,11 @@ mod tests {
         );
         assert_eq!(advice_cycle.rs1_read(), None);
         assert_eq!(advice_cycle.rd_write(), Some((10, 0, 21)));
-        let advice_trace = advice_cycle.field_inline_trace().unwrap();
         assert_eq!(
-            advice_trace.bridge,
-            Some(FieldInlineBridge::AdviceLimb {
-                field_register: 3,
-                field_value: FieldEncodedValue::from_u64(21),
-                x_register: 10,
-                x_value: 21,
+            advice_cycle.field_inline_trace().unwrap().rs1,
+            Some(FieldRegisterRead {
+                register: 3,
+                value: FieldEncodedValue::from_u64(21),
             })
         );
         assert_eq!(cpu.read_register(10), 21);
@@ -2189,7 +2138,7 @@ mod tests {
             let write = state.rd.unwrap();
             assert_eq!(write.pre_value, input);
             assert_eq!(write.post_value, FieldEncodedValue::from_u64(expected));
-            assert!(matches!(cycle.ram_access(), RAMAccess::NoOp));
+            assert!(matches!(cycle.ram_access(), RamAccess::NoOp));
         }
     }
 
@@ -2217,7 +2166,7 @@ mod tests {
                 assert_eq!(cycle.rs1_read(), Some((10, DRAM_BASE)));
                 assert_eq!(cycle.rd_write(), Some((10, DRAM_BASE, 9)));
                 match cycle.ram_access() {
-                    RAMAccess::Read(read) => {
+                    RamAccess::Read(read) => {
                         assert_eq!(read.address, DRAM_BASE + 8);
                         assert_eq!(read.value, 9);
                     }
@@ -2271,12 +2220,10 @@ mod tests {
         assert_eq!(cycle.rs2_read(), None);
         assert_eq!(cycle.rd_write(), None);
         let trace = cycle.field_inline_trace().unwrap();
-        assert_eq!(trace.op, Some(FieldInlineOp::AssertZero));
         assert_eq!(trace.rs1.unwrap().register, 3);
         assert_eq!(trace.rs1.unwrap().value, FieldEncodedValue::zero());
         assert_eq!(trace.rs2, None);
         assert_eq!(trace.rd, None);
-        assert_eq!(trace.bridge, None);
         assert_eq!(cpu.x, integer_registers);
         assert_eq!(cpu.field_registers.read(3), FieldEncodedValue::zero());
         assert!(Instruction::decode(0x7b | (6 << 12), 0x8000_0000, false).is_err());
@@ -2948,8 +2895,7 @@ mod tests {
         assert_eq!(cycle.rs1_read(), Some((1, 20)));
         assert_eq!(cycle.rs2_read(), Some((2, 22)));
         assert_eq!(cycle.rd_write(), Some((3, 9, 42)));
-        assert!(matches!(cycle.ram_access(), RAMAccess::NoOp));
-        assert_eq!(cycle.ram_access().address(), 0);
+        assert_eq!(cycle.ram_access(), RamAccess::NoOp);
         let name: &'static str = cycle.instruction().into();
         assert_eq!(name, "ADD");
 
@@ -2962,32 +2908,13 @@ mod tests {
         sw.trace(&mut cpu, Some(&mut trace));
         let last = trace.last().unwrap();
         match last.ram_access() {
-            RAMAccess::Write(write) => {
+            RamAccess::Write(write) => {
                 assert_eq!(write.address, base);
                 assert_eq!(write.pre_value, 0);
                 assert_eq!(write.post_value, 0xdead_beef);
             }
-            other => panic!("expected a RAM write, got {:?}", other.address()),
+            other => panic!("expected a RAM write, got {other:?}"),
         }
-
-        assert_eq!(
-            RAMAccess::from(RAMRead {
-                address: 5,
-                value: 0
-            })
-            .address(),
-            5
-        );
-        assert_eq!(
-            RAMAccess::from(RAMWrite {
-                address: 7,
-                pre_value: 0,
-                post_value: 0
-            })
-            .address(),
-            7
-        );
-        assert_eq!(RAMAccess::from(()).address(), 0);
     }
 
     #[test]

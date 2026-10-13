@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualAdviceLen {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAdviceLen as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualAdviceLen as RISCVInstruction>::RamAccess) {
         let remaining = advice_tape_remaining(cpu);
         cpu.write_register(self.operands.rd as usize, remaining as i64);
     }
