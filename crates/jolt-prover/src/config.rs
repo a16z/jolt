@@ -165,21 +165,6 @@ impl ProverConfig {
     }
 }
 
-/// Map a byte address into the RAM word index space: word offsets from the
-/// memory layout's lowest mapped address; address 0 means "no access".
-///
-/// Panics on a nonzero address below the layout's lowest mapped address — a
-/// malformed trace, failed loudly here (matching legacy) rather than
-/// silently under-sizing `ram_K` and failing as an opaque sumcheck error.
-#[expect(
-    clippy::panic,
-    reason = "preserve the public helper's documented panic contract"
-)]
-pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> {
-    checked_remap_address(address, memory_layout)
-        .unwrap_or_else(|_| panic!("Unexpected address {address}"))
-}
-
 fn checked_remap_address(
     address: u64,
     memory_layout: &MemoryLayout,
