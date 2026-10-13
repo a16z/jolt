@@ -584,8 +584,20 @@ pub fn assert_coverage_closure(trace: &Trace, narg_len: usize) {
                 cursor = range.end;
             }
             (TranscriptOp::Message, None) => panic!("message event without a range: {event:?}"),
-            (TranscriptOp::Public | TranscriptOp::Challenge, None) => {}
-            (TranscriptOp::Public | TranscriptOp::Challenge, Some(_)) => {
+            (
+                TranscriptOp::Public
+                | TranscriptOp::Challenge
+                | TranscriptOp::ForkAbsorb
+                | TranscriptOp::ForkSqueeze,
+                None,
+            ) => {}
+            (
+                TranscriptOp::Public
+                | TranscriptOp::Challenge
+                | TranscriptOp::ForkAbsorb
+                | TranscriptOp::ForkSqueeze,
+                Some(_),
+            ) => {
                 panic!("non-message event carries an argument-string range: {event:?}")
             }
         }
