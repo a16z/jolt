@@ -1357,6 +1357,7 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
+ "jolt-platform",
  "jolt-program",
  "jolt-riscv",
  "serde",
