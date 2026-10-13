@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791828763311,
+  "lastUpdate": 1791925991674,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -186274,6 +186274,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861828,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8b6099f70bb21c8d38abd32dc295d34786c1699a",
+          "message": "feat(sdk): add checked field_to_limbs! and field_from_limbs! conversions (#1995)\n\n* feat(tracer): name the field-inline execution field for guests\n\nAdd jolt-platform's FieldInlineModulus, the guest-visible table of field-inline\nproof fields with their little-endian modulus limbs and the canonicality\npredicate. The tracer exports FIELD_INLINE_MODULUS next to its ProofField\nselection and const-asserts the table against new jolt-field MODULUS_LIMBS\naccessors, so the copy cannot drift from the executing field.\n\nAdd a test-utils hook that injects dishonest FIELD_ADVICE_LIMB limbs (with the\nquotient the row relation requires) for guest-level soundness tests.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(sdk): add checked field_to_limbs! and field_from_limbs! conversions\n\nfield_to_limbs! splits a field register in place into its modulus width of\nFIELD_ADVICE_LIMB rows, asserts the residual quotient is zero, proves the guest\nwas compiled for the executing proof field, checks the limbs are below the\nmodulus (spoiling the proof otherwise), and restores the register from the\nlimbs. Wider outputs zero-extend; narrower ones panic when the value does not\nfit. field_from_limbs! rejects noncanonical limbs, resets the destination, binds\nthe modulus, and accumulates most significant first.\n\nThe guest-visible jolt::field_inline::MODULUS comes from\nJOLT_FIELD_INLINE_MODULUS, which jolt-host sets from the tracer's execution\nfield for field-inline guest builds, each field in its own target dir. Every\nconversion binds it by accumulating the modulus limbs into a zero register and\nasserting zero, so a mismatched build cannot be proven.\n\nfield-ops now imports its expected value and reads out limbs with the macros.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test: prove limb conversions across field-inline modes\n\nAdd the field-limbs-guest conformance crate: round trips of limb-boundary\nvalues and p - 1, readout of field-computed -1, widths, preservation of all 16\nlive registers across in-place readouts, and destination replacement. The\nfield-inline e2e matrix proves it in clear Dory, ZK Dory, and Akita, importing\nand reading back p - 1 computed on the host in each mode's field.\n\nTrace-level tests pin the import policy (values of p or more panic without\nspoiling), narrow readouts of oversized values, and dishonest advice from the\ntracer injection hook: wrong or truncated limbs stop at the residual assertion\nright after the last limb, and limbs of p for zero or value + p spoil the proof.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs: document SDK limb conversions and guest field selection\n\nSpecify the field_to_limbs!/field_from_limbs! sequences, costs, failure\noutcomes, modulus binding, and the tracer -> jolt-host -> jolt-sdk field\nselection chain in the field-inline specs; drop the #1934 follow-up notes and\nfix the stale ASSERT_ZERO field-op tag. Add field_limbs to the acceptance matrix\ndocs, and run the jolt-platform and field-ops example tests in CI.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix: satisfy style invariants and tighten conversion docs\n\nImport TwoPassConfig and the AdviceLimb match word instead of spelling them\nqualified, and let field-ops encode its memory loads through the SDK's\nmemory_accumulate_word so the encoding has one owner. State that only\nconversions bind MODULUS, name both assertions a wrong-field guest can fail,\nand list field_limbs in the field-inline CI lane comments.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(fuzz): lock jolt-host's jolt-platform dependency for jolt-eval fuzz\n\njolt-host now depends on jolt-platform for the field-inline modulus name. The root Cargo.lock records the edge, but the separate jolt-eval fuzz workspace lockfile did not, so its --locked resolution failed in CI.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs: qualify field conversion binding guarantees\n\n* test: harden checked field limb conversion boundaries\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>",
+          "timestamp": "2026-10-13T13:04:44-07:00",
+          "tree_id": "8e88ca4fdf6a88cd78092199c566c239d1ff849c",
+          "url": "https://github.com/a16z/jolt/commit/8b6099f70bb21c8d38abd32dc295d34786c1699a"
+        },
+        "date": 1791925983499,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.5085,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.8498,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0953,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.9265,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.8249,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 500176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.2313,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 221720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.1487,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 867080,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.9459,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 509252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.7026,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.6669,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4519,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 42.1964,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1994660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.3303,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 648620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 94.1521,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1102440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9931,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498556,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.275,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.9316,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 864560,
             "unit": "KB",
             "extra": ""
           }
