@@ -16,8 +16,8 @@ typed layer over spongefish's `ProverState<H, StdRng>` and
 separation uses spongefish's `DomainSeparator`. The explicit typing stays
 where it is now: claims structs, routes, and message groups, generated per
 stage. Challenges stay exactly uniform. Grinding becomes squeeze-then-grind,
-so no crate needs spongefish's `yolocrypto` feature. Jolt, Akita, and Aerie
-all run on the result. Aerie opens Akita inside its own PIOP transcript.
+so no crate needs spongefish's `yolocrypto` feature. Jolt and Akita both
+run on the result, and Akita opens inside its caller's transcript.
 
 This reverses the narg spec's rejection of spongefish's prover and verifier
 state. The four reasons given there now resolve as follows:
@@ -34,12 +34,18 @@ state. The four reasons given there now resolve as follows:
 1. Every prover message reaches the sponge only through `prover_message` and
    `prover_messages*`, and every public value only through `public_message*`.
    No crate reads, clones, or writes spongefish's duplex state.
-2. No crate in the Jolt, Akita, or Aerie dependency graphs enables
+2. No crate in the Jolt or Akita dependency graphs enables
    spongefish's `yolocrypto`. CI checks this with `cargo tree -e features`.
 3. Field challenges are exactly uniform. The wrapper samples them by
    rejection over fixed-width `verifier_message::<[u8; N]>()` squeezes, using
    `Field::random`'s contract. The small challenge set is unchanged: 16
    squeezed bytes through `CanonicalEncoding::from_challenge_bytes`.
+   On a sponge whose absorb erases the squeeze width within an output block
+   (`Sponge::ABSORB_FORGETS_SQUEEZE_WIDTH`: spongefish's overwrite-mode
+   Keccak duplex and the byte-level Poseidon sponge), each exact challenge
+   then absorbs the number of bytes it squeezed as a public `u64`, so distinct
+   rejection-retry histories cannot reconverge at the next absorb. Blake2b
+   retains the width and absorbs nothing extra.
 4. Message shapes stay positional. No message carries a length the public
    parameters already fix.
 
@@ -63,7 +69,7 @@ sponge id). A transcript starts from
 `DomainSeparator::new(protocol_id).session(B(session)).instance(B(instance))`
 followed by `to_prover(H::default())` or `to_verifier(H::default(), narg)`.
 `B` is a length-framed byte string. Every transcript passes an empty instance:
-Jolt, Akita, and Aerie bind their statement data through public messages, so
+Jolt and Akita bind their statement data through public messages, so
 the instance slot carries nothing.
 
 **Operations.**
@@ -126,15 +132,15 @@ Fixtures that cloned a mid-proof transcript rebuild it from a closure.
   $2^{-125}$ of uniform, so challenges drawn from it stay exact up to that
   distance. Supporting a field-native Poseidon later means
   adding `Encoding<[Fr]>` impls. It does not change the typed layer.
-- Changing message order or adding labels. Aerie's event headers stay an
-  Aerie-level framing, absorbed as public messages.
+- Changing message order or adding labels. A caller's own framing stays its
+  own, absorbed as public messages.
 
 ## Alternatives considered
 
 - **Statistical challenges via spongefish's field `Decoding`** (modulus bytes
   plus 32, then reduce). Rejected. Exact sampling works on spongefish state
-  through looped fixed-width squeezes. It keeps Aerie's frozen sampler, and it
-  keeps the ledgers' rejection-sampling query accounting.
+  through looped fixed-width squeezes, and it keeps the rejection-sampling
+  query accounting.
 - **Remove `CanonicalBytes` and bound on spongefish's traits directly.**
   Rejected. The wrapper needs a fixed width per atom to check a read against
   the remaining proof before allocating.
@@ -150,13 +156,12 @@ Fixtures that cloned a mid-proof transcript rebuild it from a closure.
 
 Every proof changes. The domain-separator layout and the grinding transition
 differ; the nonce keeps its canonical unsigned LEB128 encoding. Fixtures,
-known-answer tests, the FS census, and Akita's and Aerie's grinding tables are
-regenerated. Akita's `specs/transcript-grinding.md` and Aerie's
-`specs/falcon.md` §10.1–10.2 are amended in their own PRs.
+known-answer tests, the FS census, and Akita's grinding tables are
+regenerated. Akita's `specs/transcript-grinding.md` is amended in its own PR.
 
 ## Execution
 
-Three PRs, landed together. Akita and Aerie pin the Jolt PR's revision.
+Two PRs, landed together. Akita pins the Jolt PR's revision.
 
 1. **Jolt:** this spec. The spongefish codecs in `jolt-field` and
    `jolt-crypto`, the transcript core, the grinding transition, preview
@@ -164,29 +169,19 @@ Three PRs, landed together. Akita and Aerie pin the Jolt PR's revision.
 2. **Akita:** port its proof-of-work and fold-response searches to forks
    (`PreviewFoldDraw` becomes a fork draw that both roles use), and amend
    `transcript-grinding.md`.
-3. **Aerie:** delete its `akita-transcript` use. Run its PIOP stream on
-   `jolt-transcript`, keeping its event headers as public messages. Open Akita
-   inline instead of exporting `pcs_session`. Amend `falcon.md` §10.1–10.2,
-   §12.3's export description, and the grinding description in the ledgers.
 
 ## Verification
 
 - Clear, ZK, and Akita e2e; the verifier fixtures; tamper and FS sweeps; the
   census re-blessed and reviewed.
 - Per-sponge known answers regenerated, plus a test that the exact sampler
-  rejects an out-of-range candidate and resamples from the next squeeze.
+  rejects an out-of-range candidate and resamples from the next squeeze, and
+  one that pins each sponge's `ABSORB_FORGETS_SQUEEZE_WIDTH` to its actual
+  absorb-after-squeeze behavior.
 - Grinding: tests for accept, reject, an out-of-range nonce, and a wrong seed.
-- `cargo tree -e features` contains no `yolocrypto` in any of the three
-  workspaces.
-- Aerie: the end-to-end, adversarial, and specification-script suites its
-  CONTRIBUTING.md names.
+- `cargo tree -e features` contains no `yolocrypto` in either workspace.
 
 ## Unverified
 
-- Aerie's PCS-extraction argument (`falcon-pcs-extraction.md` §2) leaves the
-  random-oracle composition as an open upstream obligation. It does not use
-  the separation of the PIOP and PCS streams. Inlining replaces two oracles
-  chained by a 32-byte export with one oracle, so it adds no assumption. Only
-  `falcon.md` §10 and §12.3 describe the export and need amending.
 - Prover cost of squeeze-then-grind versus the current transition. Both hash
   one block per candidate, so parity is expected.

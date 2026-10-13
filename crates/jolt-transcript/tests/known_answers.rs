@@ -77,8 +77,8 @@ fn keccak_known_answers() {
         "keccak",
         run::<Keccak>(),
         (
-            &format!("{NARG_PREFIX}1f"),
-            "d8255bbe1b4ab7de6af9a08d7f52525044f0faa2d1f77159e6f5dbca1a897210b54afa2edf054d0a9e9d21f565d947dba3c96d3a662cbc5dc8f371998554c30845ffeaf9f80a897b327911715039879241ea7de1a6b98b5546c5f7fe87110275",
+            &format!("{NARG_PREFIX}41"),
+            "d8255bbe1b4ab7de6af9a08d7f52525044f0faa2d1f77159e6f5dbca1a89721044f898b914a69b88e14f4f1f8473ccac3701424fa1d67cc1bc6364be494dad28be074a6aac84e97e16fba3adb815c292453791a65937282f7b6aac73cb5e126e",
         ),
     );
 }
@@ -89,8 +89,8 @@ fn poseidon_known_answers() {
         "poseidon",
         run::<PoseidonSponge>(),
         (
-            &format!("{NARG_PREFIX}0f"),
-            "06667373737856e7bdd1796e22de9aa04c6ed6f0f25b3aeffc440008ac6acc2ea7cd1cc8aa62afa214666b1fc1f7547a8c0b471bfb8744ddcd96b061beeb872121dca3360f599c2057204f0f61ec2c603f42a92a9ec56dabf15c2a63bd7f7567",
+            &format!("{NARG_PREFIX}77"),
+            "06667373737856e7bdd1796e22de9aa04c6ed6f0f25b3aeffc440008ac6acc2ec9cc9dc21411bf2fe3200c7096263a2cac392db7ce5388f348ddc0d01aa11e0a370267031f8822ea3b9e157c139bbe731112ac283127d79610b197f9e4b0c649",
         ),
     );
 }

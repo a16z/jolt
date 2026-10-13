@@ -139,6 +139,7 @@ impl DuplexSpongeInterface for AuditSponge {
 
 impl Sponge for AuditSponge {
     const ID: &'static str = <Blake2b512 as Sponge>::ID;
+    const ABSORB_FORGETS_SQUEEZE_WIDTH: bool = <Blake2b512 as Sponge>::ABSORB_FORGETS_SQUEEZE_WIDTH;
 }
 
 /// Every byte squeezed during one recorded verification, in stream order.

@@ -316,6 +316,9 @@ impl<H: Sponge> Channel for VerifierTranscript<'_, H> {
     fn challenge<F: Field>(&mut self) -> F {
         let (value, squeezed) = self.state.exact_challenge();
         self.log.record(TranscriptOp::Challenge, squeezed, None);
+        if H::ABSORB_FORGETS_SQUEEZE_WIDTH {
+            self.public(&(squeezed as u64));
+        }
         value
     }
 

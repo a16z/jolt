@@ -283,3 +283,31 @@ fn prover_and_verifier_log_identical_sites() {
     assert_eq!(prover.events(), verifier.events());
     assert_eq!(prover.events()[1].narg, Some(0..32));
 }
+
+/// Pins [`Sponge::ABSORB_FORGETS_SQUEEZE_WIDTH`] to each sponge's real
+/// behavior: squeezing one byte or two and then absorbing the same bytes
+/// leaves the same state exactly when the flag is set.
+#[test]
+fn absorb_forgets_squeeze_width_matches_each_sponge() {
+    fn forgets<H: Sponge>() -> bool {
+        let next_block = |width: usize| {
+            let mut sponge = H::default();
+            let _ = sponge.absorb(b"prefix");
+            let _ = sponge.squeeze(&mut vec![0u8; width]);
+            let _ = sponge.absorb(&[17]);
+            let mut out = [0u8; 32];
+            let _ = sponge.squeeze(&mut out);
+            out
+        };
+        next_block(1) == next_block(2)
+    }
+    assert_eq!(
+        forgets::<Blake2b512>(),
+        Blake2b512::ABSORB_FORGETS_SQUEEZE_WIDTH
+    );
+    assert_eq!(forgets::<Keccak>(), Keccak::ABSORB_FORGETS_SQUEEZE_WIDTH);
+    assert_eq!(
+        forgets::<PoseidonSponge>(),
+        PoseidonSponge::ABSORB_FORGETS_SQUEEZE_WIDTH
+    );
+}
