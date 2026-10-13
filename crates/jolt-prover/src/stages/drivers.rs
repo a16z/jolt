@@ -753,13 +753,13 @@ mod twin_tests {
             23,
         )));
 
+        let mut context = KernelContext::new(&kernels, NoWitness, session);
         let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &KernelContext::new(&kernels, NoWitness),
-                &mut session,
+                &mut context,
                 &mut SequentialRounds,
                 &inputs,
                 &input_points,
@@ -789,8 +789,18 @@ mod twin_tests {
 
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
-        let calls = session.take::<PrepareCallLog>().unwrap().0;
-        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        let calls = context
+            .session()
+            .state::<PrepareCallLog>()
+            .unwrap()
+            .0
+            .clone();
+        let residues = context
+            .session()
+            .state::<ResidueCallLog>()
+            .unwrap()
+            .0
+            .clone();
         (proved, calls, residues)
     }
 
@@ -852,15 +862,15 @@ mod twin_tests {
             }),
             delta: Box::new(HeadDensePrepare { seed: 37 }),
         };
-        let mut session = ProofSession::default();
+        let session = ProofSession::default();
 
+        let mut context = KernelContext::new(&kernels, NoWitness, session);
         let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
             .prove(
-                &KernelContext::new(&kernels, NoWitness),
-                &mut session,
+                &mut context,
                 &mut SequentialRounds,
                 &inputs,
                 &input_points,
@@ -893,8 +903,18 @@ mod twin_tests {
         );
         assert_eq!(proved.output_claims.alpha.opening_values().len(), 1);
         assert_eq!(proved.output_claims.delta.opening_values().len(), 1);
-        let calls = session.take::<PrepareCallLog>().unwrap().0;
-        let residues = session.take::<ResidueCallLog>().unwrap().0;
+        let calls = context
+            .session()
+            .state::<PrepareCallLog>()
+            .unwrap()
+            .0
+            .clone();
+        let residues = context
+            .session()
+            .state::<ResidueCallLog>()
+            .unwrap()
+            .0
+            .clone();
         assert_eq!(calls, vec!["alpha", "delta"]);
         assert_eq!(
             residues,
@@ -910,14 +930,11 @@ mod twin_tests {
         let sumchecks = fixture(false);
         let inputs = inputs(false);
         let kernels = toy_kernels();
-        let mut session = ProofSession::default();
-
         let mut transcript = Blake2bTranscript::new(b"prove-driver-twin");
         let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let result = sumchecks.prove(
-            &KernelContext::new(&kernels, NoWitness),
-            &mut session,
+            &mut KernelContext::new(&kernels, NoWitness, ProofSession::default()),
             &mut SequentialRounds,
             &inputs,
             &input_points,
@@ -934,7 +951,6 @@ mod twin_tests {
     #[test]
     fn populated_cells_for_absent_member_fail_at_prepare() {
         let kernels = toy_kernels();
-        let mut session = ProofSession::default();
         let claims = ToyBetaInputs {
             claimed_sum: Fr::from_u64(777),
         };
@@ -943,9 +959,8 @@ mod twin_tests {
         };
 
         let error = crate::driver::prepare_optional::<Fr, ToyBeta<Fr>, _>(
-            &KernelContext::new(&kernels, NoWitness),
+            &mut KernelContext::new(&kernels, NoWitness, ProofSession::default()),
             None,
-            &mut session,
             Some(&claims),
             Some(&points),
             Some(&NoChallenges::default()),

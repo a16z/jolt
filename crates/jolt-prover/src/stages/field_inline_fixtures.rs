@@ -939,11 +939,10 @@ pub(crate) mod proving {
     use crate::stages::stage4::{prove_stage4, Stage4ProverOutput};
     use crate::stages::stage5::{prove_stage5, Stage5ProverOutput};
     use crate::stages::stage6a::{prove_stage6a, Stage6aProverOutput};
-    use crate::ProofSession;
     use crate::{JoltBackend, ProofMode};
     use jolt_field::Fr;
+    use jolt_kernels::KernelContext;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_witness::JoltWitnessPlane;
     type Commitment = Bn254G1;
     type Stages3 = (
         Stage1ProverOutput<Fr, Commitment>,
@@ -954,31 +953,27 @@ pub(crate) mod proving {
     type Stages5 = (Stages4, Stage5ProverOutput<Fr, Commitment>);
     type Stages6a = (Stages5, Stage6aProverOutput<Fr, Commitment>);
 
-    pub(crate) struct FixtureProver<'a> {
-        pub(crate) backend: &'a JoltBackend<Fr, DoryScheme>,
-        pub(crate) session: &'a mut ProofSession,
+    pub(crate) struct FixtureProver<'a, 'w> {
+        pub(crate) backend: &'a mut KernelContext<'w, Fr, JoltBackend<Fr, DoryScheme>>,
         pub(crate) mode: &'a ProofMode<'a, Pedersen<Bn254G1>>,
         pub(crate) config: &'a ProverConfig,
         pub(crate) public_io: &'a JoltDevice,
         pub(crate) checked: &'a CheckedInputs,
         pub(crate) preprocessing: &'a JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
-        pub(crate) witness: &'a dyn JoltWitnessPlane<Fr>,
         pub(crate) transcript: &'a mut Blake2bTranscript,
     }
 
-    impl FixtureProver<'_> {
+    impl FixtureProver<'_, '_> {
         pub(crate) fn through_stage3(&mut self) -> Stages3 {
             let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &self.backend.with_witness(self.witness),
-                self.session,
+                self.backend,
                 self.mode,
                 LOG_T,
                 self.transcript,
             )
             .unwrap();
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &self.backend.with_witness(self.witness),
-                self.session,
+                self.backend,
                 self.mode,
                 self.config,
                 self.public_io,
@@ -987,8 +982,7 @@ pub(crate) mod proving {
             )
             .unwrap();
             let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &self.backend.with_witness(self.witness),
-                self.session,
+                self.backend,
                 self.mode,
                 self.config,
                 &stage1.clear_output,
@@ -1001,8 +995,7 @@ pub(crate) mod proving {
         pub(crate) fn through_stage4(&mut self) -> Stages4 {
             let (stage1, stage2, stage3) = self.through_stage3();
             let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &self.backend.with_witness(self.witness),
-                self.session,
+                self.backend,
                 self.mode,
                 self.checked,
                 self.config,
@@ -1017,8 +1010,7 @@ pub(crate) mod proving {
         pub(crate) fn through_stage5(&mut self) -> Stages5 {
             let ((stage1, stage2, stage3), stage4) = self.through_stage4();
             let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &self.backend.with_witness(self.witness),
-                self.session,
+                self.backend,
                 self.mode,
                 self.checked,
                 self.config,
@@ -1033,8 +1025,7 @@ pub(crate) mod proving {
         pub(crate) fn through_stage6a(&mut self) -> Stages6a {
             let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
             let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                &self.backend.with_witness(self.witness),
-                self.session,
+                self.backend,
                 self.mode,
                 self.checked,
                 self.config,

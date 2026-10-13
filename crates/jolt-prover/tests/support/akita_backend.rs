@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
 use jolt_kernels::akita::commitment::{CommitWitness, WitnessCommitRequest, WitnessCommitment};
-use jolt_kernels::{KernelError, ProofSession, ReferenceBackend};
+use jolt_kernels::{KernelContext, KernelError, ProofSession, ReferenceBackend};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::{
     ChunkVisitor, JoltWitnessOracle, JoltWitnessPlane, ProgramSource, RandomAccessRows, RowSource,
@@ -124,12 +124,12 @@ fn registry_reuses_short_lived_witnesses_and_releases_each_session() {
             config.trace_length = 0;
         }
         let witness = UnreadableWitness;
-        let mut session = registry.begin_proof();
+        let mut session = ProofSession::default();
         session.park(ExecutionState {
             released: release_sender.clone(),
             trace_length: fixture.config.trace_length,
         });
-        let backend = registry.with_witness(&witness).with_session(session);
+        let backend = KernelContext::new(&registry, &witness, session);
         let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
             backend,
             &fixture.preprocessing,
@@ -170,12 +170,12 @@ fn successful_proof_releases_the_bound_witness_and_session() {
         refuse: false,
     })
     .with_optimized_compute();
-    let mut session = registry.begin_proof();
+    let mut session = ProofSession::default();
     session.park(ExecutionState {
         released: release_sender,
         trace_length: fixture.config.trace_length,
     });
-    let context = registry.with_witness(witness).with_session(session);
+    let context = KernelContext::new(&registry, witness, session);
     let _proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
         context,
         &fixture.preprocessing,

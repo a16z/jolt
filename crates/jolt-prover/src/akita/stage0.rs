@@ -1,6 +1,6 @@
 use common::jolt_device::JoltDevice;
 use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
-use jolt_kernels::{JoltBackend, KernelContext, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 
 use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
@@ -35,8 +35,7 @@ where
 /// Validate inputs, commit the native trace group and auxiliary objects, and seed the transcript.
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T>(
-    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
@@ -168,14 +167,11 @@ where
         #[cfg(feature = "field-inline")]
         field_inc,
     } = tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
-        backend.commit_witness(
-            session,
-            WitnessCommitRequest::new(
-                &preprocessing.pcs_setup,
-                one_hot_trace_shape,
-                &precommitted_hints,
-            )?,
-        )
+        backend.commit_witness(WitnessCommitRequest::new(
+            &preprocessing.pcs_setup,
+            one_hot_trace_shape,
+            &precommitted_hints,
+        )?)
     })?;
 
     absorb_akita_commitments(

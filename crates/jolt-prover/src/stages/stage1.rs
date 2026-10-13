@@ -13,7 +13,7 @@ use jolt_claims::protocols::composed::r1cs::{
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, KernelContext, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -46,8 +46,7 @@ pub struct Stage1ProverOutput<F: JoltField, C> {
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage1<F, PCS, VC, T>(
-    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     log_t: usize,
     transcript: &mut T,
@@ -63,15 +62,10 @@ where
     // `UniskipKernel` implementation inherits them — see the taxonomy's
     // kernel-seam contract.
     tracing::info_span!("SpartanOuterUniskip::prepare")
-        .in_scope(|| backend.prepare_outer_uniskip(session, log_t, &tau))?;
+        .in_scope(|| backend.prepare_outer_uniskip(log_t, &tau))?;
 
-    let uniskip_poly =
-        tracing::info_span!("SpartanOuterUniskip::first_round_poly").in_scope(|| {
-            backend
-                .registry
-                .spartan_outer_uniskip
-                .first_round_poly(session, &[], &())
-        })?;
+    let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
+        .in_scope(|| backend.outer_uniskip_poly())?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
@@ -96,10 +90,9 @@ where
         ),
     };
 
-    let mut scheduler = backend.registry.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
         &inputs,
         &input_points,
@@ -155,12 +148,11 @@ mod field_inline_round_trip {
     fn round_trip(trace_backend: TraceBackend) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
-        let mut session = backend.begin_proof();
+        let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline");
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend.with_witness(&witness),
-            &mut session,
+            &mut context,
             &mode,
             LOG_T,
             &mut prover_transcript,
@@ -223,13 +215,12 @@ mod field_inline_zk {
     fn committed_stage1_shell_carries_the_composed_rows_and_replays() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
-        let mut session = backend.begin_proof();
+        let mut context = backend.with_witness(&witness);
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend.with_witness(&witness),
-            &mut session,
+            &mut context,
             &mode,
             LOG_T,
             &mut prover_transcript,

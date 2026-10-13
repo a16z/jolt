@@ -68,46 +68,40 @@ where
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
-    let mut session = backend.begin_proof();
     let stage0 = prove_stage0::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         preprocessing,
         config,
         trusted_advice,
         public_io,
     )?;
     let log_t = config.trace_length.ilog2() as usize;
-    finish_stage("stage0", log_t, &session, &());
+    finish_stage("stage0", log_t, backend.session(), &());
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
 
-    let stage1 =
-        prove_stage1::<F, PCS, VC, T>(&backend, &mut session, &mode, log_t, &mut transcript)?;
-    finish_stage("stage1", log_t, &session, &stage1.clear_output);
+    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mode, log_t, &mut transcript)?;
+    finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &mode,
         config,
         public_io,
         &stage1.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage2", log_t, &session, &stage2.clear_output);
+    finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &mode,
         config,
         &stage1.clear_output,
         &stage2.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage3", log_t, &session, &stage3.clear_output);
+    finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
@@ -116,10 +110,9 @@ where
         &stage3.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage4", log_t, &session, &stage4.clear_output);
+    finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
@@ -128,10 +121,9 @@ where
         &stage4.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage5", log_t, &session, &stage5.clear_output);
+    finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
@@ -143,10 +135,9 @@ where
         &stage5.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage6a", log_t, &session, &stage6a.clear_output);
+    finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
@@ -159,10 +150,9 @@ where
         &stage6a.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage6b", log_t, &session, &stage6b.clear_output);
+    finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
@@ -171,10 +161,9 @@ where
         &stage6b.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage7", log_t, &session, &stage7.clear_output);
+    finish_stage("stage7", log_t, backend.session(), &stage7.clear_output);
     let stage8 = prove_stage8::<F, PCS, VC, T>(
-        &backend,
-        &mut session,
+        &mut backend,
         &checked,
         config,
         preprocessing,
@@ -188,8 +177,8 @@ where
         &stage7.clear_output,
         &mut transcript,
     )?;
-    finish_stage("stage8", log_t, &session, &());
-    jolt_kernels::mem::drop_in_background_thread(session);
+    finish_stage("stage8", log_t, backend.session(), &());
+    backend.finish();
 
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

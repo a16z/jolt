@@ -25,6 +25,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::MultilinearPoly;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
+use jolt_poly::UnivariatePoly;
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
@@ -209,50 +210,48 @@ where
     pub joint_opening: Box<dyn JointOpeningPolynomials<F>>,
 }
 
-impl<F, PCS> JoltBackend<F, PCS>
-where
-    F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
-{
-    /// Open the proof-scoped session that slot state lives in. One session
-    /// per proof; drop it when the proof is assembled.
-    pub fn begin_proof(&self) -> ProofSession {
-        ProofSession::default()
-    }
-}
-
 /// A reusable kernel registry bound to one execution. The coordinator borrows
-/// this context immutably and uses a mutable [`ProofSession`] for working state.
+/// this context mutably; its working session stays bound to the witness.
 /// The witness is mandatory and private; only kernel implementations receive it.
-/// Full proving consumes this binding and its initial session; the registry remains
+/// Full proving consumes this binding and its session; the registry remains
 /// reusable across independent executions.
 pub struct KernelContext<'a, F: JoltField, B: ?Sized> {
-    pub registry: &'a B,
+    registry: &'a B,
     witness: Box<dyn JoltWitnessPlane<F> + 'a>,
     session: ProofSession,
 }
 
 impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
-    /// Bind owned or borrowed execution data without copying trace rows.
-    pub fn new(registry: &'a B, witness: impl JoltWitnessPlane<F> + 'a) -> Self {
+    /// Bind execution data and its initial state without copying trace rows.
+    /// The caller must supply state belonging to this witness. After binding,
+    /// dispatch uses only this session, which cannot be replaced or extracted.
+    pub fn new(
+        registry: &'a B,
+        witness: impl JoltWitnessPlane<F> + 'a,
+        session: ProofSession,
+    ) -> Self {
         Self {
             registry,
             witness: Box::new(witness),
-            session: ProofSession::default(),
+            session,
         }
     }
 
-    /// Attach backend-owned execution state before entering the full prover.
-    /// The consumed binding releases this state on success or any early error.
-    pub fn with_session(mut self, session: ProofSession) -> Self {
-        self.session = session;
-        self
+    /// Inspect proof-local state without detaching it from this execution.
+    pub fn session(&self) -> &ProofSession {
+        &self.session
     }
 
-    /// Move the bound execution's initial state into the proof's working session.
-    /// Full prover entry points consume the context before calling this method.
-    pub fn begin_proof(&mut self) -> ProofSession {
-        std::mem::take(&mut self.session)
+    /// Release the completed execution, dropping retained kernel state in the background.
+    pub fn finish(self) {
+        crate::mem::drop_in_background_thread(self.session);
+    }
+
+    pub fn park_residue<R: ConcreteSumcheck<F> + 'static>(
+        &mut self,
+        kernel: Box<dyn SumcheckKernel<F, Relation = R>>,
+    ) {
+        kernel.park_residue(&mut self.session);
     }
 
     /// Check the bound witness's declared polynomial support before dispatch.
@@ -266,8 +265,7 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
 
     /// Prepare a kernel using this proof's execution data.
     pub fn prepare<R>(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         inputs: ProverInputs<'_, F, R>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>
     where
@@ -275,7 +273,7 @@ impl<'a, F: JoltField, B: ?Sized> KernelContext<'a, F, B> {
         B: PrepareKernel<F, R>,
     {
         self.registry
-            .prepare(session, self.witness.as_ref(), inputs)
+            .prepare(&mut self.session, self.witness.as_ref(), inputs)
     }
 }
 
@@ -285,77 +283,99 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> JoltBackend<F, PCS> {
         &'a self,
         witness: impl JoltWitnessPlane<F> + 'a,
     ) -> KernelContext<'a, F, Self> {
-        KernelContext::new(self, witness)
+        KernelContext::new(self, witness, ProofSession::default())
     }
 }
 
 impl<F: JoltField, PCS: CommitmentScheme<Field = F>> KernelContext<'_, F, JoltBackend<F, PCS>> {
-    pub fn prepare_outer_uniskip(
-        &self,
-        session: &mut ProofSession,
-        log_t: usize,
-        tau: &[F],
-    ) -> Result<(), KernelError<F>> {
+    pub fn build_round_scheduler(&mut self) -> Box<dyn RoundScheduler<F>> {
+        self.registry.round_scheduler.build(&mut self.session)
+    }
+
+    pub fn outer_uniskip_poly(&mut self) -> Result<UnivariatePoly<F>, KernelError<F>> {
         self.registry
             .spartan_outer_uniskip
-            .prepare(session, log_t, tau, self.witness.as_ref())
+            .first_round_poly(&mut self.session, &[], &())
+    }
+
+    pub fn product_uniskip_poly(
+        &mut self,
+        late_tau: &[F],
+        inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+    ) -> Result<UnivariatePoly<F>, KernelError<F>> {
+        self.registry
+            .spartan_product_uniskip
+            .first_round_poly(&mut self.session, late_tau, inputs)
+    }
+
+    pub fn prepare_outer_uniskip(&mut self, log_t: usize, tau: &[F]) -> Result<(), KernelError<F>> {
+        self.registry.spartan_outer_uniskip.prepare(
+            &mut self.session,
+            log_t,
+            tau,
+            self.witness.as_ref(),
+        )
     }
 
     pub fn prepare_product_uniskip(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         log_t: usize,
         tau: &[F],
     ) -> Result<(), KernelError<F>> {
-        self.registry
-            .spartan_product_uniskip
-            .prepare(session, log_t, tau, self.witness.as_ref())
+        self.registry.spartan_product_uniskip.prepare(
+            &mut self.session,
+            log_t,
+            tau,
+            self.witness.as_ref(),
+        )
     }
 
     pub fn evaluate_ram_initial_openings(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         openings: &[RamInitialOpening<'_, F>],
     ) -> Result<Vec<F>, KernelError<F>> {
-        self.registry
-            .ram_initial_openings
-            .evaluate(session, openings, self.witness.as_ref())
+        self.registry.ram_initial_openings.evaluate(
+            &mut self.session,
+            openings,
+            self.witness.as_ref(),
+        )
     }
 
     #[cfg(feature = "akita")]
     pub fn commit_witness(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         request: WitnessCommitRequest<'_, PCS>,
     ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
         self.registry
             .commit
-            .commit_witness(session, self.witness.as_ref(), request)
+            .commit_witness(&mut self.session, self.witness.as_ref(), request)
     }
 
     #[cfg(not(feature = "akita"))]
     pub fn commit_witness(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>> {
-        self.registry
-            .commit
-            .commit_witness(session, self.witness.as_ref(), ids, grid, setup)
+        self.registry.commit.commit_witness(
+            &mut self.session,
+            self.witness.as_ref(),
+            ids,
+            grid,
+            setup,
+        )
     }
 
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     pub fn commit_field_inline_witness(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         ids: &[FieldInlineCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
         self.registry.commit.commit_field_inline_witness(
-            session,
+            &mut self.session,
             self.witness.as_ref(),
             ids,
             grid,
@@ -365,38 +385,41 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F>> KernelContext<'_, F, JoltBa
 
     #[cfg(not(feature = "akita"))]
     pub fn commit_advice(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         id: JoltCommittedPolynomial,
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<WitnessCommitment<PCS>, KernelError<F>> {
-        self.registry
-            .commit
-            .commit_advice(session, self.witness.as_ref(), id, grid, setup)
+        self.registry.commit.commit_advice(
+            &mut self.session,
+            self.witness.as_ref(),
+            id,
+            grid,
+            setup,
+        )
     }
 
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     pub fn prepare_field_inline_opening(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         grid: CommitmentGrid,
     ) -> Result<Box<dyn MultilinearPoly<F>>, KernelError<F>> {
-        self.registry
-            .joint_opening
-            .prepare_field_inline(session, self.witness.as_ref(), grid)
+        self.registry.joint_opening.prepare_field_inline(
+            &mut self.session,
+            self.witness.as_ref(),
+            grid,
+        )
     }
 
     #[cfg(not(feature = "akita"))]
     pub fn prepare_joint_opening(
-        &self,
-        session: &mut ProofSession,
+        &mut self,
         polynomials: &[JoltCommittedPolynomial],
         precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
         self.registry.joint_opening.prepare(
-            session,
+            &mut self.session,
             self.witness.as_ref(),
             polynomials,
             precommitted_tables,
@@ -502,8 +525,7 @@ pub(crate) fn visit_keyed_polys<K, T>(
 /// Slots stash and share private state keyed by a backend-private type, so
 /// per-slot mixing of backend families cannot collide: witness-upload
 /// residency, cross-member shared tables, and cross-stage carries all live
-/// here, invisible to the stage recipes that thread `&mut ProofSession`
-/// through every slot call.
+/// here; the execution context supplies the session to each slot.
 ///
 /// Inserted state must be [`MaybeAllocative`]: under the `allocative`
 /// feature the session captures a per-entry visitor, so per-stage heap

@@ -18,7 +18,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
-use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, ProofSession, WitnessCommitment};
+use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltCommitments;
@@ -69,8 +69,7 @@ where
 /// order).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T>(
-    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
@@ -201,7 +200,7 @@ where
         columns = ids.len(),
         total_vars = grid.total_vars
     )
-    .in_scope(|| backend.commit_witness(session, &ids, grid, &preprocessing.pcs_setup))?;
+    .in_scope(|| backend.commit_witness(&ids, grid, &preprocessing.pcs_setup))?;
     let (commitments, mut hints) = assemble_commitments::<PCS>(committed)?;
 
     // The field-inline committed columns follow the base commitments and
@@ -210,7 +209,7 @@ where
     #[cfg(feature = "field-inline")]
     let (commitments, field_inline_hints) = {
         let (field_inline, field_inline_hints) =
-            commit_field_inline::<F, PCS>(backend, session, grid, &preprocessing.pcs_setup)?;
+            commit_field_inline::<F, PCS>(backend, grid, &preprocessing.pcs_setup)?;
         (
             commitments.with_field_inline(field_inline),
             field_inline_hints,
@@ -236,7 +235,6 @@ where
         )
         .in_scope(|| {
             backend.commit_advice(
-                session,
                 JoltCommittedPolynomial::UntrustedAdvice,
                 advice_grid,
                 &preprocessing.pcs_setup,
@@ -307,8 +305,7 @@ where
     reason = "the wire payload paired with its opening hints"
 )]
 fn commit_field_inline<F, PCS>(
-    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     grid: CommitmentGrid,
     setup: &PCS::ProverSetup,
 ) -> Result<
@@ -325,7 +322,7 @@ where
     let ids = [FieldInlineCommittedPolynomial::FieldRdInc];
     // Backend-neutral seam span, like `commit_witness`.
     let committed = tracing::info_span!("commit_field_inline_witness", columns = ids.len())
-        .in_scope(|| backend.commit_field_inline_witness(session, &ids, grid, setup))?;
+        .in_scope(|| backend.commit_field_inline_witness(&ids, grid, setup))?;
 
     let mut rd_inc = None;
     let mut hints = Vec::with_capacity(committed.len());
@@ -420,7 +417,6 @@ mod field_inline_tests {
     use jolt_kernels::KernelError;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
     use jolt_transcript::LegacyBlake2bTranscript;
-    use jolt_witness::JoltWitnessPlane;
 
     fn grid() -> CommitmentGrid {
         CommitmentGrid {
@@ -451,30 +447,16 @@ mod field_inline_tests {
     fn stage0_attaches_and_absorbs_the_field_inline_payload() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
+        let mut context = backend.with_witness(&witness);
         let setup = DoryScheme::setup_prover(grid().total_vars);
 
         let ids: Vec<JoltCommittedPolynomial> =
             witness.metadata().committed_polynomial_order().unwrap();
-        let committed = backend
-            .commit
-            .commit_witness(
-                &mut session,
-                &witness as &dyn JoltWitnessPlane<Fr>,
-                &ids,
-                grid(),
-                &setup,
-            )
-            .unwrap();
+        let committed = context.commit_witness(&ids, grid(), &setup).unwrap();
         let (commitments, _hints) = assemble_commitments::<DoryScheme>(committed).unwrap();
 
-        let (field_inline, field_inline_hints) = commit_field_inline::<Fr, DoryScheme>(
-            &backend.with_witness(&witness),
-            &mut session,
-            grid(),
-            &setup,
-        )
-        .unwrap();
+        let (field_inline, field_inline_hints) =
+            commit_field_inline::<Fr, DoryScheme>(&mut context, grid(), &setup).unwrap();
         let commitments = commitments.with_field_inline(field_inline);
 
         assert!(commitments.field_inline.is_some());
@@ -539,15 +521,10 @@ mod field_inline_tests {
     fn stage0_fails_closed_without_the_field_inline_oracle() {
         let witness = field_arithmetic_backend();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
+        let mut context = backend.with_witness(&witness);
         let setup = DoryScheme::setup_prover(grid().total_vars);
 
-        let result = commit_field_inline::<Fr, DoryScheme>(
-            &backend.with_witness(&witness),
-            &mut session,
-            grid(),
-            &setup,
-        );
+        let result = commit_field_inline::<Fr, DoryScheme>(&mut context, grid(), &setup);
         assert!(matches!(
             result,
             Err(ProverError::Kernel(KernelError::Unsupported { .. }))

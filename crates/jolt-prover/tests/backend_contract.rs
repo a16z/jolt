@@ -27,7 +27,7 @@ mod tests {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_kernels::{
-        CommitWitness, CommitmentGrid, KernelError, ProofSession, WitnessCommitment,
+        CommitWitness, CommitmentGrid, KernelContext, KernelError, ProofSession, WitnessCommitment,
     };
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_prover::{
@@ -180,24 +180,16 @@ mod tests {
             JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
             JoltPolynomialId::Virtual(JoltVirtualPolynomial::InstructionRafFlag),
         ] {
-            let context = registry.with_witness(RejectPolynomial {
+            let mut context = registry.with_witness(RejectPolynomial {
                 witness: &witness,
                 rejected,
             });
-            let mut session = registry.begin_proof();
             let result = dory::stages::stage0::prove_stage0::<
                 Fr,
                 DoryScheme,
                 Pedersen<Bn254G1>,
                 LegacyBlake2bTranscript,
-            >(
-                &context,
-                &mut session,
-                &preprocessing,
-                &config,
-                None,
-                &public_io,
-            );
+            >(&mut context, &preprocessing, &config, None, &public_io);
             assert!(
                 matches!(result, Err(ProverError::Witness(WitnessError::InvalidWitnessData { label: "stage-0 validation", reason }))
                 if reason.contains(&format!("{rejected:?}")) && reason.contains("unsupported test polynomial"))
@@ -222,12 +214,12 @@ mod tests {
             if !valid {
                 proof_config.trace_length = 0;
             }
-            let mut session = registry.begin_proof();
+            let mut session = ProofSession::default();
             session.park(ExecutionState {
                 releases: Arc::clone(&releases),
                 trace_length: config.trace_length,
             });
-            let context = registry.with_witness(&witness).with_session(session);
+            let context = KernelContext::new(&registry, &witness, session);
             let result = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
                 context,
                 &preprocessing,

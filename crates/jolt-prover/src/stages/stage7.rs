@@ -14,7 +14,7 @@
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, KernelContext, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -44,8 +44,7 @@ pub struct Stage7ProverOutput<F: JoltField, C> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage7<F, PCS, VC, T>(
-    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
@@ -83,10 +82,9 @@ where
     let inputs = stage7_input_values_from_upstream(&sumchecks, stage6b)?;
     let input_points = sumchecks.empty_input_points();
 
-    let mut scheduler = backend.registry.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
         &inputs,
         &input_points,

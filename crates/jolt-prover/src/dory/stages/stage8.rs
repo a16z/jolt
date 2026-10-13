@@ -33,7 +33,7 @@ use jolt_kernels::committed_program::{
     build_committed_bytecode_chunk_coeffs, program_image_words_padded,
 };
 use jolt_kernels::opening::PrecommittedOpeningTables;
-use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, KernelError, ProofSession};
+use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, KernelError};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 #[cfg(not(feature = "zk"))]
 use jolt_openings::BatchOpeningScheme;
@@ -69,8 +69,7 @@ pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
-    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -250,7 +249,7 @@ where
         polynomials = order.len(),
         total_vars = grid.total_vars
     )
-    .in_scope(|| backend.prepare_joint_opening(session, &order, precommitted_tables, grid))?;
+    .in_scope(|| backend.prepare_joint_opening(&order, precommitted_tables, grid))?;
     // Move stage-0 hints; cloning would retain every row commitment.
     let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
         hints.into().into_iter().collect();
@@ -278,7 +277,7 @@ where
             .ok_or(ProverError::InvariantViolation {
                 reason: "the final opening batch has no FieldRdInc entry",
             })?;
-        let column = backend.prepare_field_inline_opening(session, grid)?;
+        let column = backend.prepare_field_inline_opening(grid)?;
         polynomials.insert(position, column);
         let hint = field_inline_hints
             .into_iter()

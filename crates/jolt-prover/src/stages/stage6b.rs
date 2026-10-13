@@ -25,7 +25,7 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, KernelContext, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -67,8 +67,7 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage6b<F, PCS, VC, T>(
-    backend: &KernelContext<'_, F, JoltBackend<F, PCS>>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
@@ -180,10 +179,9 @@ where
     // `impl_stage_prover` invocation site (the promoted verifier helper's
     // canonical order, including the runtime booleanity-vs-bytecode point
     // dedup).
-    let mut scheduler = backend.registry.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
         &inputs,
         &input_points,
@@ -273,7 +271,7 @@ mod field_inline_round_trip {
     ) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
-        let mut session = backend.begin_proof();
+        let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
@@ -281,20 +279,17 @@ mod field_inline_round_trip {
 
         let mut prover_transcript = Blake2bTranscript::new(label);
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
-            backend: &backend,
-            session: &mut session,
+            backend: &mut context,
             mode: &mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
             preprocessing: &preprocessing,
-            witness: &witness,
             transcript: &mut prover_transcript,
         }
         .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend.with_witness(&witness),
-            &mut session,
+            &mut context,
             &mode,
             &checked,
             &config,
@@ -464,7 +459,7 @@ mod field_inline_round_trip {
     fn field_register_inc_claim_reduction_kernel_output_matches_direct_mle() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
-        let mut session = backend.begin_proof();
+        let mut context = backend.with_witness(&witness);
         let oracle = witness.field_inline().unwrap();
 
         let read_write_cycle: Vec<Fr> = (0..LOG_T as u64).map(|i| fr(100 + i)).collect();
@@ -488,18 +483,13 @@ mod field_inline_round_trip {
             rd_inc_val_evaluation: val_evaluation_cycle,
         };
         let challenges = FieldRegistersIncClaimReductionChallenges { gamma: fr(7) };
-        let mut kernel = backend
-            .field_registers_inc_claim_reduction
-            .prepare(
-                &mut session,
-                &witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-            )
+        let mut kernel = context
+            .prepare(ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            })
             .unwrap();
 
         let rounds = relation.rounds();
@@ -557,7 +547,7 @@ mod field_inline_zk {
     fn committed_stage6b_shell_carries_the_curated_rows() {
         let witness = addi_only_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
-        let mut session = backend.begin_proof();
+        let mut context = backend.with_witness(&witness);
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
@@ -567,20 +557,17 @@ mod field_inline_zk {
 
         let mut transcript = Blake2bTranscript::new(b"stage6b-field-inline-zk");
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
-            backend: &backend,
-            session: &mut session,
+            backend: &mut context,
             mode: &mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
             preprocessing: &preprocessing,
-            witness: &witness,
             transcript: &mut transcript,
         }
         .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend.with_witness(&witness),
-            &mut session,
+            &mut context,
             &mode,
             &checked,
             &config,
