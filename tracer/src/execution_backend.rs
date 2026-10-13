@@ -1,15 +1,14 @@
-#[cfg(not(feature = "field-inline"))]
-use std::sync::OnceLock;
+use std::mem::MaybeUninit;
 use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
-    ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary, JoltProgram, MemoryImage,
-    TraceData, TraceError, TraceInputs, TraceOutput,
+    ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
+    MemoryImage, RamAddressBounds, TraceData, TraceError, TraceInputs, TraceOutput,
 };
 use jolt_program::preprocess::BytecodePCMapper;
 #[cfg(feature = "field-inline")]
 use jolt_program::{execution::FieldEvent, field_inline::FieldInlineTraceData};
-use jolt_riscv::JoltTraceRow;
+use jolt_riscv::{CircuitFlags, JoltTraceRow};
 use rayon::prelude::*;
 
 use common::jolt_device::JoltDevice;
@@ -84,9 +83,10 @@ impl ExecutionBackend for TracerBackend {
     ) -> Result<TraceOutput, TraceError> {
         let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
         let execution = self.trace_execution(program, inputs)?;
-        let data = collect_rows(&execution.cycles, &bytecode)?;
-        Ok(TraceOutput::new(
-            data,
+        let (data, dimensions) = collect_rows(&execution.cycles, &bytecode)?;
+        Ok(TraceOutput::with_dimensions(
+            dimensions,
+            Arc::new(data),
             execution.device,
             Some(execution.final_memory),
             Some(execution.advice_tape),
@@ -96,75 +96,86 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-fn collect_rows(cycles: &[Cycle], bytecode: &BytecodePCMapper) -> Result<TraceData, TraceError> {
+struct ConvertedChunk {
+    bounds: RamAddressBounds,
+    #[cfg(feature = "field-inline")]
+    fields: Vec<FieldEvent>,
+}
+
+fn collect_rows(
+    cycles: &[Cycle],
+    bytecode: &BytecodePCMapper,
+) -> Result<(TraceData, ExecutionDimensions), TraceError> {
     let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
     let _span = tracing::info_span!(
         "trace_rows_from_cycles",
-        rows = cycles.len(),
-        workers = if parallel {
-            rayon::current_num_threads()
-        } else {
-            1
-        }
+        cycles = cycles.len(),
+        mode = if parallel { "parallel" } else { "serial" }
     )
     .entered();
-
-    #[cfg(not(feature = "field-inline"))]
-    {
-        if !parallel {
-            let mut rows = Vec::with_capacity(cycles.len());
-            for cycle in cycles {
-                rows.push(cycle_to_trace_row(cycle, bytecode)?);
+    let mut rows = Vec::<JoltTraceRow>::with_capacity(cycles.len());
+    let slots = &mut rows.spare_capacity_mut()[..cycles.len()];
+    let fill = |batch: usize, slots: &mut [MaybeUninit<JoltTraceRow>], cycles: &[Cycle]| {
+        #[cfg(not(feature = "field-inline"))]
+        let _ = batch;
+        let mut chunk = ConvertedChunk {
+            bounds: RamAddressBounds::default(),
+            #[cfg(feature = "field-inline")]
+            fields: Vec::new(),
+        };
+        for (offset, (slot, cycle)) in slots.iter_mut().zip(cycles).enumerate() {
+            #[cfg(not(feature = "field-inline"))]
+            let _ = offset;
+            let row = cycle_to_trace_row(cycle, bytecode)?;
+            chunk.bounds.observe(row.ram_address());
+            slot.write(row);
+            #[cfg(feature = "field-inline")]
+            if let Some(data) = cycle.field_inline_trace() {
+                chunk.fields.push(FieldEvent {
+                    cycle: batch * PARALLEL_ROW_CONVERSION_THRESHOLD + offset,
+                    data,
+                });
             }
-            return Ok(TraceData::new(rows));
         }
-        // Keep indexed collection in one allocation; the fallible collector
-        // would allocate intermediate row shards.
-        let error = OnceLock::new();
-        let rows = cycles
-            .par_iter()
-            .map(|cycle| match cycle_to_trace_row(cycle, bytecode) {
-                Ok(row) => row,
-                Err(worker_error) => {
-                    let _ = error.set(worker_error);
-                    JoltTraceRow::default()
-                }
-            })
-            .collect();
-        match error.into_inner() {
-            Some(worker_error) => Err(worker_error),
-            None => Ok(TraceData::new(rows)),
-        }
-    }
-    #[cfg(feature = "field-inline")]
-    {
-        let mut rows = vec![JoltTraceRow::default(); cycles.len()];
-        let batches = rows
+        Ok::<_, TraceError>(chunk)
+    };
+    let batches = if parallel {
+        slots
             .par_chunks_mut(PARALLEL_ROW_CONVERSION_THRESHOLD)
             .zip(cycles.par_chunks(PARALLEL_ROW_CONVERSION_THRESHOLD))
             .enumerate()
-            .map(|(batch, (rows, cycles))| {
-                let mut fields = Vec::new();
-                for (offset, (row, cycle)) in rows.iter_mut().zip(cycles).enumerate() {
-                    *row = cycle_to_trace_row(cycle, bytecode)?;
-                    if let Some(data) = cycle.field_inline_trace() {
-                        fields.push(FieldEvent {
-                            cycle: batch * PARALLEL_ROW_CONVERSION_THRESHOLD + offset,
-                            data,
-                        });
-                    }
-                }
-                Ok(fields)
-            })
-            .collect::<Result<Vec<_>, TraceError>>()?;
-        // A flattening collect cannot size the result from its batches, so it
-        // would regrow and recopy the inline payloads.
-        let mut fields = Vec::with_capacity(batches.iter().map(Vec::len).sum());
+            .map(|(batch, (slots, cycles))| fill(batch, slots, cycles))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        vec![fill(0, slots, cycles)?]
+    };
+    // SAFETY: successful workers initialized every slot. JoltTraceRow is Copy,
+    // so partially written rows need no cleanup on error or unwinding.
+    unsafe { rows.set_len(cycles.len()) };
+    let ram_bounds = batches
+        .iter()
+        .fold(RamAddressBounds::default(), |bounds, batch| {
+            bounds.merge(batch.bounds)
+        });
+    #[cfg(not(feature = "field-inline"))]
+    let data = TraceData::new(rows);
+    #[cfg(feature = "field-inline")]
+    let data = {
+        let mut fields = Vec::with_capacity(batches.iter().map(|batch| batch.fields.len()).sum());
         for batch in batches {
-            fields.extend(batch);
+            fields.extend(batch.fields);
         }
-        TraceData::from_parts(rows, fields)
-    }
+        TraceData::from_parts(rows, fields)?
+    };
+    let dimensions = ExecutionDimensions {
+        trace_length: data.proof_len(),
+        ends_in_jump: data
+            .proof_rows()
+            .last()
+            .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
+        ram_bounds,
+    };
+    Ok((data, dimensions))
 }
 
 /// A resume point for the chunked-execution contract, built on the two-pass
@@ -342,6 +353,7 @@ impl ChunkedExecutionBackend for TracerBackend {
             &cycles[checkpoint.skip_rows..needed],
             &checkpoint.seed.bytecode,
         )
+        .map(|(data, _)| data)
     }
 }
 
@@ -619,7 +631,7 @@ mod tests {
             instruction.trace(&mut cpu, Some(&mut captured));
             trace[position] = captured[0];
         }
-        let data = collect_rows(&trace, &bytecode).unwrap();
+        let (data, _) = collect_rows(&trace, &bytecode).unwrap();
         assert_eq!(data.len(), trace.len());
         let event_cycles: Vec<_> = data
             .field_events()
@@ -633,6 +645,84 @@ mod tests {
                 assert_eq!(row.pc(), 1);
             } else {
                 assert_eq!(*row, JoltTraceRow::default());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod conversion_tests {
+    use super::*;
+    use crate::instruction::{ld::LD, sd::SD, RISCVCycle};
+    use jolt_riscv::{RamRead, RamWrite};
+
+    #[test]
+    fn conversion_preserves_rows_and_reduces_bounds() {
+        for length in [8, PARALLEL_ROW_CONVERSION_THRESHOLD + 1] {
+            for (read, write) in [
+                (0, 0),
+                (0, u64::MAX),
+                (u64::MAX, 0),
+                (0x8000_2000, 0x8000_1000),
+            ] {
+                let mut cycles = vec![Cycle::NoOp; length];
+                cycles[1] = Cycle::LD(RISCVCycle {
+                    instruction: LD {
+                        address: 0x8000_0000,
+                        ..Default::default()
+                    },
+                    ram_access: RamRead {
+                        address: read,
+                        value: 0,
+                    },
+                    ..Default::default()
+                });
+                cycles[2] = Cycle::SD(RISCVCycle {
+                    instruction: SD {
+                        address: 0x8000_0004,
+                        ..Default::default()
+                    },
+                    ram_access: RamWrite {
+                        address: write,
+                        pre_value: 0,
+                        post_value: 0,
+                    },
+                    ..Default::default()
+                });
+                let instructions = cycles[1..3]
+                    .iter()
+                    .map(|cycle| cycle.instruction().try_jolt_instruction_row().unwrap())
+                    .collect::<Vec<_>>();
+                let bytecode = BytecodePCMapper::try_new(&instructions).unwrap();
+                let (data, dimensions) = collect_rows(&cycles, &bytecode).unwrap();
+                assert_eq!(data.len(), length);
+                assert_eq!(data.rows()[1].ram_address(), read);
+                assert_eq!(data.rows()[2].ram_address(), write);
+                assert!(data.rows()[3..]
+                    .iter()
+                    .all(|row| *row == JoltTraceRow::default()));
+                assert_eq!(dimensions.trace_length, 3);
+                assert!(!dimensions.ends_in_jump);
+                assert_eq!(
+                    dimensions.ram_bounds.min(),
+                    [read, write]
+                        .into_iter()
+                        .filter(|address| *address != 0)
+                        .min()
+                );
+                assert_eq!(
+                    dimensions.ram_bounds.max(),
+                    [read, write]
+                        .into_iter()
+                        .filter(|address| *address != 0)
+                        .max()
+                );
+                let empty_bytecode = BytecodePCMapper::try_new(&[]).unwrap();
+                assert!(matches!(
+                    collect_rows(&cycles, &empty_bytecode),
+                    Err(TraceError::MissingBytecodePc { .. })
+                ));
             }
         }
     }
