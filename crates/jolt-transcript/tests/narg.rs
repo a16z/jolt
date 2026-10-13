@@ -284,6 +284,33 @@ fn prover_and_verifier_log_identical_sites() {
     assert_eq!(prover.events()[1].narg, Some(0..32));
 }
 
+#[cfg(feature = "logging")]
+#[test]
+fn fork_draws_are_logged_without_touching_the_transcript() {
+    use jolt_transcript::{SiteId, TranscriptOp};
+    let protocol = protocol::<Blake2b512>();
+    let run = |record: bool| {
+        let mut prover = ProverTranscript::<Blake2b512>::new(&protocol, SESSION);
+        prover.site(SiteId::label("fold"));
+        if record {
+            prover.record_fork_draw(40, 32);
+        }
+        let challenge: Fr = prover.challenge();
+        let events: Vec<_> = prover.events().iter().map(|e| (e.op, e.len)).collect();
+        (prover.finish(), challenge, events)
+    };
+    let (narg, challenge, events) = run(true);
+    let (plain_narg, plain_challenge, _) = run(false);
+    assert_eq!((narg, challenge), (plain_narg, plain_challenge));
+    assert_eq!(
+        events[..2],
+        [
+            (TranscriptOp::ForkAbsorb, 40),
+            (TranscriptOp::ForkSqueeze, 32)
+        ]
+    );
+}
+
 /// Pins [`Sponge::ABSORB_FORGETS_SQUEEZE_WIDTH`] to each sponge's real
 /// behavior: squeezing one byte or two and then absorbing the same bytes
 /// leaves the same state exactly when the flag is set.

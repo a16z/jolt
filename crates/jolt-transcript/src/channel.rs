@@ -21,6 +21,13 @@ pub trait Channel {
     /// Tags subsequent operations with `site` in the event log. Never absorbed.
     fn site(&mut self, site: SiteId);
 
+    /// Records, in the event log only, one draw from an accepted [`Fork`](crate::Fork)
+    /// of this transcript: `absorbed` context bytes, then `squeezed` seed bytes,
+    /// at the current site. The sponge is untouched. A prover records only the
+    /// accepted counter's draws, after the search, in the order the verifier
+    /// redraws them, so both roles' logs compare.
+    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize);
+
     /// Absorbs a public atom both sides already hold.
     fn public<A: CanonicalBytes>(&mut self, value: &A);
 

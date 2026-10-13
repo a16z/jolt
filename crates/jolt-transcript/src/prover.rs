@@ -160,6 +160,11 @@ impl<H: Sponge> Channel for ProverTranscript<H> {
         self.log.set_site(site);
     }
 
+    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize) {
+        self.log.record(TranscriptOp::ForkAbsorb, absorbed, None);
+        self.log.record(TranscriptOp::ForkSqueeze, squeezed, None);
+    }
+
     fn public<A: CanonicalBytes>(&mut self, value: &A) {
         self.state.public_message(value);
         self.log.record(TranscriptOp::Public, A::NUM_BYTES, None);

@@ -44,6 +44,11 @@ pub enum TranscriptOp {
     Message,
     /// Squeezed a verifier challenge.
     Challenge,
+    /// Absorbed draw context into an accepted [`Fork`](crate::Fork). Event log
+    /// only; recorded through [`Channel::record_fork_draw`](crate::Channel::record_fork_draw).
+    ForkAbsorb,
+    /// Squeezed a draw seed from an accepted [`Fork`](crate::Fork). Event log only.
+    ForkSqueeze,
 }
 
 /// One recorded transcript operation.
