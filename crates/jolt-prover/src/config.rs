@@ -6,6 +6,8 @@
 //! witness chunk profile is a setup choice carried by its verifier setup.
 //! The proof-shape derivation policies must match the verifier's choices byte-for-byte.
 
+use std::num::NonZeroU64;
+
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 #[cfg(feature = "akita")]
@@ -80,11 +82,16 @@ impl ProverConfig {
             let _ = checked_remap_address(min, memory_layout)
                 .map_err(|reason| ProverError::Unsupported { reason })?;
         }
-        let touched =
-            checked_remap_address(dimensions.ram_bounds.max().unwrap_or(0), memory_layout)
-                .map_err(|reason| ProverError::Unsupported { reason })?
-                .unwrap_or(0);
-        let image_end = checked_remap_address(min_bytecode_address, memory_layout)
+        let touched = dimensions
+            .ram_bounds
+            .max()
+            .map(|address| checked_remap_address(address, memory_layout))
+            .transpose()
+            .map_err(|reason| ProverError::Unsupported { reason })?
+            .unwrap_or(0);
+        let image_end = NonZeroU64::new(min_bytecode_address)
+            .map(|address| checked_remap_address(address, memory_layout))
+            .transpose()
             .map_err(|reason| ProverError::Unsupported { reason })?
             .unwrap_or(0)
             .checked_add(program_image_len_words as u64)
@@ -166,15 +173,13 @@ impl ProverConfig {
 }
 
 fn checked_remap_address(
-    address: u64,
+    address: NonZeroU64,
     memory_layout: &MemoryLayout,
-) -> Result<Option<u64>, &'static str> {
-    if address == 0 {
-        return Ok(None);
-    }
+) -> Result<u64, &'static str> {
     address
+        .get()
         .checked_sub(memory_layout.get_lowest_address())
-        .map(|offset| Some(offset / 8))
+        .map(|offset| offset / 8)
         .ok_or("RAM address precedes the memory layout")
 }
 
@@ -305,11 +310,11 @@ mod dimension_tests {
                 );
                 let dimensions = ExecutionDimensions::from_rows(&rows);
                 assert_eq!(
-                    dimensions.ram_bounds.min(),
+                    dimensions.ram_bounds.min().map(NonZeroU64::get),
                     addresses.iter().copied().filter(|a| *a != 0).min()
                 );
                 assert_eq!(
-                    dimensions.ram_bounds.max(),
+                    dimensions.ram_bounds.max().map(NonZeroU64::get),
                     addresses.iter().copied().filter(|a| *a != 0).max()
                 );
                 let result = ProverConfig::derive_from_dimensions::<Fr>(
@@ -340,13 +345,16 @@ mod dimension_tests {
             ..Default::default()
         });
         let lowest = layout.get_lowest_address();
-        let derive = |trace_length, max_ram_address, image_words| {
+        let derive = |trace_length, max_ram_address: Option<u64>, image_words| {
             ProverConfig::derive_from_dimensions::<Fr>(
                 ExecutionDimensions {
                     trace_length,
                     ends_in_jump: trace_length != 0,
-                    ram_bounds: RamAddressBounds::try_new(max_ram_address, max_ram_address)
-                        .expect("valid bounds"),
+                    ram_bounds: RamAddressBounds::try_new(max_ram_address.map(|address| {
+                        let address = NonZeroU64::new(address).expect("nonzero address");
+                        (address, address)
+                    }))
+                    .expect("valid bounds"),
                 },
                 &layout,
                 lowest,
@@ -385,10 +393,10 @@ mod dimension_tests {
             ExecutionDimensions {
                 trace_length: 0,
                 ends_in_jump: false,
-                ram_bounds: RamAddressBounds::try_new(
-                    Some(layout.get_lowest_address() - 1),
-                    Some(layout.get_lowest_address() - 1),
-                )
+                ram_bounds: RamAddressBounds::try_new(Some((
+                    NonZeroU64::new(layout.get_lowest_address() - 1).expect("nonzero address"),
+                    NonZeroU64::new(layout.get_lowest_address() - 1).expect("nonzero address"),
+                )))
                 .expect("ordered bounds, invalid for this layout"),
             },
         ] {

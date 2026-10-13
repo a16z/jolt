@@ -705,14 +705,14 @@ mod conversion_tests {
                 assert_eq!(dimensions.trace_length, 3);
                 assert!(!dimensions.ends_in_jump);
                 assert_eq!(
-                    dimensions.ram_bounds.min(),
+                    dimensions.ram_bounds.min().map(|address| address.get()),
                     [read, write]
                         .into_iter()
                         .filter(|address| *address != 0)
                         .min()
                 );
                 assert_eq!(
-                    dimensions.ram_bounds.max(),
+                    dimensions.ram_bounds.max().map(|address| address.get()),
                     [read, write]
                         .into_iter()
                         .filter(|address| *address != 0)

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{num::NonZeroU64, sync::Arc};
 
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_riscv::{CircuitFlags, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
@@ -189,48 +189,44 @@ pub struct MemoryImage {
 /// accumulator has no bounds. Partial summaries can be merged in any order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RamAddressBounds {
-    min: Option<u64>,
-    max: Option<u64>,
+    bounds: Option<(NonZeroU64, NonZeroU64)>,
 }
 
 impl RamAddressBounds {
-    /// Accept externally collected bounds without allowing partial, zero, or
-    /// reversed bounds. This does not validate against a program's memory layout.
-    pub fn try_new(min: Option<u64>, max: Option<u64>) -> Result<Self, TraceError> {
-        match (min, max) {
-            (None, None) => Ok(Self::default()),
-            (Some(min), Some(max)) if min != 0 && min <= max => Ok(Self {
-                min: Some(min),
-                max: Some(max),
-            }),
-            _ => Err(TraceError::InvalidRamBounds),
+    /// Accept externally collected bounds if the minimum does not exceed the
+    /// maximum. This does not validate against a program's memory layout.
+    pub fn try_new(bounds: Option<(NonZeroU64, NonZeroU64)>) -> Result<Self, TraceError> {
+        if bounds.is_some_and(|(min, max)| min > max) {
+            return Err(TraceError::InvalidRamBounds);
         }
+        Ok(Self { bounds })
     }
 
     pub fn observe(&mut self, address: u64) {
-        if address != 0 {
-            self.min = Some(self.min.unwrap_or(address).min(address));
-            self.max = Some(self.max.unwrap_or(address).max(address));
+        if let Some(address) = NonZeroU64::new(address) {
+            let (min, max) = self.bounds.get_or_insert((address, address));
+            *min = (*min).min(address);
+            *max = (*max).max(address);
         }
     }
 
     #[must_use]
     pub fn merge(mut self, other: Self) -> Self {
-        if let Some(min) = other.min {
-            self.observe(min);
-        }
-        if let Some(max) = other.max {
-            self.observe(max);
-        }
+        self.bounds = match (self.bounds, other.bounds) {
+            (Some((min, max)), Some((other_min, other_max))) => {
+                Some((min.min(other_min), max.max(other_max)))
+            }
+            (bounds, None) | (None, bounds) => bounds,
+        };
         self
     }
 
-    pub fn min(&self) -> Option<u64> {
-        self.min
+    pub fn min(&self) -> Option<NonZeroU64> {
+        self.bounds.map(|(min, _)| min)
     }
 
-    pub fn max(&self) -> Option<u64> {
-        self.max
+    pub fn max(&self) -> Option<NonZeroU64> {
+        self.bounds.map(|(_, max)| max)
     }
 }
 
@@ -336,28 +332,36 @@ mod dimension_tests {
     use super::*;
 
     #[test]
-    fn external_ram_bounds_must_be_complete_nonzero_and_ordered() {
-        for (min, max) in [
-            (None, Some(8)),
-            (Some(8), None),
-            (Some(0), Some(8)),
-            (Some(8), Some(0)),
-            (Some(0), Some(0)),
-            (Some(16), Some(8)),
-        ] {
+    fn external_ram_bounds_must_be_ordered() {
+        for (min, max) in [(16, 8), (u64::MAX, 1)] {
             assert!(matches!(
-                RamAddressBounds::try_new(min, max),
+                RamAddressBounds::try_new(Some((
+                    NonZeroU64::new(min).expect("nonzero minimum"),
+                    NonZeroU64::new(max).expect("nonzero maximum"),
+                ))),
                 Err(TraceError::InvalidRamBounds)
             ));
         }
-        for (min, max) in [
-            (None, None),
-            (Some(8), Some(8)),
-            (Some(8), Some(16)),
-            (Some(u64::MAX), Some(u64::MAX)),
+        for pair in [
+            None,
+            Some((8, 8)),
+            Some((8, 16)),
+            Some((u64::MAX, u64::MAX)),
         ] {
-            let bounds = RamAddressBounds::try_new(min, max).expect("valid bounds");
-            assert_eq!((bounds.min(), bounds.max()), (min, max));
+            let bounds = RamAddressBounds::try_new(pair.map(|(min, max)| {
+                (
+                    NonZeroU64::new(min).expect("nonzero minimum"),
+                    NonZeroU64::new(max).expect("nonzero maximum"),
+                )
+            }))
+            .expect("valid bounds");
+            assert_eq!(
+                (
+                    bounds.min().map(NonZeroU64::get),
+                    bounds.max().map(NonZeroU64::get)
+                ),
+                (pair.map(|(min, _)| min), pair.map(|(_, max)| max))
+            );
         }
     }
 
@@ -382,7 +386,13 @@ mod dimension_tests {
                 }
                 let merged = left.merge(right);
                 assert_eq!(merged, right.merge(left));
-                assert_eq!((merged.min(), merged.max()), expected);
+                assert_eq!(
+                    (
+                        merged.min().map(NonZeroU64::get),
+                        merged.max().map(NonZeroU64::get)
+                    ),
+                    expected
+                );
                 assert_eq!(merged.merge(RamAddressBounds::default()), merged);
             }
         }
