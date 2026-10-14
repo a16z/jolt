@@ -30,6 +30,7 @@ thiserror = { workspace = true }
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []
+binary = []
 asm = []
 fuzzing = ["asm"]
 parallel = ["dep:rayon"]
@@ -65,6 +66,11 @@ harness = false
 name = "field_arithmetic"
 harness = false
 required-features = ["solinas"]
+
+[[bench]]
+name = "binary_kernels"
+harness = false
+required-features = ["binary"]
 
 [[example]]
 name = "fp128_production_witness"
