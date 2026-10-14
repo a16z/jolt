@@ -19,7 +19,10 @@ pub use backend::{ChunkedExecutionBackend, ExecutionBackend, ExecutionSummary};
 pub use error::TraceError;
 #[cfg(feature = "field-inline")]
 pub use trace::FieldEvent;
-pub use trace::{JoltProgram, MemoryImage, TraceData, TraceInputs, TraceOutput};
+pub use trace::{
+    ExecutionDimensions, JoltProgram, MemoryImage, RamAddressBounds, TraceData, TraceInputs,
+    TraceOutput,
+};
 
 #[cfg(feature = "image")]
 pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError> {

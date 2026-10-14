@@ -350,7 +350,7 @@ impl Program {
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> Result<TraceOutput, TraceError> {
+    ) -> Result<TraceOutput<B::Trace>, TraceError> {
         let program = self.jolt_program()?;
         let memory_config =
             self.memory_config_with_program_size(program.program_end - RAM_START_ADDRESS);

@@ -15,6 +15,7 @@ workspace = true
 default = ["std", "serialization"]
 serialization = ["dep:ark-serialize", "dep:serde", "jolt-riscv/serialization"]
 std = ["common/std"]
+parallel = ["dep:rayon"]
 image = ["dep:object"]
 field-inline = ["jolt-riscv/field-inline"]
 
@@ -23,6 +24,7 @@ ark-serialize = { workspace = true, optional = true }
 common = { workspace = true, default-features = false }
 jolt-riscv = { workspace = true, default-features = false }
 object = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
 serde = { workspace = true, optional = true, features = ["rc"] }
 thiserror.workspace = true
 

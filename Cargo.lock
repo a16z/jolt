@@ -3540,6 +3540,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "common",
+ "jolt-akita",
  "jolt-claims",
  "jolt-dory",
  "jolt-field",
@@ -3697,6 +3698,7 @@ dependencies = [
  "hex",
  "jolt-riscv",
  "object 0.40.0",
+ "rayon",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3732,7 +3734,6 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
- "jolt-utils",
  "jolt-verifier",
  "jolt-witness",
  "postcard",

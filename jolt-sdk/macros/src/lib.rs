@@ -403,7 +403,7 @@ impl MacroBuilder {
             pub fn #trace_with_backend_fn_name<__B: jolt::ExecutionBackend>(
                 __jolt_backend: &mut __B,
                 #inputs
-            ) -> ::core::result::Result<jolt::TraceOutput, jolt::TraceError> {
+            ) -> ::core::result::Result<jolt::TraceOutput<__B::Trace>, jolt::TraceError> {
                 let mut __jolt_program = jolt::host::Program::new(#guest_name);
                 __jolt_program.set_func(#fn_name_str);
                 #set_std

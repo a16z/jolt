@@ -1508,6 +1508,7 @@ dependencies = [
  "common",
  "jolt-riscv",
  "object",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -1529,7 +1530,6 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
- "jolt-utils",
  "jolt-verifier",
  "jolt-witness",
  "rayon",

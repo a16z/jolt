@@ -136,8 +136,8 @@ mod pipeline {
         } = traced;
         let memory_layout = trace_output.device.memory_layout.clone();
         let public_io = trace_output.device.clone();
-        let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.proof_rows(),
+        let config = ProverConfig::derive_from_dimensions::<Fr>(
+            trace_output.dimensions,
             &memory_layout,
             preprocessing.verifier.program.min_bytecode_address(),
             preprocessing.verifier.program.program_image_len_words(),
@@ -164,12 +164,11 @@ mod pipeline {
 
         let prover_preprocessing = preprocessing;
         let backend = JoltBackend::<Fr, VerifierPCS>::reference();
-        let proof = jolt_prover::prove::<Fr, VerifierPCS, VerifierVC, VerifierTranscript, _>(
-            &backend,
+        let proof = jolt_prover::prove::<Fr, VerifierPCS, VerifierVC, VerifierTranscript>(
+            backend.with_witness(&witness),
             &prover_preprocessing,
             &config,
             None,
-            witness.as_ref(),
             &public_io,
         )
         .expect("modular field-inline prove");

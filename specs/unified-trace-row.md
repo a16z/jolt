@@ -350,10 +350,14 @@ its first caller.
 This is a source and analysis-wire breaking change: imports, constructors,
 summary iteration, and direct `row.field_inline` access need migration.
 `OwnedTrace`, `TraceSource` (with its SDK re-exports `jolt::OwnedTrace` and
-`jolt::TraceSource`), `ExecutionBackend::Trace`, and the generic parameters on
-`TraceOutput` and `JoltVmWitnessInputs` are removed. Callers read
-`TraceOutput::trace` (`Arc<TraceData>`) directly, and generated `trace_*`
-functions return `jolt::TraceOutput`. `CapturedState` with its
+`jolt::TraceSource`), and the generic parameter on `JoltVmWitnessInputs` are
+removed. Host backends return `TraceOutput<Arc<TraceData>>`, also spelled
+`TraceOutput`, and callers read its shared trace directly. `ExecutionBackend::Trace`
+remains unconstrained so external device backends can return an opaque handle
+in `TraceOutput<T>` alongside `ExecutionDimensions`; configuration does not
+require host rows. Generated `trace_*` functions return `jolt::TraceOutput`, while
+`trace_*_with_backend` functions preserve the selected backend's trace type.
+`CapturedState` with its
 `NonMemoryState`, `LoadState`, and `StoreState` payloads is removed; slot
 values are read through the row accessors. `JoltTraceRow::no_op()` is folded
 into `Default`. `JoltInstruction` converts from `JoltInstructionRow` through an

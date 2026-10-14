@@ -20,7 +20,7 @@ use jolt_claims::protocols::composed::ComposedClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
@@ -41,7 +41,6 @@ use jolt_verifier::stages::stage6a::outputs::{
     Stage6aSumchecks,
 };
 use jolt_verifier::CheckedInputs;
-use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
@@ -60,8 +59,7 @@ pub struct Stage6aProverOutput<F: JoltField, C> {
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage6a<F, PCS, VC, T>(
-    backend: &JoltBackend<F, PCS>,
-    session: &mut ProofSession,
+    backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &ProofMode<'_, VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
@@ -71,7 +69,6 @@ pub fn prove_stage6a<F, PCS, VC, T>(
     stage3: &Stage3ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
-    witness: &dyn JoltWitnessPlane<F>,
     transcript: &mut T,
 ) -> Result<Stage6aProverOutput<F, VC::Output>, ProverError<F>>
 where
@@ -150,12 +147,10 @@ where
         bytecode_read_raf: bytecode_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
-    let mut scheduler = backend.round_scheduler.build(session);
+    let mut scheduler = backend.build_round_scheduler();
     let proved = sumchecks.prove(
         backend,
-        session,
         &mut *scheduler,
-        witness,
         &inputs,
         &input_points,
         &address_challenges,
@@ -208,8 +203,8 @@ mod field_inline_round_trip {
     #[test]
     fn field_arithmetic_stage6a_round_trips_the_composed_verifier() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
-        let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let mut session = backend.begin_proof();
+        let backend = crate::stages::field_inline_fixtures::reference_backend();
+        let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
@@ -218,20 +213,17 @@ mod field_inline_round_trip {
 
         let mut prover_transcript = Blake2bTranscript::new(b"stage6a-field-inline");
         let (((stage1, stage2, stage3), stage4), stage5) = FixtureProver {
-            backend: &backend,
-            session: &mut session,
+            backend: &mut context,
             mode: &mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
             preprocessing: &preprocessing,
-            witness: &witness,
             transcript: &mut prover_transcript,
         }
         .through_stage5();
         let out = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
+            &mut context,
             &mode,
             &checked,
             &config,
@@ -241,7 +233,6 @@ mod field_inline_round_trip {
             &stage3.clear_output,
             &stage4.clear_output,
             &stage5.clear_output,
-            &witness,
             &mut prover_transcript,
         )
         .unwrap();
