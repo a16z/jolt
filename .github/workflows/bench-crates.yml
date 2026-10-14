@@ -24,9 +24,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   # Every CPU observed in the hosted x64 fleet (Xeon 8370C/8573C, EPYC 7763/9V74)
-  # supports BMI2+ADX+AVX2. Without these flags the fp128 mulx/adx asm and the
-  # packed SIMD kernels are compile-time dead code and the benches time fallbacks.
-  RUSTFLAGS: -C target-feature=+bmi2,+adx,+avx2
+  # supports BMI2+ADX+AVX2+PCLMULQDQ. Without these flags the fp128 mulx/adx asm,
+  # the packed SIMD kernels and the binary-field carry-less multiply kernels are
+  # compile-time dead code and the benches time fallbacks.
+  RUSTFLAGS: -C target-feature=+bmi2,+adx,+avx2,+pclmulqdq
 
 concurrency:
   group: bench-crates-${{ github.head_ref || github.ref }}
@@ -71,12 +72,18 @@ jobs:
             read -r sha baseline <<< "$leg"
             echo "::group::$baseline @ $sha"
             git checkout --quiet "$sha"
+            features=jolt-field/solinas,jolt-field/asm
+            # `--bench '*'` rejects a bench whose required feature is off, and a
+            # base that predates a feature cannot enable it.
+            if grep -q '^binary = ' crates/jolt-field/Cargo.toml; then
+              features+=,jolt-field/binary
+            fi
             cargo bench \
               -p jolt-crypto \
               -p jolt-field \
               -p jolt-poly \
               -p jolt-transcript \
-              --features jolt-field/solinas,jolt-field/asm \
+              --features "$features" \
               --bench '*' \
               -- --save-baseline "$baseline" --noplot
             echo "::endgroup::"
