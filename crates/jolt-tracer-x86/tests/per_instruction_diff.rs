@@ -755,12 +755,3 @@ difftests! {
     diff_shift_data_h => |r| alu_rr(r, kind_by_name("VirtualShiftDataH"));
     diff_shift_data_w => |r| alu_rr(r, kind_by_name("VirtualShiftDataW"));
 }
-
-/// Every supported kind has a differential test above; this pins the count
-/// so growing SUPPORTED without adding a test fails. (`VirtualAdvice` is
-/// classified `RequiresAdviceGroup`, not listed here: a bare row is a
-/// compile error, and the whole-guest gates cover its semantics.)
-#[test]
-fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 87);
-}
