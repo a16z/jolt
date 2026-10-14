@@ -44,7 +44,7 @@ pub struct ProverConfig {
     /// matrix. [`ProverConfig::derive_from_dimensions`] always picks cycle-major (legacy has
     /// no production selection logic); address-major is chosen by
     /// overwriting this field after derivation. Dory committed-program
-    /// preprocessing bakes this order into its chunk commitments, so pass it
+    /// preprocessing bakes this order into its bytecode commitment, so pass it
     /// to `preprocess_committed_with_order` and keep the values equal. Akita
     /// supports only cycle-major order.
     pub trace_polynomial_order: TracePolynomialOrder,
@@ -59,7 +59,7 @@ impl ProverConfig {
     /// Derive the proof shape from execution facts without accessing trace rows.
     /// Pad the trace length past its final no-op, size RAM to cover accessed
     /// addresses and the program image, and select chunking policies.
-    #[tracing::instrument(skip_all, fields(rows = dimensions.trace_length))]
+    #[tracing::instrument(skip_all, name = "ProverConfig::derive_from_dimensions", fields(rows = dimensions.trace_length))]
     pub fn derive_from_dimensions<F: JoltField>(
         dimensions: ExecutionDimensions,
         memory_layout: &MemoryLayout,
