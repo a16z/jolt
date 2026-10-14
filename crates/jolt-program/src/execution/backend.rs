@@ -3,11 +3,13 @@ use common::jolt_device::JoltDevice;
 use super::{MemoryImage, TraceData, TraceError, TraceInputs, TraceOutput};
 
 pub trait ExecutionBackend {
+    type Trace;
+
     fn trace(
         &mut self,
         program: &super::JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput, TraceError>;
+    ) -> Result<TraceOutput<Self::Trace>, TraceError>;
 }
 
 /// Two-pass chunked execution: a fast checkpointing pass over the whole

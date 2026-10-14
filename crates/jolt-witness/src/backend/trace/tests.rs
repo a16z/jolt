@@ -142,7 +142,7 @@ fn compact_memory_layout() -> MemoryLayout {
 }
 
 fn shape(witness: &TraceBackend, id: impl Into<JoltPolynomialId>) -> Result<Shape, WitnessError> {
-    witness.shape_of(id.into())
+    witness.metadata().shape(id.into())
 }
 
 fn committed_table(
@@ -951,7 +951,7 @@ fn excluded_ids_report_their_classification() {
 
     let assert_reason = |id: JoltPolynomialId, reason: &'static str| {
         for result in [
-            witness.shape_of(id).map(|_| ()),
+            witness.metadata().shape(id).map(|_| ()),
             <TraceBackend as JoltWitnessOracle<Fr>>::oracle_table(&witness, id).map(|_| ()),
         ] {
             assert_eq!(
@@ -1026,5 +1026,34 @@ fn dense_grid_len_is_capped_and_overflow_checked() {
     assert!(matches!(
         checked_dense_grid_len::<Fr>(usize::MAX / 8, 1),
         Err(WitnessError::InvalidDimensions { .. })
+    ));
+}
+
+#[test]
+fn witness_metadata_serves_shapes_and_rejects_data_queries() {
+    use crate::RowSource;
+    let preprocessing = base_preprocessing();
+    let config = config();
+    let metadata = JoltVmWitnessMetadata::new(&config, &preprocessing);
+    let id = JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc);
+    assert_eq!(
+        metadata.shape(id).unwrap(),
+        Shape::new(4, PolynomialEncoding::Compact)
+    );
+    assert_eq!(metadata.program_preprocessing().bytecode.code_size, 32);
+    assert!(metadata
+        .committed_polynomial_order()
+        .unwrap()
+        .contains(&JoltCommittedPolynomial::RdInc));
+    assert!(matches!(
+        JoltWitnessOracle::<Fr>::oracle_table(&metadata, id),
+        Err(WitnessError::UnavailableView { .. })
+    ));
+    assert!(metadata.random_access().is_none());
+    assert!(matches!(
+        metadata.visit_chunks(0..16, 4, &mut |_, _, _| panic!(
+            "witness metadata must not emit trace rows"
+        )),
+        Err(WitnessError::UnavailableView { .. })
     ));
 }

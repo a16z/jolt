@@ -42,7 +42,7 @@ pub struct ProgramImageClaimReductionLayout {
 
 impl ProgramImageClaimReductionLayout {
     /// `start_index` is the remapped RAM address of the first program-image
-    /// word (`remap_address(min_bytecode_address)`).
+    /// word: `(min_bytecode_address - lowest_address) / 8`.
     pub fn balanced(
         trace_order: TracePolynomialOrder,
         log_t: usize,

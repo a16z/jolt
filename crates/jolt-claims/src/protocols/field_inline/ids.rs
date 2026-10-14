@@ -60,6 +60,11 @@ pub enum FieldInlineCommittedPolynomial {
     FieldRdInc,
 }
 
+impl FieldInlineCommittedPolynomial {
+    /// All field-inline committed polynomials in proof-payload order.
+    pub const ALL: [Self; 1] = [Self::FieldRdInc];
+}
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineVirtualPolynomial {
     FieldRs1Value,

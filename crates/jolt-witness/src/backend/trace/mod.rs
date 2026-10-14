@@ -20,7 +20,9 @@ use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
 mod advice;
 mod cycle;
+mod metadata;
 mod oracle;
+pub use metadata::JoltVmWitnessMetadata;
 mod ram;
 mod registers;
 
@@ -147,6 +149,17 @@ impl TraceBackend {
         })
     }
 
+    pub fn committed_polynomial_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
+        self.metadata().committed_polynomial_order()
+    }
+
+    /// Trace-independent dimensions and program facts for this witness.
+    pub fn metadata(&self) -> JoltVmWitnessMetadata<'_> {
+        JoltVmWitnessMetadata::new(&self.config, &self.preprocessing)
+    }
+}
+
+impl JoltVmWitnessMetadata<'_> {
     pub fn committed_polynomial_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         let mut order = committed_openings::proof_commitment_order(self.ra_layout()?);
         if self.config.include_trusted_advice {
@@ -324,5 +337,5 @@ fn require_index(index: usize, len: usize) -> Result<(), WitnessError> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test module")]
+#[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests;

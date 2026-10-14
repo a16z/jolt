@@ -1,4 +1,4 @@
-//! Per-proof configuration, derived from the execution trace.
+//! Per-proof configuration, derived from execution dimensions.
 //!
 //! The five proof-shape values are exactly the proof's wire config block
 //! (`JoltProof::{trace_length, ram_K, rw_config, one_hot_config,
@@ -6,21 +6,19 @@
 //! witness chunk profile is a setup choice carried by its verifier setup.
 //! The proof-shape derivation policies must match the verifier's choices byte-for-byte.
 
+use std::num::NonZeroU64;
+
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::JoltField;
-use jolt_riscv::{CircuitFlags, JoltTraceRow};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use jolt_program::execution::ExecutionDimensions;
 
 use crate::ProverError;
 
 const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
-#[cfg(feature = "parallel")]
-const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
 
 /// The minimum padded trace length — the compiled protocol's PCS floor
 /// (legacy's `PCS::MIN_PADDED_TRACE_LENGTH`). Dory needs `T >= K^(1/D)`
@@ -43,7 +41,7 @@ pub struct ProverConfig {
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     /// Coefficient placement of the trace polynomials in the commitment
-    /// matrix. [`ProverConfig::derive`] always picks cycle-major (legacy has
+    /// matrix. [`ProverConfig::derive_from_dimensions`] always picks cycle-major (legacy has
     /// no production selection logic); address-major is chosen by
     /// overwriting this field after derivation. Dory committed-program
     /// preprocessing bakes this order into its chunk commitments, so pass it
@@ -58,61 +56,83 @@ pub struct ProverConfig {
 }
 
 impl ProverConfig {
-    /// Derive the proof shape from an unpadded trace: pad the length (minimum
-    /// 256 so `T >= K^(1/D)`, else next power of two past the trace plus its
-    /// final no-op), size RAM to the highest touched (remapped) address or the
-    /// program image extent, and pick the chunking policies from `log_T`.
-    #[tracing::instrument(skip_all, name = "ProverConfig::derive", fields(rows = rows.len()))]
-    #[expect(non_snake_case)]
-    pub fn derive<F: JoltField>(
-        rows: &[JoltTraceRow],
+    /// Derive the proof shape from execution facts without accessing trace rows.
+    /// Pad the trace length past its final no-op, size RAM to cover accessed
+    /// addresses and the program image, and select chunking policies.
+    #[tracing::instrument(skip_all, fields(rows = dimensions.trace_length))]
+    pub fn derive_from_dimensions<F: JoltField>(
+        dimensions: ExecutionDimensions,
         memory_layout: &MemoryLayout,
         min_bytecode_address: u64,
         program_image_len_words: usize,
         max_padded_trace_length: usize,
     ) -> Result<Self, ProverError<F>> {
-        // The tracer stops when the PC stops changing or on a trap that emits
-        // no rows, so only `j .` (or `jalr` to itself) leaves a jump last.
-        if rows
-            .last()
-            .is_some_and(|row| !row.circuit_flags().get(CircuitFlags::Jump))
-        {
+        if dimensions.trace_length != 0 && !dimensions.ends_in_jump {
             return Err(ProverError::TraceDoesNotEndInJump);
         }
-        let trace_length = if rows.len() < MIN_PADDED_TRACE_LENGTH {
-            MIN_PADDED_TRACE_LENGTH
-        } else {
-            (rows.len() + 1).next_power_of_two()
-        };
+        let trace_length = dimensions
+            .trace_length
+            .checked_add(1)
+            .and_then(usize::checked_next_power_of_two)
+            .ok_or(ProverError::Unsupported {
+                reason: "trace length overflows the padded domain",
+            })?
+            .max(MIN_PADDED_TRACE_LENGTH);
+        if let Some(min) = dimensions.ram_bounds.min() {
+            let _ = checked_remap_address(min, memory_layout)
+                .map_err(|reason| ProverError::Unsupported { reason })?;
+        }
+        let touched = dimensions
+            .ram_bounds
+            .max()
+            .map(|address| checked_remap_address(address, memory_layout))
+            .transpose()
+            .map_err(|reason| ProverError::Unsupported { reason })?
+            .unwrap_or(0);
+        let image_end = NonZeroU64::new(min_bytecode_address)
+            .map(|address| checked_remap_address(address, memory_layout))
+            .transpose()
+            .map_err(|reason| ProverError::Unsupported { reason })?
+            .unwrap_or(0)
+            .checked_add(program_image_len_words as u64)
+            .and_then(|end| end.checked_add(1))
+            .ok_or(ProverError::Unsupported {
+                reason: "program image extent overflows the RAM domain",
+            })?;
+        let ram_k = touched
+            .max(image_end)
+            .checked_next_power_of_two()
+            .and_then(|domain| usize::try_from(domain).ok())
+            .ok_or(ProverError::Unsupported {
+                reason: "RAM domain does not fit the host address space",
+            })?;
+        Self::from_padded_dimensions(trace_length, ram_k, max_padded_trace_length)
+    }
+
+    /// Use domains already selected by an execution backend. The caller must
+    /// ensure the RAM domain covers execution and the program image; this checks
+    /// domain geometry and applies the same default policies as execution derivation.
+    #[expect(non_snake_case)]
+    pub fn from_padded_dimensions<F: JoltField>(
+        trace_length: usize,
+        ram_K: usize,
+        max_padded_trace_length: usize,
+    ) -> Result<Self, ProverError<F>> {
+        if !trace_length.is_power_of_two() || trace_length < MIN_PADDED_TRACE_LENGTH {
+            return Err(ProverError::Unsupported {
+                reason: "invalid padded trace domain",
+            });
+        }
         if trace_length > max_padded_trace_length {
             return Err(ProverError::Unsupported {
                 reason: "trace exceeds the preprocessing's maximum padded trace length",
             });
         }
-
-        #[cfg(feature = "parallel")]
-        let touched = if rows.len() >= PARALLEL_DERIVE_MIN_ROWS {
-            rows.par_iter()
-                .filter_map(|row| remap_address(row.ram_address(), memory_layout))
-                .max()
-                .unwrap_or(0)
-        } else {
-            rows.iter()
-                .filter_map(|row| remap_address(row.ram_address(), memory_layout))
-                .max()
-                .unwrap_or(0)
-        };
-        #[cfg(not(feature = "parallel"))]
-        let touched = rows
-            .iter()
-            .filter_map(|row| remap_address(row.ram_address(), memory_layout))
-            .max()
-            .unwrap_or(0);
-        let image_end = remap_address(min_bytecode_address, memory_layout).unwrap_or(0)
-            + program_image_len_words as u64
-            + 1;
-        let ram_K = touched.max(image_end).next_power_of_two() as usize;
-
+        if !ram_K.is_power_of_two() {
+            return Err(ProverError::Unsupported {
+                reason: "RAM domain must be a nonzero power of two",
+            });
+        }
         let log_T = trace_length.ilog2() as usize;
         Ok(Self {
             trace_length,
@@ -152,19 +172,15 @@ impl ProverConfig {
     }
 }
 
-/// Map a byte address into the RAM word index space: word offsets from the
-/// memory layout's lowest mapped address; address 0 means "no access".
-///
-/// Panics on a nonzero address below the layout's lowest mapped address — a
-/// malformed trace, failed loudly here (matching legacy) rather than
-/// silently under-sizing `ram_K` and failing as an opaque sumcheck error.
-pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> {
-    if address == 0 {
-        return None;
-    }
-    let lowest = memory_layout.get_lowest_address();
-    assert!(address >= lowest, "Unexpected address {address}");
-    Some((address - lowest) / 8)
+fn checked_remap_address(
+    address: NonZeroU64,
+    memory_layout: &MemoryLayout,
+) -> Result<u64, &'static str> {
+    address
+        .get()
+        .checked_sub(memory_layout.get_lowest_address())
+        .map(|offset| offset / 8)
+        .ok_or("RAM address precedes the memory layout")
 }
 
 /// Read-write checking phase splits: cycle variables in phase 1, address
@@ -236,14 +252,183 @@ pub(crate) fn advice_total_vars(max_advice_size_bytes: u64) -> usize {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "test module")]
+mod dimension_tests {
+    use super::*;
+    use common::jolt_device::MemoryConfig;
+    use jolt_field::Fr;
+    use jolt_program::execution::RamAddressBounds;
+    use jolt_riscv::{JoltTraceRow, RamAccess};
+
+    #[test]
+    fn execution_summaries_preserve_address_validation() {
+        use jolt_riscv::{JoltInstructionKind, JoltInstructionRow};
+        use jolt_riscv::{RamRead, RamWrite};
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        let lowest = layout.get_lowest_address();
+        for length in [3, 1 << 16] {
+            for addresses in [
+                [0, 0, 0],
+                [0, lowest, lowest + 64],
+                [lowest - 1, lowest + 64, 0],
+                [lowest + 64, lowest - 1, 0],
+            ] {
+                let mut rows: Vec<_> = (0..length)
+                    .map(|index| {
+                        let address = addresses[index % addresses.len()];
+                        let store = index % 2 == 1;
+                        let instruction = JoltInstructionRow {
+                            instruction_kind: if store {
+                                JoltInstructionKind::SD
+                            } else {
+                                JoltInstructionKind::LD
+                            },
+                            ..Default::default()
+                        };
+                        let ram = if store {
+                            RamAccess::Write(RamWrite {
+                                address,
+                                ..Default::default()
+                            })
+                        } else {
+                            RamAccess::Read(RamRead { address, value: 0 })
+                        };
+                        JoltTraceRow::new(instruction, Default::default(), ram, 1)
+                            .expect("valid row")
+                    })
+                    .collect();
+                let jump = JoltInstructionRow {
+                    instruction_kind: JoltInstructionKind::JAL,
+                    ..Default::default()
+                };
+                rows.push(
+                    JoltTraceRow::new(jump, Default::default(), RamAccess::NoOp, 1)
+                        .expect("jump row"),
+                );
+                let dimensions = ExecutionDimensions::from_rows(&rows);
+                assert_eq!(
+                    dimensions.ram_bounds.min().map(NonZeroU64::get),
+                    addresses.iter().copied().filter(|a| *a != 0).min()
+                );
+                assert_eq!(
+                    dimensions.ram_bounds.max().map(NonZeroU64::get),
+                    addresses.iter().copied().filter(|a| *a != 0).max()
+                );
+                let result = ProverConfig::derive_from_dimensions::<Fr>(
+                    dimensions,
+                    &layout,
+                    lowest,
+                    0,
+                    usize::MAX,
+                );
+                if addresses.contains(&(lowest - 1)) {
+                    assert!(matches!(
+                        result,
+                        Err(ProverError::Unsupported {
+                            reason: "RAM address precedes the memory layout"
+                        })
+                    ));
+                } else {
+                    assert!(result.is_ok(), "valid addresses: {result:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn execution_facts_determine_padding_and_ram_extent() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        let lowest = layout.get_lowest_address();
+        let derive = |trace_length, max_ram_address: Option<u64>, image_words| {
+            ProverConfig::derive_from_dimensions::<Fr>(
+                ExecutionDimensions {
+                    trace_length,
+                    ends_in_jump: trace_length != 0,
+                    ram_bounds: RamAddressBounds::try_new(max_ram_address.map(|address| {
+                        let address = NonZeroU64::new(address).expect("nonzero address");
+                        (address, address)
+                    }))
+                    .expect("valid bounds"),
+                },
+                &layout,
+                lowest,
+                image_words,
+                1 << 26,
+            )
+            .expect("valid execution dimensions")
+        };
+        let empty = derive(0, None, 0);
+        assert_eq!(empty.trace_length, MIN_PADDED_TRACE_LENGTH);
+        assert_eq!(empty.ram_K, 1);
+        let touched = derive(MIN_PADDED_TRACE_LENGTH, Some(lowest + 8 * 513), 3);
+        assert_eq!(touched.trace_length, MIN_PADDED_TRACE_LENGTH * 2);
+        assert_eq!(touched.ram_K, 1024);
+        let image = derive(7, None, 1024);
+        assert_eq!(image.ram_K, 2048);
+        assert_eq!(
+            derive((1 << 25) - 1, None, 0).one_hot_config.log_k_chunk,
+            if cfg!(feature = "akita") { 4 } else { 8 }
+        );
+        assert_eq!(derive((1 << 24) - 1, None, 0).one_hot_config.log_k_chunk, 4);
+    }
+
+    #[test]
+    fn invalid_execution_and_padded_domains_are_rejected() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        for dimensions in [
+            ExecutionDimensions {
+                trace_length: usize::MAX,
+                ends_in_jump: true,
+                ram_bounds: RamAddressBounds::default(),
+            },
+            ExecutionDimensions {
+                trace_length: 0,
+                ends_in_jump: false,
+                ram_bounds: RamAddressBounds::try_new(Some((
+                    NonZeroU64::new(layout.get_lowest_address() - 1).expect("nonzero address"),
+                    NonZeroU64::new(layout.get_lowest_address() - 1).expect("nonzero address"),
+                )))
+                .expect("ordered bounds, invalid for this layout"),
+            },
+        ] {
+            assert!(ProverConfig::derive_from_dimensions::<Fr>(
+                dimensions,
+                &layout,
+                0,
+                0,
+                usize::MAX
+            )
+            .is_err());
+        }
+        for (trace, ram, maximum) in [
+            (0, 1, usize::MAX),
+            (MIN_PADDED_TRACE_LENGTH - 1, 1, usize::MAX),
+            (MIN_PADDED_TRACE_LENGTH, 0, usize::MAX),
+            (MIN_PADDED_TRACE_LENGTH, 3, usize::MAX),
+            (MIN_PADDED_TRACE_LENGTH, 1, MIN_PADDED_TRACE_LENGTH / 2),
+        ] {
+            assert!(ProverConfig::from_padded_dimensions::<Fr>(trace, ram, maximum).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::jolt_device::MemoryLayout;
     use jolt_field::Fr;
+    use jolt_program::execution::ExecutionDimensions;
     use jolt_riscv::JoltInstructionKind as Kind;
-    use jolt_riscv::{
-        JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess, RegisterState,
-    };
+    use jolt_riscv::{JoltInstructionRow, JoltTraceRow, NormalizedOperands, RamAccess};
 
     use super::ProverConfig;
     use crate::ProverError;
@@ -262,11 +447,16 @@ mod tests {
     fn derive(trace: &[JoltInstructionRow]) -> Result<ProverConfig, ProverError<Fr>> {
         let rows: Vec<JoltTraceRow> = trace
             .iter()
-            .map(|&row| {
-                JoltTraceRow::new(row, RegisterState::default(), RamAccess::NoOp, 1).unwrap()
-            })
+            .map(|&row| JoltTraceRow::new(row, Default::default(), RamAccess::NoOp, 1).unwrap())
             .collect();
-        ProverConfig::derive(&rows, &MemoryLayout::default(), TEXT_BASE, 0, 1 << 12)
+        let layout = MemoryLayout::default();
+        ProverConfig::derive_from_dimensions(
+            ExecutionDimensions::from_rows(&rows),
+            &layout,
+            TEXT_BASE,
+            0,
+            1 << 12,
+        )
     }
 
     fn addi() -> JoltInstructionRow {

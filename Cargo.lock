@@ -2566,6 +2566,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "field-limbs-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "field-ops"
 version = "0.1.0"
 dependencies = [
@@ -3375,6 +3382,7 @@ dependencies = [
  "bincode 2.0.1",
  "common",
  "jolt-field",
+ "jolt-platform",
  "jolt-program",
  "jolt-riscv",
  "postcard",
@@ -3532,6 +3540,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "common",
+ "jolt-akita",
  "jolt-claims",
  "jolt-dory",
  "jolt-field",
@@ -3689,6 +3698,7 @@ dependencies = [
  "hex",
  "jolt-riscv",
  "object 0.40.0",
+ "rayon",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3717,13 +3727,13 @@ dependencies = [
  "jolt-kernels",
  "jolt-lookup-tables",
  "jolt-openings",
+ "jolt-platform",
  "jolt-poly",
  "jolt-profiling",
  "jolt-program",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
- "jolt-utils",
  "jolt-verifier",
  "jolt-witness",
  "postcard",

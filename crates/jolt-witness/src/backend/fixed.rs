@@ -97,10 +97,6 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for FixedFieldInline<F> {
             .copied()
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
-
-    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
-        Vec::new()
-    }
 }
 
 impl<F> FixedBackend<F> {

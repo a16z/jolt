@@ -27,11 +27,57 @@ mod support;
 mod clear {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_prover::JoltBackend;
+    use jolt_prover::{JoltBackend, ProverError};
     use jolt_verifier::proof::JoltProofClaims;
+    use jolt_verifier::VerifierError;
 
     use crate::support::field_inline::dory;
     use crate::support::field_inline::{field_ops, muldiv};
+
+    #[test]
+    fn noncanonical_limb_advice_cannot_produce_an_accepted_proof() {
+        use jolt_program::execution::{ExecutionBackend, TraceInputs};
+        use tracer::execution_backend::TracerBackend;
+        use tracer::instruction::field_inline::advice_limb::inject_advice_limbs;
+
+        use crate::support::{self, GuestCase};
+
+        let inputs = postcard::to_stdvec(&(Some([0u64; 6]), Some(6u8)))
+            .expect("serialize conversion request");
+        let case = GuestCase {
+            inputs,
+            field_inline_active: true,
+            ..GuestCase::new("field-limbs-guest")
+        };
+        let mut prepared = support::prepare(&case);
+        let trace_inputs = TraceInputs::new(
+            case.inputs.clone(),
+            vec![],
+            vec![],
+            support::memory_config(&prepared.preprocessing.memory_layout),
+        );
+        let injection = inject_advice_limbs(&Fr::MODULUS_LIMBS);
+        prepared.trace = TracerBackend::new()
+            .trace(&prepared.program, trace_inputs)
+            .expect("dishonest advice produces a spoiled trace");
+        assert_eq!(
+            injection.consumed_addresses().len(),
+            Fr::MODULUS_LIMBS.len()
+        );
+        assert!(prepared.trace.device.panic);
+        drop(injection);
+        match dory::try_prove(prepared, JoltBackend::optimized()) {
+            Ok((preprocessing, public_io, proof)) => {
+                assert!(dory::verify_full(&preprocessing, &public_io, &proof).is_err());
+            }
+            Err(error) => assert!(
+                matches!(&error, ProverError::Verifier(
+                    VerifierError::StageClaimSumcheckFailed { stage, .. }
+                ) if stage == "Stage1Batch"),
+                "unexpected rejection before checking the spoiled constraints: {error:?}",
+            ),
+        }
+    }
 
     type BackendCase = (&'static str, fn() -> JoltBackend<Fr, DoryScheme>);
 
