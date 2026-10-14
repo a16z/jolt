@@ -248,6 +248,17 @@ fn centered_integer_domain_rejects_empty_domain() {
 }
 
 #[test]
+fn oversized_integer_domain_is_rejected_without_a_full_scan() {
+    let domain_size = i64::MAX as usize;
+    let result: Result<Vec<Fr>, _> =
+        CenteredIntegerDomain::new(domain_size).round_sum_coefficients(3);
+    assert!(matches!(
+        result,
+        Err(SumcheckError::InvalidIntegerDomain { domain_size: size }) if size == domain_size
+    ));
+}
+
+#[test]
 fn centered_integer_domain_exposes_power_sums() {
     let domain = CenteredIntegerDomain::new(4);
 
