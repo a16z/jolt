@@ -33,7 +33,7 @@ use crate::committed::CommittedSumcheckBuilder;
 use crate::committed::CommittedSumcheckWitness;
 use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
 use crate::error::SumcheckError;
-use crate::proof::{ClearProof, ClearSumcheckProof, SumcheckProof};
+use crate::proof::{ClearSumcheckProof, SumcheckProof};
 use crate::recorder::SumcheckRecorder;
 use crate::round_proof::{LabeledRoundPoly, RoundMessage};
 use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
@@ -379,8 +379,8 @@ where
 /// challenge — the batch driver absorbs it again as the remainder's input
 /// claim).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProvedUniskip<F: Field, C = ()> {
-    pub proof: SumcheckProof<F, C>,
+pub struct ProvedUniskip<F: Field> {
+    pub proof: ClearSumcheckProof<F>,
     pub challenge: F,
     pub output_claim: F,
 }
@@ -426,13 +426,13 @@ fn check_uniskip_round<F: Field + AppendToTranscript>(
 /// coefficient squeeze in particular), which is why the absorb lives here and
 /// not in the stage.
 #[tracing::instrument(skip_all, name = "prove_uniskip_clear")]
-pub fn prove_uniskip_clear<F, C, T>(
+pub fn prove_uniskip_clear<F, T>(
     round_poly: UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
     domain_size: usize,
     transcript: &mut T,
-) -> Result<ProvedUniskip<F, C>, SumcheckError<F>>
+) -> Result<ProvedUniskip<F>, SumcheckError<F>>
 where
     F: Field + AppendToTranscript,
     T: Transcript<Challenge = F>,
@@ -445,9 +445,9 @@ where
     transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &output_claim);
 
     Ok(ProvedUniskip {
-        proof: SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof {
+        proof: ClearSumcheckProof {
             round_polynomials: vec![round_poly],
-        })),
+        },
         challenge,
         output_claim,
     })

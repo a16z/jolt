@@ -1341,7 +1341,7 @@ mod begin_batch_tests {
         let challenges = challenges.unwrap();
 
         let (events, head) = record(|t| {
-            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+            let mut recorder = ClearSumcheckRecorder::<Fr>::new();
             sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
         });
         let (batch, coefficients) = head.unwrap();
@@ -1416,7 +1416,7 @@ mod begin_batch_tests {
         let challenges = challenges.unwrap();
 
         let (events, head) = record(|t| {
-            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+            let mut recorder = ClearSumcheckRecorder::<Fr>::new();
             sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
         });
         let (batch, coefficients) = head.unwrap();
