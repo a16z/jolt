@@ -2,6 +2,7 @@ use core::{cmp::Ordering, mem::MaybeUninit};
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::{Accumulator, JoltField};
+use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -10,7 +11,7 @@ use super::{
         merge_bind, merge_count, merge_soa, split_indexed, split_pair_group, split_soa_pair_group,
         Cell, IndexedMeta, MatrixEntry, SeedEntry, SoaSpareBlock, SparseEntry,
     },
-    CoeffLut, CycleState, LutIndex, OneHotCoeff,
+    CoeffLut, CycleState, LutIndex, OneHotCoeff, Seeds,
 };
 
 /// Block boundaries advanced so no `row >> pair_bits` group is split.
@@ -527,13 +528,88 @@ pub(super) fn fused_intermediates<F: JoltField>(
     merge_bind(evens, odds, &bind, |entry| scratch.1.push(entry));
 }
 
+/// `Σ_{x_out} e_out[x_out] · Σ_{x_in} e_in[x_in] · inner(z)` over the nonempty
+/// `2^span_bits`-row seed groups `z = x_out·|e_in| + x_in`. Each task owns one
+/// complete `x_out` group, so a nonempty group costs two `e_out` products, as
+/// in [`sparse_quadratic`], and an empty group costs none.
+fn seed_split_eq<F: JoltField, S>(
+    seeds: &Seeds,
+    span_bits: u32,
+    e_in: &[F],
+    e_out: &[F],
+    init: impl Fn() -> S + Send + Sync,
+    inner: impl Fn(&mut S, usize, &[SeedEntry]) -> [F; 2] + Sync,
+) -> Result<[F; 2], WitnessError> {
+    let in_mask = e_in.len() - 1;
+    let group_rows = e_in.len() << span_bits;
+    let outer_group = |state: &mut S, x_out: usize| -> Result<[F; 2], WitnessError> {
+        let mut acc = [F::Accumulator::default(); 2];
+        let mut nonempty = false;
+        seeds.for_each_group(
+            x_out * group_rows..(x_out + 1) * group_rows,
+            span_bits,
+            |z, cells| {
+                nonempty = true;
+                let e_in_eval = e_in[z & in_mask];
+                let [at_zero, leading] = inner(state, z, cells);
+                acc[0].fmadd(e_in_eval, at_zero);
+                acc[1].fmadd(e_in_eval, leading);
+            },
+        )?;
+        if !nonempty {
+            return Ok([F::zero(); 2]);
+        }
+        let e_out_eval = e_out[x_out];
+        Ok([e_out_eval * acc[0].reduce(), e_out_eval * acc[1].reduce()])
+    };
+    #[cfg(feature = "parallel")]
+    {
+        (0..e_out.len())
+            .into_par_iter()
+            .map_init(init, outer_group)
+            .try_reduce(|| [F::zero(); 2], |a, b| Ok([a[0] + b[0], a[1] + b[1]]))
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut state = init();
+        (0..e_out.len()).try_fold([F::zero(); 2], |sum, x_out| {
+            let group = outer_group(&mut state, x_out)?;
+            Ok([sum[0] + group[0], sum[1] + group[1]])
+        })
+    }
+}
+
+/// Round-0 `[q(0), leading coefficient]` over seed cells.
+pub(super) fn seed_quadratic<F: JoltField>(
+    seeds: &Seeds,
+    ra_lut: &CoeffLut<F>,
+    wa_lut: &CoeffLut<F>,
+    e_in: &[F],
+    e_out: &[F],
+    inc_evals_at: impl Fn(usize) -> [F; 2] + Sync,
+) -> Result<[F; 2], WitnessError> {
+    seed_split_eq(
+        seeds,
+        1,
+        e_in,
+        e_out,
+        || (),
+        |&mut (), z, pair_group| {
+            let mut inner = [F::Accumulator::default(); 2];
+            let (evens, odds) = split_pair_group(pair_group);
+            accumulate_pair_group(evens, odds, inc_evals_at(z), &mut inner, ra_lut, wa_lut);
+            [inner[0].reduce(), inner[1].reduce()]
+        },
+    )
+}
+
 /// Round-1 quadratic with first-bind rows rebuilt in per-thread scratch.
 #[expect(
     clippy::too_many_arguments,
-    reason = "mirrors sparse_quadratic plus the two table generations"
+    reason = "mirrors seed_quadratic plus the two table generations"
 )]
-pub(super) fn sparse_quadratic_fused<F: JoltField>(
-    entries: &[SeedEntry],
+pub(super) fn seed_quadratic_fused<F: JoltField>(
+    seeds: &Seeds,
     seed_ra_lut: &CoeffLut<F>,
     seed_wa_lut: &CoeffLut<F>,
     ra_lut: &CoeffLut<F>,
@@ -542,91 +618,65 @@ pub(super) fn sparse_quadratic_fused<F: JoltField>(
     e_in: &[F],
     e_out: &[F],
     inc_evals_at: impl Fn(usize) -> [F; 2] + Sync,
-) -> [F; 2] {
-    let e_in_len = e_in.len();
-    let in_bits = if e_in_len <= 1 {
-        0
-    } else {
-        e_in_len.trailing_zeros() as usize
-    };
-    let mask = (1usize << in_bits) - 1;
-
-    let group_contribution = |scratch: &mut FusedScratch<F>, group: &[SeedEntry]| -> [F; 2] {
-        let x_out = (group[0].row() / 4) >> in_bits;
-        let mut acc = [F::Accumulator::default(), F::Accumulator::default()];
-        for pair_group in group.chunk_by(|a, b| a.row() / 4 == b.row() / 4) {
-            let z = pair_group[0].row() / 4;
-            let e_in_eval = if e_in_len <= 1 {
-                F::one()
-            } else {
-                e_in[z & mask]
-            };
-            let inc_evals = inc_evals_at(z);
-
-            fused_intermediates(pair_group, seed_ra_lut, seed_wa_lut, r1, scratch);
-            let mut inner = [F::Accumulator::default(), F::Accumulator::default()];
-            accumulate_pair_group(
-                &scratch.0, &scratch.1, inc_evals, &mut inner, ra_lut, wa_lut,
-            );
-
-            acc[0].fmadd(e_in_eval, inner[0].reduce());
-            acc[1].fmadd(e_in_eval, inner[1].reduce());
-        }
-        let e_out_eval = e_out[x_out];
-        [e_out_eval * acc[0].reduce(), e_out_eval * acc[1].reduce()]
-    };
-
-    let group_predicate =
-        |a: &SeedEntry, b: &SeedEntry| (a.row() / 4) >> in_bits == (b.row() / 4) >> in_bits;
-    #[cfg(feature = "parallel")]
-    {
-        entries
-            .par_chunk_by(group_predicate)
-            .map_init(fused_scratch, |scratch, group| {
-                group_contribution(scratch, group)
-            })
-            .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut scratch = fused_scratch();
-        entries
-            .chunk_by(group_predicate)
-            .map(|group| group_contribution(&mut scratch, group))
-            .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
-    }
+) -> Result<[F; 2], WitnessError> {
+    seed_split_eq(seeds, 2, e_in, e_out, fused_scratch, |scratch, z, quad| {
+        fused_intermediates(quad, seed_ra_lut, seed_wa_lut, r1, scratch);
+        let mut inner = [F::Accumulator::default(); 2];
+        accumulate_pair_group(
+            &scratch.0,
+            &scratch.1,
+            inc_evals_at(z),
+            &mut inner,
+            ra_lut,
+            wa_lut,
+        );
+        [inner[0].reduce(), inner[1].reduce()]
+    })
 }
 
+/// Cycles per second-bind block: a multiple of four, so no 4-row group
+/// straddles two blocks.
+const BIND_BLOCK_CYCLES: usize = 1 << 12;
+
 /// Fuse two seed binds into quarter-domain indexed SoA columns.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the seed source and its cycle count, both table generations, and both challenges"
+)]
 pub(super) fn bind_seed_entries_fused<F: JoltField>(
-    entries: &[SeedEntry],
+    seeds: &Seeds,
+    cycles: usize,
     seed_ra_lut: &CoeffLut<F>,
     seed_wa_lut: &CoeffLut<F>,
     ra_lut: &CoeffLut<F>,
     wa_lut: &CoeffLut<F>,
     r1: F,
     r2: F,
-) -> (Vec<F>, Vec<IndexedMeta>) {
+) -> Result<(Vec<F>, Vec<IndexedMeta>), WitnessError> {
     const _: () = assert!(REGISTER_ADDRESS_BITS <= 7);
-    let group_predicate = |a: &SeedEntry, b: &SeedEntry| a.row() / 4 == b.row() / 4;
-    let bounds = pair_aligned_bounds(entries, 2);
-    let blocks = bounds.len() - 1;
+    let block_cycles = BIND_BLOCK_CYCLES.min(cycles);
+    let blocks = cycles / block_cycles;
+    let block_rows = |block: usize| block * block_cycles..(block + 1) * block_cycles;
 
-    let count_block = |block: usize| -> usize {
-        entries[bounds[block]..bounds[block + 1]]
-            .chunk_by(group_predicate)
-            .map(|group| {
-                group
-                    .iter()
-                    .fold(0u128, |mask, entry| mask | (1u128 << entry.col))
-                    .count_ones() as usize
-            })
-            .sum()
+    let count_block = |block: usize| -> Result<usize, WitnessError> {
+        let mut count = 0usize;
+        seeds.for_each_group(block_rows(block), 2, |_, quad| {
+            count += quad
+                .iter()
+                .fold(0u128, |mask, entry| mask | (1u128 << entry.col))
+                .count_ones() as usize;
+        })?;
+        Ok(count)
     };
     #[cfg(feature = "parallel")]
-    let counts: Vec<usize> = (0..blocks).into_par_iter().map(count_block).collect();
+    let counts = (0..blocks)
+        .into_par_iter()
+        .map(count_block)
+        .collect::<Result<Vec<usize>, _>>()?;
     #[cfg(not(feature = "parallel"))]
-    let counts: Vec<usize> = (0..blocks).map(count_block).collect();
+    let counts = (0..blocks)
+        .map(count_block)
+        .collect::<Result<Vec<usize>, _>>()?;
 
     let bound_length: usize = counts.iter().sum();
     let mut vals: Vec<F> = Vec::with_capacity(bound_length);
@@ -642,48 +692,53 @@ pub(super) fn bind_seed_entries_fused<F: JoltField>(
         out_slices.push((vals_slice, metas_slice));
     }
 
-    let fill_block =
-        |scratch: &mut FusedScratch<F>,
-         (block, (vals_out, metas_out)): (usize, SoaSpareBlock<'_, F>)| {
-            let mut written = 0usize;
-            for group in entries[bounds[block]..bounds[block + 1]].chunk_by(group_predicate) {
-                fused_intermediates(group, seed_ra_lut, seed_wa_lut, r1, scratch);
-                merge_bind(
-                    &scratch.0,
-                    &scratch.1,
-                    &|even, odd| {
-                        split_indexed(SparseEntry::<F, LutIndex>::bind(
-                            even, odd, r2, ra_lut, wa_lut,
-                        ))
-                    },
-                    |(val, meta)| {
-                        vals_out[written] = MaybeUninit::new(val);
-                        metas_out[written] = MaybeUninit::new(meta);
-                        written += 1;
-                    },
-                );
-            }
-            debug_assert_eq!(written, vals_out.len());
-        };
+    let fill_block = |scratch: &mut FusedScratch<F>,
+                      (block, (vals_out, metas_out)): (usize, SoaSpareBlock<'_, F>)|
+     -> Result<(), WitnessError> {
+        let mut written = 0usize;
+        seeds.for_each_group(block_rows(block), 2, |_, quad| {
+            fused_intermediates(quad, seed_ra_lut, seed_wa_lut, r1, scratch);
+            merge_bind(
+                &scratch.0,
+                &scratch.1,
+                &|even, odd| {
+                    split_indexed(SparseEntry::<F, LutIndex>::bind(
+                        even, odd, r2, ra_lut, wa_lut,
+                    ))
+                },
+                |(val, meta)| {
+                    vals_out[written] = MaybeUninit::new(val);
+                    metas_out[written] = MaybeUninit::new(meta);
+                    written += 1;
+                },
+            );
+        })?;
+        assert_eq!(
+            written,
+            vals_out.len(),
+            "second-bind fill diverged from its count"
+        );
+        Ok(())
+    };
     #[cfg(feature = "parallel")]
     out_slices
         .into_par_iter()
         .enumerate()
-        .for_each_init(fused_scratch, |scratch, item| fill_block(scratch, item));
+        .try_for_each_init(fused_scratch, |scratch, item| fill_block(scratch, item))?;
     #[cfg(not(feature = "parallel"))]
     {
         let mut scratch = fused_scratch();
         out_slices
             .into_iter()
             .enumerate()
-            .for_each(|item| fill_block(&mut scratch, item));
+            .try_for_each(|item| fill_block(&mut scratch, item))?;
     }
 
-    // SAFETY: exact per-block counts partition both spare capacities; the
-    // merge initializes every slot once.
+    // SAFETY: exact per-block counts partition both spare capacities, and
+    // every fill block asserted it initialized each of its slots.
     unsafe {
         vals.set_len(bound_length);
         metas.set_len(bound_length);
     }
-    (vals, metas)
+    Ok((vals, metas))
 }
