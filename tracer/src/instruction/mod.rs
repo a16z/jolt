@@ -11,7 +11,6 @@ pub const FUNCT7_ADVICE_LB: u32 = 0x00;
 pub const FUNCT7_ADVICE_LH: u32 = 0x01;
 pub const FUNCT7_ADVICE_LW: u32 = 0x02;
 pub const FUNCT7_ADVICE_LD: u32 = 0x03;
-pub const FUNCT7_ADVICE_LEN: u32 = 0x04;
 pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05;
 
 use add::ADD;
@@ -123,7 +122,6 @@ use xor::XOR;
 use xori::XORI;
 
 use virtual_advice::VirtualAdvice;
-use virtual_advice_len::VirtualAdviceLen;
 use virtual_advice_load::VirtualAdviceLoad;
 use virtual_align_addr::VirtualAlignAddr;
 use virtual_assert_eq::VirtualAssertEQ;
@@ -335,7 +333,6 @@ pub mod sub;
 pub mod subw;
 pub mod sw;
 pub mod virtual_advice;
-pub mod virtual_advice_len;
 pub mod virtual_advice_load;
 pub mod virtual_align_addr;
 pub mod virtual_assert_eq;
@@ -1346,9 +1343,6 @@ impl Instruction {
                         }
                         FUNCT7_ADVICE_LD => {
                             Ok(AdviceLD::new(instr, address, true, compressed).into())
-                        }
-                        FUNCT7_ADVICE_LEN => {
-                            Ok(VirtualAdviceLen::new(instr, address, true, compressed).into())
                         }
                         FUNCT7_VIRTUAL_REV8W => {
                             Ok(VirtualRev8W::new(instr, address, true, compressed).into())
@@ -2459,10 +2453,6 @@ mod tests {
             (r_type(FUNCT7_ADVICE_LW, 0, 1, 0, 2, 0x5b), "AdviceLW"),
             (r_type(FUNCT7_ADVICE_LD, 0, 1, 0, 2, 0x5b), "AdviceLD"),
             (
-                r_type(FUNCT7_ADVICE_LEN, 0, 1, 0, 2, 0x5b),
-                "VirtualAdviceLen",
-            ),
-            (
                 r_type(FUNCT7_VIRTUAL_REV8W, 0, 1, 0, 2, 0x5b),
                 "VirtualRev8W",
             ),
@@ -2523,6 +2513,7 @@ mod tests {
             // cycle CSR (0xc00) is not modelled; rejected at decode time
             (i_type(0xc00, 1, 0b001, 2, 0x73), "Unsupported CSR in CSRRW"),
             (i_type(0xc00, 1, 0b010, 2, 0x73), "Unsupported CSR in CSRRS"),
+            (0x0800_00db, "Invalid funct7 for virtual R-type instruction"),
             (
                 r_type(0x7f, 0, 1, 0, 2, 0x5b),
                 "Invalid funct7 for virtual R-type instruction",
