@@ -323,9 +323,10 @@ mod tests {
         sumchecks.append_output_claims(&mut got, &claims);
 
         let mut want = RecordingTranscript::default();
-        for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
-            want.append_labeled(b"opening_claim", &value);
-        }
+        jolt_sumcheck::append_opening_claims(
+            &mut want,
+            &[901, 903, 904, 905, 906, 907, 902].map(fr),
+        );
 
         assert_eq!(got.chunks, want.chunks);
     }

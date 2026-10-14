@@ -7,7 +7,7 @@ use crate::{
     verifier::SumcheckVerifier,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_field::Field;
+use jolt_field::{CanonicalBytes, Field};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: AppendToTranscript,
+        F: CanonicalBytes,
         T: Transcript<Challenge = F>,
         D: SumcheckDomain<F>,
     {
@@ -129,7 +129,7 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: AppendToTranscript,
+        F: CanonicalBytes,
         T: Transcript<Challenge = F>,
     {
         match self {

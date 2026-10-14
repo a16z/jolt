@@ -25,13 +25,14 @@ pub mod configs;
 mod native_batching;
 mod one_hot_family;
 mod planning;
+mod prepared;
 pub mod schedule_registry;
 pub mod schedules;
 mod scheme;
 mod shape_guard;
 mod trace_onehot;
 
-pub use akita_pcs::AkitaError;
+pub use akita_pcs::{AkitaError, TrustedBytes};
 
 #[cfg(feature = "profiling")]
 #[doc(hidden)]

@@ -137,7 +137,7 @@ Beyond the usual Rust rules around `unsafe` and undefined behavior, Jolt guest p
 
 - **Prover-supplied advice must be validated by the guest.** `UntrustedAdvice<T>` and `PrivateInput<T>` are supplied by the prover and are not constrained by the proof system itself. The guest is responsible for verifying that any advice it consumes satisfies the properties the program relies on (e.g. that a claimed factor actually divides the input, or that a claimed Merkle path matches a known root). `TrustedAdvice<T>` carries an external commitment, but the data itself may still require validation.
 
-- **No source of randomness or wall clock.** The guest has no entropy source and no clock. The platform exposes `sys_rand` (see `jolt-platform/src/random.rs`), but it is a **deterministic PRNG seeded with a fixed constant** — its output is fully predictable, including by the verifier — and is not suitable for cryptographic use. Any value that must be unpredictable (nonces, keys, sampling weights) has to be supplied as a public input. Supplying it via advice does *not* solve the problem: advice is chosen by the prover, so a "key" derived from advice is a key the prover picked.
+- **No source of randomness or wall clock.** The guest has no entropy source and no clock (see [Time](#time) for what `std::time` returns). The platform exposes `sys_rand` (see `jolt-platform/src/random.rs`), but it is a **deterministic PRNG seeded with a fixed constant** — its output is fully predictable, including by the verifier — and is not suitable for cryptographic use. Any value that must be unpredictable (nonces, keys, sampling weights) has to be supplied as a public input. Supplying it via advice does *not* solve the problem: advice is chosen by the prover, so a "key" derived from advice is a key the prover picked.
 
 - **Bytecode is public.** The compiled guest ELF is committed at preprocessing time and is known to the verifier. The `zk` feature protects *inputs*, not the program. Do not embed secrets in guest code — API keys, hardcoded credentials, or proprietary algorithms you do not want disclosed.
 
@@ -171,6 +171,9 @@ fn int_to_string(n: i32) -> String {
     n.to_string()
 }
 ```
+
+### Time
+The zkVM has no clock. In `guest-std` guests the runtime answers `clock_gettime` itself with a zero timestamp, for every clock, so `std::time::Instant::now()` and `SystemTime::now()` succeed instead of aborting, but always return the same value: every `Instant` duration is zero and `SystemTime::now()` is the Unix epoch. Code that only takes timestamps for logging or profiling keeps working. Do not rely on time for timeouts, ordering, or expiry checks; a fixed value is also what keeps execution deterministic, so tracing and proving runs see the same program behavior.
 
 ## alloc
 

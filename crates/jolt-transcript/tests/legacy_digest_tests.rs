@@ -14,7 +14,7 @@
 //! squeeze        : out    = H(state || round_word(n)),  state' = out, n += 1
 //! ```
 
-use jolt_field::{CanonicalEncoding, Fr};
+use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_transcript::{Label, LabelWithCount, LegacyBlake2bTranscript, Transcript, U64Word};
 
 type T = LegacyBlake2bTranscript<Fr>;
@@ -165,4 +165,34 @@ fn u64_word_packs_left_padded_big_endian_value() {
     explicit.append_bytes(&word);
 
     assert_eq!(via_helper.state(), explicit.state());
+}
+
+#[test]
+#[should_panic(expected = "label must be at most")]
+fn overlong_transcript_label_is_rejected() {
+    let _ = T::new(b"this label is thirty-three bytes!");
+}
+
+/// `append_scalars` absorbs one message: the label zero-padded to 24 bytes,
+/// the count as a big-endian u64, then each value big-endian. The expected
+/// message is written out byte by byte from that layout.
+#[test]
+fn append_scalars_absorbs_one_framed_message() {
+    let values = [Fr::from_u64(1), Fr::from_u64(2)];
+    let mut message = [0u8; 32 + 2 * 32];
+    message[..3].copy_from_slice(b"lbl");
+    message[31] = 2;
+    message[32 + 31] = 1;
+    message[64 + 31] = 2;
+
+    let mut batched = T::new(KAT_LABEL);
+    batched.append_scalars(b"lbl", &values);
+    let mut framed = T::new(KAT_LABEL);
+    framed.append_bytes(&message);
+    assert_eq!(batched.state(), framed.state());
+
+    let mut split = T::new(KAT_LABEL);
+    split.append_scalars(b"lbl", &values[..1]);
+    split.append_scalars(b"lbl", &values[1..]);
+    assert_ne!(batched.state(), split.state());
 }

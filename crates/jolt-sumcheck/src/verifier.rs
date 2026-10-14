@@ -1,7 +1,8 @@
-use jolt_field::Field;
+use jolt_field::{CanonicalBytes, Field};
 use jolt_poly::UnivariatePolynomial;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{AppendToTranscript, Transcript};
 
+use crate::append_round_coefficients;
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
     CommittedRound, CommittedSumcheckConsistency, CommittedSumcheckProof, VerifiedCommittedRound,
@@ -89,7 +90,7 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: Field + AppendToTranscript,
+        F: Field + CanonicalBytes,
         T: Transcript<Challenge = F>,
     {
         if proof.round_polynomials.len() != claim.num_vars {
@@ -115,10 +116,7 @@ impl SumcheckVerifier {
                 return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
             }
 
-            transcript.append(&LabelWithCount(round_label, coeffs.len() as u64));
-            for coeff in coeffs {
-                coeff.append_to_transcript(transcript);
-            }
+            append_round_coefficients(transcript, round_label, coeffs);
             let r: F = transcript.challenge();
             running_sum = round_proof.evaluate_with_hint(running_sum, r);
             challenges.push(r);
@@ -172,7 +170,7 @@ impl SumcheckVerifier {
 
 impl<F> CompressedSumcheckProof<F>
 where
-    F: Field + AppendToTranscript,
+    F: Field + CanonicalBytes,
 {
     pub fn verify<T>(
         &self,

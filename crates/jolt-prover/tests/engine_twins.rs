@@ -16,9 +16,9 @@ use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_field::{Fr, JoltField, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
-    prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
-    CommittedSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckDomain, SumcheckError,
-    SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+    append_opening_claims, prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound,
+    ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SequentialRounds,
+    SumcheckDomain, SumcheckError, SumcheckRecorder,
 };
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
@@ -199,9 +199,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
             &mut verifier_transcript,
         )
         .unwrap();
-    for value in &output_values {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
-    }
+    append_opening_claims(&mut verifier_transcript, &output_values);
 
     assert_eq!(reduction.value, proved.final_claim);
     assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());

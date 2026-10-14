@@ -6,20 +6,23 @@
 
 use std::marker::PhantomData;
 
-use jolt_field::{Ext2, Field, FpExt4, Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
+use jolt_field::{
+    CanonicalBytes, Ext2, Field, FpExt4, Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring,
+};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
-    CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds,
-    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
-    SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    append_opening_claims, prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude,
+    BooleanHypercube, CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder,
+    CompressedSumcheckProof, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
+    SumcheckProof, SumcheckRecorder, SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL,
+    SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    UNISKIP_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 
-trait ChallengeField: Field + AppendToTranscript + 'static {
+trait ChallengeField: Field + CanonicalBytes + 'static {
     fn challenge_from_seed(seed: u64) -> Self;
 }
 
@@ -266,9 +269,7 @@ where
         &mut verifier_transcript,
     )
     .unwrap();
-    for claim in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, claim);
-    }
+    append_opening_claims(&mut verifier_transcript, &proved.member_claims);
 
     let point: [F; 2] = reduced.point.as_slice().try_into().unwrap();
     let expected = affine(left_coefficients, point) * affine(right_coefficients, point);

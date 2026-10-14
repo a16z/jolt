@@ -583,9 +583,10 @@ fn append_opening_claims<F, T>(
 {
     // Single-sourced with the prover-curation order: both fronts absorb the
     // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
-    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
-        transcript.append_labeled(b"opening_claim", &value);
-    }
+    jolt_sumcheck::append_opening_claims(
+        transcript,
+        &stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point),
+    );
 }
 
 #[cfg(test)]
@@ -871,9 +872,7 @@ mod tests {
         append_opening_claims(&mut got, &claims, &[], &[]);
 
         let mut want = RecordingTranscript::default();
-        for value in (1..=last).map(fr) {
-            want.append_labeled(b"opening_claim", &value);
-        }
+        jolt_sumcheck::append_opening_claims(&mut want, &(1..=last).map(fr).collect::<Vec<_>>());
 
         assert_eq!(got.chunks, want.chunks);
     }

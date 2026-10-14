@@ -4,10 +4,35 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 field-inline = ["jolt_sdk/field-inline"]
+# The field the field-inline unit computes in: BN254 `Fr` under Dory, the
+# Fp128 protocol prime under Akita. The host selects the one its tracer uses.
+field-inline-bn254 = ["field-inline", "jolt-field/field-inline-guest-bn254"]
+field-inline-fp128 = ["field-inline", "jolt-field/field-inline-guest-fp128"]
+akita = [
+  "jolt_sdk/akita",
+  "dep:jolt-akita",
+  "dep:jolt-crypto",
+  "dep:jolt-transcript",
+]
+fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
+hash-inlines = [
+  "jolt_sdk/blake2-inline",
+  "jolt-transcript?/blake2-inline",
+  "jolt-akita?/blake2-inline",
+  "jolt-akita?/keccak-inline",
+]
+
+[package.metadata.cargo-machete]
+# The jolt-field edge selects the guest's field-inline arithmetic; generated
+# embedded_bytecode.rs imports jolt-riscv types when the host prepares an
+# embedded guest.
+ignored = ["jolt-field", "jolt-riscv"]
 
 [dependencies]
+jolt-riscv = { path = "../../../crates/jolt-riscv" }
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "guest-verifier",
   "thread",
@@ -15,6 +40,12 @@ jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
 ] }
 bincode.workspace = true
 serde.workspace = true
+jolt-field = { path = "../../../crates/jolt-field" }
+jolt-akita = { path = "../../../crates/jolt-akita", optional = true, default-features = false }
+jolt-crypto = { path = "../../../crates/jolt-crypto", optional = true, default-features = false }
+jolt-transcript = { path = "../../../crates/jolt-transcript", default-features = false, features = [
+  "transcript-blake2b",
+], optional = true }
 
 [lib]
 test = false

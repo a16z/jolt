@@ -450,7 +450,7 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
-        ProveRounds, SequentialRounds, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+        ProveRounds, SequentialRounds, SumcheckRecorder,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -748,9 +748,10 @@ mod tests {
                 &mut verifier_transcript,
             )
             .unwrap();
-        for value in output_claims.opening_values() {
-            verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &value);
-        }
+        jolt_sumcheck::append_opening_claims(
+            &mut verifier_transcript,
+            &output_claims.opening_values(),
+        );
 
         assert_eq!(reduction.value, proved.final_claim);
         assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
