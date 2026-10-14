@@ -326,21 +326,22 @@ fn assert_production_kernels_match_materialized<const D: usize>(
     num_positions: usize,
     committed_zero_column: Option<usize>,
     num_digits: usize,
+    num_columns: usize,
+    full_support: bool,
 ) {
-    const COLUMNS: usize = 3;
     let columns = TraceOneHotColumn::new(
         k,
         64,
         Arc::new(TestRows {
             rows,
-            columns: COLUMNS,
+            columns: num_columns,
             k,
             committed_zero_column,
         }),
     )
     .unwrap();
     let source = &columns[0];
-    let materialized_columns = (0..COLUMNS)
+    let materialized_columns = (0..num_columns)
         .map(|column| {
             let indices = (0..rows)
                 .map(|row| {
@@ -355,15 +356,24 @@ fn assert_production_kernels_match_materialized<const D: usize>(
     let materialized_sources = materialized_columns.iter().collect::<Vec<_>>();
     let num_blocks = RootPolyShape::<AkitaField, D>::num_ring_elems(source).div_ceil(num_positions);
     let backend = test_backend();
-    let challenges = (0..num_blocks * COLUMNS)
-        .map(|block| SparseChallenge {
-            positions: vec![0, (block % (D - 1) + 1) as u32].into(),
-            coeffs: vec![1, -1].into(),
+    let challenges = (0..num_blocks * num_columns)
+        .map(|block| {
+            if full_support {
+                SparseChallenge {
+                    positions: (0..D as u32).collect::<Vec<_>>().into(),
+                    coeffs: vec![i8::MIN; D].into(),
+                }
+            } else {
+                SparseChallenge {
+                    positions: vec![0, (block % (D - 1) + 1) as u32].into(),
+                    coeffs: vec![1, -1].into(),
+                }
+            }
         })
         .collect::<Vec<_>>();
     for num_chunks in [1, 2, 4, 8] {
         let challenge_set =
-            Challenges::from_sparse(challenges.clone(), num_blocks, COLUMNS).unwrap();
+            Challenges::from_sparse(challenges.clone(), num_blocks, num_columns).unwrap();
         let ranges = akita_params::dyadic_block_ranges(num_blocks, num_chunks).unwrap();
         if num_chunks > num_blocks {
             assert!(ranges.iter().any(Range::is_empty));
@@ -475,26 +485,31 @@ fn assert_production_kernels_match_materialized<const D: usize>(
 
 #[test]
 fn blockwise_production_kernels_match_materialized_onehot() {
-    assert_production_kernels_match_materialized::<64>(256, 32, 16, None, 2);
-    assert_production_kernels_match_materialized::<64>(256, 32, 1, None, 2);
-    assert_production_kernels_match_materialized::<128>(256, 32, 16, None, 2);
-    assert_production_kernels_match_materialized::<256>(256, 32, 16, None, 2);
-    assert_production_kernels_match_materialized::<512>(256, 32, 8, None, 2);
-    assert_production_kernels_match_materialized::<64>(16, 32, 4, None, 2);
-    assert_production_kernels_match_materialized::<128>(16, 32, 2, None, 2);
-    assert_production_kernels_match_materialized::<256>(16, 32, 2, None, 2);
-    assert_production_kernels_match_materialized::<512>(16, 32, 1, None, 2);
-    assert_production_kernels_match_materialized::<64>(16, 32, 16, None, 2);
-    assert_production_kernels_match_materialized::<64>(16, 32, 32, Some(1), 2);
-    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(0), 2);
-    assert_production_kernels_match_materialized::<128>(16, 32, 8, None, 2);
-    assert_production_kernels_match_materialized::<256>(16, 32, 4, None, 2);
-    assert_production_kernels_match_materialized::<512>(16, 32, 2, None, 2);
-    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2);
-    assert_production_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2);
-    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(1), 1);
-    assert_production_kernels_match_materialized::<64>(16, 32, 4, Some(1), 1);
-    assert_production_kernels_match_materialized::<256>(256, 32, 16, Some(1), 1);
+    assert_production_kernels_match_materialized::<64>(256, 32, 256, Some(0), 1, 3, true);
+    assert_production_kernels_match_materialized::<128>(256, 128, 2, Some(0), 1, 3, true);
+    assert_production_kernels_match_materialized::<128>(256, 128, 2, Some(0), 2, 48, true);
+    assert_production_kernels_match_materialized::<128>(256, 32, 16, Some(0), 1, 48, true);
+
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(256, 32, 1, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<128>(256, 32, 16, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<256>(256, 32, 16, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<512>(256, 32, 8, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(16, 32, 4, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<128>(16, 32, 2, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<256>(16, 32, 2, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<512>(16, 32, 1, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(16, 32, 16, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(16, 32, 32, Some(1), 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(0), 2, 3, false);
+    assert_production_kernels_match_materialized::<128>(16, 32, 8, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<256>(16, 32, 4, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<512>(16, 32, 2, None, 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2, 3, false);
+    assert_production_kernels_match_materialized::<64>(256, 32, 16, Some(1), 1, 3, false);
+    assert_production_kernels_match_materialized::<64>(16, 32, 4, Some(1), 1, 3, false);
+    assert_production_kernels_match_materialized::<256>(256, 32, 16, Some(1), 1, 3, false);
 }
 
 fn batch_decompose_test_source<const D: usize>() -> Vec<TraceOneHotColumn> {
