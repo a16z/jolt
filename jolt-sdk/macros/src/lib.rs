@@ -563,7 +563,6 @@ impl MacroBuilder {
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             pub fn #preprocess_committed_fn_name(
                 program: &mut jolt::host::Program,
-                bytecode_chunk_count: usize,
             )
                 -> ::core::result::Result<
                     jolt::JoltProverPreprocessing,
@@ -574,7 +573,7 @@ impl MacroBuilder {
                     program,
                     #memory_config_fn_name(),
                     #max_trace_length,
-                    ::core::option::Option::Some(bytecode_chunk_count),
+                    jolt::ProgramPreprocessingMode::Committed,
                 )
             }
         }

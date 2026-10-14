@@ -1129,19 +1129,6 @@ where
     )
 }
 
-fn add_bytecode_chunk_weight_publics<F: JoltField>(
-    values: &mut SourceValues<F>,
-    chunk_weights: Vec<F>,
-) -> Result<(), VerifierError> {
-    for (chunk_idx, weight) in chunk_weights.into_iter().enumerate() {
-        values.public(
-            JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(chunk_idx)),
-            weight,
-        )?;
-    }
-    Ok(())
-}
-
 fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
     input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
     values: &mut SourceValues<PCS::Field>,
@@ -1165,10 +1152,13 @@ where
     // The cycle scale recovered from the produced opening point equals the
     // sumcheck-point form (`cycle_phase_permuted_*` agree — unit-tested in
     // `claim_reductions::precommitted`), matching the clear relation's path.
-    let chunk_weights = layout
-        .cycle_phase_final_output_weights_at_opening_point(weights.as_inputs(), opening_point)
+    let weight = layout
+        .cycle_phase_final_output_weight_at_opening_point(weights.as_inputs(), opening_point)
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReductionCyclePhase, error))?;
-    add_bytecode_chunk_weight_publics(values, chunk_weights)
+    values.public(
+        JoltDerivedId::from(BytecodeClaimReductionPublic::OutputWeight),
+        weight,
+    )
 }
 
 fn add_bytecode_reduction_address_publics<PCS, VC, ZkProof>(
@@ -1189,14 +1179,17 @@ where
             id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
         })?;
     let weights = bytecode_reduction_weights(input, layout)?;
-    let chunk_weights = layout
-        .address_phase_final_output_weights(
+    let weight = layout
+        .address_phase_final_output_weight(
             weights.as_inputs(),
             &cycle_phase_variables,
             sumcheck_point,
         )
         .map_err(|error| public_error(JoltRelationId::BytecodeClaimReduction, error))?;
-    add_bytecode_chunk_weight_publics(values, chunk_weights)
+    values.public(
+        JoltDerivedId::from(BytecodeClaimReductionPublic::OutputWeight),
+        weight,
+    )
 }
 
 fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(

@@ -28,10 +28,11 @@ use jolt_akita::{AkitaField, AkitaScheme};
 use jolt_claims::protocols::jolt::lattice::relations::{
     booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
 };
+use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::{JoltField, Ring};
 use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
-use jolt_verifier::preprocessing::ProgramPreprocessing;
+use jolt_verifier::preprocessing::{CommittedProgramPreprocessing, ProgramPreprocessing};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
     stage1::{
@@ -441,16 +442,14 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
     for scalar in committed_instruction_ra.iter_mut() {
         f(scalar);
     }
-    if let Some(BytecodeReductionCyclePhaseOutputClaims {
-        intermediate,
-        chunks,
-    }) = bytecode_reduction
-    {
-        if let Some(scalar) = intermediate {
-            f(scalar);
-        }
-        for scalar in chunks.iter_mut() {
-            f(scalar);
+    if let Some(reduction) = bytecode_reduction {
+        match reduction {
+            BytecodeReductionCyclePhaseOutputClaims::Intermediate(
+                BytecodeReductionIntermediateClaims { intermediate },
+            ) => f(intermediate),
+            BytecodeReductionCyclePhaseOutputClaims::Final(
+                BytecodeReductionAddressPhaseOutputClaims { bytecode },
+            ) => f(bytecode),
         }
     }
     if let Some(ProgramImageReductionCyclePhaseOutputClaims { program_image }) =
@@ -486,10 +485,8 @@ fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn Fn
         f(scalar);
     }
     f(balanced_inc_carry);
-    if let Some(BytecodeReductionAddressPhaseOutputClaims { chunks }) = bytecode_address_phase {
-        for scalar in chunks.iter_mut() {
-            f(scalar);
-        }
+    if let Some(BytecodeReductionAddressPhaseOutputClaims { bytecode }) = bytecode_address_phase {
+        f(bytecode);
     }
     if let Some(ProgramImageReductionAddressPhaseOutputClaims { program_image }) =
         program_image_address_phase
@@ -657,26 +654,28 @@ fn every_commitment_wire_rejects_perturbation() {
     let ProgramPreprocessing::Committed(program) = &committed.preprocessing.program else {
         panic!("committed fixture must carry committed preprocessing");
     };
-    for (index, original) in program
-        .direct_program_commitments
-        .iter()
-        .cloned()
-        .enumerate()
-    {
-        sweep_commitment(&original, 6, |commitment| {
-            let mut preprocessing = committed.preprocessing.clone();
-            let ProgramPreprocessing::Committed(program) = &mut preprocessing.program else {
-                panic!("committed fixture must carry committed preprocessing");
-            };
-            program.direct_program_commitments[index] = commitment;
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
-                &preprocessing,
-                &committed.public_io,
-                &committed.proof,
-                None,
-            )
-        });
-    }
+    let sweep_program =
+        |original, replace: fn(&mut CommittedProgramPreprocessing<AkitaScheme>, _)| {
+            sweep_commitment(original, 6, |commitment| {
+                let mut preprocessing = committed.preprocessing.clone();
+                let ProgramPreprocessing::Committed(program) = &mut preprocessing.program else {
+                    panic!("committed fixture must carry committed preprocessing");
+                };
+                replace(program, commitment);
+                jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                    &preprocessing,
+                    &committed.public_io,
+                    &committed.proof,
+                    None,
+                )
+            });
+        };
+    sweep_program(&program.bytecode_commitment, |program, commitment| {
+        program.bytecode_commitment = commitment;
+    });
+    sweep_program(&program.program_image_commitment, |program, commitment| {
+        program.program_image_commitment = commitment;
+    });
 }
 
 #[test]
@@ -687,11 +686,26 @@ fn akita_proof_shape_tampers_reject() {
     assert_rejects(muldiv.verify_proof(&proof));
 
     let committed = akita_committed_muldiv_case();
+    let mut proof = committed.proof.clone();
+    let reduction = &mut clear_claims_mut(&mut proof).stage6b.bytecode_reduction;
+    let Some(BytecodeReductionCyclePhaseOutputClaims::Intermediate(claim)) = reduction else {
+        panic!("the committed fixture must require an address phase");
+    };
+    *reduction = Some(BytecodeReductionCyclePhaseOutputClaims::Final(
+        BytecodeReductionAddressPhaseOutputClaims {
+            bytecode: claim.intermediate,
+        },
+    ));
+    assert_rejects(committed.verify_proof(&proof));
+
     let mut preprocessing = committed.preprocessing.clone();
     let ProgramPreprocessing::Committed(program) = &mut preprocessing.program else {
         panic!("committed fixture must carry committed preprocessing");
     };
-    program.direct_program_commitments.swap(0, 1);
+    std::mem::swap(
+        &mut program.bytecode_commitment,
+        &mut program.program_image_commitment,
+    );
     assert_rejects(jolt_verifier::verify::<
         AkitaField,
         AkitaScheme,

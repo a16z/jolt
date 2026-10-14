@@ -290,32 +290,20 @@ where
         None
     };
 
-    let committed = preprocessing.program.committed();
-    let program_plan = committed
+    let program = preprocessing
+        .program
+        .committed()
         .map(|committed| {
             committed_program_packing_plan(
                 preprocessing.program.bytecode_len(),
-                committed.bytecode_chunk_count(),
                 preprocessing.program.program_image_len_words(),
                 committed.trace_order,
             )
+            .map(|plan| (committed, plan))
             .map_err(batch_failed)
         })
         .transpose()?;
-    let plans = program_plan
-        .as_ref()
-        .map(|plan| plan.objects().cloned().collect::<Vec<_>>())
-        .unwrap_or_default();
-    if committed.map_or(0, |program| program.direct_program_commitments.len()) != plans.len() {
-        return Err(batch_failed(
-            "direct committed-program commitments do not match the canonical plan",
-        ));
-    }
-
-    let capacity = 2usize
-        .checked_add(plans.len())
-        .ok_or_else(|| batch_failed("auxiliary group capacity overflows"))?;
-    let mut auxiliary_groups = Vec::with_capacity(capacity);
+    let mut auxiliary_groups = Vec::with_capacity(5);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),
         (trusted.as_ref(), trusted_claim.as_ref()),
@@ -341,15 +329,18 @@ where
         auxiliary_groups.push(field_inc_claim(commitment, stage6b)?);
     }
 
-    if let Some(committed) = committed {
-        for (plan, commitment) in plans.into_iter().zip(&committed.direct_program_commitments) {
+    if let Some((committed, plan)) = program {
+        for (plan, commitment) in [
+            (plan.bytecode, &committed.bytecode_commitment),
+            (plan.program_image, &committed.program_image_commitment),
+        ] {
             let object: ResolvedObject<'_, PCS> = ResolvedObject { plan, commitment };
             validate_packed_object_metadata(object.commitment, &object.plan)?;
             let physical = reduce_object(&object, &leaves, transcript)?;
             auxiliary_groups.push(TaggedGroupOpeningClaim::new(
                 object.plan.group_role(),
                 GroupOpeningClaim::new(
-                    (*object.commitment).clone(),
+                    object.commitment.clone(),
                     physical.point.as_slice().to_vec(),
                     vec![physical.value],
                 ),

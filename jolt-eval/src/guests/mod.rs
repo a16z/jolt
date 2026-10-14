@@ -1,3 +1,4 @@
+use jolt_sdk::ProgramPreprocessingMode;
 pub mod btreemap;
 pub mod fibonacci;
 pub mod secp256k1_ecdsa;
@@ -36,8 +37,13 @@ pub fn prover_preprocessing(
     memory_config: MemoryConfig,
     max_trace_length: usize,
 ) -> ProverPreprocessing {
-    jolt_sdk::preprocess_program(program, memory_config, max_trace_length, None)
-        .expect("prover preprocessing failed")
+    jolt_sdk::preprocess_program(
+        program,
+        memory_config,
+        max_trace_length,
+        ProgramPreprocessingMode::Full,
+    )
+    .expect("prover preprocessing failed")
 }
 
 pub fn verifier_preprocessing(prover_pp: &ProverPreprocessing) -> VerifierPreprocessing {

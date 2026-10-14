@@ -191,11 +191,15 @@ pub enum BytecodeClaimReductionChallenge {
     Eta,
 }
 
+/// Uninhabited payload preserving retired identifier slots in the wire format.
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RetiredIdentifier {}
+
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BytecodeClaimReductionPublic {
-    /// Final output coefficient of one committed bytecode chunk opening:
-    /// `eq(r_bc_high)[chunk] * eq_combined * skip_scale`.
-    ChunkOutputWeight(usize),
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved0(RetiredIdentifier),
+    OutputWeight,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -332,7 +336,8 @@ pub enum JoltCommittedPolynomial {
     RamInc,
     InstructionRa(usize),
     BytecodeRa(usize),
-    BytecodeChunk(usize),
+    // Reserved codec slot; uninhabited and rejected during deserialization.
+    Reserved4(RetiredIdentifier),
     RamRa(usize),
     TrustedAdvice,
     UntrustedAdvice,
@@ -341,6 +346,7 @@ pub enum JoltCommittedPolynomial {
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
+    ProgramBytecode,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -497,6 +503,7 @@ pub enum JoltDerivedId {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "wire regression tests fail loudly")]
 mod tests {
     use super::*;
 
@@ -508,5 +515,35 @@ mod tests {
         assert!(untrusted.order() < trusted.order());
         assert_eq!(untrusted.transcript_label(), b"untrusted_advice");
         assert_eq!(trusted.transcript_label(), b"trusted_advice");
+    }
+
+    #[test]
+    fn retired_bytecode_identifiers_are_rejected_without_shifting_live_tags() {
+        let config = bincode::config::standard();
+        for (id, tag) in [
+            (JoltCommittedPolynomial::RamRa(3), vec![5, 3]),
+            (JoltCommittedPolynomial::ProgramImageInit, vec![8]),
+            (JoltCommittedPolynomial::ProgramBytecode, vec![11]),
+        ] {
+            assert_eq!(bincode::serde::encode_to_vec(id, config).unwrap(), tag);
+            let (decoded, consumed) =
+                bincode::serde::decode_from_slice::<JoltCommittedPolynomial, _>(&tag, config)
+                    .unwrap();
+            assert_eq!(decoded, id);
+            assert_eq!(consumed, tag.len());
+        }
+        assert!(
+            bincode::serde::decode_from_slice::<JoltCommittedPolynomial, _>(&[4, 0], config)
+                .is_err()
+        );
+        assert_eq!(
+            bincode::serde::encode_to_vec(BytecodeClaimReductionPublic::OutputWeight, config)
+                .unwrap(),
+            vec![1]
+        );
+        assert!(
+            bincode::serde::decode_from_slice::<BytecodeClaimReductionPublic, _>(&[0, 0], config)
+                .is_err()
+        );
     }
 }

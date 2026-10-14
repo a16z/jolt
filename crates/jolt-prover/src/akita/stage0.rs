@@ -78,7 +78,6 @@ where
         preprocessing.committed_program.as_ref(),
         preprocessing.verifier.program.committed(),
     ) {
-        let objects = &data.direct_program.objects;
         if data.trace_order != config.trace_polynomial_order
             || committed.trace_order != config.trace_polynomial_order
         {
@@ -86,11 +85,8 @@ where
                 reason: "committed-program trace order disagrees with the proof configuration",
             });
         }
-        if objects.len() != committed.direct_program_commitments.len()
-            || objects
-                .iter()
-                .zip(&committed.direct_program_commitments)
-                .any(|(object, commitment)| object.commitment != *commitment)
+        if data.direct_program.bytecode.commitment != committed.bytecode_commitment
+            || data.direct_program.program_image.commitment != committed.program_image_commitment
         {
             return Err(ProverError::Unsupported {
                 reason: "the retained direct-program commitments disagree with the preprocessing",
@@ -159,7 +155,7 @@ where
         .as_ref()
         .map(|data| &data.direct_program)
     {
-        precommitted_hints.extend(program.objects.iter().map(|object| &object.hint));
+        precommitted_hints.extend(program.objects().map(|object| &object.hint));
     }
     let WitnessCommitment {
         commitment,
@@ -180,11 +176,12 @@ where
         trusted_advice.map(|object| &object.commitment),
         #[cfg(feature = "field-inline")]
         Some(&field_inc.commitment),
-        preprocessing
-            .verifier
-            .program
-            .committed()
-            .map_or(&[][..], |committed| &committed.direct_program_commitments),
+        preprocessing.verifier.program.committed().map(|committed| {
+            (
+                &committed.bytecode_commitment,
+                &committed.program_image_commitment,
+            )
+        }),
         &mut transcript,
     );
 

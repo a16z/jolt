@@ -4,19 +4,15 @@ use tracing::info;
 
 pub fn main() {
     tracing_subscriber::fmt::init();
-    let bytecode_chunk = std::env::args()
-        .skip_while(|arg| arg != "--committed-bytecode")
-        .nth(1)
-        .map(|arg| arg.parse().unwrap());
+    let committed_bytecode = std::env::args().any(|arg| arg == "--committed-bytecode");
 
     let save_to_disk = std::env::args().any(|arg| arg == "--save");
 
     let target_dir = "/tmp/jolt-guest-targets";
     let mut program = guest::compile_fib(target_dir);
 
-    let (prover_preprocessing, verifier_preprocessing) = if let Some(chunk_count) = bytecode_chunk {
-        let prover_preprocessing =
-            guest::preprocess_committed_fib(&mut program, chunk_count).unwrap();
+    let (prover_preprocessing, verifier_preprocessing) = if committed_bytecode {
+        let prover_preprocessing = guest::preprocess_committed_fib(&mut program).unwrap();
         let verifier_preprocessing =
             guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
         (prover_preprocessing, verifier_preprocessing)

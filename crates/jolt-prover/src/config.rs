@@ -44,7 +44,7 @@ pub struct ProverConfig {
     /// matrix. [`ProverConfig::derive_from_dimensions`] always picks cycle-major (legacy has
     /// no production selection logic); address-major is chosen by
     /// overwriting this field after derivation. Dory committed-program
-    /// preprocessing bakes this order into its chunk commitments, so pass it
+    /// preprocessing bakes this order into its bytecode commitment, so pass it
     /// to `preprocess_committed_with_order` and keep the values equal. Akita
     /// supports only cycle-major order.
     pub trace_polynomial_order: TracePolynomialOrder,
@@ -59,7 +59,7 @@ impl ProverConfig {
     /// Derive the proof shape from execution facts without accessing trace rows.
     /// Pad the trace length past its final no-op, size RAM to cover accessed
     /// addresses and the program image, and select chunking policies.
-    #[tracing::instrument(skip_all, fields(rows = dimensions.trace_length))]
+    #[tracing::instrument(skip_all, name = "ProverConfig::derive_from_dimensions", fields(rows = dimensions.trace_length))]
     pub fn derive_from_dimensions<F: JoltField>(
         dimensions: ExecutionDimensions,
         memory_layout: &MemoryLayout,
@@ -165,7 +165,7 @@ impl ProverConfig {
         }
         if let Some(committed) = committed_program {
             total_vars = total_vars
-                .max(committed.bytecode_chunk_vars)
+                .max(committed.bytecode_vars)
                 .max(committed.program_image_vars);
         }
         total_vars
@@ -227,7 +227,7 @@ pub(crate) fn committed_log_k_chunk(log_T: usize) -> u8 {
 /// into the shared commitment grid alongside the advice candidates.
 #[derive(Clone, Copy, Debug)]
 pub struct CommittedProgramCandidates {
-    pub bytecode_chunk_vars: usize,
+    pub bytecode_vars: usize,
     pub program_image_vars: usize,
 }
 
@@ -237,7 +237,7 @@ impl CommittedProgramCandidates {
     pub fn from_schedule(schedule: &jolt_verifier::stages::PrecommittedSchedule) -> Option<Self> {
         match (&schedule.bytecode, &schedule.program_image) {
             (Some(bytecode), Some(image)) => Some(Self {
-                bytecode_chunk_vars: bytecode.chunk_shape().total_vars(),
+                bytecode_vars: bytecode.polynomial_shape().total_vars(),
                 program_image_vars: image.image_shape().total_vars(),
             }),
             _ => None,

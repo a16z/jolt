@@ -82,7 +82,8 @@ impl JoltVmWitnessMetadata<'_> {
                         Compact,
                     ))
                 }
-                C::BytecodeChunk(_) | C::ProgramImageInit => {
+                C::Reserved4(retired) => match retired {},
+                C::ProgramBytecode | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
                 C::BalancedIncDigit(index) => {
@@ -190,7 +191,8 @@ impl<F: JoltField> JoltWitnessOracle<F> for TraceBackend {
                 ),
                 C::TrustedAdvice => self.materialize_trusted_advice(),
                 C::UntrustedAdvice => self.materialize_untrusted_advice(),
-                C::BytecodeChunk(_) | C::ProgramImageInit => {
+                C::Reserved4(retired) => match retired {},
+                C::ProgramBytecode | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
                 C::BalancedIncDigit(index) => self.materialize_balanced_inc_one_hot(

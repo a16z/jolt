@@ -313,7 +313,7 @@ where
         layout,
         include_trusted,
         include_untrusted,
-        committed_program.map(|committed| committed.bytecode_chunk_count()),
+        committed_program.is_some(),
     );
 
     fn ra_family_entry<'c, F: JoltField, O>(
@@ -416,10 +416,9 @@ where
                     polynomial,
                     id,
                 )?,
-                JoltCommittedPolynomial::BytecodeChunk(index) => precommitted_entry(
+                JoltCommittedPolynomial::ProgramBytecode => precommitted_entry(
                     precommitted_final(polynomial),
-                    committed_program
-                        .and_then(|committed| committed.bytecode_chunk_commitments.get(index)),
+                    committed_program.map(|committed| &committed.bytecode_commitment),
                     polynomial,
                     id,
                 )?,
@@ -429,6 +428,7 @@ where
                     polynomial,
                     id,
                 )?,
+                JoltCommittedPolynomial::Reserved4(retired) => match retired {},
                 JoltCommittedPolynomial::BalancedIncDigit(_)
                 | JoltCommittedPolynomial::BalancedIncCarry => {
                     // Lattice-mode polynomials open through the fixed-prefix
@@ -451,12 +451,13 @@ where
             },
             JoltCommittedPolynomial::TrustedAdvice
             | JoltCommittedPolynomial::UntrustedAdvice
-            | JoltCommittedPolynomial::BytecodeChunk(_)
+            | JoltCommittedPolynomial::ProgramBytecode
             | JoltCommittedPolynomial::ProgramImageInit => CommitmentEmbedding::Precommitted,
+            JoltCommittedPolynomial::Reserved4(retired) => match retired {},
             JoltCommittedPolynomial::BalancedIncDigit(_)
             | JoltCommittedPolynomial::BalancedIncCarry => {
                 return Err(VerifierError::FinalOpeningBatchFailed {
-                    reason: "Akita increments have no homomorphic embedding".to_string(),
+                    reason: "Akita objects have no homomorphic embedding".to_string(),
                 });
             }
         };
@@ -537,7 +538,7 @@ mod tests {
     }
 
     fn base_entries(include_advice: bool) -> Vec<Stage8BatchEntry<'static, Fr, ()>> {
-        final_opening_polynomial_order(layout(), include_advice, include_advice, None)
+        final_opening_polynomial_order(layout(), include_advice, include_advice, false)
             .into_iter()
             .map(|polynomial| Stage8BatchEntry {
                 id: final_opening_id(polynomial).into(),
