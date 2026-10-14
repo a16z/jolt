@@ -275,14 +275,14 @@ impl ExecutionBackend for X86TracerBackend {
                 "record pass emitted a different row count than the fast pass",
             ));
         }
-        let (rows, dimensions) = Observation::reassemble_rows(
+        let (data, dimensions) = Observation::reassemble_rows(
             &program.expanded_bytecode,
             record.compiled.pc_map(),
             &record.observations,
         )?;
         Ok(TraceOutput::with_dimensions(
             dimensions,
-            Arc::new(TraceData::new(rows)),
+            Arc::new(data),
             record.device,
             Some(record.final_memory),
             Some(record.advice_tape),
@@ -303,7 +303,7 @@ impl Observation {
         bytecode: &[JoltInstructionRow],
         pc_map: &BytecodePCMapper,
         observations: &[Self],
-    ) -> Result<(Vec<JoltTraceRow>, ExecutionDimensions), TraceError> {
+    ) -> Result<(TraceData, ExecutionDimensions), TraceError> {
         let mut bounds = RamAddressBounds::default();
         let mut rows = Vec::with_capacity(observations.len());
         for observation in observations {
@@ -344,14 +344,16 @@ impl Observation {
                 pc,
             )?);
         }
+        let data = TraceData::new(rows);
         let dimensions = ExecutionDimensions {
-            trace_length: rows.len(),
-            ends_in_jump: rows
+            trace_length: data.proof_len(),
+            ends_in_jump: data
+                .proof_rows()
                 .last()
                 .is_some_and(|row| row.circuit_flags().get(CircuitFlags::Jump)),
             ram_bounds: bounds,
         };
-        Ok((rows, dimensions))
+        Ok((data, dimensions))
     }
 
     fn register_read(register: Option<u8>, value: u64) -> Option<RegisterRead> {
@@ -657,12 +659,12 @@ impl ChunkedExecutionBackend for X86TracerBackend {
             ));
         }
         observations.truncate(needed);
-        let (rows, _) = Observation::reassemble_rows(
+        let (data, _) = Observation::reassemble_rows(
             &checkpoint.bytecode,
             checkpoint.compiled.pc_map(),
             &observations[checkpoint.skip_rows..],
         )?;
-        Ok(TraceData::new(rows))
+        Ok(data)
     }
 }
 

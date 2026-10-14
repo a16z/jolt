@@ -1,7 +1,9 @@
 use std::{num::NonZeroU64, sync::Arc};
 
 use common::jolt_device::{JoltDevice, MemoryConfig};
-use jolt_riscv::{CircuitFlags, JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{
+    CircuitFlags, JoltInstructionProfile, JoltInstructionRow, JoltTraceRow, RV64IMAC_JOLT,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

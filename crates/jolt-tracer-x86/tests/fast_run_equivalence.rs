@@ -79,6 +79,10 @@ fn assert_record_matches(package: &str, func: &str, input: Vec<u8>) {
     )
     .expect("preprocess trace bytecode");
 
+    assert_eq!(
+        actual_output.dimensions, reference.dimensions,
+        "{package}: execution dimensions"
+    );
     assert_eq!(actual.len(), expected.len(), "{package}: row count");
     for (index, (got, want)) in actual.iter().zip(expected.iter()).enumerate() {
         assert_eq!(

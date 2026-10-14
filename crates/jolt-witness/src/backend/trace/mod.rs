@@ -337,5 +337,5 @@ fn require_index(index: usize, len: usize) -> Result<(), WitnessError> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, reason = "test module")]
+#[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests;
