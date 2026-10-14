@@ -81,8 +81,8 @@ impl<F: Copy> FieldInlineSpartanRow<F> {
 }
 
 /// The object-safe field-inline witness surface a prover reads off the witness plane:
-/// shapes and dense tables over the field-inline id vocabulary, the committed-order
-/// tail, and (via the supertrait) the register replay rows the read-write kernels fold.
+/// shapes and dense tables over the field-inline id vocabulary and (via the
+/// supertrait) the register replay rows the read-write kernels fold.
 /// Deliberately minimal — later units extend it as the field-inline kernels land.
 pub trait FieldInlineWitnessOracle<F: JoltField>:
     FieldInlineRegisterReadWriteRows<F> + Send + Sync
@@ -117,9 +117,6 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
         }
         Ok(())
     }
-
-    /// The proof-payload order of the field-inline committed polynomials.
-    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial>;
 
     /// The composed spartan-outer field-inline column values, sparse over the cycle
     /// domain: `(cycle, row)` pairs sorted strictly increasing by cycle, covering at
@@ -196,10 +193,6 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
         self.scatter_cycle_values(start, values, |data, env| {
             FieldRdInc::<F>::extract(data, None, env).map(|value| value.0)
         })
-    }
-
-    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
-        TraceBackedFieldInlineWitness::committed_order(self)
     }
 
     /// Direct sparse walk: exactly the rows carrying a field-inline payload,
@@ -503,10 +496,6 @@ impl TraceBackedFieldInlineWitness {
                 }
             },
         }
-    }
-
-    pub fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
-        vec![FieldInlineCommittedPolynomial::FieldRdInc]
     }
 }
 
@@ -939,12 +928,9 @@ mod tests {
     }
 
     #[test]
-    fn committed_order_and_requirements_are_blindfold_retained() {
+    fn committed_increment_has_dense_trace_shape() {
         let (bytecode, rows, field_events) = arithmetic_fixture();
         let provider = build_field_provider(bytecode, rows, field_events, 3);
-
-        let order = provider.committed_order();
-        assert_eq!(order, vec![FieldInlineCommittedPolynomial::FieldRdInc]);
 
         let shape = provider
             .shape(FieldInlinePolynomialId::Committed(

@@ -217,9 +217,6 @@ fn field_inline_public_provider_materializes_views() {
     let witness = witness(&program, &preprocessing, rows, field_events, 2);
     let provider = witness.field_inline_witness().unwrap();
 
-    let order = provider.committed_order();
-    assert_eq!(order, vec![FieldInlineCommittedPolynomial::FieldRdInc]);
-
     assert_eq!(
         field_rd_inc_column(&provider),
         vec![fr(13), fr(17), fr(221), fr(0)]
@@ -357,10 +354,6 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
         .unwrap();
     let oracle: &dyn JoltWitnessOracle<Fr> = &attached;
     let provider = oracle.field_inline().unwrap();
-    assert_eq!(
-        provider.committed_order(),
-        vec![FieldInlineCommittedPolynomial::FieldRdInc]
-    );
     assert_eq!(
         provider
             .oracle_table(FieldInlinePolynomialId::Committed(

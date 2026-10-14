@@ -319,7 +319,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
 {
-    let ids = [FieldInlineCommittedPolynomial::FieldRdInc];
+    let ids = FieldInlineCommittedPolynomial::ALL;
     // Backend-neutral seam span, like `commit_witness`.
     let committed = tracing::info_span!("commit_field_inline_witness", columns = ids.len())
         .in_scope(|| backend.commit_field_inline_witness(&ids, grid, setup))?;
