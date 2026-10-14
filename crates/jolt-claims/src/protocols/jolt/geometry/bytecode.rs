@@ -6,6 +6,8 @@ use jolt_riscv::{
     JoltInstruction, JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
+use rayon::prelude::*;
+
 use crate::{challenge, derived, opening};
 
 use super::super::{
@@ -453,6 +455,65 @@ where
             )
         })
         .collect()
+}
+
+/// Fold staged bytecode values without allocating a row-value matrix. Large
+/// tables use Rayon; small tables run serially. Field addition makes the result
+/// independent of chunk scheduling.
+pub fn read_raf_fold_stage_values<F: JoltField>(
+    inputs: BytecodeReadRafStageValueInputs<'_, F>,
+    address_eq_evals: &[F],
+) -> Result<[F; NUM_BYTECODE_VAL_STAGES], PointGeometryError> {
+    if inputs.bytecode.len() != address_eq_evals.len() {
+        return Err(PointGeometryError::EvaluationDomainLengthMismatch {
+            expected: inputs.bytecode.len(),
+            got: address_eq_evals.len(),
+        });
+    }
+    let register_eq = read_raf_register_eq_evals(
+        inputs.register_read_write_point,
+        inputs.register_val_evaluation_point,
+    );
+    let fold_rows = |rows: &[JoltInstructionRow], weights: &[F]| {
+        let mut sums = [F::zero(); NUM_BYTECODE_VAL_STAGES];
+        for (instruction, weight) in rows.iter().zip(weights) {
+            let values = read_raf_row_values::<F>(
+                instruction,
+                &register_eq.read_write,
+                &register_eq.val_evaluation,
+                inputs.stage1_gammas,
+                inputs.stage2_gammas,
+                inputs.stage3_gammas,
+                inputs.stage4_gammas,
+                inputs.stage5_gammas,
+            );
+            for (sum, value) in sums.iter_mut().zip(values) {
+                *sum += value * *weight;
+            }
+        }
+        sums
+    };
+    const PARALLEL_MIN_ROWS: usize = 1 << 15;
+    const CHUNK_ROWS: usize = 1 << 12;
+    let folded = if inputs.bytecode.len() < PARALLEL_MIN_ROWS {
+        fold_rows(inputs.bytecode, address_eq_evals)
+    } else {
+        inputs
+            .bytecode
+            .par_chunks(CHUNK_ROWS)
+            .zip(address_eq_evals.par_chunks(CHUNK_ROWS))
+            .map(|(rows, weights)| fold_rows(rows, weights))
+            .reduce(
+                || [F::zero(); NUM_BYTECODE_VAL_STAGES],
+                |mut left, right| {
+                    for (sum, value) in left.iter_mut().zip(right) {
+                        *sum += value;
+                    }
+                    left
+                },
+            )
+    };
+    Ok(folded)
 }
 
 pub fn read_raf_public_values<F>(

@@ -206,22 +206,20 @@ fn fold_stage_values<F: JoltField>(
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
     let bytecode_rows = fold.bytecode;
-    let row_values = bytecode::read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: bytecode_rows,
-        register_read_write_point: fold.register_read_write_point,
-        register_val_evaluation_point: fold.register_val_evaluation_point,
-        stage1_gammas: fold.stage_gammas[0],
-        stage2_gammas: fold.stage_gammas[1],
-        stage3_gammas: fold.stage_gammas[2],
-        stage4_gammas: fold.stage_gammas[3],
-        stage5_gammas: fold.stage_gammas[4],
-    });
-    let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
-    for (row_values, eq_address) in row_values.into_iter().zip(&address_eq_evals) {
-        for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
-            *stage_value += row_value * *eq_address;
-        }
-    }
+    let stage_values = bytecode::read_raf_fold_stage_values(
+        BytecodeReadRafStageValueInputs {
+            bytecode: bytecode_rows,
+            register_read_write_point: fold.register_read_write_point,
+            register_val_evaluation_point: fold.register_val_evaluation_point,
+            stage1_gammas: fold.stage_gammas[0],
+            stage2_gammas: fold.stage_gammas[1],
+            stage3_gammas: fold.stage_gammas[2],
+            stage4_gammas: fold.stage_gammas[3],
+            stage5_gammas: fold.stage_gammas[4],
+        },
+        &address_eq_evals,
+    )
+    .map_err(public_input_failed)?;
     #[cfg(feature = "field-inline")]
     let field_registers = {
         use jolt_claims::protocols::field_inline::geometry::bytecode::{
