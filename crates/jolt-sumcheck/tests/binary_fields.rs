@@ -160,7 +160,7 @@ impl<F: JoltField + AppendToTranscript> BatchFixture<F> {
         max_degree: usize,
         mut transcript: T,
     ) -> Self {
-        let mut recorder = ClearSumcheckRecorder::<F, ()>::new();
+        let mut recorder = ClearSumcheckRecorder::<F>::new();
         let claims: Vec<_> = original.iter().map(DenseProduct::claimed_sum).collect();
         recorder.absorb_input_claims(&claims, &mut transcript);
         let members = original
@@ -200,7 +200,7 @@ impl<F: JoltField + AppendToTranscript> BatchFixture<F> {
         Self {
             prelude,
             proved,
-            proof: recorded.proof,
+            proof: recorded.proof.into(),
             transcript_state: transcript.state(),
         }
     }
@@ -455,7 +455,7 @@ fn rejection<F: BinaryField>() {
             &changed_prelude,
             &mut references,
             &mut SequentialRounds,
-            &mut ClearSumcheckRecorder::<F, ()>::new(),
+            &mut ClearSumcheckRecorder::<F>::new(),
             &mut transcript
         ),
         Err(SumcheckError::RoundCheckFailed { round: 0, .. }),
@@ -637,12 +637,12 @@ fn integer_domains<F: BinaryField>() {
     let mut transcript = Blake2bTranscript::<F>::new(LABEL);
     let state = transcript.state();
     assert!(matches!(
-        prove_uniskip_clear::<F, (), _>(polynomial.clone(), F::sample(4), 2, 3, &mut transcript),
+        prove_uniskip_clear::<F, _>(polynomial.clone(), F::sample(4), 2, 3, &mut transcript),
         Err(SumcheckError::IntegerDomainNotDistinct { domain_size: 3 })
     ));
     assert_eq!(transcript.state(), state);
     assert!(matches!(
-        prove_uniskip_clear::<F, (), _>(polynomial, F::sample(4), 1, 3, &mut transcript),
+        prove_uniskip_clear::<F, _>(polynomial, F::sample(4), 1, 3, &mut transcript),
         Err(SumcheckError::DegreeBoundExceeded { got: 2, max: 1 })
     ));
     assert_eq!(transcript.state(), state);

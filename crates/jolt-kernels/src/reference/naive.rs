@@ -450,7 +450,8 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         append_sumcheck_claim, prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder,
-        ProveRounds, SequentialRounds, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+        ProveRounds, SequentialRounds, SumcheckProof, SumcheckRecorder,
+        OPENING_CLAIM_TRANSCRIPT_LABEL,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
@@ -660,7 +661,7 @@ mod tests {
         };
         let input_claim = relation.input_claim(&inputs, &challenges).unwrap();
         assert_eq!(input_claim, claimed_sum);
-        let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+        let mut recorder = ClearSumcheckRecorder::<Fr>::new();
         recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
         let coefficient: Fr = prover_transcript.challenge_scalar();
         let prelude = BatchPrelude::new(
@@ -739,8 +740,7 @@ mod tests {
             .unwrap();
         append_sumcheck_claim(&mut verifier_transcript, &verifier_input_claim);
         let verifier_coefficient: Fr = verifier_transcript.challenge_scalar();
-        let reduction = recorded
-            .proof
+        let reduction = SumcheckProof::<Fr, Fr>::from(recorded.proof)
             .verify_compressed_boolean(
                 ROUNDS,
                 verifier_relation.degree(),
@@ -787,7 +787,7 @@ mod tests {
             ROUNDS,
             relation.degree(),
         );
-        let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
+        let mut recorder = ClearSumcheckRecorder::<Fr>::new();
         let inputs = ToyInputs {
             total: claimed_sum,
             untrusted: None,

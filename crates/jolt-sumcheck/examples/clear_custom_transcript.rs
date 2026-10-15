@@ -1,9 +1,9 @@
 use jolt_field::{Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof, ClearSumcheckRecorder,
-    ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
-    SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
+    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearSumcheckRecorder, ProveRounds,
+    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
+    OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
@@ -97,9 +97,7 @@ fn main() -> Result<(), SumcheckError<F>> {
         &mut prover_transcript,
     )?;
     let recorded = recorder.finish(&proved.member_claims, &mut prover_transcript)?;
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = recorded.proof else {
-        unreachable!("the clear recorder always returns a compressed clear proof")
-    };
+    let proof = recorded.proof;
 
     let mut verifier_transcript = FixedTranscript::new(b"external-sumcheck-example");
     verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &claim.claimed_sum);
