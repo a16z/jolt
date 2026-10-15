@@ -1,44 +1,26 @@
 use jolt_claims::protocols::jolt::geometry::bytecode::{
-    read_raf_fold_stage_values, read_raf_stage_values, BytecodeReadRafStageValueInputs,
-    BYTECODE_STAGE_GAMMA_COUNTS,
+    read_raf_fold_stage_values, BytecodeReadRafStageValueInputs, BYTECODE_STAGE_GAMMA_COUNTS,
 };
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-use jolt_field::{Fr, JoltField};
-use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
+use jolt_claims::protocols::jolt::geometry::dimensions::PointGeometryError;
+use jolt_field::{Fr, One, Ring, Zero};
+use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow, NormalizedOperands};
 use rayon::ThreadPoolBuilder;
 
-#[expect(clippy::unwrap_used)]
-fn check_fold<F: JoltField>() {
-    let gammas = BYTECODE_STAGE_GAMMA_COUNTS.map(|n| {
-        (0..n)
-            .map(|i| F::from_u64(17 + i as u64))
-            .collect::<Vec<_>>()
-    });
-    let register_point = vec![F::from_u64(11); 7];
-    for len in [0, 1, 4095, 4096, 8193, 32767, 32768, 32769, 65537] {
-        let bytecode = (0..len)
-            .map(|i| JoltInstructionRow {
-                instruction_kind: match i % 4 {
-                    0 => JoltInstructionKind::ADD,
-                    1 => JoltInstructionKind::SD,
-                    2 => JoltInstructionKind::ADDI,
-                    _ => JoltInstructionRow::default().instruction_kind,
-                },
-                address: 4 * i,
-                operands: NormalizedOperands {
-                    rs1: Some(1),
-                    rs2: Some(2),
-                    rd: Some(3),
-                    imm: i as i128 - 4096,
-                },
-                ..Default::default()
-            })
-            .collect::<Vec<_>>();
-        let weights = (0..len)
-            .map(|i| -F::from_u64(i as u64 + 3))
-            .collect::<Vec<_>>();
-        let inputs = || BytecodeReadRafStageValueInputs {
-            bytecode: &bytecode,
+fn fold(
+    bytecode: &[JoltInstructionRow],
+    weights: &[Fr],
+) -> Result<[Fr; NUM_BYTECODE_VAL_STAGES], PointGeometryError> {
+    let mut gammas = BYTECODE_STAGE_GAMMA_COUNTS.map(|n| vec![Fr::zero(); n]);
+    for stage in &mut gammas {
+        stage[0] = Fr::one();
+    }
+    gammas[1].fill(Fr::one());
+    gammas[3] = [1, 2, 4].map(Fr::from_u64).to_vec();
+    let register_point = [Fr::zero(); 7];
+    read_raf_fold_stage_values(
+        BytecodeReadRafStageValueInputs {
+            bytecode,
             register_read_write_point: &register_point,
             register_val_evaluation_point: &register_point,
             stage1_gammas: &gammas[0],
@@ -46,38 +28,82 @@ fn check_fold<F: JoltField>() {
             stage3_gammas: &gammas[2],
             stage4_gammas: &gammas[3],
             stage5_gammas: &gammas[4],
-        };
-        let mut expected = [F::zero(); NUM_BYTECODE_VAL_STAGES];
-        for (row, weight) in read_raf_stage_values(inputs()).into_iter().zip(&weights) {
-            for (sum, value) in expected.iter_mut().zip(row) {
-                *sum += value * *weight;
-            }
-        }
-        assert_eq!(
-            read_raf_fold_stage_values(inputs(), &weights).unwrap(),
-            expected,
-            "fused len={len}"
-        );
-        assert!(read_raf_fold_stage_values(inputs(), &vec![F::one(); len + 1]).is_err());
+        },
+        weights,
+    )
+}
+
+#[test]
+#[expect(clippy::unwrap_used)]
+fn bytecode_fold_repeated_rows_fixed_vectors() {
+    let add = JoltInstructionRow {
+        instruction_kind: Kind::ADD,
+        address: 4,
+        operands: NormalizedOperands {
+            rs1: Some(0),
+            rs2: Some(0),
+            rd: Some(0),
+            imm: -7,
+        },
+        ..Default::default()
+    };
+    let store = JoltInstructionRow {
+        instruction_kind: Kind::SD,
+        address: 12,
+        operands: NormalizedOperands {
+            rd: None,
+            imm: 5,
+            ..add.operands
+        },
+        ..Default::default()
+    };
+
+    // At the Boolean register point x0, the base stage vectors are
+    // ADD = [4, 1, -7, 1+2+4, 1], SD = [12, 0, 5, 2+4, 0].
+    // Akita appends the store indicator: ADD = 0, SD = 1.
+    for workers in [1, 4] {
+        ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| {
+                assert_eq!(
+                    fold(&[], &[]).unwrap(),
+                    [Fr::zero(); NUM_BYTECODE_VAL_STAGES]
+                );
+                for len in [1, 4095, 4096, 8193, 32767, 32768, 32769, 65537] {
+                    let mut bytecode = vec![add; len];
+                    bytecode[len - 1] = store;
+                    let mut weights = vec![Fr::from_u64(3); len];
+                    weights[len - 1] = -Fr::from_u64(2);
+
+                    // Homogeneity: n identical ADD rows with weight 3 contribute
+                    // 3n times the fixed ADD vector; the final SD has weight -2.
+                    let m = 3 * (len as i128 - 1);
+                    #[cfg(not(feature = "akita"))]
+                    let expected = [4 * m - 24, m, -7 * m - 10, 7 * m - 12, m];
+                    #[cfg(feature = "akita")]
+                    let expected = [4 * m - 24, m, -7 * m - 10, 7 * m - 12, m, -2];
+                    assert_eq!(
+                        fold(&bytecode, &weights).unwrap(),
+                        expected.map(Fr::from_i128),
+                        "len={len}, workers={workers}"
+                    );
+                }
+            });
     }
 }
 
 #[test]
-#[expect(clippy::unwrap_used)]
-fn bytecode_fold_matches_materialized_rows_one_worker() {
-    ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap()
-        .install(check_fold::<Fr>);
-}
-
-#[test]
-#[expect(clippy::unwrap_used)]
-fn bytecode_fold_matches_materialized_rows_four_workers() {
-    ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap()
-        .install(check_fold::<Fr>);
+fn bytecode_fold_rejects_mismatched_weight_lengths() {
+    let bytecode = [JoltInstructionRow::default(); 2];
+    for weights in [vec![Fr::one()], vec![Fr::one(); 3]] {
+        assert_eq!(
+            fold(&bytecode, &weights),
+            Err(PointGeometryError::EvaluationDomainLengthMismatch {
+                expected: bytecode.len(),
+                got: weights.len(),
+            })
+        );
+    }
 }
