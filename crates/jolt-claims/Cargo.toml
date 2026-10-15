@@ -28,6 +28,7 @@ jolt-r1cs.workspace = true
 jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-utils.workspace = true
+rayon.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true
 
