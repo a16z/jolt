@@ -192,7 +192,10 @@ mod twin_tests {
         SumcheckKernel, SumcheckKernelError,
     };
     use jolt_poly::UnivariatePoly;
-    use jolt_sumcheck::{ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckError};
+    use jolt_sumcheck::{
+        ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds, SequentialRounds,
+        SumcheckError, SumcheckProof,
+    };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
@@ -739,7 +742,7 @@ mod twin_tests {
     fn drive(
         beta: bool,
     ) -> (
-        Proved<Fr, ToyDriverSumchecks<Fr>, Fr>,
+        Proved<Fr, ToyDriverSumchecks<Fr>, CompressedSumcheckProof<Fr>>,
         Vec<&'static str>,
         Vec<JoltRelationId>,
     ) {
@@ -764,7 +767,7 @@ mod twin_tests {
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
@@ -780,7 +783,7 @@ mod twin_tests {
                 &input_points,
                 &verifier_challenges,
                 &proved.output_claims,
-                &proved.recorded.proof,
+                &SumcheckProof::<Fr, Fr>::from(proved.recorded.proof.clone()),
                 &mut verifier_transcript,
                 0,
             )
@@ -875,7 +878,7 @@ mod twin_tests {
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
@@ -888,7 +891,7 @@ mod twin_tests {
                 &input_points,
                 &verifier_challenges,
                 &proved.output_claims,
-                &proved.recorded.proof,
+                &SumcheckProof::<Fr, Fr>::from(proved.recorded.proof),
                 &mut verifier_transcript,
                 0,
             )
@@ -939,7 +942,7 @@ mod twin_tests {
             &inputs,
             &input_points,
             &challenges,
-            ClearSumcheckRecorder::<Fr, Fr>::new(),
+            ClearSumcheckRecorder::<Fr>::new(),
             &mut transcript,
         );
         assert!(matches!(

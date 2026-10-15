@@ -127,7 +127,7 @@ Key abstractions introduced or modified:
           witness: &dyn WitnessProvider<F, JoltVmNamespace>,
           inputs: &Self::InputClaims, input_points: &Self::InputPoints,
           challenges: &Self::Challenges, recorder: Rec, transcript: &mut T,
-      ) -> Result<Proved<F, Self, Rec::Commitment>, ProverError<F>>
+      ) -> Result<Proved<F, Self, Rec::Proof>, ProverError<F>>
       where B: KernelSource<F, Self>, Rec: SumcheckRecorder<F>,
             T: Transcript<Challenge = F>;
   }
@@ -141,7 +141,7 @@ Key abstractions introduced or modified:
   B: PrepareKernel<F, SpartanShift<F>> + PrepareKernel<F, InstructionInput<F>> + ...` — so
   the trait method's `B` bound is uniform while each stage demands exactly its members'
   slots.
-  `Proved<F, S, C>` is one generic carrier in jolt-prover
+  `Proved<F, S, P>` is one generic carrier in jolt-prover
   `{ recorded, output_claims: S::OutputClaims, output_points: S::OutputPoints, final_claim }`
   (replaces v1's per-stage generated `ProvedStageN`).
   Output curation (stage-6b's dedup'd absorb order) is a per-impl

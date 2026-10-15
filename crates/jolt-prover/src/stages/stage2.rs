@@ -175,7 +175,7 @@ where
     #[cfg(feature = "zk")]
     let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
     #[cfg(not(feature = "zk"))]
-    let sumcheck_proof = proved.recorded.proof;
+    let sumcheck_proof = proved.recorded.proof.into();
 
     let claims = Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     Ok(Stage2ProverOutput {

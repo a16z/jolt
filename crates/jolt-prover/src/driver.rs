@@ -74,7 +74,7 @@ pub trait StageProver<F: JoltField>: Sized {
         challenges: &Self::Challenges,
         recorder: Rec,
         transcript: &mut T,
-    ) -> Result<Proved<F, Self, Rec::Commitment>, ProverError<F>>
+    ) -> Result<Proved<F, Self, Rec::Proof>, ProverError<F>>
     where
         B: ?Sized,
         for<'a> KernelContext<'a, F, B>: KernelSource<F, Self>,
@@ -115,8 +115,8 @@ pub trait KernelSource<F: JoltField, S: StageProver<F>> {
 /// witness for a committed recorder), the typed output claims and derived
 /// opening points, and the batch's final running claim (already hard-checked
 /// against the generated `expected_final_claim`).
-pub struct Proved<F: JoltField, S: StageProver<F>, C> {
-    pub recorded: RecordedSumcheck<F, C>,
+pub struct Proved<F: JoltField, S: StageProver<F>, P> {
+    pub recorded: RecordedSumcheck<F, P>,
     pub output_claims: S::OutputClaims,
     pub output_points: S::OutputPoints,
     pub final_claim: F,
@@ -473,7 +473,7 @@ macro_rules! impl_stage_prover {
                 mut recorder: Rec,
                 transcript: &mut T,
             ) -> ::core::result::Result<
-                $crate::driver::Proved<F, Self, Rec::Commitment>,
+                $crate::driver::Proved<F, Self, Rec::Proof>,
                 $crate::ProverError<F>,
             >
             where
