@@ -8,7 +8,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::JoltField;
 use jolt_lookup_tables::LookupTableKind;
 use jolt_program::{
-    execution::{JoltProgram, TraceOutput},
+    execution::{JoltProgram, RowReplay, TraceOutput},
     preprocess::JoltProgramPreprocessing,
 };
 
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::backend::ProgramSource;
 use crate::witnesses::ram_access_address;
-use crate::{WitnessError, JOLT_VM_LABEL, RV64_XLEN};
+use crate::{TraceRows, TraceStorage, WitnessError, JOLT_VM_LABEL, RV64_XLEN};
 
 mod advice;
 mod cycle;
@@ -27,6 +27,10 @@ mod ram;
 mod registers;
 
 pub const RV64_LOOKUP_ADDRESS_BITS: usize = 128;
+
+/// Rows per visit callback of the oracle walks, and the smallest parallel
+/// task of the cycle-column walk.
+const WALK_ROWS: usize = 1 << 12;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoltVmWitnessConfig {
@@ -80,7 +84,7 @@ impl JoltVmWitnessConfig {
 pub struct JoltVmWitnessInputs {
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
-    pub trace: TraceOutput,
+    pub trace: TraceOutput<TraceStorage>,
 }
 
 impl JoltVmWitnessInputs {
@@ -89,20 +93,48 @@ impl JoltVmWitnessInputs {
         preprocessing: &Arc<JoltProgramPreprocessing>,
         trace: TraceOutput,
     ) -> Self {
+        Self::with_storage(program, preprocessing, trace, TraceStorage::Resident)
+    }
+
+    /// Inputs whose rows are re-executed through `trace`'s replay whenever a
+    /// visit reads them instead of being retained.
+    pub fn replayed<R: RowReplay + 'static>(
+        program: &Arc<JoltProgram>,
+        preprocessing: &Arc<JoltProgramPreprocessing>,
+        trace: TraceOutput<R>,
+    ) -> Self {
+        Self::with_storage(program, preprocessing, trace, |replay| {
+            TraceStorage::Replay(Arc::new(replay))
+        })
+    }
+
+    fn with_storage<T>(
+        program: &Arc<JoltProgram>,
+        preprocessing: &Arc<JoltProgramPreprocessing>,
+        trace: TraceOutput<T>,
+        storage: impl FnOnce(T) -> TraceStorage,
+    ) -> Self {
         Self {
             program: Arc::clone(program),
             preprocessing: Arc::clone(preprocessing),
-            trace,
+            trace: TraceOutput {
+                dimensions: trace.dimensions,
+                trace: storage(trace.trace),
+                device: trace.device,
+                final_memory: trace.final_memory,
+                advice_tape: trace.advice_tape,
+            },
         }
     }
 }
 
-/// Retains the producer's rows and payloads without converting or copying them.
+/// Retains the producer's rows (or their replay) and payloads without
+/// converting or copying them.
 pub struct TraceBackend {
     pub config: JoltVmWitnessConfig,
     pub program: Arc<JoltProgram>,
     pub preprocessing: Arc<JoltProgramPreprocessing>,
-    pub trace: TraceOutput,
+    pub trace: TraceOutput<TraceStorage>,
     #[cfg(feature = "field-inline")]
     pub(crate) field_inline: Option<crate::field_inline::TraceBackedFieldInlineWitness>,
 }
@@ -129,16 +161,10 @@ impl TraceBackend {
         config: JoltVmWitnessConfig,
         inputs: JoltVmWitnessInputs,
     ) -> Result<Self, WitnessError> {
-        let cycles = checked_pow2(config.log_t)?;
-        let proof_len = inputs.trace.trace.proof_len();
-        if proof_len > cycles {
-            return Err(WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: format!(
-                    "physical trace has {proof_len} rows but the cycle domain has {cycles}"
-                ),
-            });
-        }
+        inputs
+            .trace
+            .trace
+            .check_domain(checked_pow2(config.log_t)?)?;
         Ok(Self {
             config,
             program: inputs.program,
@@ -156,6 +182,14 @@ impl TraceBackend {
     /// Trace-independent dimensions and program facts for this witness.
     pub fn metadata(&self) -> JoltVmWitnessMetadata<'_> {
         JoltVmWitnessMetadata::new(&self.config, &self.preprocessing)
+    }
+
+    pub(crate) fn trace_rows(&self) -> Result<TraceRows, WitnessError> {
+        TraceRows::new(
+            self.trace.trace.clone(),
+            checked_pow2(self.config.log_t)?,
+            Arc::clone(&self.preprocessing),
+        )
     }
 }
 

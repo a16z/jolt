@@ -17,6 +17,7 @@ use std::sync::Arc;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 
 use super::*;
+use crate::testing::LoggedReplay;
 use crate::witnesses::{Extract, NextIsNoop, NextPc, NextUnexpandedPc, ShouldJump, WitnessEnv};
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
@@ -71,6 +72,16 @@ fn trace_output() -> TraceOutput {
 
 fn trace_output_with_rows(rows: Vec<JoltTraceRow>) -> TraceOutput {
     TraceOutput::new(TraceData::new(rows), Default::default(), None, None)
+}
+
+fn replay_output(rows: Vec<JoltTraceRow>, segment_rows: usize) -> TraceOutput<LoggedReplay> {
+    TraceOutput::with_dimensions(
+        Default::default(),
+        LoggedReplay::new(rows, segment_rows),
+        Default::default(),
+        None,
+        None,
+    )
 }
 
 fn checked_row(
@@ -356,9 +367,8 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), String> {
-    let program = Arc::new(JoltProgram::default());
+/// A store, a no-op and a load of the same stack word.
+fn store_noop_load() -> Result<(Arc<JoltProgramPreprocessing>, Vec<JoltTraceRow>), String> {
     let memory_layout = compact_memory_layout();
     let access_address = memory_layout.stack_end;
     let store = memory_instruction(JoltInstructionKind::SD, RAM_START_ADDRESS as usize);
@@ -419,6 +429,13 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
             }),
         ),
     ];
+    Ok((preprocessing, rows))
+}
+
+#[test]
+fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), String> {
+    let program = Arc::new(JoltProgram::default());
+    let (preprocessing, rows) = store_noop_load()?;
     let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
     let witness = TraceBackend::new(JoltVmWitnessConfig::new(2, 16, config().one_hot), inputs);
 
@@ -435,6 +452,98 @@ fn ram_read_write_virtual_views_materialize_address_major_state() -> Result<(), 
     assert_eq!(ra[base + 1], Fr::from_u64(0));
     assert_eq!(ra[base + 2], Fr::from_u64(1));
     assert_eq!(ra[base + 3], Fr::from_u64(0));
+    Ok(())
+}
+
+/// The resident tables are pinned by the expected-value tests above; replayed
+/// rows must reproduce every trace-derived table family, while the fused
+/// streaming pass stays resident-only.
+#[test]
+fn replayed_rows_serve_the_resident_oracle_tables() -> Result<(), String> {
+    use crate::RowSource;
+    use JoltCommittedPolynomial as C;
+    use JoltVirtualPolynomial as V;
+    let program = Arc::new(JoltProgram::default());
+    let (preprocessing, rows) = store_noop_load()?;
+    let config = JoltVmWitnessConfig::new(2, 16, config().one_hot);
+    let resident = TraceBackend::new(
+        config.clone(),
+        JoltVmWitnessInputs::new(
+            &program,
+            &preprocessing,
+            trace_output_with_rows(rows.clone()),
+        ),
+    );
+    let replayed = TraceBackend::new(
+        config,
+        JoltVmWitnessInputs::replayed(&program, &preprocessing, replay_output(rows, 1)),
+    );
+    let committed = [C::RamInc, C::RamRa(0), C::BalancedIncCarry].map(JoltPolynomialId::from);
+    let grids = [
+        V::NextUnexpandedPC,
+        V::RamVal,
+        V::RamRa,
+        V::RegistersVal,
+        V::RdWa,
+    ];
+    for id in committed
+        .into_iter()
+        .chain(grids.map(JoltPolynomialId::from))
+    {
+        let table = |witness| {
+            <TraceBackend as JoltWitnessOracle<Fr>>::oracle_table(witness, id)
+                .map_err(|error| format!("{id:?}: {error}"))
+        };
+        assert_eq!(table(&replayed)?, table(&resident)?, "{id:?}");
+    }
+    let streamed = replayed.visit_chunks(0..4, 2, &mut |_, _, _| Ok(()));
+    assert!(matches!(
+        streamed,
+        Err(WitnessError::UnavailableView { .. })
+    ));
+    Ok(())
+}
+
+/// More rows than one walk task, so the parallel column walk writes several
+/// task slices; row `i` sits at address `0x8000_0000 + 4i`.
+#[test]
+fn cycle_columns_cross_walk_tasks_on_both_storages() -> Result<(), String> {
+    let log_t = 13;
+    let rows = (0..5000)
+        .map(|index| {
+            JoltTraceRow::new(
+                instruction(0x8000_0000 + 4 * index),
+                RegisterState::default(),
+                RamAccess::NoOp,
+                1,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut pcs = vec![0; 1 << log_t];
+    for (pc, row) in pcs.iter_mut().zip(&rows) {
+        *pc = row.unexpanded_pc();
+    }
+    let next_pcs = pcs.iter().skip(1).copied().chain([0]).collect::<Vec<_>>();
+    let program = Arc::new(JoltProgram::default());
+    let preprocessing = preprocessing();
+    let config = config().with_log_t(log_t);
+    let resident = TraceBackend::new(
+        config.clone(),
+        JoltVmWitnessInputs::new(
+            &program,
+            &preprocessing,
+            trace_output_with_rows(rows.clone()),
+        ),
+    );
+    let replayed = TraceBackend::new(
+        config,
+        JoltVmWitnessInputs::replayed(&program, &preprocessing, replay_output(rows, 4)),
+    );
+    for witness in [&resident, &replayed] {
+        assert_virtual_values(witness, JoltVirtualPolynomial::UnexpandedPC, &pcs)?;
+        assert_virtual_values(witness, JoltVirtualPolynomial::NextUnexpandedPC, &next_pcs)?;
+    }
     Ok(())
 }
 
@@ -1049,7 +1158,7 @@ fn witness_metadata_serves_shapes_and_rejects_data_queries() {
         JoltWitnessOracle::<Fr>::oracle_table(&metadata, id),
         Err(WitnessError::UnavailableView { .. })
     ));
-    assert!(metadata.random_access().is_none());
+    assert!(metadata.rows().is_none());
     assert!(matches!(
         metadata.visit_chunks(0..16, 4, &mut |_, _, _| panic!(
             "witness metadata must not emit trace rows"

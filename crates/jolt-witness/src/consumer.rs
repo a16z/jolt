@@ -2,17 +2,14 @@
 //! of consumers.
 
 use std::ops::Range;
-use std::sync::Arc;
 
-use jolt_program::execution::TraceData;
-use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::JoltTraceRow as TraceRow;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::bundle::WitnessBundle;
 use crate::witnesses::WitnessEnv;
-use crate::{WitnessError, JOLT_VM_LABEL};
+use crate::{TraceRows, WitnessError};
 
 /// One consumer of a bundle stream. `Option<C>` is also a consumer:
 /// membership in a set is static, presence is runtime.
@@ -126,10 +123,10 @@ consumer_set_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, G: 5, H: 6, I: 7);
 pub type ChunkVisitor<'a> =
     dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
-/// Sequential row access, with an optional random-access fast path.
+/// Sequential row access, plus the owned row handle when the source has one.
 pub trait RowSource {
     /// Visits the half-open cycle `range` in order as buffers of at most
-    /// `chunk_size` rows; `[0, T)` today, segments later.
+    /// `chunk_size` rows.
     fn visit_chunks(
         &self,
         range: Range<usize>,
@@ -137,56 +134,8 @@ pub trait RowSource {
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError>;
 
-    fn random_access(&self) -> Option<RandomAccessRows> {
+    fn rows(&self) -> Option<TraceRows> {
         None
-    }
-}
-
-/// Shared random access to compact rows and their extraction context.
-#[derive(Clone)]
-pub struct RandomAccessRows {
-    rows: Arc<TraceData>,
-    cycles: usize,
-    preprocessing: Arc<JoltProgramPreprocessing>,
-    padding: TraceRow,
-}
-
-impl RandomAccessRows {
-    pub(crate) fn new(
-        rows: Arc<TraceData>,
-        cycles: usize,
-        preprocessing: Arc<JoltProgramPreprocessing>,
-    ) -> Result<Self, WitnessError> {
-        if rows.proof_len() > cycles {
-            return Err(WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: format!(
-                    "physical trace has {} rows but the cycle domain has {cycles}",
-                    rows.proof_len()
-                ),
-            });
-        }
-        Ok(Self {
-            rows,
-            cycles,
-            preprocessing,
-            padding: TraceRow::default(),
-        })
-    }
-
-    /// Padded cycle-domain size.
-    pub fn cycles(&self) -> usize {
-        self.cycles
-    }
-
-    /// Extracts one bundle with padding and one-row lookahead semantics.
-    #[inline]
-    pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {
-        let physical = self.rows.proof_rows();
-        let current = physical.get(index).unwrap_or(&self.padding);
-        let next =
-            (index + 1 < self.cycles).then(|| physical.get(index + 1).unwrap_or(&self.padding));
-        B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
     }
 }
 
@@ -230,9 +179,9 @@ pub fn collect_bundles<B: WitnessBundle + Clone + Send + Sync>(
     cycles: usize,
 ) -> Result<Vec<B>, WitnessError> {
     // Out-of-range requests fall through to the validated chunk walk.
-    if let Some(access) = source.random_access() {
-        if cycles <= access.cycles() {
-            let window = |index| access.window::<B>(index);
+    if let Some(rows) = source.rows() {
+        if cycles <= rows.cycles() {
+            let window = |index| rows.window::<B>(index);
             #[cfg(feature = "parallel")]
             return (0..cycles).into_par_iter().map(window).collect();
             #[cfg(not(feature = "parallel"))]
@@ -329,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn random_access_collection_matches_the_chunked_walk() {
+    fn row_handle_collection_matches_the_chunked_walk() {
         with_sample_backend(|backend| {
             let routed: Vec<WindowBundle> = collect_bundles(backend, 4).unwrap();
             let mut consumers = (CollectBundles::<WindowBundle>::default(),);
@@ -339,11 +288,14 @@ mod tests {
     }
 
     #[test]
-    fn random_access_rejects_rows_beyond_cycle_domain() {
+    fn row_handle_rejects_rows_beyond_cycle_domain() {
         with_sample_backend(|backend| {
-            let rows = Arc::clone(&backend.trace.trace);
             assert!(matches!(
-                RandomAccessRows::new(rows, 1, Arc::clone(&backend.preprocessing)),
+                TraceRows::new(
+                    backend.trace.trace.clone(),
+                    1,
+                    Arc::clone(&backend.preprocessing)
+                ),
                 Err(WitnessError::InvalidWitnessData { .. })
             ));
         });

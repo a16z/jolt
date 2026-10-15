@@ -17,53 +17,57 @@ impl TraceBackend {
         }
     }
 
+    // Padding rows access no RAM, so both walks cover the whole domain.
     pub(crate) fn materialize_ram_val<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
-        let cycles = checked_pow2(self.config.log_t)?;
+        let rows = self.trace_rows()?;
+        let cycles = rows.cycles();
         let addresses = self.config.ram_k;
         let mut state = self.initial_ram_state()?;
         let mut values =
             jolt_utils::unsafe_allocate_zero_vec(checked_dense_grid_len::<F>(addresses, cycles)?);
 
-        for cycle in 0..cycles {
-            for (address, value) in state.iter().copied().enumerate() {
-                values[address * cycles + cycle] = F::from_u64(value);
-            }
-
-            let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
-                continue;
-            };
-            if row.is_load() {
-                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
-                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
+        let mut cycle = 0;
+        rows.visit(0..cycles, WALK_ROWS, &mut |chunk, _, _| {
+            for row in chunk {
+                for (address, value) in state.iter().copied().enumerate() {
+                    values[address * cycles + cycle] = F::from_u64(value);
                 }
-            } else if row.is_store() {
-                if let Some(address) = self.remapped_ram_address(row.ram_address())? {
-                    values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
-                    state[address] = row.ram_write_value();
+                if row.is_load() {
+                    if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                        values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
+                    }
+                } else if row.is_store() {
+                    if let Some(address) = self.remapped_ram_address(row.ram_address())? {
+                        values[address * cycles + cycle] = F::from_u64(row.ram_read_value());
+                        state[address] = row.ram_write_value();
+                    }
                 }
+                cycle += 1;
             }
-        }
-
+            Ok(())
+        })?;
         Ok(values)
     }
 
     pub(crate) fn materialize_ram_ra<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
-        let cycles = checked_pow2(self.config.log_t)?;
+        let rows = self.trace_rows()?;
+        let cycles = rows.cycles();
         let addresses = self.config.ram_k;
         let mut values =
             jolt_utils::unsafe_allocate_zero_vec(checked_dense_grid_len::<F>(addresses, cycles)?);
 
-        for cycle in 0..cycles {
-            let Some(row) = self.trace.trace.proof_rows().get(cycle) else {
-                continue;
-            };
-            if let Some(raw_address) = ram_access_address(row) {
-                if let Some(address) = self.remapped_ram_address(raw_address)? {
-                    values[address * cycles + cycle] = F::one();
+        let mut cycle = 0;
+        rows.visit(0..cycles, WALK_ROWS, &mut |chunk, _, _| {
+            for row in chunk {
+                if let Some(raw_address) = ram_access_address(row) {
+                    if let Some(address) = self.remapped_ram_address(raw_address)? {
+                        values[address * cycles + cycle] = F::one();
+                    }
                 }
+                cycle += 1;
             }
-        }
-
+            Ok(())
+        })?;
         Ok(values)
     }
 

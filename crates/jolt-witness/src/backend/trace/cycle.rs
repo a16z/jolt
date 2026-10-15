@@ -1,9 +1,14 @@
 use super::*;
 use crate::consumer::ChunkVisitor;
-use crate::witnesses::{Extract, ExtractIndexed, RaChunkSelector, ToField, WitnessEnv};
+use crate::witnesses::{
+    BalancedIncColumn, BalancedIncRow, Extract, ExtractIndexed, RaChunkSelector, ToField,
+    WitnessEnv,
+};
 use jolt_riscv::JoltTraceRow as TraceRow;
 #[cfg(feature = "parallel")]
-use jolt_utils::par_collect_windows;
+use jolt_utils::FirstErrorLatch;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use std::ops::Range;
 
 use crate::{BundleSource, RowSource, WitnessBundle};
@@ -31,9 +36,8 @@ impl TraceBackend {
     }
 
     /// Materializes one member of a one-hot RA decomposition as the flat
-    /// address-major `(K x T)` grid, `K = 2^chunk_bits`: one cycle walk
-    /// collecting the per-cycle hot addresses (`None` is a cold cycle),
-    /// then a scatter of ones.
+    /// address-major `(K x T)` grid, `K = 2^chunk_bits`: one sequential visit
+    /// writes a one at each cycle's hot address (`None` is a cold cycle).
     ///
     /// The walk's padding (default no-op) rows coincide with the one-hot
     /// conventions by construction: a no-op's lookup index is 0 and `get_pc`
@@ -50,18 +54,23 @@ impl TraceBackend {
         W: ExtractIndexed<RaChunkSelector> + Into<Option<usize>>,
     {
         let selector = RaChunkSelector::new(index, chunks, chunk_bits)?;
-        let cycles = checked_pow2(self.config.log_t)?;
+        let rows = self.trace_rows()?;
+        let cycles = rows.cycles();
         let len = checked_dense_grid_len::<F>(checked_pow2(chunk_bits)?, cycles)?;
-        let hot_addresses: Vec<Option<usize>> = self.walk_cycles(|row, next, env| {
-            W::extract_indexed(selector, row, next, env).map(W::into)
-        })?;
         // The selector's mask bounds every hot address below `2^chunk_bits`.
         let mut values = jolt_utils::unsafe_allocate_zero_vec(len);
-        for (cycle, address) in hot_addresses.into_iter().enumerate() {
-            if let Some(address) = address {
-                values[address * cycles + cycle] = F::one();
+        let mut cycle = 0;
+        rows.visit(0..cycles, WALK_ROWS, &mut |chunk, next, env| {
+            for (index, row) in chunk.iter().enumerate() {
+                let hot: Option<usize> =
+                    W::extract_indexed(selector, row, chunk.get(index + 1).or(next), env)?.into();
+                if let Some(address) = hot {
+                    values[address * cycles + cycle] = F::one();
+                }
+                cycle += 1;
             }
-        }
+            Ok(())
+        })?;
         Ok(values)
     }
 
@@ -71,98 +80,106 @@ impl TraceBackend {
     /// the zero delta in row zero of every digit and the carry.
     pub(crate) fn materialize_balanced_inc_one_hot<F: JoltField>(
         &self,
-        column: crate::witnesses::BalancedIncColumn,
+        column: BalancedIncColumn,
     ) -> Result<Vec<F>, WitnessError> {
         let chunk_bits = self.config.one_hot.committed_chunk_bits();
-        let cycles = checked_pow2(self.config.log_t)?;
+        let rows = self.trace_rows()?;
+        let cycles = rows.cycles();
         let len = checked_dense_grid_len::<F>(checked_pow2(chunk_bits)?, cycles)?;
-        let selected_rows: Vec<usize> = self.walk_cycles(|row, next, env| {
-            crate::witnesses::BalancedIncRow::extract_indexed(column, row, next, env)
-                .map(|selected| selected.0)
-        })?;
         let mut values = vec![F::zero(); len];
-        for (cycle, selected_row) in selected_rows.into_iter().enumerate() {
-            if selected_row >> chunk_bits != 0 {
-                return Err(WitnessError::InvalidWitnessData {
-                    label: JOLT_VM_LABEL,
-                    reason: format!(
-                        "balanced-inc row {selected_row} outside the 2^{chunk_bits} row domain"
-                    ),
-                });
+        let mut cycle = 0;
+        rows.visit(0..cycles, WALK_ROWS, &mut |chunk, next, env| {
+            for (index, row) in chunk.iter().enumerate() {
+                let selected_row = BalancedIncRow::extract_indexed(
+                    column,
+                    row,
+                    chunk.get(index + 1).or(next),
+                    env,
+                )?
+                .0;
+                if selected_row >> chunk_bits != 0 {
+                    return Err(WitnessError::InvalidWitnessData {
+                        label: JOLT_VM_LABEL,
+                        reason: format!(
+                            "balanced-inc row {selected_row} outside the 2^{chunk_bits} row domain"
+                        ),
+                    });
+                }
+                values[selected_row * cycles + cycle] = F::one();
+                cycle += 1;
             }
-            values[selected_row * cycles + cycle] = F::one();
-        }
+            Ok(())
+        })?;
         Ok(values)
     }
 
-    fn walk_cycles<V: Copy + Send>(
+    /// Fills the cycle-domain column `value(row, lookahead)`. Parallel tasks
+    /// start at multiples of `max(segment_len, WALK_ROWS)` and each writes its
+    /// own slice of the output through one serial visit, so at most one visit
+    /// per pool thread is live. The lowest-index failure wins.
+    fn walk_cycles<F: JoltField>(
         &self,
-        value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<V, WitnessError>
-            + Send
-            + Sync,
-    ) -> Result<Vec<V>, WitnessError> {
-        let rows = checked_pow2(self.config.log_t)?;
-        let env = WitnessEnv::new(&self.preprocessing);
-        let physical = self.trace.trace.proof_rows();
-        let padding = TraceRow::default();
-        let window = |index: usize| {
-            let current = physical.get(index).unwrap_or(&padding);
-            let next = (index + 1 < rows).then(|| physical.get(index + 1).unwrap_or(&padding));
-            value(current, next, &env)
+        value: impl Fn(&TraceRow, Option<&TraceRow>, &WitnessEnv<'_>) -> Result<F, WitnessError> + Sync,
+    ) -> Result<Vec<F>, WitnessError> {
+        let rows = self.trace_rows()?;
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(rows.cycles());
+        let fill = |first: usize, values: &mut [F]| {
+            let mut rest = values;
+            rows.visit(
+                first..first + rest.len(),
+                WALK_ROWS,
+                &mut |chunk, next, env| {
+                    let (head, tail) = std::mem::take(&mut rest).split_at_mut(chunk.len());
+                    rest = tail;
+                    for (index, (row, slot)) in chunk.iter().zip(head).enumerate() {
+                        *slot = value(row, chunk.get(index + 1).or(next), env)?;
+                    }
+                    Ok(())
+                },
+            )
         };
         #[cfg(feature = "parallel")]
-        return par_collect_windows(rows, window);
+        {
+            let task = rows.segment_len().max(WALK_ROWS);
+            let error = FirstErrorLatch::new();
+            values
+                .par_chunks_mut(task)
+                .enumerate()
+                .for_each(|(index, values)| {
+                    if let Err(failure) = fill(index * task, values) {
+                        error.record(index, failure);
+                    }
+                });
+            if let Some(failure) = error.take() {
+                return Err(failure);
+            }
+        }
         #[cfg(not(feature = "parallel"))]
-        return (0..rows).map(window).collect();
+        fill(0, &mut values)?;
+        Ok(values)
     }
 }
 
 impl RowSource for TraceBackend {
-    fn random_access(&self) -> Option<crate::RandomAccessRows> {
-        let cycles = checked_pow2(self.config.log_t).ok()?;
-        crate::RandomAccessRows::new(
-            std::sync::Arc::clone(&self.trace.trace),
-            cycles,
-            std::sync::Arc::clone(&self.preprocessing),
-        )
-        .ok()
+    fn rows(&self) -> Option<TraceRows> {
+        self.trace_rows().ok()
     }
 
+    /// The fused streaming pass extracts and consumes inside Rayon, which a
+    /// replayed visit's visitor must not do; like random access, it is served
+    /// only from resident rows.
     fn visit_chunks(
         &self,
         range: Range<usize>,
         chunk_size: usize,
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError> {
-        let total = checked_pow2(self.config.log_t)?;
-        if range.start > range.end || range.end > total {
-            return Err(WitnessError::InvalidDimensions {
-                label: JOLT_VM_LABEL,
-                reason: format!(
-                    "cycle range [{}, {}) exceeds the domain of {total} cycles",
-                    range.start, range.end
-                ),
+        if let TraceStorage::Replay(_) = self.trace.trace {
+            return Err(WitnessError::UnavailableView {
+                label: "replayed trace rows",
             });
         }
-        let env = WitnessEnv::new(&self.preprocessing);
-        let physical = self.trace.trace.proof_rows();
-        let padding = TraceRow::default();
-        let mut position = range.start;
-        while position < range.end {
-            let chunk_end = (position + chunk_size).min(range.end);
-            let next_after =
-                (chunk_end < total).then(|| physical.get(chunk_end).unwrap_or(&padding));
-            if chunk_end <= physical.len() {
-                visitor(&physical[position..chunk_end], next_after, &env)?;
-            } else {
-                let mut rows = Vec::with_capacity(chunk_end - position);
-                rows.extend_from_slice(&physical[position.min(physical.len())..]);
-                rows.resize(chunk_end - position, TraceRow::default());
-                visitor(&rows, next_after, &env)?;
-            }
-            position = chunk_end;
-        }
-        Ok(())
+        self.trace_rows()?.visit(range, chunk_size, visitor)
     }
 }
 

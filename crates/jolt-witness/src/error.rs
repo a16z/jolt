@@ -17,4 +17,12 @@ pub enum WitnessError {
     InvalidDimensions { label: &'static str, reason: String },
     #[error("invalid witness data for `{label}`: {reason}")]
     InvalidWitnessData { label: &'static str, reason: String },
+    /// A replay source failed; `row` is the first row of the failed read.
+    #[error("trace row replay failed reading from row {row}: {reason}")]
+    Replay { row: usize, reason: String },
+    #[error("`{label}` does not support {reason}")]
+    Unsupported {
+        label: &'static str,
+        reason: &'static str,
+    },
 }

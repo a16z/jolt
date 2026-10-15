@@ -21,7 +21,7 @@ use self::witnesses::{
 };
 use crate::backend::trace::{checked_pow2, TraceBackend};
 use crate::witnesses::{Extract, WitnessEnv};
-use crate::{PolynomialEncoding, Shape, WitnessError};
+use crate::{PolynomialEncoding, Shape, TraceStorage, WitnessError};
 
 pub mod witnesses;
 
@@ -513,12 +513,20 @@ impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlin
 }
 
 impl TraceBackend {
+    /// Field events are retained only by resident storage; replayed rows do
+    /// not carry them.
     pub fn field_inline_witness(&self) -> Result<TraceBackedFieldInlineWitness, WitnessError> {
+        let TraceStorage::Resident(trace_data) = &self.trace.trace else {
+            return Err(WitnessError::Unsupported {
+                label: FIELD_INLINE_LABEL,
+                reason: "replayed trace rows",
+            });
+        };
         TraceBackedFieldInlineWitness::build(
             self.config.log_t,
             &self.program,
             &self.preprocessing,
-            &self.trace.trace,
+            trace_data,
         )
     }
 
@@ -692,6 +700,7 @@ mod tests {
 
     use super::*;
     use crate::backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs};
+    use crate::testing::LoggedReplay;
 
     const ENTRY: u64 = RAM_START_ADDRESS;
 
@@ -901,6 +910,30 @@ mod tests {
     }
 
     #[test]
+    fn replayed_rows_serve_no_field_inline_witness() {
+        let (bytecode, _, _) = arithmetic_fixture();
+        let profile = RV64IMAC_JOLT_FIELD_INLINE;
+        let backend = TraceBackend::new(
+            config(2),
+            JoltVmWitnessInputs::replayed(
+                &program(bytecode.clone(), profile),
+                &preprocessing(bytecode, profile),
+                TraceOutput::with_dimensions(
+                    Default::default(),
+                    LoggedReplay::new(Vec::new(), 1),
+                    Default::default(),
+                    None,
+                    None,
+                ),
+            ),
+        );
+        assert!(matches!(
+            backend.with_field_inline(),
+            Err(WitnessError::Unsupported { .. })
+        ));
+    }
+
+    #[test]
     fn field_inline_disabled_rejects_field_inline_trace_payload() {
         let bytecode = vec![instruction(
             JoltInstructionKind::ADDI,
@@ -1076,7 +1109,10 @@ mod tests {
                 2,
             );
             let provider = backend.field_inline_witness().unwrap();
-            assert!(Arc::ptr_eq(&provider.trace_data, &backend.trace.trace));
+            assert!(matches!(
+                &backend.trace.trace,
+                TraceStorage::Resident(trace_data) if Arc::ptr_eq(&provider.trace_data, trace_data)
+            ));
             let registers: Vec<(usize, FieldInlineRegisterReadWriteRow<Fr>)> =
                 provider.field_inline_register_read_write_rows().unwrap();
             assert_eq!(registers[1].1.rs1.unwrap().value, fr(3));
