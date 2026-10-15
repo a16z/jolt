@@ -118,8 +118,12 @@ fn index_html_source(func_names: &[String], project_name: &str) -> String {
                 const ppResp = await fetch('target/wasm32-unknown-unknown/release/preprocessed_{func_name}_verifier.bin');
                 const ppData = new Uint8Array(await ppResp.arrayBuffer());
 
-                const result = verify_{func_name}(ppData, proofData, ioData, trustedData);
-                alert(result ? "Proof is valid!" : "Proof is invalid.");
+                try {{
+                    verify_{func_name}(ppData, proofData, ioData, trustedData);
+                    alert("Proof is valid!");
+                }} catch (error) {{
+                    alert("Proof is invalid: " + error.message);
+                }}
             }});
 "#
         ));
@@ -157,34 +161,23 @@ pub fn verify_{func_name}(
     proof_data: &[u8],
     io_data: &[u8],
     trusted_advice_commitment_bytes: &[u8],
-) -> bool {{
-    let preprocessing: JoltVerifierPreprocessing = match deserialize_verifier_object(preprocessing_data) {{
-        Ok(p) => p,
-        Err(_) => return false,
-    }};
-    let proof: RV64IMACProof = match deserialize_verifier_object(proof_data) {{
-        Ok(p) => p,
-        Err(_) => return false,
-    }};
-    let program_io: JoltDevice = match deserialize_verifier_object(io_data) {{
-        Ok(d) => d,
-        Err(_) => return false,
-    }};
+) -> Result<(), JsError> {{
+    let preprocessing: JoltVerifierPreprocessing = deserialize_verifier_object(preprocessing_data)?;
+    let proof: RV64IMACProof = deserialize_verifier_object(proof_data)?;
+    let program_io: JoltDevice = deserialize_verifier_object(io_data)?;
     let trusted_advice_commitment: Option<jolt_sdk::VerifierTrustedAdviceCommitment> =
         if trusted_advice_commitment_bytes.is_empty() {{
             None
         }} else {{
-            match deserialize_verifier_object(trusted_advice_commitment_bytes) {{
-                Ok(commitment) => commitment,
-                Err(_) => return false,
-            }}
+            deserialize_verifier_object(trusted_advice_commitment_bytes)?
         }};
     jolt_sdk::jolt_verifier::verify::<
         jolt_sdk::VerifierField,
         jolt_sdk::VerifierPCS,
         jolt_sdk::VerifierVC,
         jolt_sdk::VerifierTranscript,
-    >(&preprocessing, &program_io, &proof, trusted_advice_commitment.as_ref()).is_ok()
+    >(&preprocessing, &program_io, &proof, trusted_advice_commitment.as_ref())
+    .map_err(JsError::from)
 }}
 "#
         ));
@@ -277,7 +270,7 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
     }
 
     fn add_wasm_dependencies(dependencies: &mut Table) {
-        insert_if_absent(dependencies, "wasm-bindgen", toml_edit::value("0.2.73"));
+        insert_if_absent(dependencies, "wasm-bindgen", value("0.2.79"));
     }
 
     {

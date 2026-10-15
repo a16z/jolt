@@ -195,8 +195,7 @@ pub fn main() {
 
     let n = 221u32;  // 13 * 17
     let (output, proof, program_io) = prove(n);
-    let is_valid = verify(n, output, program_io.panic, proof);
-    assert!(is_valid);
+    verify(n, output, program_io.panic, proof).expect("proof verification failed");
 }
 ```
 

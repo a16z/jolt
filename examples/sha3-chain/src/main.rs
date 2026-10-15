@@ -20,10 +20,10 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove_sha3_chain(input, iters);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_sha3_chain(input, iters, output, program_io.panic, proof);
+    verify_sha3_chain(input, iters, output, program_io.panic, proof)
+        .expect("proof verification failed");
 
     assert_eq!(output, native_output, "output mismatch");
     info!("output: {}", hex::encode(output));
     info!("native_output: {}", hex::encode(native_output));
-    info!("valid: {is_valid}");
 }
