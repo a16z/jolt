@@ -320,7 +320,9 @@ pub struct Cpu {
     #[allow(dead_code)]
     f: [f64; 32],
     pub(crate) pc: u64,
-    csr: [u64; CSR_CAPACITY],
+    /// Boxed so `Cpu` stays small: replay readers move it through several
+    /// frames, which Rayon inlines into its recursive split helpers.
+    csr: Box<[u64; CSR_CAPACITY]>,
     pub mmu: Mmu,
     reservation: u64,
     is_reservation_set: bool,
@@ -438,6 +440,7 @@ fn get_trap_cause(trap: &Trap) -> u64 {
 }
 
 impl Cpu {
+    #[expect(clippy::expect_used)]
     pub fn new(terminal: Box<dyn Terminal>) -> Self {
         let mut cpu = Self {
             clock: 0,
@@ -446,7 +449,12 @@ impl Cpu {
             x: [0; REGISTER_COUNT as usize],
             f: [0.0; 32],
             pc: 0,
-            csr: [0; CSR_CAPACITY],
+            // Allocated zeroed on the heap; `Box::new([0; CSR_CAPACITY])`
+            // may stage the array on the stack first.
+            csr: vec![0; CSR_CAPACITY]
+                .into_boxed_slice()
+                .try_into()
+                .expect("CSR_CAPACITY words"),
             mmu: Mmu::new(terminal),
             reservation: 0,
             is_reservation_set: false,
@@ -1161,7 +1169,7 @@ impl Cpu {
             x: self.x,
             f: self.f,
             pc: self.pc,
-            csr: self.csr,
+            csr: self.csr.clone(),
             mmu: self.mmu.save_state_with_empty_memory(),
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
@@ -1229,7 +1237,7 @@ impl Cpu {
             x: *x,
             f: *f,
             pc: *pc,
-            csr: Box::new(*csr),
+            csr: csr.clone(),
             reservation: *reservation,
             is_reservation_set: *is_reservation_set,
             reservation_width: *reservation_width,
@@ -1255,7 +1263,7 @@ impl Cpu {
         self.x = state.x;
         self.f = state.f;
         self.pc = state.pc;
-        self.csr = *state.csr;
+        *self.csr = *state.csr;
         self.reservation = state.reservation;
         self.is_reservation_set = state.is_reservation_set;
         self.reservation_width = state.reservation_width;
