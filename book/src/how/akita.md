@@ -61,7 +61,7 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The workspace pins Akita to `318c322113dc66aeed31f9f3c640e84099ba043f`.
+The workspace pins Akita to `2514b2396757add941305c5b9bf364ee0a566ed9`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold.
 The checked-in schedule catalogs match this revision.
@@ -72,7 +72,10 @@ preprocessing and use that config for proving. Proving rejects a profile that
 differs from the prepared setup. The selected profile is carried
 by the verifier setup. Four-file schedule directories containing the updated
 dense catalogs remain valid for the default profile; a nondefault profile needs
-its matching companion catalog for the selected one-hot domain size.
+an application-supplied companion catalog covering the exact shape. The checked-in
+companions contain integration fixtures; downstream applications generate and
+distribute their own production coverage. The same upstream verifier consumes
+the catalog embedded in the public verifier setup.
 
 Nondefault chunk profiles bind the `akita_chunk_profile` transcript label.
 
