@@ -12,8 +12,8 @@ use jolt_spartan_verifier::{
     inner_relation, SpartanError, SpartanKey, SpartanProof, INNER_DEGREE, OUTER_DEGREE,
 };
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, ClearProof, ClearSumcheckRecorder,
-    CompressedSumcheckProof, ProveRounds, SequentialRounds, SumcheckProof, SumcheckRecorder,
+    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, CompressedSumcheckProof,
+    ProveRounds, SequentialRounds, SumcheckRecorder,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -121,8 +121,5 @@ fn prove_rounds<F: JoltField + AppendToTranscript>(
         transcript,
     )?;
     let recorded = recorder.finish(&[], transcript)?;
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = recorded.proof else {
-        return Err(SpartanError::InternalShape);
-    };
-    Ok((proof, result.challenges, result.final_claim))
+    Ok((recorded.proof, result.challenges, result.final_claim))
 }

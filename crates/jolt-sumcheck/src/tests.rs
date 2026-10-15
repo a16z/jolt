@@ -1051,7 +1051,7 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
     let claimed_sum = compute_sum(&evals);
 
     let mut prover_transcript = Blake2bTranscript::new(b"recorder-test");
-    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[claimed_sum], &mut prover_transcript);
 
     let mut buf = evals;
@@ -1077,8 +1077,7 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
 
     let mut verifier_transcript = Blake2bTranscript::new(b"recorder-test");
     append_sumcheck_claim(&mut verifier_transcript, &claimed_sum);
-    let reduction = recorded
-        .proof
+    let reduction = SumcheckProof::<F, Bn254G1>::from(recorded.proof)
         .verify_compressed_boolean(num_vars, 1, claimed_sum, &mut verifier_transcript)
         .unwrap();
     verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &reduction.value);
@@ -1178,7 +1177,7 @@ fn prove_batch_rejects_zero_max_degree() {
     };
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
     let mut transcript = Blake2bTranscript::new(b"zero-degree-batch");
-    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
     let result = prove_batch(
         &prelude,
         &mut members,
@@ -1211,7 +1210,7 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     let mut short = DenseMember::with_sum(1, sum_short, 91);
 
     let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-twin");
-    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_transcript);
     let coeff_long: F = prover_transcript.challenge_scalar();
     let coeff_short: F = prover_transcript.challenge_scalar();
@@ -1264,8 +1263,7 @@ fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
     let claimed_sum =
         verifier_coeff_long * sum_long + verifier_coeff_short * sum_short.mul_pow_2(2);
     assert_eq!(claimed_sum, prelude.claimed_sum);
-    let reduction = recorded
-        .proof
+    let reduction = SumcheckProof::<F, Bn254G1>::from(recorded.proof)
         .verify_compressed_boolean(3, 1, claimed_sum, &mut verifier_transcript)
         .unwrap();
     for value in &proved.member_claims {
@@ -1297,7 +1295,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
     let mut short = DenseMember::with_sum(1, sum_short.mul_pow_2(2), 91);
 
     let mut prover_transcript = Blake2bTranscript::new(b"prove-batch-head-twin");
-    let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
     recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_transcript);
     let coeff_long: F = prover_transcript.challenge_scalar();
     let coeff_short: F = prover_transcript.challenge_scalar();
@@ -1347,8 +1345,7 @@ fn prove_batch_clear_twin_head_aligned_member() {
     let claimed_sum =
         verifier_coeff_long * sum_long + verifier_coeff_short * sum_short.mul_pow_2(2);
     assert_eq!(claimed_sum, prelude.claimed_sum);
-    let reduction = recorded
-        .proof
+    let reduction = SumcheckProof::<F, Bn254G1>::from(recorded.proof)
         .verify_compressed_boolean(3, 1, claimed_sum, &mut verifier_transcript)
         .unwrap();
     for value in &proved.member_claims {
@@ -1480,7 +1477,7 @@ fn prove_uniskip_clear_twin_matches_uniskip_verify() {
         <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(&poly, &coefficients);
 
     let mut prover_transcript = Blake2bTranscript::new(b"uniskip-twin");
-    let proved = prove_uniskip_clear::<F, Bn254G1, _>(
+    let proved = prove_uniskip_clear::<F, _>(
         poly,
         input_claim,
         degree,
@@ -1490,8 +1487,7 @@ fn prove_uniskip_clear_twin_matches_uniskip_verify() {
     .unwrap();
 
     let mut verifier_transcript = Blake2bTranscript::new(b"uniskip-twin");
-    let reduction = proved
-        .proof
+    let reduction = SumcheckProof::<F, Bn254G1>::from(proved.proof)
         .verify(
             &SumcheckClaim::new(1, degree, input_claim),
             domain,
