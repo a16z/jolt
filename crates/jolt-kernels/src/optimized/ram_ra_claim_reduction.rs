@@ -3,30 +3,28 @@
 //! Port of legacy `zkvm/claim_reductions/ram_ra.rs`. The summand
 //! `(eq(r_cycle_raf, j) + γ·eq(r_cycle_rw, j) + γ²·eq(r_cycle_val, j)) · ra(r_address, j)`
 //! has per-term tensor structure `eq_lo(j_lo)·eq_hi(j_hi)·H(j)` with
-//! `H(j) = eq(r_address)[addresses[j]]` served off the session-shared RAM
-//! access columns, so no round ever touches a dense `T`-sized table:
+//! `H(j) = eq(r_address)[addresses[j]]` nonzero only on the accesses of the
+//! [`RamEventLog`], which this last consumer takes from the session, so no
+//! round ever touches a dense `T`-sized table:
 //!
 //! - **Prefix rounds** (`log_T/2`, low-to-high): the round loop runs over
 //!   `P_x[j_lo] = eq(r_x_lo)[j_lo]` and
 //!   `Q_x[j_lo] = Σ_{j_hi} H[j]·eq(r_x_hi)[j_hi]` — six `O(√T)` tables, with
-//!   `Q` built in one `O(T)` columns pass. Binding low variables commutes
+//!   `Q` built in one pass over the events. Binding low variables commutes
 //!   with summing out the high ones, so the messages equal the reference's
 //!   dense-table rounds exactly.
-//! - **Suffix rounds**: at the phase switch one more `O(T)` pass gathers
-//!   `H'[j_hi] = Σ_{j_lo} eq(r_prefix)[j_lo]·H[j]` (the partial evaluation of
-//!   `ra` at the prefix challenges); the bound prefix eq factors collapse to
-//!   the scalars `eq(r_x_lo, r_prefix)` folded into the term coefficients.
+//! - **Suffix rounds**: at the phase switch one more pass over the events
+//!   gathers `H'[j_hi] = Σ_{j_lo} eq(r_prefix)[j_lo]·H[j]` (the partial
+//!   evaluation of `ra` at the prefix challenges) and releases the log; the
+//!   bound prefix eq factors collapse to the scalars `eq(r_x_lo, r_prefix)`
+//!   folded into the term coefficients.
 //!
 //! Round messages sample `t ∈ {0, 2}` with the engine hint supplying `s(1)`.
-
-use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaClaimReductionPublic};
 use jolt_field::JoltField;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-#[cfg(feature = "parallel")]
-use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -37,7 +35,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
+use super::ram_trace::{RamEvent, RamEventLog};
 use super::support::{bind_pairs, pin_derived_term, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -47,6 +45,9 @@ use crate::{
 
 /// The three consumed claims (RAF, read-write, val-check), in γ-power order.
 const TERMS: usize = 3;
+
+/// Events per scatter task: one task, and no extra slot, for up to this many.
+const EVENTS_PER_TASK: usize = 1 << 14;
 
 impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
     fn prepare(
@@ -75,8 +76,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
         // hard-checks that all three inputs agree on it).
         let r_address = &input_points.read_write()[..ram_log_k];
 
-        let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        super::ram_trace::validate_addresses(&addresses, 1usize << ram_log_k)?;
+        let log = RamEventLog::take(session, witness, log_t, 1usize << ram_log_k)?;
         let eq_address = eq_table(r_address);
 
         let gamma = inputs.challenges.gamma;
@@ -93,16 +93,16 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
 
         let phase = if prefix_bits == 0 {
             Phase::Suffix {
-                h: super::ram_trace::fold_addresses(&addresses, &eq_address),
+                h: gather_h_prime(&log, &eq_address, &[F::one()], 0, suffix_bits),
                 eq_hi,
                 scales: [F::one(); TERMS],
             }
         } else {
             Phase::Prefix {
                 p: cycle_points.map(|r| eq_table(&r[suffix_bits..])),
-                q: build_q_tables(&addresses, &eq_address, &eq_hi, prefix_bits),
+                q: build_q_tables(&log, &eq_address, &eq_hi, prefix_bits),
                 eq_hi,
-                addresses,
+                log,
                 eq_address,
                 r_cycle_lo: cycle_points.map(|r| r[suffix_bits..].to_vec()),
                 challenges: Vec::with_capacity(prefix_bits),
@@ -118,63 +118,75 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
     }
 }
 
+/// `N` tables of `len` entries summing `term(tables, cycle, address)` over the
+/// accesses: one task per [`EVENTS_PER_TASK`] events, up to the pool's thread
+/// count, each filling one caller-allocated slot; slot 0 is the result and the
+/// others merge into it in place.
+fn scatter_accesses<F: JoltField, const N: usize>(
+    log: &RamEventLog,
+    len: usize,
+    term: impl Fn(&mut [Vec<F>; N], usize, usize) + Sync,
+) -> [Vec<F>; N] {
+    let events = log.events();
+    let zero = || core::array::from_fn(|_| vec![F::zero(); len]);
+    #[cfg(feature = "parallel")]
+    let threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let threads = 1;
+    let tasks = events.len().div_ceil(EVENTS_PER_TASK).clamp(1, threads);
+    let per_task = events.len().div_ceil(tasks).max(1);
+    let mut total: [Vec<F>; N] = zero();
+    let mut extra: Vec<[Vec<F>; N]> = (1..tasks).map(|_| zero()).collect();
+    let fill = |(slot, chunk): (&mut [Vec<F>; N], &[RamEvent])| {
+        for event in chunk {
+            if let Some(address) = event.address {
+                term(slot, event.cycle as usize, address as usize);
+            }
+        }
+    };
+    #[cfg(feature = "parallel")]
+    rayon::iter::once(&mut total)
+        .chain(extra.par_iter_mut())
+        .zip(events.par_chunks(per_task))
+        .for_each(fill);
+    #[cfg(not(feature = "parallel"))]
+    core::iter::once(&mut total)
+        .chain(extra.iter_mut())
+        .zip(events.chunks(per_task))
+        .for_each(fill);
+    for slot in extra {
+        for (table, partial) in total.iter_mut().zip(slot) {
+            for (sum, value) in table.iter_mut().zip(partial) {
+                *sum += value;
+            }
+        }
+    }
+    total
+}
+
 fn build_q_tables<F: JoltField>(
-    addresses: &[u32],
+    log: &RamEventLog,
     eq_address: &[F],
     eq_hi: &[Vec<F>; TERMS],
     prefix_bits: usize,
 ) -> [Vec<F>; TERMS] {
     let prefix_size = 1usize << prefix_bits;
-    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u32]| {
-        for (i, &address) in chunk.iter().enumerate() {
-            if address == NO_ACCESS {
-                continue;
-            }
-            let c = base + i;
-            let c_lo = c & (prefix_size - 1);
-            let c_hi = c >> prefix_bits;
-            let h_c = eq_address[address as usize];
+    scatter_accesses(
+        log,
+        prefix_size,
+        |q: &mut [Vec<F>; TERMS], cycle, address| {
+            let c_lo = cycle & (prefix_size - 1);
+            let c_hi = cycle >> prefix_bits;
+            let h_c = eq_address[address];
             for x in 0..TERMS {
                 q[x][c_lo] += h_c * eq_hi[x][c_hi];
             }
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        const CHUNK: usize = 1 << 14;
-        addresses
-            .par_chunks(CHUNK)
-            .enumerate()
-            .fold(
-                || core::array::from_fn(|_| unsafe_allocate_zero_vec(prefix_size)),
-                |mut q, (chunk_index, chunk)| {
-                    fill(&mut q, chunk_index * CHUNK, chunk);
-                    q
-                },
-            )
-            .reduce(
-                || core::array::from_fn(|_| unsafe_allocate_zero_vec(prefix_size)),
-                |mut acc, q| {
-                    for (acc_x, q_x) in acc.iter_mut().zip(&q) {
-                        for (a, v) in acc_x.iter_mut().zip(q_x) {
-                            *a += *v;
-                        }
-                    }
-                    acc
-                },
-            )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut q = core::array::from_fn(|_| vec![F::zero(); prefix_size]);
-        fill(&mut q, 0, addresses);
-        q
-    }
+        },
+    )
 }
 
 fn gather_h_prime<F: JoltField>(
-    addresses: &[u32],
+    log: &RamEventLog,
     eq_address: &[F],
     eq_prefix: &[F],
     prefix_bits: usize,
@@ -182,45 +194,10 @@ fn gather_h_prime<F: JoltField>(
 ) -> Vec<F> {
     let prefix_size = 1usize << prefix_bits;
     let suffix_size = 1usize << suffix_bits;
-    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u32]| {
-        for (i, &address) in chunk.iter().enumerate() {
-            if address == NO_ACCESS {
-                continue;
-            }
-            let c = base + i;
-            h[c >> prefix_bits] += eq_address[address as usize] * eq_prefix[c & (prefix_size - 1)];
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        const CHUNK: usize = 1 << 14;
-        addresses
-            .par_chunks(CHUNK)
-            .enumerate()
-            .fold(
-                || unsafe_allocate_zero_vec(suffix_size),
-                |mut h, (chunk_index, chunk)| {
-                    fill(&mut h, chunk_index * CHUNK, chunk);
-                    h
-                },
-            )
-            .reduce(
-                || unsafe_allocate_zero_vec(suffix_size),
-                |mut acc, h| {
-                    for (a, v) in acc.iter_mut().zip(&h) {
-                        *a += *v;
-                    }
-                    acc
-                },
-            )
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        let mut h = vec![F::zero(); suffix_size];
-        fill(&mut h, 0, addresses);
-        h
-    }
+    let [h] = scatter_accesses(log, suffix_size, |[h]: &mut [Vec<F>; 1], cycle, address| {
+        h[cycle >> prefix_bits] += eq_address[address] * eq_prefix[cycle & (prefix_size - 1)];
+    });
+    h
 }
 
 #[expect(
@@ -233,7 +210,7 @@ enum Phase<F: JoltField> {
         p: [Vec<F>; TERMS],
         q: [Vec<F>; TERMS],
         eq_hi: [Vec<F>; TERMS],
-        addresses: Arc<Vec<u32>>,
+        log: RamEventLog,
         eq_address: Vec<F>,
         r_cycle_lo: [Vec<F>; TERMS],
         challenges: Vec<F>,
@@ -287,7 +264,7 @@ impl<F: JoltField> RaReductionKernel<F> {
         };
         let Phase::Prefix {
             eq_hi,
-            addresses,
+            log,
             eq_address,
             r_cycle_lo,
             challenges,
@@ -301,12 +278,13 @@ impl<F: JoltField> RaReductionKernel<F> {
         let r_prefix: Vec<F> = challenges.iter().rev().copied().collect();
         let eq_prefix = eq_table(&r_prefix);
         let h = gather_h_prime(
-            &addresses,
+            &log,
             &eq_address,
             &eq_prefix,
             self.prefix_bits,
             self.progress.total() - self.prefix_bits,
         );
+        drop(log);
         let scales = core::array::from_fn(|x| EqPolynomial::<F>::mle(&r_cycle_lo[x], &r_prefix));
         self.phase = Phase::Suffix { h, eq_hi, scales };
     }
@@ -438,16 +416,18 @@ mod tests {
         RamRaClaimReductionChallenges, RamRaClaimReductionInputClaims,
     };
     use jolt_field::{Fr, Ring};
+    use jolt_witness::TraceBackend;
 
     use super::super::testing::{
-        assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,
+        assert_parity, for_each_storage, ram_fixture, random_scalars, silent_ram_fixture,
+        FixtureShape, RamOp,
     };
     use super::*;
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
 
-    fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
-        with_ram_fixture(shape, ops, |witness| {
+    fn run_parity(resident: &TraceBackend, shape: FixtureShape, seed: u64) {
+        for_each_storage(resident, |resident, witness| {
             let r_address = random_scalars(shape.log_k(), seed);
             let r_cycle_raf = random_scalars(shape.log_t, seed ^ 0x11);
             let r_cycle_rw = random_scalars(shape.log_t, seed ^ 0x22);
@@ -472,7 +452,7 @@ mod tests {
             let reference = PrepareKernel::<Fr, _>::prepare(
                 &ReferenceBackend,
                 &mut reference_session,
-                witness,
+                resident,
                 ProverInputs {
                     relation: &relation,
                     claims: &claims,
@@ -496,7 +476,7 @@ mod tests {
             .unwrap();
 
             let ra_folded =
-                address_fold::<Fr>(witness, ram_ra_claim_reduction(), shape.log_t, &r_address)
+                address_fold::<Fr>(resident, ram_ra_claim_reduction(), shape.log_t, &r_address)
                     .unwrap();
             let eq_raf = eq_table::<Fr>(&r_cycle_raf);
             let eq_rw = eq_table::<Fr>(&r_cycle_rw);
@@ -526,6 +506,7 @@ mod tests {
             RamOp::Read { word: 2 },
             RamOp::Write { word: 5, post: 1 },
             RamOp::None,
+            RamOp::UnmappedWrite { pre: 3, post: 6 },
             RamOp::Read { word: 5 },
             RamOp::Write { word: 2, post: 3 },
         ]
@@ -533,7 +514,8 @@ mod tests {
 
     #[test]
     fn matches_reference_on_mixed_traffic() {
-        run_parity(FixtureShape { log_t: 4, ram_k: 8 }, mixed_ops(), 53);
+        let shape = FixtureShape { log_t: 4, ram_k: 8 };
+        run_parity(&ram_fixture(shape, Vec::new(), mixed_ops()), shape, 53);
     }
 
     #[test]
@@ -545,17 +527,22 @@ mod tests {
             RamOp::None,
             RamOp::Read { word: 3 },
         ]);
-        run_parity(FixtureShape { log_t: 5, ram_k: 8 }, ops, 59);
+        let shape = FixtureShape { log_t: 5, ram_k: 8 };
+        run_parity(&ram_fixture(shape, Vec::new(), ops), shape, 59);
     }
 
     #[test]
     fn matches_reference_on_single_round() {
         // `log_T = 1` has no prefix rounds: the kernel starts in the suffix
         // phase off the plain address fold.
-        run_parity(
-            FixtureShape { log_t: 1, ram_k: 8 },
-            vec![RamOp::Write { word: 1, post: 4 }],
-            61,
-        );
+        let shape = FixtureShape { log_t: 1, ram_k: 8 };
+        let ops = vec![RamOp::Write { word: 1, post: 4 }];
+        run_parity(&ram_fixture(shape, Vec::new(), ops), shape, 61);
+    }
+
+    #[test]
+    fn matches_reference_without_ram_events() {
+        let shape = FixtureShape { log_t: 4, ram_k: 8 };
+        run_parity(&silent_ram_fixture(shape), shape, 67);
     }
 }

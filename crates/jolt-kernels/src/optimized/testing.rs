@@ -18,7 +18,7 @@ use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Field, Fr};
 use jolt_poly::UnivariatePoly;
-use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
+use jolt_program::execution::{JoltProgram, RowReplay, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 use jolt_riscv::{
@@ -28,7 +28,10 @@ use jolt_riscv::{
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessPlane, TraceBackend};
+use jolt_witness::testing::LoggedReplay;
+use jolt_witness::{
+    JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessPlane, TraceBackend, TraceStorage,
+};
 use rand_core::SeedableRng;
 
 use crate::{ProverInputs, SumcheckKernel};
@@ -62,8 +65,19 @@ impl FixtureShape {
 /// so scripts stay trace-consistent by construction.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum RamOp {
-    Read { word: u64 },
-    Write { word: u64, post: u64 },
+    Read {
+        word: u64,
+    },
+    Write {
+        word: u64,
+        post: u64,
+    },
+    /// A store to raw address 0, which remaps to no RAM word: `RamInc`
+    /// changes by `post − pre` without a RAM access.
+    UnmappedWrite {
+        pre: u64,
+        post: u64,
+    },
     None,
 }
 
@@ -93,6 +107,15 @@ pub(crate) fn with_ram_fixture_init<R>(
     ops: Vec<RamOp>,
     f: impl FnOnce(&dyn JoltWitnessPlane<Fr>) -> R,
 ) -> R {
+    f(&ram_fixture(shape, init_words, ops))
+}
+
+/// The [`with_ram_fixture_init`] trace backend.
+pub(crate) fn ram_fixture(
+    shape: FixtureShape,
+    init_words: Vec<u64>,
+    ops: Vec<RamOp>,
+) -> TraceBackend {
     assert!(ops.len() < 1usize << shape.log_t, "script too long");
     assert!(
         init_words.is_empty() || 2 + init_words.len() <= shape.ram_k,
@@ -212,6 +235,25 @@ pub(crate) fn with_ram_fixture_init<R>(
                         }),
                     )
                 }
+                RamOp::UnmappedWrite { pre, post } => (
+                    store,
+                    RegisterState {
+                        rs1: Some(RegisterRead {
+                            register: 2,
+                            value: 0,
+                        }),
+                        rs2: Some(RegisterRead {
+                            register: 3,
+                            value: post,
+                        }),
+                        ..Default::default()
+                    },
+                    RamAccess::Write(RamWrite {
+                        address: 0,
+                        pre_value: pre,
+                        post_value: post,
+                    }),
+                ),
                 RamOp::None => (
                     JoltInstructionRow::default(),
                     RegisterState::default(),
@@ -251,8 +293,81 @@ pub(crate) fn with_ram_fixture_init<R>(
         &preprocessing,
         TraceOutput::new(TraceData::new(rows), device, None, None),
     );
-    let backend = TraceBackend::new(config, inputs);
-    f(&backend)
+    TraceBackend::new(config, inputs)
+}
+
+/// A trace without RAM events: trusted advice starts the termination word at
+/// its final value, so no termination write is needed and every cycle is
+/// padding.
+pub(crate) fn silent_ram_fixture(shape: FixtureShape) -> TraceBackend {
+    let base = ram_fixture(shape, Vec::new(), Vec::new());
+    let device = JoltDevice {
+        trusted_advice: [0u64.to_le_bytes(), 1u64.to_le_bytes()].concat(),
+        ..base.trace.device.clone()
+    };
+    TraceBackend::new(
+        base.config.clone(),
+        JoltVmWitnessInputs::new(
+            &base.program,
+            &base.preprocessing,
+            TraceOutput::new(TraceData::new(Vec::new()), device, None, None),
+        ),
+    )
+}
+
+/// Runs `f(resident, witness)` with `witness` the resident rows, then the same
+/// rows replayed from two-row checkpoints: reference kernels read `resident`,
+/// the kernel under test `witness`.
+pub(crate) fn for_each_storage(
+    resident: &TraceBackend,
+    mut f: impl FnMut(&dyn JoltWitnessPlane<Fr>, &dyn JoltWitnessPlane<Fr>),
+) {
+    f(resident, resident);
+    f(resident, &replayed(resident, 2, None));
+}
+
+/// `resident`'s rows re-executed from `segment_rows`-row checkpoints by a
+/// replay whose read covering `fail_row` fails.
+pub(crate) fn replayed(
+    resident: &TraceBackend,
+    segment_rows: usize,
+    fail_row: Option<usize>,
+) -> TraceBackend {
+    let replay = LoggedReplay::new(resident_rows(resident), segment_rows);
+    let replay = match fail_row {
+        Some(row) => replay.failing_at(row),
+        None => replay,
+    };
+    replayed_with(resident, replay)
+}
+
+/// `resident`'s configuration and device over the rows `replay` serves.
+pub(crate) fn replayed_with(
+    resident: &TraceBackend,
+    replay: impl RowReplay + 'static,
+) -> TraceBackend {
+    TraceBackend::new(
+        resident.config.clone(),
+        JoltVmWitnessInputs::replayed(
+            &resident.program,
+            &resident.preprocessing,
+            TraceOutput::with_dimensions(
+                resident.trace.dimensions,
+                replay,
+                resident.trace.device.clone(),
+                None,
+                None,
+            ),
+        ),
+    )
+}
+
+/// The retained proof rows of a fixture backend.
+pub(crate) fn resident_rows(resident: &TraceBackend) -> Vec<TraceRow> {
+    let TraceStorage::Resident(trace) = &resident.trace.trace else {
+        panic!("RAM fixtures retain their rows");
+    };
+    trace.proof_rows().to_vec()
 }
 
 pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {

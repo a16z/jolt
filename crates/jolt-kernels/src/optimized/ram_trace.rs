@@ -1,21 +1,26 @@
 //! Sparse per-cycle RAM addresses and values shared across RAM kernels.
+//! [`RamEventLog`] serves the stage-2 RAF and stage-5 RA claim reduction;
 //! [`SharedRamAddresses`] survives stages 2–6b; [`RamAccessColumns`] owns the
 //! stage-2-only values.
 
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
+use core::ops::Range;
 use std::sync::Arc;
 
 use jolt_field::JoltField;
-use jolt_poly::EqPolynomial;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
-use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
+use jolt_witness::witnesses::{RamInc, RamReadValue, RamWriteValue, RemappedRamAddress};
 #[cfg(feature = "parallel")]
 use jolt_witness::TraceRows;
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
+use jolt_witness::{
+    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::{task_ranges, VISIT_ROWS};
 use crate::{KernelError, ProofSession};
 
 const SPLIT_CHUNK: usize = 1 << 16;
@@ -35,6 +40,232 @@ struct RamValueBundle {
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RamAddressBundle {
     address: RemappedRamAddress,
+}
+
+#[derive(Clone, Copy, Debug, WitnessBundle)]
+struct RamEventBundle {
+    address: RemappedRamAddress,
+    inc: RamInc,
+}
+
+impl RamEventBundle {
+    /// `ra` vanishes off remapped accesses and `RamInc` off stores, and
+    /// neither support contains the other: a store to an address that remaps
+    /// to no word increments `RamInc` without an access.
+    fn is_event(&self) -> bool {
+        self.address.0.is_some() || self.inc.0 != 0
+    }
+}
+
+/// One cycle that carries a remapped RAM access, a nonzero `RamInc`, or both.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct RamEvent {
+    pub cycle: u32,
+    /// The remapped word, below `ram_K`; `None` for a store whose address
+    /// remaps to no word.
+    pub address: Option<u32>,
+}
+
+impl RamEvent {
+    fn new(cycle: usize, bundle: &RamEventBundle, ram_k: usize) -> Result<Self, WitnessError> {
+        let address = bundle
+            .address
+            .0
+            .map(|address| {
+                if address < ram_k as u64 {
+                    Ok(address as u32)
+                } else {
+                    Err(WitnessError::InvalidWitnessData {
+                        label: EVENT_LOG_LABEL,
+                        reason: format!(
+                            "cycle {cycle} accesses remapped word {address}, beyond ram_K {ram_k}"
+                        ),
+                    })
+                }
+            })
+            .transpose()?;
+        // `RamEventLog::collect` bounds the cycle domain and `ram_K` by 2^32,
+        // so both narrowings are exact.
+        Ok(Self {
+            cycle: cycle as u32,
+            address,
+        })
+    }
+}
+
+const EVENT_LOG_LABEL: &str = "RAM event log";
+
+/// Every [`RamEvent`] of the cycle domain in cycle order: the sparse support
+/// of the stage-2–5 RAM factors. Its size scales with the event count, not
+/// the cycle count. The first consumer collects and parks it; the stage-5 RA
+/// claim reduction, its last consumer, takes it.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct RamEventLog {
+    cycles: usize,
+    ram_k: usize,
+    events: Vec<RamEvent>,
+}
+
+impl RamEventLog {
+    /// Collect once, then return the session's log.
+    #[expect(
+        clippy::expect_used,
+        reason = "the log is parked by this function right above the read"
+    )]
+    pub fn shared<'s, F: JoltField>(
+        session: &'s mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        ram_k: usize,
+    ) -> Result<&'s Self, KernelError<F>> {
+        if session.state::<Self>().is_none() {
+            session.park(Self::collect(witness, log_t, ram_k)?);
+        }
+        let log = session.state::<Self>().expect("RAM event log parked above");
+        log.check_domain(log_t, ram_k)?;
+        Ok(log)
+    }
+
+    /// Remove the session's log for its last consumer, collecting it when no
+    /// earlier consumer parked one.
+    pub fn take<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        ram_k: usize,
+    ) -> Result<Self, KernelError<F>> {
+        let log = match session.take::<Self>() {
+            Some(log) => log,
+            None => Self::collect(witness, log_t, ram_k)?,
+        };
+        log.check_domain(log_t, ram_k)?;
+        Ok(log)
+    }
+
+    pub fn events(&self) -> &[RamEvent] {
+        &self.events
+    }
+
+    /// One serial visit per [`task_ranges`] task counts its events; a second
+    /// writes them into that task's slots of one exactly sized allocation,
+    /// so no task holds a vector of its own.
+    fn collect<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        ram_k: usize,
+    ) -> Result<Self, KernelError<F>> {
+        const LABEL: &str = "RAM event trace rows";
+        let rows = witness
+            .rows()
+            .ok_or(WitnessError::UnavailableView { label: LABEL })?;
+        let cycles = 1usize << log_t;
+        if rows.cycles() != cycles {
+            return Err(WitnessError::InvalidDimensions {
+                label: LABEL,
+                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
+            }
+            .into());
+        }
+        if u32::try_from(cycles - 1).is_err() || u32::try_from(ram_k - 1).is_err() {
+            return Err(KernelError::Unsupported {
+                reason: "the RAM event log packs cycles and remapped addresses as u32",
+            });
+        }
+        let ranges = task_ranges(cycles, rows.segment_len(), 1);
+
+        let count = |range: &Range<usize>| -> Result<usize, WitnessError> {
+            let mut events = 0;
+            rows.visit_bundles(
+                range.clone(),
+                VISIT_ROWS,
+                |_, bundles: &[RamEventBundle]| {
+                    events += bundles.iter().filter(|bundle| bundle.is_event()).count();
+                    Ok(())
+                },
+            )?;
+            Ok(events)
+        };
+        #[cfg(feature = "parallel")]
+        let counts: Vec<usize> = ranges.par_iter().map(count).collect::<Result<_, _>>()?;
+        #[cfg(not(feature = "parallel"))]
+        let counts: Vec<usize> = ranges.iter().map(count).collect::<Result<_, _>>()?;
+
+        let total = counts.iter().sum();
+        let mut events = Vec::with_capacity(total);
+        let mut spare = &mut events.spare_capacity_mut()[..total];
+        let task_slots: Vec<&mut [MaybeUninit<RamEvent>]> = counts
+            .iter()
+            .map(|&count| {
+                let (head, tail) = core::mem::take(&mut spare).split_at_mut(count);
+                spare = tail;
+                head
+            })
+            .collect();
+        let disagreement = || WitnessError::InvalidWitnessData {
+            label: EVENT_LOG_LABEL,
+            reason: "replayed rows disagree between the count and fill passes".to_owned(),
+        };
+        let fill = |range: &Range<usize>, slots: &mut [MaybeUninit<RamEvent>]| {
+            let mut slots = slots.iter_mut();
+            rows.visit_bundles(
+                range.clone(),
+                VISIT_ROWS,
+                |first, bundles: &[RamEventBundle]| {
+                    for (cycle, bundle) in (first..).zip(bundles) {
+                        if bundle.is_event() {
+                            let slot = slots.next().ok_or_else(disagreement)?;
+                            let _ = slot.write(RamEvent::new(cycle, bundle, ram_k)?);
+                        }
+                    }
+                    Ok(())
+                },
+            )?;
+            if slots.next().is_some() {
+                return Err(disagreement());
+            }
+            Ok(())
+        };
+        #[cfg(feature = "parallel")]
+        ranges
+            .par_iter()
+            .zip(task_slots)
+            .try_for_each(|(range, slots)| fill(range, slots))?;
+        #[cfg(not(feature = "parallel"))]
+        ranges
+            .iter()
+            .zip(task_slots)
+            .try_for_each(|(range, slots)| fill(range, slots))?;
+        // SAFETY: the task slots tile the first `total` spare elements, and
+        // every task wrote each of its slots before returning `Ok`.
+        unsafe { events.set_len(total) };
+        Ok(Self {
+            cycles,
+            ram_k,
+            events,
+        })
+    }
+
+    /// Reuse by type must not cross trace or address domains.
+    fn check_domain<F: JoltField>(&self, log_t: usize, ram_k: usize) -> Result<(), KernelError<F>> {
+        for (table, expected, got) in [
+            (
+                "session-shared RAM event log cycles",
+                1usize << log_t,
+                self.cycles,
+            ),
+            ("session-shared RAM event log words", ram_k, self.ram_k),
+        ] {
+            if expected != got {
+                return Err(KernelError::TableSizeMismatch {
+                    table: table.to_owned(),
+                    expected,
+                    got,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Pack a remapped address. The column is `u32` because it outlives every
@@ -164,7 +395,6 @@ where
     B: WitnessBundle + Copy + Send + Sync,
     T: Copy + Send + Sync,
 {
-    use core::mem::MaybeUninit;
     let mut columns: [Vec<T>; N] = core::array::from_fn(|_| Vec::with_capacity(cycles));
     let chunk_count = cycles.div_ceil(PAR_CHUNK).max(1);
     let error = FirstErrorLatch::new();
@@ -292,66 +522,18 @@ pub(crate) fn validate_addresses<F: JoltField>(
     Ok(())
 }
 
-/// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
-pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) -> Vec<F> {
-    addresses
-        .iter()
-        .map(|&address| {
-            if address == NO_ACCESS {
-                F::zero()
-            } else {
-                eq_address[address as usize]
-            }
-        })
-        .collect()
-}
-
-const FOLD_CYCLES_CHUNK: usize = 1 << 20;
-
-/// Cycle fold of the one-hot `ra` grid:
-/// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
-/// Eq values are generated in chunks from `e_hi ⊗ e_lo`.
-pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k: usize) -> Vec<F> {
-    let mid = r_cycle.len() / 2;
-    let (r_hi, r_lo) = r_cycle.split_at(mid);
-    let e_hi = EqPolynomial::<F>::evals(r_hi, None);
-    let e_lo = EqPolynomial::<F>::evals(r_lo, None);
-    let lo_bits = r_lo.len();
-    let lo_mask = e_lo.len() - 1;
-
-    let mut out = vec![F::zero(); ram_k];
-    let mut staging: Vec<F> = vec![F::zero(); FOLD_CYCLES_CHUNK.min(addresses.len())];
-    for (chunk_index, chunk) in addresses.chunks(FOLD_CYCLES_CHUNK).enumerate() {
-        let base = chunk_index * FOLD_CYCLES_CHUNK;
-        let staging = &mut staging[..chunk.len()];
-        let fill = |(offset, slot): (usize, &mut F)| {
-            let j = base + offset;
-            *slot = e_hi[j >> lo_bits] * e_lo[j & lo_mask];
-        };
-        #[cfg(feature = "parallel")]
-        staging
-            .par_iter_mut()
-            .enumerate()
-            .with_min_len(1 << 10)
-            .for_each(fill);
-        #[cfg(not(feature = "parallel"))]
-        staging.iter_mut().enumerate().for_each(fill);
-
-        for (&address, &eq) in chunk.iter().zip(staging.iter()) {
-            if address != NO_ACCESS {
-                out[address as usize] += eq;
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
-#[expect(clippy::panic, reason = "test module")]
+#[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
-    use jolt_field::Fr;
-    use jolt_witness::testing::with_sample_backend;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use jolt_field::Fr;
+    use jolt_program::execution::{RowReader, RowReplay, TraceError};
+    use jolt_witness::testing::{with_sample_backend, LoggedReplay};
+
+    use super::super::testing::{
+        ram_fixture, replayed, replayed_with, resident_rows, FixtureShape, RamOp,
+    };
     use super::*;
 
     #[test]
@@ -373,5 +555,160 @@ mod tests {
                 }
             ));
         });
+    }
+
+    /// Accesses and nonzero increments, never only their intersection, in
+    /// cycle order from task-partitioned visits of resident and replayed rows.
+    #[test]
+    fn event_log_keeps_accesses_and_increments_in_cycle_order() {
+        let shape = FixtureShape {
+            log_t: 4,
+            ram_k: 16,
+        };
+        let resident = ram_fixture(
+            shape,
+            vec![7],
+            vec![
+                RamOp::Read { word: 2 },
+                RamOp::None,
+                RamOp::UnmappedWrite { pre: 3, post: 8 },
+                RamOp::Write { word: 2, post: 7 },
+                RamOp::UnmappedWrite { pre: 4, post: 4 },
+                RamOp::Write { word: 5, post: 2 },
+                RamOp::UnmappedWrite { pre: 9, post: 1 },
+            ],
+        );
+        let replay = replayed(&resident, 2, None);
+        // (cycle, word); cycle 7 is the fixture's termination write, cycles
+        // 8.. are padding.
+        let expected = [
+            (0, Some(2)),
+            (2, None),
+            (3, Some(2)),
+            (5, Some(5)),
+            (6, None),
+            (7, Some(1)),
+        ];
+        for witness in [&resident, &replay] {
+            let log = RamEventLog::collect::<Fr>(witness, shape.log_t, shape.ram_k).unwrap();
+            let events: Vec<_> = log.events().iter().map(|e| (e.cycle, e.address)).collect();
+            assert_eq!(events, expected);
+            assert_eq!(log.events.capacity(), expected.len());
+        }
+    }
+
+    /// A witness without a row handle, a failing replay, an access beyond
+    /// `ram_K` and a session log of another domain fail typed.
+    #[test]
+    fn event_log_failures_are_typed() {
+        let shape = FixtureShape { log_t: 3, ram_k: 8 };
+        let resident = ram_fixture(
+            shape,
+            Vec::new(),
+            vec![RamOp::Write { word: 3, post: 4 }, RamOp::Read { word: 3 }],
+        );
+        // A configured domain shorter than the trace leaves no valid handle.
+        let mut shortened = replayed(&resident, 2, None);
+        shortened.config.log_t = 1;
+        assert!(matches!(
+            RamEventLog::collect::<Fr>(&shortened, 1, shape.ram_k),
+            Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
+        ));
+        assert!(matches!(
+            RamEventLog::collect::<Fr>(&replayed(&resident, 2, Some(1)), shape.log_t, shape.ram_k),
+            Err(KernelError::Witness(WitnessError::Replay { .. }))
+        ));
+        assert!(matches!(
+            RamEventLog::collect::<Fr>(&resident, shape.log_t, 2),
+            Err(KernelError::Witness(
+                WitnessError::InvalidWitnessData { .. }
+            ))
+        ));
+
+        let mut session = ProofSession::default();
+        session.park(RamEventLog::collect::<Fr>(&resident, shape.log_t, shape.ram_k).unwrap());
+        assert!(matches!(
+            RamEventLog::shared::<Fr>(&mut session, &resident, shape.log_t, 2 * shape.ram_k),
+            Err(KernelError::TableSizeMismatch {
+                expected: 16,
+                got: 8,
+                ..
+            })
+        ));
+        assert!(matches!(
+            RamEventLog::take::<Fr>(&mut session, &resident, shape.log_t + 1, shape.ram_k),
+            Err(KernelError::TableSizeMismatch {
+                expected: 16,
+                got: 8,
+                ..
+            })
+        ));
+    }
+
+    /// Serves the first reader `.0` and every later reader `.1`: a single-task
+    /// collection counts one row set and fills from the other.
+    struct SwitchingReplay(LoggedReplay, LoggedReplay, AtomicUsize);
+
+    impl RowReplay for SwitchingReplay {
+        fn segment_rows(&self) -> usize {
+            self.0.segment_rows()
+        }
+
+        fn proof_len(&self) -> usize {
+            self.0.proof_len()
+        }
+
+        fn reader(&self, start: usize) -> Result<Box<dyn RowReader + '_>, TraceError> {
+            match self.2.fetch_add(1, Ordering::Relaxed) {
+                0 => self.0.reader(start),
+                _ => self.1.reader(start),
+            }
+        }
+    }
+
+    /// A fill pass that sees more or fewer events than the count pass, or whose
+    /// replay fails after its first callback wrote events, fails typed and
+    /// publishes no log.
+    #[test]
+    fn event_log_publishes_only_a_matching_fill() {
+        let shape = FixtureShape {
+            log_t: 13,
+            ram_k: 8,
+        };
+        let fixture = |second: RamOp, last: RamOp| {
+            let mut ops = vec![RamOp::None; 4100];
+            (ops[0], ops[1], ops[4099]) = (RamOp::Write { word: 3, post: 4 }, second, last);
+            ram_fixture(shape, Vec::new(), ops)
+        };
+        let base = fixture(RamOp::None, RamOp::Read { word: 3 });
+        let counted = resident_rows(&base);
+        let more = fixture(RamOp::Write { word: 2, post: 1 }, RamOp::Read { word: 3 });
+        let fewer = fixture(RamOp::None, RamOp::None);
+        for (filled, replay) in [
+            (resident_rows(&more), false),
+            (resident_rows(&fewer), false),
+            (counted[..4100].to_vec(), true),
+        ] {
+            let segment = 1 << shape.log_t;
+            let witness = replayed_with(
+                &base,
+                SwitchingReplay(
+                    LoggedReplay::new(counted.clone(), segment),
+                    LoggedReplay::new(filled, segment),
+                    AtomicUsize::new(0),
+                ),
+            );
+            let mut session = ProofSession::default();
+            let result =
+                RamEventLog::shared::<Fr>(&mut session, &witness, shape.log_t, shape.ram_k)
+                    .map(|_| ());
+            let typed = match &result {
+                Err(KernelError::Witness(WitnessError::Replay { .. })) => replay,
+                Err(KernelError::Witness(WitnessError::InvalidWitnessData { .. })) => !replay,
+                _ => false,
+            };
+            assert!(typed, "{result:?}");
+            assert!(session.state::<RamEventLog>().is_none());
+        }
     }
 }
