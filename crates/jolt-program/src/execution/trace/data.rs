@@ -14,6 +14,14 @@ pub struct FieldEvent {
     pub data: FieldInlineTraceData,
 }
 
+/// Length of the proof prefix of `rows`: through the last row that is not
+/// canonical padding.
+pub(crate) fn proof_prefix_len(rows: &[JoltTraceRow]) -> usize {
+    rows.iter()
+        .rposition(|row| *row != JoltTraceRow::default())
+        .map_or(0, |index| index + 1)
+}
+
 /// Shared execution storage. The proof view omits canonical trailing padding
 /// without reallocating or changing the execution row count.
 #[derive(Debug)]
@@ -28,10 +36,7 @@ impl TraceData {
     /// Takes ownership of collected rows. The proof prefix ends at the last
     /// row that is not canonical padding.
     pub fn new(rows: Vec<JoltTraceRow>) -> Self {
-        let proof_len = rows
-            .iter()
-            .rposition(|row| *row != JoltTraceRow::default())
-            .map_or(0, |index| index + 1);
+        let proof_len = proof_prefix_len(&rows);
         Self {
             rows,
             proof_len,

@@ -183,17 +183,13 @@ struct ActiveMarker {
 
 /// Host-side I/O mode. `Replay` suppresses effects that must happen exactly
 /// once per program run — stdout prints, cycle-marker bookkeeping,
-/// advice-tape appends, call-stack tracking — so a parallel-trace worker
-/// re-executing a chunk does not repeat what pass-1 already did.
-/// Guest-visible effects (JoltDevice loads/stores, advice reads) stay live
-/// in both modes: trace rows depend on them.
-///
-/// Load-bearing assumption: a guest never appends to the advice tape and
-/// reads those bytes back within the same run. The SDK's two-pass advice
-/// design guarantees this (writes happen in `compute_advice` execute passes,
-/// reads in trace passes); a same-chunk append-then-read would replay
-/// wrongly under suppression, and the chunk-boundary paranoia compare flags
-/// the tape divergence.
+/// call-stack tracking — so a parallel-trace worker re-executing a chunk
+/// does not repeat what pass-1 already did. Guest-visible effects
+/// (JoltDevice loads/stores, advice appends and reads) stay live in both
+/// modes: trace rows depend on them. A worker's advice tape is its private
+/// copy of the checkpoint's unread suffix, so its appends extend that copy
+/// exactly as pass-1's appends extended the run's tape, and a run that
+/// appends advice and reads it back replays the same values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostIo {
     Live,
@@ -221,14 +217,20 @@ pub(crate) struct ChunkCpuState {
     reservation_width: ReservationWidth,
     trace_len: usize,
     executed_instrs: u64,
-    /// Unread advice-tape suffix; the replay tape is exactly this suffix
-    /// with read position 0. Appends are suppressed in replay ([`HostIo`]).
+    /// Unread advice-tape suffix; the replay tape starts as exactly this
+    /// suffix with read position 0, and replay appends extend it ([`HostIo`]).
     advice_suffix: Vec<u8>,
     #[cfg(feature = "field-inline")]
     field_registers: FieldRegisterFile,
 }
 
 impl ChunkCpuState {
+    /// Heap bytes this state owns, by capacity: the boxed CSR file and the
+    /// advice suffix.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        core::mem::size_of::<[u64; CSR_CAPACITY]>() + self.advice_suffix.capacity()
+    }
+
     /// First difference between this captured boundary state and `cpu`'s
     /// current state (`None` = equal). Paranoia check: a worker finishing
     /// chunk k must land exactly on checkpoint k+1's capture. `trace_len` is
@@ -1105,11 +1107,6 @@ impl Cpu {
     }
 
     pub fn handle_advice_write(&mut self, ptr: u64, len: u64) -> Result<(), Trap> {
-        // Pass-1 already appended these bytes; a replay append would corrupt
-        // the worker's suffix-relative read offsets.
-        if self.host_io == HostIo::Replay {
-            return Ok(());
-        }
         let mut bytes = Vec::with_capacity(len as usize);
         for i in 0..len {
             let (b, _) = self.mmu.load(ptr + i)?;

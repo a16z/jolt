@@ -755,10 +755,17 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
 #[cfg(test)]
 pub(crate) mod test_utils {
     /// Build the muldiv guest and return the ELF bytes.
-    /// Mirrors the pattern used by `jolt_host::Program::build()`.
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
-        let guest = "muldiv-guest";
-        let func = "muldiv";
+        build_guest("muldiv-guest", "muldiv")
+    }
+
+    /// Build the fibonacci guest and return the ELF bytes.
+    pub(crate) fn build_fibonacci_guest() -> Vec<u8> {
+        build_guest("fibonacci-guest", "fib")
+    }
+
+    /// Mirrors the pattern used by `jolt_host::Program::build()`.
+    fn build_guest(guest: &str, func: &str) -> Vec<u8> {
         let target_dir = std::env::temp_dir()
             .join("jolt-guest-targets")
             .join(format!("{guest}-{func}"))
@@ -798,7 +805,7 @@ pub(crate) mod test_utils {
 
         if !output.status.success() {
             panic!(
-                "failed to build muldiv guest:\n{}",
+                "failed to build {guest}:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             );
         }
