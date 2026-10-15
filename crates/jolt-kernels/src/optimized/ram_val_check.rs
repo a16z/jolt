@@ -67,7 +67,6 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         }
         let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
 
-        // Reuse stage 2 addresses; collect only the short-lived values.
         let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
         super::ram_trace::validate_addresses(&columns.addresses, 1usize << ram_log_k)?;
         let addresses = Arc::clone(&columns.addresses);

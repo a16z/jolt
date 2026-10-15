@@ -15,13 +15,18 @@
 //! out as the quadratic factor's evaluations, exactly like the legacy
 //! prover; summation order differs from legacy where convenient (field
 //! addition is exact, so the values are identical).
+//!
+//! Both start from the [`RamEventLog`]: one unbound entry per remapped
+//! access. While cycle variables bind, the cycle-indexed `inc` column is the
+//! separate [`SparseInc`] over the nonzero increments, which need not be
+//! accesses.
 
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::ram_trace::RamEventLog;
 
 /// One explicit matrix entry while cycle variables bind (row-major order).
 /// `prev_val`/`next_val` stay raw `u64`s: cycle binding always starts from
@@ -247,6 +252,30 @@ fn split_row_pair<F>(
     group.split_at(odd_start)
 }
 
+/// The unbound entries, in cycle order: an access reads `pre` and leaves
+/// `post` behind.
+fn unbound_entries<F: JoltField>(
+    log: &RamEventLog,
+) -> impl Iterator<Item = CycleMajorEntry<F>> + '_ {
+    log.events().iter().filter_map(|event| {
+        event.address.map(|col| CycleMajorEntry {
+            row: event.cycle,
+            col,
+            prev_val: event.pre_value,
+            next_val: event.post_value,
+            val: F::from_u64(event.pre_value),
+            ra: F::one(),
+        })
+    })
+}
+
+fn access_count(log: &RamEventLog) -> usize {
+    log.events()
+        .iter()
+        .filter(|event| event.address.is_some())
+        .count()
+}
+
 /// The cycle-major sparse matrix: entries sorted by `(row, col)`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct CycleMajorMatrix<F> {
@@ -254,6 +283,14 @@ pub(crate) struct CycleMajorMatrix<F> {
 }
 
 impl<F: JoltField> CycleMajorMatrix<F> {
+    /// The unbound matrix: at most one access per cycle, so cycle order is
+    /// `(row, col)` order.
+    pub fn from_events(log: &RamEventLog) -> Self {
+        let mut entries: Vec<CycleMajorEntry<F>> = Vec::with_capacity(access_count(log));
+        entries.extend(unbound_entries(log));
+        Self { entries }
+    }
+
     /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
         #[cfg(feature = "parallel")]
@@ -282,17 +319,18 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     /// The quadratic factor `[q(0), q_∞]` of the phase-1 round message:
     /// `q(t) = Σ_pairs eq_head(pair) · Σ_cols ra(t)·(val(t) + γ(inc(t)+val(t)))`,
     /// with `eq_head` supplied per pair index (the Gruen head weight) and
-    /// `inc` the bound committed increment column.
+    /// `inc` the bound committed increment column. Pairs without an entry
+    /// contribute nothing: `ra` vanishes on them.
     pub fn quadratic_coefficients(
         &self,
         eq_head: impl Fn(usize) -> F + Sync,
-        inc: &Polynomial<F>,
+        inc: &SparseInc<F>,
         gamma: F,
     ) -> [F; 2] {
         let per_group = |group: &[CycleMajorEntry<F>]| -> [F; 2] {
             let pair = (group[0].row / 2) as usize;
-            let inc_0 = inc.evals()[2 * pair];
-            let inc_evals = [inc_0, inc.evals()[2 * pair + 1] - inc_0];
+            let [inc_0, inc_1] = inc.pair(pair);
+            let inc_evals = [inc_0, inc_1 - inc_0];
             let (even, odd) = split_row_pair(group);
             let inner = merge_quadratic_evals(even, odd, inc_evals, gamma);
             let head = eq_head(pair);
@@ -315,7 +353,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         }
     }
 
-    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &Polynomial<F>, gamma: F) -> F {
+    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &SparseInc<F>, gamma: F) -> F {
         self.entries
             .iter()
             .filter(|entry| entry.row % 2 == 1)
@@ -324,7 +362,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
                 let constant = CycleMajorEntry::quadratic_evals(
                     Some(entry),
                     None,
-                    [inc.evals()[row], F::zero()],
+                    [inc.at(row), F::zero()],
                     gamma,
                 )[0];
                 sum + eq_head(row / 2) * constant
@@ -352,125 +390,88 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     }
 }
 
-#[inline]
-fn round0_entry<F: JoltField>(
-    columns: &RamAccessColumns,
-    cycle: usize,
-) -> Option<CycleMajorEntry<F>> {
-    let address = columns.addresses[cycle];
-    (address != NO_ACCESS).then(|| {
-        let pre_value = columns.pre_values[cycle];
-        CycleMajorEntry {
-            row: cycle as u32,
-            col: address,
-            prev_val: pre_value,
-            next_val: columns.post_values[cycle],
-            val: F::from_u64(pre_value),
-            ra: F::one(),
-        }
-    })
+/// One `inc` row that may be nonzero while cycle variables bind.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct IncEntry<F> {
+    row: u32,
+    value: F,
 }
 
-pub(crate) fn round0_q_at_one<F: JoltField>(
-    columns: &RamAccessColumns,
-    eq_head: impl Fn(usize) -> F,
-    inc: &Polynomial<F>,
-    gamma: F,
-) -> F {
-    (1..columns.addresses.len())
-        .step_by(2)
-        .fold(F::zero(), |sum, row| {
-            let Some(entry) = round0_entry::<F>(columns, row) else {
-                return sum;
-            };
-            let constant = CycleMajorEntry::quadratic_evals(
-                Some(&entry),
-                None,
-                [inc.evals()[row], F::zero()],
-                gamma,
-            )[0];
-            sum + eq_head(row / 2) * constant
-        })
+/// The cycle-indexed `inc` column during the cycle rounds: its rows that may
+/// be nonzero, sorted by row, at most one per row; an absent row is zero.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct SparseInc<F> {
+    entries: Vec<IncEntry<F>>,
 }
 
-pub(crate) fn round0_quadratic_coefficients<F: JoltField>(
-    columns: &RamAccessColumns,
-    eq_head: impl Fn(usize) -> F + Sync,
-    inc: &Polynomial<F>,
-    gamma: F,
-) -> [F; 2] {
-    let pairs = columns.addresses.len() / 2;
-    let per_pair = |pair: usize| -> [F; 2] {
-        let even = round0_entry::<F>(columns, 2 * pair);
-        let odd = round0_entry::<F>(columns, 2 * pair + 1);
-        if even.is_none() && odd.is_none() {
-            return [F::zero(); 2];
-        }
-        let inc_0 = inc.evals()[2 * pair];
-        let inc_evals = [inc_0, inc.evals()[2 * pair + 1] - inc_0];
-        let inner = match (&even, &odd) {
-            (Some(even), Some(odd)) if even.col != odd.col => {
-                let lone_even =
-                    CycleMajorEntry::quadratic_evals(Some(even), None, inc_evals, gamma);
-                let lone_odd = CycleMajorEntry::quadratic_evals(None, Some(odd), inc_evals, gamma);
-                [lone_even[0] + lone_odd[0], lone_even[1] + lone_odd[1]]
+impl<F: JoltField> SparseInc<F> {
+    /// The unbound column: each event's exact `RamInc`, zeros omitted.
+    pub fn from_events(log: &RamEventLog) -> Self {
+        let increments = || log.events().iter().filter(|event| event.inc != 0);
+        let mut entries = Vec::with_capacity(increments().count());
+        entries.extend(increments().map(|event| IncEntry {
+            row: event.cycle,
+            value: F::from_i128(event.inc),
+        }));
+        Self { entries }
+    }
+
+    /// `[inc(2·pair), inc(2·pair + 1)]`.
+    fn pair(&self, pair: usize) -> [F; 2] {
+        let start = self
+            .entries
+            .partition_point(|entry| (entry.row as usize) < 2 * pair);
+        let mut halves = [F::zero(); 2];
+        for entry in &self.entries[start..] {
+            if entry.row as usize / 2 != pair {
+                break;
             }
-            _ => CycleMajorEntry::quadratic_evals(even.as_ref(), odd.as_ref(), inc_evals, gamma),
+            halves[entry.row as usize % 2] = entry.value;
+        }
+        halves
+    }
+
+    fn at(&self, row: usize) -> F {
+        self.entries
+            .binary_search_by_key(&row, |entry| entry.row as usize)
+            .map_or(F::zero(), |index| self.entries[index].value)
+    }
+
+    /// Bind one cycle variable low-to-high: `lo + r·(hi − lo)` per row pair,
+    /// a missing half being zero.
+    pub fn bind(&mut self, r: F) {
+        let bind_pair = |group: &[IncEntry<F>]| {
+            let mut halves = [F::zero(); 2];
+            for entry in group {
+                halves[entry.row as usize % 2] = entry.value;
+            }
+            IncEntry {
+                row: group[0].row / 2,
+                value: halves[0] + r * (halves[1] - halves[0]),
+            }
         };
-        let head = eq_head(pair);
-        [head * inner[0], head * inner[1]]
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        (0..pairs)
-            .into_par_iter()
-            .map(per_pair)
-            .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+        #[cfg(feature = "parallel")]
+        let bound: Vec<IncEntry<F>> = self
+            .entries
+            .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
+            .map(bind_pair)
+            .collect();
+        #[cfg(not(feature = "parallel"))]
+        let bound: Vec<IncEntry<F>> = self
+            .entries
+            .chunk_by(|a, b| a.row / 2 == b.row / 2)
+            .map(bind_pair)
+            .collect();
+        self.entries = bound;
     }
-    #[cfg(not(feature = "parallel"))]
-    {
-        (0..pairs)
-            .map(per_pair)
-            .fold([F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]])
+
+    /// The column's value once every cycle variable is bound; zero without
+    /// increments.
+    pub fn bound_value(&self) -> F {
+        debug_assert!(self.entries.iter().all(|entry| entry.row == 0));
+        self.entries.first().map_or(F::zero(), |entry| entry.value)
     }
-}
-
-/// First bind, producing the first entry vector at half size.
-/// Entries remain ordered by cycle, then column.
-pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> CycleMajorMatrix<F> {
-    let pairs = columns.addresses.len() / 2;
-    let per_pair = |pair: usize| -> [Option<CycleMajorEntry<F>>; 2] {
-        let even = round0_entry::<F>(columns, 2 * pair);
-        let odd = round0_entry::<F>(columns, 2 * pair + 1);
-        match (&even, &odd) {
-            (None, None) => [None, None],
-            (Some(even), Some(odd)) if even.col != odd.col => {
-                let lone_even = CycleMajorEntry::bind(Some(even), None, r);
-                let lone_odd = CycleMajorEntry::bind(None, Some(odd), r);
-                if even.col < odd.col {
-                    [Some(lone_even), Some(lone_odd)]
-                } else {
-                    [Some(lone_odd), Some(lone_even)]
-                }
-            }
-            _ => [
-                Some(CycleMajorEntry::bind(even.as_ref(), odd.as_ref(), r)),
-                None,
-            ],
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
-        .into_par_iter()
-        .flat_map_iter(|pair| per_pair(pair).into_iter().flatten())
-        .collect();
-    #[cfg(not(feature = "parallel"))]
-    let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
-        .flat_map(|pair| per_pair(pair).into_iter().flatten())
-        .collect();
-    CycleMajorMatrix { entries }
 }
 
 impl<F: JoltField> AddressMajorEntry<F> {
@@ -724,12 +725,9 @@ pub(crate) struct AddressMajorMatrix<F> {
 }
 
 impl<F: JoltField> AddressMajorMatrix<F> {
-    pub fn from_columns(columns: &RamAccessColumns) -> Self {
-        let mut entries: Vec<_> = (0..columns.addresses.len())
-            .filter_map(|cycle| {
-                round0_entry(columns, cycle).map(CycleMajorEntry::into_address_major)
-            })
-            .collect();
+    pub fn from_events(log: &RamEventLog) -> Self {
+        let mut entries: Vec<AddressMajorEntry<F>> = Vec::with_capacity(access_count(log));
+        entries.extend(unbound_entries(log).map(CycleMajorEntry::into_address_major));
         #[cfg(feature = "parallel")]
         entries.par_sort_unstable_by_key(|entry| (entry.col, entry.row));
         #[cfg(not(feature = "parallel"))]
@@ -846,5 +844,55 @@ impl<F: JoltField> AddressMajorMatrix<F> {
             Some(entry) => (entry.ra, entry.val),
             None => (F::zero(), val_init.evals()[0]),
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::EqPolynomial;
+    use jolt_witness::JoltWitnessOracle;
+
+    use super::super::testing::{ram_fixture, FixtureShape, RamOp};
+    use super::*;
+    use crate::ProofSession;
+
+    /// Binding keeps exact zeros (a pair cancelled by r = 2, then a retained
+    /// zero half chosen by r = 0) and ends at the dense column's multilinear
+    /// value.
+    #[test]
+    fn sparse_inc_binds_to_the_dense_mle() {
+        let witness = ram_fixture(
+            FixtureShape { log_t: 3, ram_k: 8 },
+            Vec::new(),
+            vec![
+                RamOp::UnmappedWrite { pre: 0, post: 2 },
+                RamOp::UnmappedWrite { pre: 0, post: 1 },
+                RamOp::None,
+                RamOp::UnmappedWrite { pre: 0, post: 5 },
+                RamOp::UnmappedWrite { pre: 0, post: 1 },
+            ],
+        );
+        let mut session = ProofSession::default();
+        let log = RamEventLog::shared::<Fr>(&mut session, &witness, 3, 8).unwrap();
+        let mut inc = SparseInc::<Fr>::from_events(log);
+        let challenges = [2, 0, 1].map(Fr::from_u64);
+        for (round, r) in challenges.into_iter().enumerate() {
+            inc.bind(r);
+            if round < 2 {
+                let first = inc.entries.first().map(|entry| (entry.row, entry.value));
+                assert_eq!(first, Some((0, Fr::from_u64(0))), "round {round}");
+            }
+        }
+        let dense = JoltWitnessOracle::<Fr>::oracle_table(&witness, ram_inc().polynomial_id());
+        let point: Vec<Fr> = challenges.into_iter().rev().collect();
+        let expected: Fr = EqPolynomial::<Fr>::evals(&point, None)
+            .iter()
+            .zip(&dense.unwrap())
+            .map(|(eq, value)| *eq * *value)
+            .sum();
+        assert_eq!(inc.bound_value(), expected);
     }
 }
