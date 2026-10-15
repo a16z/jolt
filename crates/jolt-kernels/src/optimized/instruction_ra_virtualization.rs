@@ -37,7 +37,7 @@
 use std::sync::Arc;
 
 use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
-use super::lazy_ra::LazyFoldedRa;
+use super::lazy_ra::{LazyFoldedRa, MATERIALIZE_BYTES};
 use super::support::{
     accumulate_product_grid, map_indices, pin_derived_term, product_grid_scratch_len,
     GruenRoundMessage, RoundProgress, MAX_GRID_FACTORS,
@@ -82,6 +82,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
             relation.committed_chunk_bits(),
             rows,
             inputs.challenges.gamma,
+            MATERIALIZE_BYTES,
         )?))
     }
 }
@@ -97,13 +98,15 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
-    /// batching multiplies — served lazily off the shared rows for the
-    /// first four binds instead of `N × T` dense.
+    /// batching multiplies — served lazily off the shared rows until the
+    /// byte-budgeted materialization instead of `N × T` dense.
     folded_ra: LazyFoldedRa<F, LookupIndexChunks>,
     gruen: GruenSplitEqPolynomial<F>,
 }
 
 impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
+    /// `materialize_bytes` bounds each dense selector table
+    /// ([`LazyFoldedRa::new`]); production passes [`MATERIALIZE_BYTES`].
     #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
     pub(crate) fn new(
         log_t: usize,
@@ -114,6 +117,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         committed_chunk_bits: usize,
         rows: Arc<Vec<InstructionCycleRow>>,
         gamma: F,
+        materialize_bytes: usize,
     ) -> Result<Self, KernelError<F>> {
         let num_committed = num_virtual * num_committed_per_virtual;
         let chunks = committed_address_chunks(instruction_address, committed_chunk_bits);
@@ -181,6 +185,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
             LookupIndexChunks::new(rows, num_committed, committed_chunk_bits),
+            materialize_bytes,
         );
 
         Ok(Self {
@@ -225,7 +230,8 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = self.gruen.par_fold_out_in(
+        let block_lanes = folded_ra.try_fold_out_in(
+            &self.gruen,
             || Scratch {
                 lanes: vec![F::Accumulator::default(); n],
                 row_lanes: vec![F::Accumulator::default(); n],
@@ -234,8 +240,8 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 steps: vec![F::zero(); n],
                 grid: vec![F::zero(); product_grid_scratch_len(n)],
             },
-            |scratch, row, _x_in, e_in| {
-                folded_ra.lo_hi_all(row, &mut scratch.pairs);
+            |scratch, block, row, _x_in, e_in| {
+                block.lo_hi_all(row, &mut scratch.pairs);
                 for lane in &mut scratch.row_lanes {
                     *lane = F::Accumulator::default();
                 }
@@ -272,20 +278,24 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 }
                 a
             },
-        );
+        )?;
 
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
-        self.gruen
+        // A failed fallback pass is returned; its placeholder never reaches a message.
+        let mut failure = None;
+        let message = self
+            .gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                self.gruen.par_fold_out_in(
+                let q_at_zero = folded_ra.try_fold_out_in(
+                    &self.gruen,
                     || {
                         (
                             vec![(F::zero(), F::zero()); num_committed],
                             F::Accumulator::default(),
                         )
                     },
-                    |(pairs, sum), row, _, weight| {
-                        folded_ra.lo_hi_all(row, pairs);
+                    |(pairs, sum), block, row, _, weight| {
+                        block.lo_hi_all(row, pairs);
                         let value = pairs.chunks_exact(n).take(self.active_virtuals).fold(
                             F::zero(),
                             |sum, factors| {
@@ -298,8 +308,13 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                     },
                     |_, weight, (_, sum)| weight * sum.reduce(),
                     |a, b| a + b,
-                )
-            })
+                );
+                q_at_zero.unwrap_or_else(|error| {
+                    failure = Some(error);
+                    F::zero()
+                })
+            });
+        failure.map_or(message, Err)
     }
 
     /// Degenerate `N = 1` geometry (virtual = committed): the grid recovery
@@ -311,11 +326,11 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
-        let folded_ra = &self.folded_ra;
-        let mut q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.folded_ra.try_fold_out_in(
+            &self.gruen,
             || ([F::zero(); 3], vec![(F::zero(), F::zero()); num_committed]),
-            |(acc, pairs), row, _x_in, e_in| {
-                folded_ra.lo_hi_all(row, pairs);
+            |(acc, pairs), block, row, _x_in, e_in| {
+                block.lo_hi_all(row, pairs);
                 let mut at_0 = F::zero();
                 let mut at_1 = F::zero();
                 let mut at_2 = F::zero();
@@ -340,16 +355,17 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 }
                 a
             },
-        );
+        )?;
 
         self.gruen
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.gruen.bind(challenge);
-        self.folded_ra.bind(challenge);
+        self.folded_ra.bind(challenge)?;
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -365,14 +381,13 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionRaVirtualizationKernel
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -386,7 +401,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         self.progress.require_complete()?;
         // Unscale the batch-first tables' γ^v pre-scaling back to the
         // committed polynomials' claims.
-        let mut committed_instruction_ra = self.folded_ra.final_values();
+        let mut committed_instruction_ra = self.folded_ra.final_values()?;
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {
                 *value *= self.opening_unscale[index / self.num_committed_per_virtual];
@@ -456,6 +471,7 @@ mod tests {
     use super::super::instruction_read_raf::{
         InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
     };
+    use super::super::lazy_ra::MATERIALIZE_BYTES;
     use super::super::support::MAX_GRID_FACTORS;
     use super::super::testing::{with_ram_fixture, FixtureShape};
     use super::{OptimizedInstructionRaVirtualization, OptimizedInstructionRaVirtualizationKernel};
@@ -576,12 +592,13 @@ mod tests {
             with_session,
             gamma,
             None,
+            MATERIALIZE_BYTES,
         );
     }
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "test shape plus exceptional equality case"
+        reason = "test shape plus exceptional equality case and dense budget"
     )]
     fn assert_parity_case(
         log_t: usize,
@@ -592,7 +609,9 @@ mod tests {
         with_session: bool,
         gamma: Fr,
         exceptional: Option<ExceptionalEq>,
+        materialize_bytes: usize,
     ) {
+        assert!(!with_session || materialize_bytes == MATERIALIZE_BYTES);
         let num_committed = num_virtual * per_virtual;
         let dimensions = InstructionRaVirtualizationDimensions::new(
             log_t,
@@ -699,6 +718,7 @@ mod tests {
                         chunk_bits,
                         Arc::new(pack(&rows)),
                         gamma,
+                        materialize_bytes,
                     )
                     .unwrap(),
                 )
@@ -795,6 +815,7 @@ mod tests {
                 1,
                 Arc::new(pack(&fixture_rows(log_t, 47))),
                 fr(7),
+                MATERIALIZE_BYTES,
             );
             if supported {
                 assert!(
@@ -819,6 +840,35 @@ mod tests {
         assert_parity(6, 2, 2, 4, 7, false);
     }
 
+    /// A budget of `T/64` entries per dense table keeps the selectors lazy
+    /// through 32 branches and materializes them at the sixth bind, under
+    /// both the single-factor and the product-grid message. The all-one
+    /// cycle point (`ℓ(0) = 0`, nonzero scalar) takes the product grid's
+    /// `q(0)` fallback at every width, including 16 and 32.
+    #[test]
+    fn parity_materializing_at_64_branches() {
+        for (log_t, per_virtual, exceptional) in [
+            (8, 1, None),
+            (8, 4, None),
+            (10, 1, None),
+            (10, 4, None),
+            (8, 4, Some(ExceptionalEq::One)),
+        ] {
+            let materialize_bytes = (size_of::<Fr>() << log_t) / 64;
+            assert_parity_case(
+                log_t,
+                2,
+                per_virtual,
+                4,
+                59,
+                false,
+                fr(0xFEED_5EED),
+                exceptional,
+                materialize_bytes,
+            );
+        }
+    }
+
     #[test]
     fn parity_zero_batching_challenge_preserves_all_openings() {
         assert_parity_with_gamma(6, 2, 2, 4, 7, false, fr(0));
@@ -836,7 +886,17 @@ mod tests {
     fn parity_exceptional_eq_in_lazy_and_dense_virtualization() {
         for factors in [1usize, 2, 4] {
             for case in ExceptionalEq::ALL {
-                assert_parity_case(6, 2, factors, 2, 277, true, fr(31), Some(case));
+                assert_parity_case(
+                    6,
+                    2,
+                    factors,
+                    2,
+                    277,
+                    true,
+                    fr(31),
+                    Some(case),
+                    MATERIALIZE_BYTES,
+                );
             }
         }
     }

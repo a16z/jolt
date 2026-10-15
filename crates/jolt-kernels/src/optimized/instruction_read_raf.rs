@@ -37,6 +37,7 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
@@ -56,11 +57,13 @@ use jolt_witness::witnesses::{BalancedIncColumn, FusedInc};
 use jolt_witness::witnesses::{
     BytecodePc, InstructionRafFlag, LookupIndex, RemappedRamAddress, TableIndex,
 };
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle};
+use jolt_witness::{
+    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
+};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{try_fold_groups, visit_resident, ChunkIndexSource, LazyFoldedRa, PairBlock};
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
     product_grid_scratch_len, scan_chunk_size, GruenRoundMessage, RoundProgress,
@@ -75,10 +78,10 @@ use crate::{
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-/// Widest lazy branch set of the cycle tables: the 2^16-entry RA columns
-/// outgrow the caches as their branch tables double, so past four branches
-/// a gather round costs more than binding the `T/8` dense tables it saves.
-const LAZY_MAX_WIDTH: usize = 4;
+/// Branch count at which the cycle tables materialize: the 2^16-entry RA
+/// columns outgrow the caches as their branch tables double, so gathering
+/// eight branches costs more than binding the `T/8` dense tables it saves.
+const MATERIALIZE_BRANCHES: usize = 8;
 
 const _: () = assert!(
     LookupTableKind::<RISCV_XLEN>::COUNT < u8::MAX as usize,
@@ -337,6 +340,8 @@ impl LookupIndexChunks {
 }
 
 impl ChunkIndexSource for LookupIndexChunks {
+    type Row = InstructionCycleRow;
+
     fn num_columns(&self) -> usize {
         self.chunks
     }
@@ -346,10 +351,19 @@ impl ChunkIndexSource for LookupIndexChunks {
     }
 
     #[inline]
-    fn index(&self, i: usize, j: usize) -> Option<usize> {
+    fn index(&self, i: usize, row: &InstructionCycleRow) -> Option<usize> {
         let shift = (self.chunks - 1 - i) * self.chunk_bits;
         let mask = (1u128 << self.chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
+        Some(((row.lookup_index() >> shift) & mask) as usize)
+    }
+
+    fn visit_blocks(
+        &self,
+        range: Range<usize>,
+        block: usize,
+        visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        visit_resident(&self.rows, range, block, visit)
     }
 }
 
@@ -359,6 +373,8 @@ impl ChunkIndexSource for LookupIndexChunks {
 struct ClaimBytes(Arc<Vec<u8>>);
 
 impl ChunkIndexSource for ClaimBytes {
+    type Row = u8;
+
     fn num_columns(&self) -> usize {
         1
     }
@@ -368,8 +384,17 @@ impl ChunkIndexSource for ClaimBytes {
     }
 
     #[inline]
-    fn index(&self, _i: usize, j: usize) -> Option<usize> {
-        Some(usize::from(self.0[j]))
+    fn index(&self, _i: usize, packed: &u8) -> Option<usize> {
+        Some(usize::from(*packed))
+    }
+
+    fn visit_blocks(
+        &self,
+        range: Range<usize>,
+        block: usize,
+        visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        visit_resident(&self.0, range, block, visit)
     }
 }
 
@@ -475,6 +500,44 @@ struct CycleState<F: JoltField> {
     /// (the tensor product of those phases' eq tables); wider virtual
     /// chunks are products of such columns.
     ra: LazyFoldedRa<F, LookupIndexChunks>,
+}
+
+impl<F: JoltField> CycleState<F> {
+    /// [`try_fold_groups`] over both tables' pairs: each `ra` block's rows
+    /// read the combined value's source over the same cycles.
+    fn try_fold_out_in<Inner, Outer: Send>(
+        &self,
+        make_inner: impl Fn() -> Inner + Sync,
+        inner_step: impl Fn(
+                &mut Inner,
+                &PairBlock<'_, F, ClaimBytes>,
+                &PairBlock<'_, F, LookupIndexChunks>,
+                usize,
+                usize,
+                F,
+            ) + Sync,
+        outer_step: impl Fn(usize, F, Inner) -> Outer + Sync,
+        merge: impl Fn(Outer, Outer) -> Outer + Sync,
+    ) -> Result<Outer, SumcheckError<F>> {
+        try_fold_groups(
+            &self.gruen,
+            make_inner,
+            |rows, groups| {
+                self.ra.visit_rows(rows, |rows, ra| {
+                    self.combined_val.visit_rows(rows, |rows, val| {
+                        for row in rows {
+                            groups.row(row, |inner, x_in, e_in| {
+                                inner_step(inner, val, ra, row, x_in, e_in);
+                            });
+                        }
+                        Ok(())
+                    })
+                })
+            },
+            outer_step,
+            merge,
+        )
+    }
 }
 
 struct RafScan<F: JoltField> {
@@ -1209,7 +1272,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = cycle.gruen.par_fold_out_in(
+        let block_lanes = cycle.try_fold_out_in(
             || Scratch {
                 lanes: vec![F::Accumulator::default(); factors],
                 pairs: vec![(F::zero(), F::zero()); factors],
@@ -1217,10 +1280,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 steps: vec![F::zero(); factors],
                 grid: vec![F::zero(); product_grid_scratch_len(factors)],
             },
-            |scratch, row, _x_in, e_in| {
+            |scratch, val_block, ra_block, row, _x_in, e_in| {
                 let (val, ra) = scratch.pairs.split_at_mut(1);
-                cycle.combined_val.lo_hi_all(row, val);
-                cycle.ra.lo_hi_all(row, ra);
+                val_block.lo_hi_all(row, val);
+                ra_block.lo_hi_all(row, ra);
                 let (lo, hi) = val[0];
                 val[0] = (e_in * lo, e_in * hi);
                 for ((&(lo, hi), eval), step) in scratch
@@ -1252,22 +1315,24 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 }
                 a
             },
-        );
+        )?;
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
-        cycle
+        // A failed fallback pass is returned; its placeholder never reaches a message.
+        let mut failure = None;
+        let message = cycle
             .gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                cycle.gruen.par_fold_out_in(
+                let q_at_zero = cycle.try_fold_out_in(
                     || {
                         (
                             vec![(F::zero(), F::zero()); factors],
                             F::Accumulator::default(),
                         )
                     },
-                    |(pairs, sum), row, _, weight| {
+                    |(pairs, sum), val_block, ra_block, row, _, weight| {
                         let (val, ra) = pairs.split_at_mut(1);
-                        cycle.combined_val.lo_hi_all(row, val);
-                        cycle.ra.lo_hi_all(row, ra);
+                        val_block.lo_hi_all(row, val);
+                        ra_block.lo_hi_all(row, ra);
                         let value = pairs
                             .iter()
                             .fold(F::one(), |product, pair| product * pair.0);
@@ -1275,8 +1340,13 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                     },
                     |_, weight, (_, sum)| weight * sum.reduce(),
                     |a, b| a + b,
-                )
-            })
+                );
+                q_at_zero.unwrap_or_else(|error| {
+                    failure = Some(error);
+                    F::zero()
+                })
+            });
+        failure.map_or(message, Err)
     }
 
     fn init_cycle_rounds(&mut self) {
@@ -1358,13 +1428,13 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             combined_val: LazyFoldedRa::factored(
                 vec![combined_table],
                 1,
-                LAZY_MAX_WIDTH,
+                MATERIALIZE_BRANCHES,
                 ClaimBytes(claim_columns),
             ),
             ra: LazyFoldedRa::factored(
                 column_tables,
                 phases_per_ra / phases_per_column,
-                LAZY_MAX_WIDTH,
+                MATERIALIZE_BRANCHES,
                 chunks,
             ),
         });
@@ -1431,8 +1501,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 .as_mut()
                 .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })?;
             cycle.gruen.bind(challenge);
-            cycle.combined_val.bind(challenge);
-            cycle.ra.bind(challenge);
+            cycle.combined_val.bind(challenge)?;
+            cycle.ra.bind(challenge)?;
             self.cycle_challenges.push(challenge);
         }
         self.progress.advance();
@@ -1518,7 +1588,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
 
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
-            instruction_ra: cycle.ra.final_values(),
+            instruction_ra: cycle.ra.final_values()?,
             instruction_raf_flag,
         })
     }

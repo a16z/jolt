@@ -31,7 +31,7 @@
 //!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
 //!   batching multiply in the round loop (legacy `SharedRaPolynomials`
 //!   pre-scaling), served by the shared `LazyFoldedRa` state machine:
-//!   index-encoded for the first four binds, dense at `T/16` after.
+//!   index-encoded until its byte-budgeted materialization bind, dense after.
 //! - **Categorical startup products.** After address binding, values still
 //!   come from the address table (or zero on cold RAM rows). In the first
 //!   two cycle rounds, sufficiently small alphabets let us precompute the
@@ -59,6 +59,7 @@
 //! streaming pass when the carry is absent or geometry-stale).
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
@@ -89,12 +90,15 @@ use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhas
 #[cfg(feature = "akita")]
 use jolt_witness::witnesses::BalancedIncColumn;
 use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{
+    try_fold_groups, visit_resident, visit_source_rows, ChunkIndexSource, LazyFoldedRa,
+    SourceBlock, MATERIALIZE_BYTES,
+};
 use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
@@ -492,6 +496,24 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, Booleanity<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
+        Ok(Box::new(OptimizedBooleanityCycleKernel::prepare(
+            session,
+            witness,
+            &inputs,
+            MATERIALIZE_BYTES,
+        )?))
+    }
+}
+
+impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
+    /// `materialize_bytes` bounds each dense table ([`LazyFoldedRa::new`]);
+    /// production passes [`MATERIALIZE_BYTES`].
+    fn prepare(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: &ProverInputs<'_, F, Booleanity<F>>,
+        materialize_bytes: usize,
+    ) -> Result<Self, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let r_address = relation.r_address();
@@ -533,7 +555,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             })
             .collect();
 
-        Ok(Box::new(OptimizedBooleanityCycleKernel {
+        Ok(Self {
             progress: RoundProgress::new(relation.rounds()),
             eq: GruenSplitEqPolynomial::new_with_scaling(
                 reference_cycle,
@@ -546,11 +568,12 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
                     rows,
                     selectors: columns.selectors,
                 },
+                materialize_bytes,
             ),
             gamma_powers,
             opening_unscale,
             openings: columns.openings,
-        }))
+        })
     }
 }
 
@@ -562,6 +585,8 @@ struct BooleanityChunks {
 }
 
 impl ChunkIndexSource for BooleanityChunks {
+    type Row = InstructionCycleRow;
+
     fn num_columns(&self) -> usize {
         self.selectors.len()
     }
@@ -571,8 +596,17 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 
     #[inline]
-    fn index(&self, i: usize, j: usize) -> Option<usize> {
-        self.selectors[i].index(&self.rows[j])
+    fn index(&self, i: usize, row: &InstructionCycleRow) -> Option<usize> {
+        self.selectors[i].index(row)
+    }
+
+    fn visit_blocks(
+        &self,
+        range: Range<usize>,
+        block: usize,
+        visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        visit_resident(&self.rows, range, block, visit)
     }
 }
 
@@ -591,10 +625,11 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
 }
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.eq.bind(challenge);
-        self.tables.bind(challenge);
+        self.tables.bind(challenge)?;
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -611,7 +646,7 @@ struct CategoricalProducts<'a, F: JoltField, S> {
 }
 
 impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
-    fn fits_budget(width: usize, addresses: usize, cycles: usize) -> bool {
+    fn fits_budget(width: usize, addresses: usize, dense_len: usize) -> bool {
         if width != 1 && width != 2 {
             return false;
         }
@@ -623,8 +658,8 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
             return false;
         };
         // Cached products, construction temporary and lazy branches fit
-        // within the existing T/16 dense allocation budget per family.
-        states * (states + 2) + width * addresses <= cycles / 16
+        // within the family's dense allocation, `dense_len` entries per table.
+        states * (states + 2) + width * addresses <= dense_len
     }
 
     fn new(tables: &'a [Vec<F>], width: usize, source: &'a S, rho: &[F]) -> Self {
@@ -667,9 +702,8 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
     }
 
     #[inline]
-    fn state(&self, family: usize, row: usize) -> usize {
-        let first = self
-            .source
+    fn state(&self, rows: &SourceBlock<'_, S>, family: usize, row: usize) -> usize {
+        let first = rows
             .index(family, row * self.width)
             .unwrap_or(self.radix - 1);
         if self.width == 1 {
@@ -677,11 +711,35 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         } else {
             first
                 + self.radix
-                    * self
-                        .source
+                    * rows
                         .index(family, row * self.width + 1)
                         .unwrap_or(self.radix - 1)
         }
+    }
+
+    /// [`try_fold_groups`] over the source rows of `eq`'s current pairs.
+    fn try_fold<Inner, Outer: Send>(
+        &self,
+        eq: &GruenSplitEqPolynomial<F>,
+        make_inner: impl Fn() -> Inner + Sync,
+        step: impl Fn(&mut Inner, &SourceBlock<'_, S>, usize, F) + Sync,
+        outer_step: impl Fn(usize, F, Inner) -> Outer + Sync,
+        merge: impl Fn(Outer, Outer) -> Outer + Sync,
+    ) -> Result<Outer, SumcheckError<F>> {
+        try_fold_groups(
+            eq,
+            make_inner,
+            |rows, groups| {
+                visit_source_rows(self.source, self.width, rows, |rows, block| {
+                    for row in rows {
+                        groups.row(row, |inner, _, weight| step(inner, block, row, weight));
+                    }
+                    Ok(())
+                })
+            },
+            outer_step,
+            merge,
+        )
     }
 
     fn lookup(
@@ -690,14 +748,15 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         round: usize,
         claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let lanes = eq.par_fold_out_in(
+        let lanes = self.try_fold(
+            eq,
             || [F::Accumulator::default(); 2],
-            |lanes, row, _, weight| {
+            |lanes, rows, row, weight| {
                 let mut constant = F::zero();
                 let mut leading = F::zero();
                 for (family, (constants, squares)) in self.products.iter().enumerate() {
-                    let lo = self.state(family, 2 * row);
-                    let hi = self.state(family, 2 * row + 1);
+                    let lo = self.state(rows, family, 2 * row);
+                    let hi = self.state(rows, family, 2 * row + 1);
                     constant += constants[lo];
                     leading += squares[lo * self.states + hi];
                 }
@@ -715,23 +774,31 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                 a[1].merge(b[1]);
                 a
             },
-        );
-        eq.checked_cubic(lanes[0].reduce(), lanes[1].reduce(), claim, round, || {
-            eq.par_fold_out_in(
+        )?;
+        // A failed fallback pass is returned; its placeholder never reaches a message.
+        let mut failure = None;
+        let message = eq.checked_cubic(lanes[0].reduce(), lanes[1].reduce(), claim, round, || {
+            let q_at_one = self.try_fold(
+                eq,
                 F::zero,
-                |sum, row, _, weight| {
+                |sum, rows, row, weight| {
                     let value = self.products.iter().enumerate().fold(
                         F::zero(),
                         |value, (family, (constants, _))| {
-                            value + constants[self.state(family, 2 * row + 1)]
+                            value + constants[self.state(rows, family, 2 * row + 1)]
                         },
                     );
                     *sum += weight * value;
                 },
                 |_, weight, sum| weight * sum,
                 |a, b| a + b,
-            )
-        })
+            );
+            q_at_one.unwrap_or_else(|error| {
+                failure = Some(error);
+                F::zero()
+            })
+        });
+        failure.map_or(message, Err)
     }
 }
 
@@ -747,21 +814,21 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         if let LazyFoldedRa::Lazy {
             tables,
             width,
+            materialize_branches,
             factors: 1,
             source,
-            ..
         } = &self.tables
         {
             if !tables.is_empty()
                 && CategoricalProducts::<F, BooleanityChunks>::fits_budget(
                     *width,
                     tables[0].len() / width,
-                    source.cycles(),
+                    source.cycles() / *materialize_branches,
                 )
             {
                 let products = CategoricalProducts::new(tables, *width, source, &self.gamma_powers);
@@ -784,13 +851,14 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         // Per-row products accumulate unreduced, reduce once, and fold into
         // the block lanes by `e_in`; blocks fold by `e_out` (legacy
         // `par_fold_out_in_unreduced`).
-        let block_lanes = self.eq.par_fold_out_in(
+        let block_lanes = tables.try_fold_out_in(
+            &self.eq,
             || Scratch {
                 lanes: [F::Accumulator::default(); 2],
                 pairs: vec![(F::zero(), F::zero()); num_polys],
             },
-            |scratch, row, _x_in, e_in| {
-                tables.lo_hi_all(row, &mut scratch.pairs);
+            |scratch, block, row, _x_in, e_in| {
+                block.lo_hi_all(row, &mut scratch.pairs);
                 let mut constant = F::Accumulator::default();
                 let mut leading = F::Accumulator::default();
                 for ((h_0, h_1), rho) in scratch.pairs.iter().zip(gamma_powers).take(active_polys) {
@@ -812,22 +880,25 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 a[1].merge(b[1]);
                 a
             },
-        );
-        self.eq.checked_cubic(
+        )?;
+        // A failed fallback pass is returned; its placeholder never reaches a message.
+        let mut failure = None;
+        let message = self.eq.checked_cubic(
             block_lanes[0].reduce(),
             block_lanes[1].reduce(),
             previous_claim,
             round,
             || {
-                self.eq.par_fold_out_in(
+                let q_at_one = tables.try_fold_out_in(
+                    &self.eq,
                     || {
                         (
                             vec![(F::zero(), F::zero()); num_polys],
                             F::Accumulator::default(),
                         )
                     },
-                    |(pairs, sum), row, _, weight| {
-                        tables.lo_hi_all(row, pairs);
+                    |(pairs, sum), block, row, _, weight| {
+                        block.lo_hi_all(row, pairs);
                         let mut value = F::Accumulator::default();
                         for ((_, hi), rho) in pairs.iter().zip(gamma_powers).take(active_polys) {
                             value.fmadd(*hi, *hi - *rho);
@@ -836,14 +907,18 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                     },
                     |_, weight, (_, sum)| weight * sum.reduce(),
                     |a, b| a + b,
-                )
+                );
+                q_at_one.unwrap_or_else(|error| {
+                    failure = Some(error);
+                    F::zero()
+                })
             },
-        )
+        );
+        failure.map_or(message, Err)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -855,6 +930,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
+        let finals = self.tables.final_values()?;
         // Disabled columns were retained unscaled; the unit factor preserves
         // their opening values when gamma is zero.
         let values: BTreeMap<JoltOpeningId, F> = self
@@ -862,7 +938,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
             .iter()
             .copied()
             .enumerate()
-            .map(|(i, id)| (id, self.tables.value(i, 0) * self.opening_unscale[i]))
+            .map(|(i, id)| (id, finals[i] * self.opening_unscale[i]))
             .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| values.get(id).copied())
             .map_err(SumcheckKernelError::from)
@@ -1280,7 +1356,14 @@ mod tests {
     }
 
     fn cycle_parity_with_gamma(log_t: usize, log_k_chunk: u8, carried_indices: bool, gamma: Fr) {
-        cycle_parity_case(log_t, log_k_chunk, carried_indices, gamma, None);
+        cycle_parity_case(
+            log_t,
+            log_k_chunk,
+            carried_indices,
+            gamma,
+            None,
+            MATERIALIZE_BYTES,
+        );
     }
 
     fn cycle_parity_case(
@@ -1289,6 +1372,7 @@ mod tests {
         carried_indices: bool,
         gamma: Fr,
         exceptional: Option<ExceptionalEq>,
+        materialize_bytes: usize,
     ) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, dimensions| {
             let r_address = point(110, dimensions.log_k_chunk);
@@ -1336,18 +1420,20 @@ mod tests {
                 let rows = InstructionCycleRow::collect::<Fr>(backend, 1usize << log_t).unwrap();
                 session.park(SharedInstructionRows(Arc::new(rows)));
             }
-            let optimized = OptimizedBooleanityCycle
-                .prepare(
+            let optimized: Box<dyn SumcheckKernel<Fr, Relation = Booleanity<Fr>>> = Box::new(
+                OptimizedBooleanityCycleKernel::prepare(
                     &mut session,
                     backend,
-                    ProverInputs {
+                    &ProverInputs {
                         relation: &relation,
                         claims: &claims,
                         points: &points,
                         challenges: &challenges,
                     },
+                    materialize_bytes,
                 )
-                .unwrap();
+                .unwrap(),
+            );
             if carried_indices {
                 assert!(
                     session.state::<SharedInstructionRows>().is_some()
@@ -1386,7 +1472,7 @@ mod tests {
         for bits in [4u8, 8] {
             for gamma in [Fr::from_u64(0), Fr::from_u64(31)] {
                 for case in ExceptionalEq::ALL {
-                    cycle_parity_case(6, bits, true, gamma, Some(case));
+                    cycle_parity_case(6, bits, true, gamma, Some(case), MATERIALIZE_BYTES);
                 }
             }
         }
@@ -1424,6 +1510,25 @@ mod tests {
     #[test]
     fn cycle_kernel_matches_reference_with_carried_indices() {
         cycle_parity(2, 4, true);
+    }
+
+    /// A budget of `T/64` entries per dense table keeps the tables lazy
+    /// through 32 branches and materializes them at the sixth bind. The
+    /// all-zero cycle point (`ℓ(1) = 0`, nonzero scalar) takes the `q(1)`
+    /// fallback at every width, including 16 and 32.
+    #[test]
+    fn cycle_kernel_matches_reference_materializing_at_64_branches() {
+        for (log_t, exceptional) in [(8, None), (10, None), (8, Some(ExceptionalEq::Zero))] {
+            let materialize_bytes = (size_of::<Fr>() << log_t) / 64;
+            cycle_parity_case(
+                log_t,
+                4,
+                false,
+                Fr::from_u64(31),
+                exceptional,
+                materialize_bytes,
+            );
+        }
     }
 
     /// The production 6a→6b sequencing: the address phase (both kernels in
@@ -1569,25 +1674,42 @@ mod tests {
 )]
 mod categorical_tests {
     use crate::optimized::parity::ExceptionalEq;
+    use std::ops::Range;
+
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Fr, JoltField, Ring, Zero};
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+    use jolt_witness::WitnessError;
 
-    use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};
+    use super::{
+        visit_resident, CategoricalProducts, ChunkIndexSource, LazyFoldedRa, MATERIALIZE_BYTES,
+    };
     use crate::reference::views::eq_table;
 
+    /// Column-major hot indices; a cycle's row is its index.
     struct Source(Vec<Vec<Option<usize>>>);
 
     impl ChunkIndexSource for Source {
+        type Row = usize;
+
         fn num_columns(&self) -> usize {
             self.0.len()
         }
         fn cycles(&self) -> usize {
             self.0[0].len()
         }
-        fn index(&self, i: usize, j: usize) -> Option<usize> {
-            self.0[i][j]
+        fn index(&self, i: usize, cycle: &usize) -> Option<usize> {
+            self.0[i][*cycle]
+        }
+        fn visit_blocks(
+            &self,
+            range: Range<usize>,
+            block: usize,
+            visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
+        ) -> Result<(), WitnessError> {
+            let cycles: Vec<usize> = (0..self.cycles()).collect();
+            visit_resident(&cycles, range, block, visit)
         }
     }
 
@@ -1646,7 +1768,7 @@ mod categorical_tests {
                             .collect()
                     })
                     .collect();
-                let mut lazy = LazyFoldedRa::new(tables, source);
+                let mut lazy = LazyFoldedRa::new(tables, source, MATERIALIZE_BYTES);
                 let reference: Vec<F> = exceptional.map_or_else(
                     || (0..5).map(|i| F::from_u64(7 + 3 * i)).collect(),
                     |case| case.point(5, bind),
@@ -1698,7 +1820,7 @@ mod categorical_tests {
                         }
                         column.truncate(column.len() / 2);
                     }
-                    lazy.bind(bind);
+                    lazy.bind(bind).unwrap();
                     eq.bind(bind);
                     prefix *= bit * bind + (F::one() - bit) * (F::one() - bind);
                 }

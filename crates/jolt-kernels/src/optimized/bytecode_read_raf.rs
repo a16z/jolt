@@ -41,6 +41,7 @@
 //! same value on every row.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
@@ -66,15 +67,17 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::{
 };
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
 use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{
+    rows_unavailable, visit_resident, ChunkIndexSource, LazyFoldedRa, MATERIALIZE_BYTES,
+};
 use super::support::{
-    bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, par_sum_pair_groups_reusing,
-    round_poly_from_skipped_evals, scaled_eq_table, RoundProgress,
+    bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
+    scaled_eq_table, task_ranges, try_par_sum_vecs, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -871,8 +874,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         let rows = InstructionCycleRow::shared(session, witness, cycles)?;
 
         // ra_i(j) = eq(chunk_i)[chunk_i(pc_j)] — the address fold of the
-        // one-hot grid, served lazily off the sparse per-cycle indices for
-        // the first four binds instead of `d × T` dense.
+        // one-hot grid, served lazily off the sparse per-cycle indices until
+        // the byte-budgeted materialization instead of `d × T` dense.
         let chunk_eqs: Vec<Vec<F>> = chunks.iter().map(|chunk| eq_table(chunk)).collect();
         let selectors = (0..num_ra)
             .map(|index| {
@@ -882,7 +885,11 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             .collect::<Result<Vec<_>, _>>()?;
         #[cfg(feature = "akita")]
         let fused_inc = LazyFusedInc::new(Arc::clone(&rows));
-        let ra = LazyFoldedRa::new(chunk_eqs, BytecodePcChunks { rows, selectors });
+        let ra = LazyFoldedRa::new(
+            chunk_eqs,
+            BytecodePcChunks { rows, selectors },
+            MATERIALIZE_BYTES,
+        );
 
         // The combined coefficient table: every non-RA factor of the summand is linear
         // in one cycle table, so   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) +
@@ -1037,6 +1044,8 @@ struct BytecodePcChunks {
 }
 
 impl ChunkIndexSource for BytecodePcChunks {
+    type Row = InstructionCycleRow;
+
     fn num_columns(&self) -> usize {
         self.selectors.len()
     }
@@ -1046,8 +1055,17 @@ impl ChunkIndexSource for BytecodePcChunks {
     }
 
     #[inline]
-    fn index(&self, i: usize, j: usize) -> Option<usize> {
-        Some(self.selectors[i].chunk_usize(self.rows[j].bytecode_pc()))
+    fn index(&self, i: usize, row: &InstructionCycleRow) -> Option<usize> {
+        Some(self.selectors[i].chunk_usize(row.bytecode_pc()))
+    }
+
+    fn visit_blocks(
+        &self,
+        range: Range<usize>,
+        block: usize,
+        visit: impl FnMut(usize, &[Self::Row]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        visit_resident(&self.rows, range, block, visit)
     }
 }
 
@@ -1067,20 +1085,21 @@ struct CycleKernel<F: JoltField> {
     output_openings: Vec<JoltOpeningId>,
 }
 impl<F: JoltField> CycleKernel<F> {
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         bind_all([&mut self.combined], challenge);
         #[cfg(feature = "akita")]
         bind_all([&mut self.fused_combined], challenge);
-        self.ra.bind(challenge);
+        self.ra.bind(challenge)?;
         #[cfg(feature = "akita")]
         self.fused_inc.bind(challenge);
         self.progress.advance();
+        Ok(())
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
-    /// group `y`, written into `acc` (length `degree`). `ra_pairs` is the
-    /// caller's per-group scratch: each RA pair is gathered once per group,
-    /// then held as the factor's running `(value, step)`, so every factor
+    /// group `y`, written into `acc` (length `degree`). `ra_pairs` holds the
+    /// caller's once-per-group gather of the RA pairs at `y`, then each
+    /// factor's running `(value, step)`, so every factor
     /// advances by one addition per sample point instead of a
     /// `t · (hi − lo)` multiplication.
     #[inline]
@@ -1100,7 +1119,6 @@ impl<F: JoltField> CycleKernel<F> {
                 (fused_inc_hi - fused_inc_lo) * (fused_coefficient_hi - fused_coefficient_lo);
             (at_zero, at_one - at_zero, leading + leading)
         };
-        self.ra.lo_hi_all(y, ra_pairs);
         for (lo, hi) in ra_pairs.iter_mut() {
             *hi -= *lo;
         }
@@ -1144,25 +1162,36 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         let half = self.combined.len() / 2;
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
-        let evals = par_sum_pair_groups_reusing(
-            half,
+        let ranges = task_ranges(half, 1, 1);
+        let evals = try_par_sum_vecs(
+            ranges.len(),
             slots,
-            || vec![(F::zero(), F::zero()); num_ra],
-            |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
-        );
+            |task| -> Result<Vec<F>, WitnessError> {
+                let mut acc = vec![F::zero(); slots];
+                let mut ra_pairs = vec![(F::zero(), F::zero()); num_ra];
+                self.ra.visit_rows(ranges[task].clone(), |groups, block| {
+                    for y in groups {
+                        block.lo_hi_all(y, &mut ra_pairs);
+                        self.accumulate_group(y, &mut acc, &mut ra_pairs);
+                    }
+                    Ok(())
+                })?;
+                Ok(acc)
+            },
+        )
+        .map_err(rows_unavailable)?;
 
         Ok(round_poly_from_skipped_evals(&evals, previous_claim))
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -1174,7 +1203,7 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let ra = &self.ra;
+        let ra = self.ra.final_values()?;
         let output_openings = &self.output_openings;
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id: &JoltOpeningId| {
             #[cfg(feature = "akita")]
@@ -1184,7 +1213,7 @@ impl<F: JoltField> SumcheckKernel<F> for CycleKernel<F> {
             output_openings
                 .iter()
                 .position(|opening| opening == id)
-                .map(|index| ra.value(index, 0))
+                .map(|index| ra[index])
         })
         .map_err(SumcheckKernelError::from)
     }
@@ -1947,6 +1976,9 @@ mod cycle_group_tests {
             for y in 0..GROUPS {
                 let start: Vec<Fr> = (0..degree).map(|_| Fr::random(&mut rng)).collect();
                 let mut acc = start.clone();
+                for (slot, poly) in pairs.iter_mut().zip(&ra) {
+                    *slot = pair(poly, y);
+                }
                 kernel.accumulate_group(y, &mut acc, &mut pairs);
                 for (slot, (acc, start)) in acc.iter().zip(&start).enumerate() {
                     let t = Fr::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
