@@ -452,7 +452,7 @@ program/Jolt-trace boundary, not through tracer internals:
 guest Rust / SDK
   -> jolt-program image, expansion, profile checks, preprocessing
   -> execution backend
-  -> Jolt trace: TraceOutput<TraceSource>
+  -> Jolt trace: TraceOutput (Arc<TraceData>)
   -> jolt-witness
   -> jolt-prover stages
 ```
@@ -481,7 +481,6 @@ field-inline row data, when enabled:
   field op kind / selector flags
   field register operands and destination
   field register read/write values
-  bridge payloads for x-register <-> field-register movement
 ```
 
 Pure field operations should not create incidental ordinary x-register effects.
@@ -640,8 +639,10 @@ instructions, checks its final quotient with `FIELD_ASSERT_ZERO`, and checks
 the emitted integer `L < p`. The relations alone establish equality modulo
 the proof-field modulus. To preserve the source, accumulate the emitted limbs
 high-to-low into that now-zero register; no scratch field register or reserved
-zero register is needed. Ergonomic `field_to`/`field_from` macros remain
-follow-up work in [#1934](https://github.com/a16z/jolt/issues/1934).
+zero register is needed. The SDK's `field_to_limbs!` and `field_from_limbs!`
+own these sequences, including the `L < p` check and a proof that the guest
+was built for the executing field (`specs/field-inline-protocol.md`, "SDK Limb
+Conversions").
 
 Field inline v1 is native-field only: the field used by the Jolt proof and the
 field used by field-inline arithmetic are the same field. Prover code should not

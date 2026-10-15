@@ -532,9 +532,10 @@ over a fallback for the rest); the reference backend derives every slot from one
 the slot inputs are the same typed relation data the verifier defines. Shipping incrementally is
 the designed path, not a failure mode.
 
-**`ProofSession`** — backend-owned state with proof lifetime, created by
-`backend.begin_proof(…)`, threaded `&mut` through every slot call, contents opaque to
-orchestration (a boxed backend-private type the backend downcasts internally). It is where
+**`ProofSession`** — backend-owned state with proof lifetime, owned by the execution's
+`KernelContext` alongside its witness. Mutable context methods dispatch each slot with
+that session; orchestration cannot replace or extract it. Backend-private state is
+stored by type and downcast inside the kernels. It is where
 residency and reuse live: witness uploads cached across stages (upload-once-reuse-many keyed by
 committed-polynomial id — the commit-time stream must not be re-uploaded for read-write-checking
 stages), cross-member shared tables (the `SharedRaPolynomials`/eq-table precedent), the 6a→6b

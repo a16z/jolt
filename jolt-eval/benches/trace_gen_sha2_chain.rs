@@ -32,8 +32,8 @@ fn bench(c: &mut Criterion) {
         b.iter(|| assert_eq!(objective.run_reference(&setup), setup.trace_len))
     });
     // Same group and throughput so the pair decomposes the seam: `reference`
-    // is raw tracing plus the Cycle to TraceRow conversion, `reference_raw` is
-    // raw tracing alone. The AOT backend emits TraceRow directly and so skips
+    // is raw tracing plus the Cycle to JoltTraceRow conversion, `reference_raw` is
+    // raw tracing alone. The AOT backend emits JoltTraceRow directly and so skips
     // the difference; AC8/AC9 ratios need both to be attributable.
     group.bench_function("reference_raw", |b| {
         b.iter(|| assert_eq!(objective.run_reference_raw(&setup), setup.trace_len))

@@ -433,7 +433,7 @@ Verified shape of the blast radius:
   a stack-scratch partition bound; raised 4→5 for `PextSigned`, the first 5-suffix table —
   any table with more suffixes must bump it, and only the muldiv e2e catches the miss since
   the assert is debug-only). The committed bytecode width is 447 of 512 lanes
-  (`bytecode/chunks.rs` — `3·128 + 2 + 14 + 6 + 40 + 1`); every new lookup table and every new
+  (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` — `3·128 + 2 + 14 + 6 + 40 + 1`); every new lookup table and every new
   circuit flag consumes a lane, and crossing 512 doubles the committed width. This design adds
   ~15–22 tables + 0–2 flags — it fits, but economize the table family (parameterize widths
   where the MLE allows). And `LC` caps at 5 variable terms per side

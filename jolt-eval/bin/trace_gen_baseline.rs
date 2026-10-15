@@ -152,13 +152,13 @@ fn orchestrate(runs: usize) {
     }
     println!(
         "\nReference backend, serial (`TRACER_PARALLEL` unset); median of {runs} runs per guest.\n\
-         `seam` is `ExecutionBackend::trace` (raw tracing + the `Cycle` to `TraceRow` \
-         conversion); `raw trace` is `tracer::trace` alone. A backend that emits `TraceRow` \
+         `seam` is `ExecutionBackend::trace` (raw tracing + the `Cycle` to `JoltTraceRow` \
+         conversion); `raw trace` is `tracer::trace` alone. A backend that emits `JoltTraceRow` \
          directly skips the conversion, so its speedup over `seam` includes that share and \
          only its gain over `raw trace` is attributable to codegen. Report both when \
          grading AC8/AC9.\n\
          Peak RSS is the seam's: during conversion `Vec<Cycle>` (96 B/row) and \
-         `Vec<TraceRow>` (160 B/row) coexist, so it sits above the 160 B/row floor a \
+         `Vec<JoltTraceRow>` (64 B/row) coexist, so it sits above the 64 B/row row-storage floor a \
          direct-emit backend would have. AC10 comparisons should account for that rather \
          than read the difference as an allocation win.\n\
          Memory config is `GuestConfig`'s (stack 4 KiB, heap 32 KiB), not the 32 MiB heap \

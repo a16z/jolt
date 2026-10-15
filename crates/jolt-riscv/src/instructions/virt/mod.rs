@@ -3,7 +3,6 @@
 pub mod advice;
 pub mod advice_lb;
 pub mod advice_ld;
-pub mod advice_len;
 pub mod advice_lh;
 pub mod advice_load;
 pub mod advice_lw;
@@ -57,7 +56,6 @@ pub mod zero_extend_word;
 pub use advice::VirtualAdvice;
 pub use advice_lb::AdviceLb;
 pub use advice_ld::AdviceLd;
-pub use advice_len::VirtualAdviceLen;
 pub use advice_lh::AdviceLh;
 pub use advice_load::VirtualAdviceLoad;
 pub use advice_lw::AdviceLw;

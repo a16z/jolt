@@ -5,14 +5,13 @@
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
-use jolt_kernels::JoltBackend;
+use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::proof::ClearProofClaims;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
-use jolt_witness::JoltWitnessPlane;
 
 use crate::boundary::finish_stage;
 use crate::dory::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
@@ -33,7 +32,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// mode — clear claims without the `zk` feature, the BlindFold tail with it.
 ///
 /// `config` is the derived proof shape (its five wire fields are copied into
-/// the proof verbatim), `witness` the trace-backed provider the kernels read,
+/// the proof verbatim), `backend` binds the witness used by the kernels,
 /// and `public_io` the Fiat-Shamir preamble's program I/O.
 ///
 /// `trusted_advice` is the externally supplied (preprocessing-time)
@@ -47,15 +46,14 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// must not exceed the main commitment grid) and with or without
 /// committed-program preprocessing (which requires
 /// `preprocessing.committed_program` — the prover-retained full program and
-/// chunk/image hints). Dominant advice returns
+/// bytecode/image hints). Dominant advice returns
 /// [`ProverError::Unsupported`] at stage 0.
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
-pub fn prove<F, PCS, VC, T, W>(
-    backend: &JoltBackend<F, PCS>,
+pub fn prove<F, PCS, VC, T>(
+    mut backend: KernelContext<'_, F, JoltBackend<F, PCS>>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
-    witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
@@ -67,85 +65,65 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F>,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
-    let mut session = backend.begin_proof();
-    let stage0 = prove_stage0::<F, PCS, VC, T, W>(
-        backend,
-        &mut session,
+    let stage0 = prove_stage0::<F, PCS, VC, T>(
+        &mut backend,
         preprocessing,
         config,
         trusted_advice,
-        witness,
         public_io,
     )?;
     let log_t = config.trace_length.ilog2() as usize;
-    finish_stage("stage0", log_t, &session, &());
+    finish_stage("stage0", log_t, backend.session(), &());
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
 
-    let stage1 = prove_stage1::<F, PCS, VC, T>(
-        backend,
-        &mut session,
-        &mode,
-        log_t,
-        witness,
-        &mut transcript,
-    )?;
-    finish_stage("stage1", log_t, &session, &stage1.clear_output);
+    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mode, log_t, &mut transcript)?;
+    finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &mode,
         config,
         public_io,
         &stage1.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage2", log_t, &session, &stage2.clear_output);
+    finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &mode,
         config,
         &stage1.clear_output,
         &stage2.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage3", log_t, &session, &stage3.clear_output);
+    finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
         preprocessing,
         &stage2.clear_output,
         &stage3.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage4", log_t, &session, &stage4.clear_output);
+    finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
         preprocessing,
         &stage2.clear_output,
         &stage4.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage5", log_t, &session, &stage5.clear_output);
+    finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
@@ -155,13 +133,11 @@ where
         &stage3.clear_output,
         &stage4.clear_output,
         &stage5.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage6a", log_t, &session, &stage6a.clear_output);
+    finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
@@ -172,26 +148,22 @@ where
         &stage4.clear_output,
         &stage5.clear_output,
         &stage6a.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage6b", log_t, &session, &stage6b.clear_output);
+    finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &mode,
         &checked,
         config,
         preprocessing,
         &stage4.clear_output,
         &stage6b.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage7", log_t, &session, &stage7.clear_output);
+    finish_stage("stage7", log_t, backend.session(), &stage7.clear_output);
     let stage8 = prove_stage8::<F, PCS, VC, T>(
-        backend,
-        &mut session,
+        &mut backend,
         &checked,
         config,
         preprocessing,
@@ -203,11 +175,10 @@ where
         stage0.field_inline_hints,
         &stage6b.clear_output,
         &stage7.clear_output,
-        witness,
         &mut transcript,
     )?;
-    finish_stage("stage8", log_t, &session, &());
-    jolt_kernels::mem::drop_in_background_thread(session);
+    finish_stage("stage8", log_t, backend.session(), &());
+    backend.finish();
 
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

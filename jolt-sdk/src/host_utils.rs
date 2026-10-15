@@ -79,9 +79,7 @@ pub type ProtocolTranscript = LegacyBlake2bTranscript<Fr>;
 #[cfg(feature = "host")]
 pub type ProofTranscript = ProtocolTranscript;
 #[cfg(feature = "host")]
-pub use jolt_program::execution::{
-    ExecutionBackend, OwnedTrace, TraceError, TraceInputs, TraceOutput, TraceSource,
-};
+pub use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 #[cfg(feature = "host")]
 pub use tracer::TracerBackend;
 
@@ -159,16 +157,25 @@ pub fn preprocess_shared_program(
 }
 
 #[cfg(feature = "host")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramPreprocessingMode {
+    Full,
+    Committed,
+}
+
+#[cfg(feature = "host")]
 pub fn preprocess_program(
     source: &mut dyn host::JoltProgramSource,
     memory_config: MemoryConfig,
     max_trace_length: usize,
-    bytecode_chunk_count: Option<usize>,
+    mode: ProgramPreprocessingMode,
 ) -> Result<JoltProverPreprocessing, PreprocessingError> {
     let program = program_preprocessing(source, memory_config, max_trace_length)?;
-    match bytecode_chunk_count {
-        Some(chunk_count) => jolt_prover::dory::preprocess_committed(program, chunk_count),
-        None => JoltSharedPreprocessing::new(program).and_then(jolt_prover::dory::from_shared),
+    match mode {
+        ProgramPreprocessingMode::Committed => jolt_prover::dory::preprocess_committed(program),
+        ProgramPreprocessingMode::Full => {
+            JoltSharedPreprocessing::new(program).and_then(jolt_prover::dory::from_shared)
+        }
     }
 }
 
@@ -309,26 +316,10 @@ pub fn prove_program(
         memory_config,
     )
     .with_advice_tape(advice_tape);
-    #[cfg(not(feature = "field-inline"))]
-    let trace = TracerBackend::new().trace_compact(
-        &program,
-        trace_inputs,
-        &program_preprocessing.bytecode,
-    )?;
-    #[cfg(feature = "field-inline")]
     let trace = program.trace_with(&mut TracerBackend::new(), trace_inputs)?;
     let public_io = trace.device.clone();
-    #[cfg(not(feature = "field-inline"))]
-    let config = ProverConfig::derive_compact::<F>(
-        trace.trace.as_slice(),
-        memory_layout,
-        preprocessing.verifier.program.min_bytecode_address(),
-        preprocessing.verifier.program.program_image_len_words(),
-        preprocessing.verifier.program.max_padded_trace_length(),
-    )?;
-    #[cfg(feature = "field-inline")]
-    let config = ProverConfig::derive::<F>(
-        trace.trace.rows(),
+    let config = ProverConfig::derive_from_dimensions::<F>(
+        trace.dimensions,
         memory_layout,
         preprocessing.verifier.program.min_bytecode_address(),
         preprocessing.verifier.program.program_image_len_words(),
@@ -342,11 +333,9 @@ pub fn prove_program(
     .include_trusted_advice(trusted_advice_commitment.is_some())
     .include_untrusted_advice(!untrusted_advice.is_empty());
     let witness_inputs = JoltVmWitnessInputs::new(&program, &program_preprocessing, trace);
-    #[cfg(not(feature = "field-inline"))]
-    let witness = WitnessTraceBackend::<OwnedTrace>::from_compact(witness_config, witness_inputs);
+    let witness = WitnessTraceBackend::try_new(witness_config, witness_inputs)?;
     #[cfg(feature = "field-inline")]
-    let witness = WitnessTraceBackend::<OwnedTrace>::try_new(witness_config, witness_inputs)?
-        .with_field_inline()?;
+    let witness = witness.with_field_inline()?;
     let trusted_advice = match (trusted_advice_commitment, trusted_advice_hint) {
         (Some(commitment), Some(hint)) => Some(TrustedAdviceCommitment { commitment, hint }),
         (None, None) => None,
@@ -359,12 +348,11 @@ pub fn prove_program(
         }
     };
     let backend = jolt_prover::JoltBackend::<F, PCS>::optimized();
-    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProofTranscript, _>(
-        &backend,
+    let proof = jolt_prover::dory::prove::<F, PCS, VerifierVC, ProofTranscript>(
+        backend.with_witness(&witness),
         preprocessing,
         &config,
         trusted_advice.as_ref(),
-        &witness,
         &public_io,
     )?;
     Ok((proof, public_io))

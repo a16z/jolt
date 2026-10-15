@@ -22,6 +22,13 @@ collision envelope grows linearly with chunk count; eight therefore covers one,
 two, and four as well. B is certified for the selected opening geometry. These
 producer profiles are independent of the eventual trace chunk selection.
 
+Committed programs use one whole-bytecode group and one image group. Their
+physical arities are `max(14, logical_arity)` with a ceiling of 34. Bytecode
+logical arity is `9 + log2(padded_bytecode_rows)` and may exceed the trace
+group arity. Producer and grouped schedule admission run before whole-table
+allocation. Existing dense catalogs are reused; this changes the requested
+group shapes, not the offline response-chunk budget.
+
 During preprocessing, Jolt adapts rows whose shapes depend on advice, field
 increments, or direct committed-program sizes. Those rows are merged with the
 relevant base catalog.

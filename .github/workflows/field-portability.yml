@@ -10,8 +10,8 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".cargo/**"
+  # No base-branch filter: a stacked pull request changes these paths too.
   pull_request:
-    branches: [main]
     paths:
       - ".github/workflows/field-portability.yml"
       - "crates/jolt-field/**"
@@ -32,6 +32,75 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  binary-x86:
+    name: Binary fields on x86_64 (${{ matrix.feature }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - feature: +pclmulqdq
+            kernel: true
+          - feature: -pclmulqdq
+            kernel: false
+    env:
+      RUSTFLAGS: -D warnings -C target-feature=${{ matrix.feature }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      - name: Require native x86_64 carry-less multiply
+        run: |
+          test "$(uname -m)" = "x86_64"
+          grep -Eq '(^|[[:space:]])pclmulqdq([[:space:]]|$)' /proc/cpuinfo
+      - name: Clippy binary backend
+        run: |
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
+          cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
+      - name: Compare binary kernels with portable arithmetic
+        if: matrix.kernel
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
+      - name: Run whole binary field suite
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
+
+  binary-aarch64:
+    name: Binary fields on AArch64 (${{ matrix.feature }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        include:
+          - feature: +aes
+            kernel: true
+          - feature: -aes
+            kernel: false
+    env:
+      RUSTFLAGS: -D warnings -C target-feature=${{ matrix.feature }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - name: Install nextest
+        uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
+        with:
+          tool: nextest
+      - name: Require native AArch64 polynomial multiply
+        run: |
+          test "$(uname -m)" = "aarch64"
+          grep -Eq '(^|[[:space:]])aes([[:space:]]|$)' /proc/cpuinfo
+          grep -Eq '(^|[[:space:]])pmull([[:space:]]|$)' /proc/cpuinfo
+      - name: Clippy binary backend
+        run: |
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary
+          cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
+          cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
+      - name: Compare binary kernels with portable arithmetic
+        if: matrix.kernel
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
+      - name: Run whole binary field suite
+        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
+
   avx2:
     name: AVX2 field kernels
     runs-on: ubuntu-latest

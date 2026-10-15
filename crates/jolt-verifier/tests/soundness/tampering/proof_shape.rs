@@ -95,3 +95,20 @@ fn empty_blindfold_proof() -> BlindFoldProof<Fr, jolt_crypto::Bn254G1> {
         folded_eval_blinding_openings: Vec::new(),
     }
 }
+
+#[cfg(feature = "prover-fixtures")]
+#[test]
+fn committed_program_rejects_mismatched_trace_order() {
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_verifier::VerifierError;
+
+    #[cfg(not(feature = "zk"))]
+    let mut case = crate::support::verifier_fixtures::standard_committed_muldiv_case();
+    #[cfg(feature = "zk")]
+    let mut case = crate::support::verifier_fixtures::zk_committed_muldiv_case();
+    case.proof.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
+    assert!(matches!(
+        case.verify(),
+        Err(VerifierError::InvalidCommittedProgram { .. })
+    ));
+}

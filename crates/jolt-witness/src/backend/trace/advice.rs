@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl<T: TraceSource> TraceBackend<T> {
+impl TraceBackend {
     pub(crate) fn materialize_trusted_advice<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         materialize_advice(
             "trusted",
@@ -24,7 +24,7 @@ impl<T: TraceSource> TraceBackend<T> {
 
 /// An advice column's word count: the power-of-two number of little-endian
 /// words covering the configured maximum size. Single-sources the column
-/// length for [`TraceBackend::shape_of`].
+/// length for [`crate::JoltVmWitnessMetadata::shape`].
 pub(super) fn advice_words(max_bytes: usize) -> usize {
     (max_bytes / 8).next_power_of_two().max(1)
 }

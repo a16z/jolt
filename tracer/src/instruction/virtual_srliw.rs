@@ -17,7 +17,7 @@ declare_riscv_instr!(
 );
 
 impl VirtualSRLIW {
-    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRLIW as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <VirtualSRLIW as RISCVInstruction>::RamAccess) {
         let shift = self.operands.imm.trailing_zeros();
         let result = (cpu.x[self.operands.rs1 as usize] as u32)
             .checked_shr(shift)

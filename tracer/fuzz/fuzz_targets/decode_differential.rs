@@ -39,9 +39,8 @@ use tracer::instruction::{
     remuw::REMUW, remw::REMW, sb::SB, scd::SCD, scw::SCW, sd::SD, sh::SH, sll::SLL, slli::SLLI,
     slliw::SLLIW, sllw::SLLW, slt::SLT, slti::SLTI, sltiu::SLTIU, sltu::SLTU, sra::SRA, srai::SRAI,
     sraiw::SRAIW, sraw::SRAW, srl::SRL, srli::SRLI, srliw::SRLIW, srlw::SRLW, sub::SUB, subw::SUBW,
-    sw::SW, virtual_advice_len::VirtualAdviceLen, virtual_assert_eq::VirtualAssertEQ,
-    virtual_host_io::VirtualHostIO, virtual_rev8w::VirtualRev8W, xor::XOR, xori::XORI, Instruction,
-    RISCVInstruction,
+    sw::SW, virtual_assert_eq::VirtualAssertEQ, virtual_host_io::VirtualHostIO,
+    virtual_rev8w::VirtualRev8W, xor::XOR, xori::XORI, Instruction, RISCVInstruction,
 };
 
 fn matches_tracer_mask<T: RISCVInstruction>(word: u32) -> bool {
@@ -143,7 +142,6 @@ fn matches_program_kind_tracer_mask(kind: SourceInstructionKind, word: u32) -> b
         SourceInstructionKind::SUB => matches_tracer_mask::<SUB>(word),
         SourceInstructionKind::SUBW => matches_tracer_mask::<SUBW>(word),
         SourceInstructionKind::SW => matches_tracer_mask::<SW>(word),
-        SourceInstruction::VirtualAdviceLen(_) => matches_tracer_mask::<VirtualAdviceLen>(word),
         SourceInstructionKind::VirtualAssertEQ => matches_tracer_mask::<VirtualAssertEQ>(word),
         SourceInstruction::VirtualHostIO(_) => matches_tracer_mask::<VirtualHostIO>(word),
         SourceInstruction::VirtualRev8W(_) => matches_tracer_mask::<VirtualRev8W>(word),

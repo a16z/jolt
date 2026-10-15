@@ -71,11 +71,6 @@ impl AdviceTape {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
-
-    /// Get the number of bytes remaining to be read
-    pub fn remaining(&self) -> usize {
-        self.data.len().saturating_sub(self.read_position)
-    }
 }
 
 pub fn advice_tape_write(cpu: &mut Cpu, bytes: &[u8]) {
@@ -84,11 +79,6 @@ pub fn advice_tape_write(cpu: &mut Cpu, bytes: &[u8]) {
 
 pub fn advice_tape_read(cpu: &mut Cpu, num_bytes: usize) -> Option<u64> {
     cpu.advice_tape.read(num_bytes)
-}
-
-/// Get the number of bytes remaining to be read from the CPU's advice tape
-pub fn advice_tape_remaining(cpu: &Cpu) -> usize {
-    cpu.advice_tape.remaining()
 }
 
 use crate::utils::panic::CallFrame;
@@ -1582,14 +1572,11 @@ mod test_cpu {
 
         tape.write(&[0x01, 0x02, 0x03, 0x04]);
         assert_eq!(tape.len(), 4);
-        assert_eq!(tape.remaining(), 4);
 
         assert_eq!(tape.read(2), Some(0x0201), "bytes assemble little-endian");
-        assert_eq!(tape.remaining(), 2);
         assert_eq!(tape.read(4), None);
-        assert_eq!(tape.remaining(), 2);
         assert_eq!(tape.read(2), Some(0x0403));
-        assert_eq!(tape.remaining(), 0);
+        assert_eq!(tape.read(1), None);
 
         tape.reset_read_position();
         assert_eq!(tape.read(4), Some(0x0403_0201));
@@ -1603,7 +1590,7 @@ mod test_cpu {
             cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
         }
         cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
-        assert_eq!(advice_tape_remaining(&cpu), 4);
+        assert_eq!(cpu.advice_tape.len(), 4);
         assert_eq!(advice_tape_read(&mut cpu, 4), Some(0xefbe_adde));
     }
 
