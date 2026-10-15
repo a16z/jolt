@@ -3,8 +3,9 @@ use jolt_claims::protocols::jolt::geometry::bytecode::{
     BYTECODE_STAGE_GAMMA_COUNTS,
 };
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-use jolt_field::JoltField;
+use jolt_field::{Fr, JoltField};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
+use rayon::ThreadPoolBuilder;
 
 #[expect(clippy::unwrap_used)]
 fn check_fold<F: JoltField>() {
@@ -64,19 +65,19 @@ fn check_fold<F: JoltField>() {
 #[test]
 #[expect(clippy::unwrap_used)]
 fn bytecode_fold_matches_materialized_rows_one_worker() {
-    rayon::ThreadPoolBuilder::new()
+    ThreadPoolBuilder::new()
         .num_threads(1)
         .build()
         .unwrap()
-        .install(check_fold::<jolt_field::Fr>);
+        .install(check_fold::<Fr>);
 }
 
 #[test]
 #[expect(clippy::unwrap_used)]
 fn bytecode_fold_matches_materialized_rows_four_workers() {
-    rayon::ThreadPoolBuilder::new()
+    ThreadPoolBuilder::new()
         .num_threads(4)
         .build()
         .unwrap()
-        .install(check_fold::<jolt_field::Fr>);
+        .install(check_fold::<Fr>);
 }
