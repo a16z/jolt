@@ -1,10 +1,9 @@
-//! The optimized field-registers value-evaluation (stage 5) kernel: the
-//! integer-register kernel ([`super::registers_val_evaluation`]) at the field-register
-//! geometry, byte-parity twin of [`crate::reference::field_registers_val_evaluation`].
+//! The optimized field-registers value-evaluation (stage 5) kernel, byte-parity
+//! twin of [`crate::reference::field_registers_val_evaluation`].
 //!
 //! The reference folds the `(2^4 × T)` one-hot `FieldRdWa` grid into a dense
 //! cycle table at prepare time and binds three dense `T`-sized tables per
-//! round. This kernel keeps the sibling's technique set:
+//! round. This kernel instead uses:
 //!
 //! - **Lazy one-hot `wa`** ([`WaState`]): round 0 serves
 //!   `wa(j) = eq(r_address)[rd_j]` straight from the per-cycle field-register write slots
@@ -16,17 +15,16 @@
 //! - **Deferred-reduction accumulation** of the triple products.
 //!
 //! The increment column is the field-inline oracle's single committed polynomial
-//! (`FieldRdInc`), materialized dense at prepare — there is no slice-backed deferral
-//! like the integer sibling's because the field-inline oracle serves whole tables only,
-//! and the column is all-zero exactly when the trace has no field-inline activity (a
-//! cheap bind).
+//! (`FieldRdInc`), materialized dense at prepare because the field-inline oracle
+//! serves whole tables only; the column is all-zero exactly when the trace has no
+//! field-inline activity (a cheap bind).
 
 use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
 use jolt_claims::protocols::field_inline::{
     FieldInlineDerivedId, FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
 };
 use jolt_field::JoltField;
-use jolt_poly::{EqPolynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
@@ -34,15 +32,72 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use super::field_registers_read_write::{
     field_register_rows, SharedFieldRdWrites, SharedFieldRegisterRows,
 };
-use super::registers_val_evaluation::WaState;
 use super::support::{pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+/// The write-address column: hot indices plus the address eq table until the
+/// first bind, a dense bound vector afterwards. The `K × T` grid never exists.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum WaState<F: JoltField> {
+    Indices {
+        rd: Vec<Option<u8>>,
+        eq_address: Vec<F>,
+    },
+    Dense(Polynomial<F>),
+}
+
+impl<F: JoltField> WaState<F> {
+    #[inline]
+    fn pair(&self, y: usize) -> (F, F) {
+        match self {
+            Self::Indices { rd, eq_address } => {
+                let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
+                (value(2 * y), value(2 * y + 1))
+            }
+            Self::Dense(table) => {
+                let evals = table.evals();
+                (evals[2 * y], evals[2 * y + 1])
+            }
+        }
+    }
+
+    fn bind(&mut self, r: F) {
+        match self {
+            Self::Indices { rd, eq_address } => {
+                let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
+                let half = rd.len() / 2;
+                let bind_pair = |y: usize| {
+                    let lo = value(2 * y);
+                    lo + r * (value(2 * y + 1) - lo)
+                };
+                #[cfg(feature = "parallel")]
+                let dense: Vec<F> = (0..half).into_par_iter().map(bind_pair).collect();
+                #[cfg(not(feature = "parallel"))]
+                let dense: Vec<F> = (0..half).map(bind_pair).collect();
+                *self = Self::Dense(Polynomial::new(dense));
+            }
+            Self::Dense(table) => table.bind_with_order(r, BindingOrder::LowToHigh),
+        }
+    }
+
+    fn final_value(&self) -> F {
+        match self {
+            Self::Dense(table) => {
+                debug_assert_eq!(table.len(), 1);
+                table.evals()[0]
+            }
+            Self::Indices { .. } => unreachable!("bound at least once before extraction"),
+        }
+    }
+}
 
 pub struct OptimizedFieldRegistersValEvaluation;
 

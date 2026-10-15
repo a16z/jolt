@@ -45,7 +45,7 @@ pub(crate) mod test_support;
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests;
 
-pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
+pub(crate) use rows::RegisterCycleRow;
 
 use address_first::AddressFirstKernel;
 use rows::RegisterColumns;
@@ -56,7 +56,7 @@ pub struct OptimizedRegistersReadWrite;
 impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
@@ -82,9 +82,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             });
         }
         if order == ReadWriteOrder::AddressFirst {
-            return Ok(Box::new(AddressFirstKernel::prepare(
-                session, witness, &inputs,
-            )?));
+            return Ok(Box::new(AddressFirstKernel::prepare(witness, &inputs)?));
         }
         let cycles = 1usize << log_t;
 
@@ -96,7 +94,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             RegisterColumns {
                 rs1_indices,
                 rs2_indices,
-                rd_indices,
                 rd_inc,
             },
             seeds,
@@ -107,9 +104,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             CoeffLut::new(vec![F::zero(), F::one()]),
             rd_inc,
         );
-
-        // Park the rd hot indices for the stage-5 val-evaluation kernel.
-        session.park(SharedRdIndices(rd_indices));
 
         Ok(Box::new(ReadWriteKernel {
             dimensions,
