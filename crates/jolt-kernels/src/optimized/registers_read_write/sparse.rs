@@ -28,7 +28,7 @@ impl<F: JoltField> CoeffLut<F> {
         self.values.len().trailing_zeros()
     }
 
-    pub(super) fn bind(&mut self, r: F) {
+    pub(super) fn bound(&self, r: F) -> Self {
         let n = self.values.len();
         let old = &self.values;
         let square = |index: usize| {
@@ -37,12 +37,17 @@ impl<F: JoltField> CoeffLut<F> {
             b + r * (a - b)
         };
         #[cfg(feature = "parallel")]
-        let next: Vec<F> = (0..n * n).into_par_iter().map(square).collect();
+        let values: Vec<F> = (0..n * n).into_par_iter().map(square).collect();
         #[cfg(not(feature = "parallel"))]
-        let next: Vec<F> = (0..n * n).map(square).collect();
-        self.values = next;
+        let values: Vec<F> = (0..n * n).map(square).collect();
+        Self { values }
     }
 }
+
+/// The deepest level whose coefficients stay [`LutIndex`]es: `ra`'s index
+/// bits double per bind from 2 at level 0, so level 3's fill the `u16`. A
+/// merge into level 4 dereferences both coefficients with level 3's tables.
+const LUT_LEVELS: usize = 3;
 
 #[inline(always)]
 fn mul_01_optimized<F: JoltField>(left: F, right: F) -> F {
@@ -142,18 +147,18 @@ mod stream;
 use layout::{merge_bind, split_pair_group, MatrixEntry, SparseEntry};
 use ops::{bind_sparse_entries_in_place, sparse_quadratic};
 
-/// What round 0's pass leaves for the next cycle bind.
+/// What a streamed round's pass leaves for the next round.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(super) enum Level1<F: JoltField> {
-    /// Each round-0 Gruen group's level-1 entries: one per column of either
-    /// row of each of its pairs, whatever the coefficients. Round 1's pass
-    /// fills exactly these.
+pub(super) enum NextLevel<F: JoltField> {
+    /// Each Gruen group's next-level entries: one per column of either row
+    /// of each of its pairs, whatever the coefficients. The round that fills
+    /// the level places its entries by these counts.
     Counts(Vec<usize>),
-    /// A one-round domain's only pair, which the final cycle bind merges.
+    /// A one-pair level's pair, which the final cycle bind merges.
     Final(FinalPair<F>),
 }
 
-/// Rows 0 and 1 of a one-round domain: their field-coefficient cells and
+/// The two rows of a one-pair level: their field-coefficient cells and
 /// increments.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct FinalPair<F: JoltField> {
@@ -162,26 +167,41 @@ pub(super) struct FinalPair<F: JoltField> {
     inc: [F; 2],
 }
 
+/// Cycle rounds before the frontier is filled: each pass regenerates its
+/// round's level from the rows.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(super) struct Frontier<F: JoltField> {
+    /// Level `ℓ`'s `[ra, wa]` coefficient tables, `ℓ ≤ min(bound, LUT_LEVELS)`.
+    luts: Vec<[CoeffLut<F>; 2]>,
+    /// The last pass's result; `None` before round 0's pass.
+    pub(super) next: Option<NextLevel<F>>,
+    /// Bytes the filled entries and increments may take.
+    cap: usize,
+}
+
+impl<F: JoltField> Frontier<F> {
+    /// The last pass's counts when round `depth`'s level of `rows` rows fits
+    /// the cap: from level 1 on, its counted entries at their actual size
+    /// plus its increments. An overflowing size does not fit.
+    fn admitted(&self, depth: usize, rows: usize) -> Option<&[usize]> {
+        let Some(NextLevel::Counts(counts)) = &self.next else {
+            return None;
+        };
+        let entries = counts
+            .iter()
+            .try_fold(0usize, |sum, &count| sum.checked_add(count))?;
+        let bytes = entries
+            .checked_mul(size_of::<SparseEntry<F, F>>())?
+            .checked_add(rows.checked_mul(size_of::<F>())?)?;
+        (depth >= 1 && bytes <= self.cap).then_some(counts.as_slice())
+    }
+}
+
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) enum CyclePhase<F: JoltField> {
-    /// Round 0, whose pass regenerates the cells from the rows and keeps
-    /// `level1`.
-    Seed {
-        ra_lut: CoeffLut<F>,
-        wa_lut: CoeffLut<F>,
-        level1: Option<Level1<F>>,
-    },
-    /// Round 1, whose pass merges the cells bound by `r1` and fills the
-    /// counted level-1 entries.
-    Fill {
-        seed_ra_lut: CoeffLut<F>,
-        seed_wa_lut: CoeffLut<F>,
-        ra_lut: CoeffLut<F>,
-        wa_lut: CoeffLut<F>,
-        #[cfg_attr(feature = "allocative", allocative(skip))]
-        r1: F,
-        counts: Vec<usize>,
-    },
+    Streamed(Frontier<F>),
+    /// Filled by the first round whose level fits the cap, bound in place
+    /// after.
     Direct {
         entries: Vec<SparseEntry<F, F>>,
         inc: Polynomial<F>,
@@ -194,8 +214,8 @@ pub(super) struct CycleState<F: JoltField>(pub(super) CyclePhase<F>);
 /// The bound cycle row as dense `(ra, wa, val)` address arrays and its `inc`.
 type DenseCycleRow<F> = (Vec<F>, Vec<F>, Vec<F>, F);
 
-/// A row failed to extract, or round 1's rows or tasks disagree with round
-/// 0's count.
+/// A row failed to extract, or a filling round's rows or tasks disagree with
+/// the last pass's counts.
 fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     SumcheckError::MissingEvaluationSource { kind: ROWS_LABEL }
 }
@@ -206,60 +226,48 @@ fn out_of_order<F: JoltField>() -> SumcheckError<F> {
 }
 
 impl<F: JoltField> CycleState<F> {
-    pub(super) fn new(ra_lut: CoeffLut<F>, wa_lut: CoeffLut<F>) -> Self {
-        Self(CyclePhase::Seed {
-            ra_lut,
-            wa_lut,
-            level1: None,
-        })
+    /// `ra_lut` and `wa_lut` index the level-0 coefficients; `cap` bounds the
+    /// bytes of the filled entries and increments.
+    pub(super) fn new(ra_lut: CoeffLut<F>, wa_lut: CoeffLut<F>, cap: usize) -> Self {
+        Self(CyclePhase::Streamed(Frontier {
+            luts: vec![[ra_lut, wa_lut]],
+            next: None,
+            cap,
+        }))
     }
 
     pub(super) fn unused_lut() -> CoeffLut<F> {
         CoeffLut { values: Vec::new() }
     }
 
-    /// The round's `[q(0), leading coefficient]`. Round 0's pass also keeps
-    /// its level-1 counts, or a one-round domain's pair; round 1's pass fills
-    /// the counted entries and their increments.
+    /// Round `r.len()`'s `[q(0), leading coefficient]`, `r` holding the bound
+    /// cycle challenges. A streamed round whose level fits the cap fills it;
+    /// any other streamed round counts the next level, or keeps a one-pair
+    /// level's pair.
     pub(super) fn quadratic(
         &mut self,
         rows: &KernelRows<RegisterCycleRow>,
         e_in: &[F],
         e_out: &[F],
+        r: &[F],
     ) -> Result<[F; 2], SumcheckError<F>> {
         Ok(match &mut self.0 {
-            CyclePhase::Seed {
-                ra_lut,
-                wa_lut,
-                level1,
-            } => {
-                let (quadratic, next) = stream::count(rows, e_in, e_out, [&*ra_lut, &*wa_lut])
-                    .map_err(rows_unavailable)?;
-                *level1 = Some(next);
-                quadratic
-            }
-            CyclePhase::Fill {
-                seed_ra_lut,
-                seed_wa_lut,
-                ra_lut,
-                wa_lut,
-                r1,
-                counts,
-            } => {
-                let (quadratic, entries, inc) = stream::fill(
-                    rows,
-                    e_in,
-                    e_out,
-                    *r1,
-                    [[&*seed_ra_lut, &*seed_wa_lut], [&*ra_lut, &*wa_lut]],
-                    counts,
-                )
-                .map_err(rows_unavailable)?;
-                self.0 = CyclePhase::Direct {
-                    entries,
-                    inc: Polynomial::new(inc),
-                };
-                quadratic
+            CyclePhase::Streamed(frontier) => {
+                if let Some(counts) = frontier.admitted(r.len(), 2 * e_out.len() * e_in.len()) {
+                    let (quadratic, entries, inc) =
+                        stream::fill(rows, e_in, e_out, r, &frontier.luts, counts)
+                            .map_err(rows_unavailable)?;
+                    self.0 = CyclePhase::Direct {
+                        entries,
+                        inc: Polynomial::new(inc),
+                    };
+                    quadratic
+                } else {
+                    let (quadratic, next) = stream::count(rows, e_in, e_out, r, &frontier.luts)
+                        .map_err(rows_unavailable)?;
+                    frontier.next = Some(next);
+                    quadratic
+                }
             }
             CyclePhase::Direct { entries, inc } => {
                 let unused = Self::unused_lut();
@@ -277,14 +285,12 @@ impl<F: JoltField> CycleState<F> {
         rows: &KernelRows<RegisterCycleRow>,
         e_in: &[F],
         e_out: &[F],
+        r: &[F],
     ) -> Result<F, SumcheckError<F>> {
         Ok(match &self.0 {
-            CyclePhase::Seed { ra_lut, wa_lut, .. } => {
-                stream::at_one(rows, e_in, e_out, &[], &[[ra_lut, wa_lut]])
-                    .map_err(rows_unavailable)?
+            CyclePhase::Streamed(frontier) => {
+                stream::at_one(rows, e_in, e_out, r, &frontier.luts).map_err(rows_unavailable)?
             }
-            // Round 1's `quadratic` fills the entries before its `q(1)`.
-            CyclePhase::Fill { .. } => return Err(out_of_order()),
             CyclePhase::Direct { entries, inc } => {
                 let unused = Self::unused_lut();
                 sparse_at_one(
@@ -299,58 +305,46 @@ impl<F: JoltField> CycleState<F> {
         })
     }
 
-    /// Binds a cycle challenge other than the last.
-    pub(super) fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
-        if let CyclePhase::Direct { entries, inc } = &mut self.0 {
-            let unused = Self::unused_lut();
-            bind_sparse_entries_in_place(entries, |even, odd| {
-                SparseEntry::<F, F>::bind(even, odd, r, &unused, &unused)
-            });
-            let _ = inc.bind_low_to_high_in_place(r);
-            return Ok(());
+    /// Binds a cycle challenge other than the last. A streamed bind adds the
+    /// next level's coefficient tables, through level [`LUT_LEVELS`].
+    pub(super) fn bind(&mut self, r: F) {
+        match &mut self.0 {
+            CyclePhase::Streamed(frontier) => {
+                if frontier.luts.len() <= LUT_LEVELS {
+                    let [ra, wa] = &frontier.luts[frontier.luts.len() - 1];
+                    let next = [ra.bound(r), wa.bound(r)];
+                    frontier.luts.push(next);
+                }
+            }
+            CyclePhase::Direct { entries, inc } => {
+                let unused = Self::unused_lut();
+                bind_sparse_entries_in_place(entries, |even, odd| {
+                    SparseEntry::<F, F>::bind(even, odd, r, &unused, &unused)
+                });
+                let _ = inc.bind_low_to_high_in_place(r);
+            }
         }
-        let CyclePhase::Seed {
-            ra_lut,
-            wa_lut,
-            level1: Some(Level1::Counts(counts)),
-        } = &mut self.0
-        else {
-            return Err(out_of_order());
-        };
-        let mut bound_ra = CoeffLut::new(ra_lut.values.clone());
-        let mut bound_wa = CoeffLut::new(wa_lut.values.clone());
-        bound_ra.bind(r);
-        bound_wa.bind(r);
-        self.0 = CyclePhase::Fill {
-            seed_ra_lut: std::mem::replace(ra_lut, Self::unused_lut()),
-            seed_wa_lut: std::mem::replace(wa_lut, Self::unused_lut()),
-            ra_lut: bound_ra,
-            wa_lut: bound_wa,
-            r1: r,
-            counts: std::mem::take(counts),
-        };
-        Ok(())
     }
 
     /// Binds the last cycle challenge `r`: the final pair — the filled
-    /// entries' two remaining rows, or a one-round domain's pair from round
-    /// 0's pass — merges into dense `(ra, wa, val)` address arrays and the
-    /// bound increment, and the cycle state is dropped.
+    /// entries' two remaining rows, or the last streamed pass's pair — merges
+    /// into dense `(ra, wa, val)` address arrays and the bound increment, and
+    /// the cycle state is dropped.
     pub(super) fn take_dense(
         &mut self,
         r: F,
         k: usize,
     ) -> Result<DenseCycleRow<F>, SumcheckError<F>> {
         let (evens, odds, [low, high]) = match &self.0 {
-            CyclePhase::Seed {
-                level1: Some(Level1::Final(pair)),
+            CyclePhase::Streamed(Frontier {
+                next: Some(NextLevel::Final(pair)),
                 ..
-            } => (&pair.evens[..], &pair.odds[..], pair.inc),
+            }) => (&pair.evens[..], &pair.odds[..], pair.inc),
             CyclePhase::Direct { entries, inc } => {
                 let (evens, odds) = split_pair_group(entries);
                 (evens, odds, [inc.evals()[0], inc.evals()[1]])
             }
-            CyclePhase::Seed { .. } | CyclePhase::Fill { .. } => return Err(out_of_order()),
+            CyclePhase::Streamed(_) => return Err(out_of_order()),
         };
         let mut ra = vec![F::zero(); k];
         let mut wa = vec![F::zero(); k];
