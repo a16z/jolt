@@ -1,7 +1,8 @@
 use std::{
     collections::BTreeMap,
+    error::Error,
     fmt,
-    io::{Cursor, ErrorKind},
+    io::{Cursor, Error as IoError, ErrorKind},
     path::{Path, PathBuf},
     sync::Arc,
     sync::OnceLock,
@@ -241,40 +242,64 @@ const SCHEDULE_SELECTION_BYTES: usize = 32;
 /// so oversizing costs virtual address space only.
 const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
+/// `None` where the platform cannot spawn threads at all (wasm32), the case in
+/// which rayon itself runs its global pool on the current thread.
 #[expect(
-    clippy::expect_used,
-    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
+    clippy::panic,
+    reason = "a pool that cannot spawn threads on a threaded platform is an unrecoverable environment failure"
 )]
-fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> ThreadPool {
+fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> Option<ThreadPool> {
     let mut builder = ThreadPoolBuilder::new()
         .thread_name(move |index| format!("{name}-{index}"))
         .stack_size(BACKEND_WORKER_STACK_BYTES);
     if let Some(num_threads) = num_threads {
         builder = builder.num_threads(num_threads);
     }
-    builder
-        .build()
-        .expect("the Akita backend thread pool must build")
+    match builder.build() {
+        Ok(pool) => Some(pool),
+        Err(error)
+            if error
+                .source()
+                .and_then(|source| source.downcast_ref::<IoError>())
+                .is_some_and(|source| source.kind() == ErrorKind::Unsupported) =>
+        {
+            None
+        }
+        Err(error) => panic!("the Akita backend thread pool must build: {error}"),
+    }
 }
 
-fn backend_pool() -> &'static ThreadPool {
-    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+fn backend_pool() -> Option<&'static ThreadPool> {
+    static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| build_backend_pool("jolt-akita", None))
+        .as_ref()
 }
 
 #[cfg(feature = "profiling")]
+#[expect(
+    clippy::expect_used,
+    reason = "the profiling harness measures a host thread pool and cannot run without one"
+)]
 fn host_parallel_verifier_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
         let num_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
         build_backend_pool("jolt-akita-verify-parallel", Some(num_threads))
+            .expect("the profiling harness needs a platform that spawns threads")
     })
 }
 
 #[cfg(feature = "profiling")]
+#[expect(
+    clippy::expect_used,
+    reason = "the profiling harness measures a host thread pool and cannot run without one"
+)]
 fn single_threaded_verifier_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| build_backend_pool("jolt-akita-verify-single", Some(1)))
+    POOL.get_or_init(|| {
+        build_backend_pool("jolt-akita-verify-single", Some(1))
+            .expect("the profiling harness needs a platform that spawns threads")
+    })
 }
 
 #[cfg(feature = "profiling")]
@@ -340,6 +365,9 @@ pub fn host_parallel_verifier_threads() -> usize {
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
 /// the Akita prover at trace-scale shapes. Every backend setup/commit/
 /// prove/verify entry funnels through this pool. Nested calls reuse it.
+///
+/// Where the platform cannot spawn threads (wasm32), no dedicated pool can
+/// exist: `f` runs on the caller's pool, whose embedder sizes worker stacks.
 pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     #[cfg(feature = "profiling")]
     match PROFILE_BACKEND_POOL.with(Cell::get) {
@@ -349,7 +377,10 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
         }
         ProfileBackendPool::Default => {}
     }
-    backend_pool().install(f)
+    match backend_pool() {
+        Some(pool) => pool.install(f),
+        None => f(),
+    }
 }
 
 /// Regenerable recipe for constructing an Akita setup.
