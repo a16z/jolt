@@ -1,6 +1,6 @@
 //! Sparse per-cycle RAM data shared across RAM kernels. [`RamEventLog`]
-//! serves the RAM factors of stages 2–5; [`SharedRamAddresses`] survives
-//! stages 4–6b; [`RamAccessColumns`] owns the stage-4 values.
+//! serves the RAM factors of stages 2–5; the stage-6b RA virtualization
+//! collects the dense [`SharedRamAddresses`] column.
 
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -30,12 +30,6 @@ const PAR_CHUNK: usize = 1 << 14;
 
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
-
-#[derive(Clone, Copy, Debug, WitnessBundle)]
-struct RamValueBundle {
-    pre_value: RamReadValue,
-    post_value: RamWriteValue,
-}
 
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct RamAddressBundle {
@@ -307,8 +301,7 @@ impl RamEventLog {
     }
 }
 
-/// Pack a remapped address. The column is `u32` because it outlives every
-/// other trace-sized RAM array (stages 4–6b).
+/// Pack a remapped address.
 fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError<F>> {
     let Some(address) = address else {
         return Ok(NO_ACCESS);
@@ -487,40 +480,6 @@ where
         }
     }
     Ok(columns)
-}
-
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct RamAccessColumns {
-    pub addresses: Arc<Vec<u32>>,
-    /// Pre-access value, or zero without an access.
-    pub pre_values: Vec<u64>,
-    /// Post-access word value per cycle (equals the pre-value for reads).
-    pub post_values: Vec<u64>,
-}
-
-impl RamAccessColumns {
-    /// Reuse or create the shared address column, then collect the values.
-    ///
-    /// Two bundle passes instead of one fused pass: the `u32` address column
-    /// outlives the `u64` values until stage 6b, so it is collected on its
-    /// own.
-    pub fn collect_full<F: JoltField>(
-        session: &mut ProofSession,
-        witness: &dyn JoltWitnessPlane<F>,
-        log_t: usize,
-    ) -> Result<Self, KernelError<F>> {
-        let cycles = 1usize << log_t;
-        let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        let [pre_values, post_values] =
-            collect_split_columns::<F, RamValueBundle, u64, 2>(witness, cycles, |bundle| {
-                Ok([bundle.pre_value.0, bundle.post_value.0])
-            })?;
-        Ok(Self {
-            addresses,
-            pre_values,
-            post_values,
-        })
-    }
 }
 
 pub(crate) fn validate_addresses<F: JoltField>(

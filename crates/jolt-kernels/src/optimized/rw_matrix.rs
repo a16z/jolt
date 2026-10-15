@@ -17,9 +17,10 @@
 //! addition is exact, so the values are identical).
 //!
 //! Both start from the [`RamEventLog`]: one unbound entry per remapped
-//! access. While cycle variables bind, the cycle-indexed `inc` column is the
-//! separate [`SparseInc`] over the nonzero increments, which need not be
-//! accesses.
+//! access. While cycle variables bind, the cycle-indexed `inc` column is a
+//! separate [`SparseCycleColumn`] over the nonzero increments, which need not
+//! be accesses; the stage-4 value check binds its `inc` and address-folded
+//! `ra` columns the same way.
 
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
@@ -324,7 +325,7 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     pub fn quadratic_coefficients(
         &self,
         eq_head: impl Fn(usize) -> F + Sync,
-        inc: &SparseInc<F>,
+        inc: &SparseCycleColumn<F>,
         gamma: F,
     ) -> [F; 2] {
         let per_group = |group: &[CycleMajorEntry<F>]| -> [F; 2] {
@@ -353,7 +354,12 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         }
     }
 
-    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &SparseInc<F>, gamma: F) -> F {
+    pub fn q_at_one(
+        &self,
+        eq_head: impl Fn(usize) -> F,
+        inc: &SparseCycleColumn<F>,
+        gamma: F,
+    ) -> F {
         self.entries
             .iter()
             .filter(|entry| entry.row % 2 == 1)
@@ -390,35 +396,54 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     }
 }
 
-/// One `inc` row that may be nonzero while cycle variables bind.
+/// One row of a [`SparseCycleColumn`] that may be nonzero.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct IncEntry<F> {
+struct ColumnEntry<F> {
     row: u32,
     value: F,
 }
 
-/// The cycle-indexed `inc` column during the cycle rounds: its rows that may
-/// be nonzero, sorted by row, at most one per row; an absent row is zero.
+/// A cycle-indexed column during the cycle rounds: its rows that may be
+/// nonzero, sorted by row, at most one per row; an absent row is zero. The
+/// support follows the trace, never a challenge: binding keeps an entry for
+/// every row pair that had one, also when the challenge cancels it to zero.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SparseInc<F> {
-    entries: Vec<IncEntry<F>>,
+pub(crate) struct SparseCycleColumn<F> {
+    entries: Vec<ColumnEntry<F>>,
 }
 
-impl<F: JoltField> SparseInc<F> {
-    /// The unbound column: each event's exact `RamInc`, zeros omitted.
-    pub fn from_events(log: &RamEventLog) -> Self {
+impl<F: JoltField> SparseCycleColumn<F> {
+    /// The unbound `RamInc` column: each event's exact increment, zeros
+    /// omitted.
+    pub fn increments(log: &RamEventLog) -> Self {
         let increments = || log.events().iter().filter(|event| event.inc != 0);
         let mut entries = Vec::with_capacity(increments().count());
-        entries.extend(increments().map(|event| IncEntry {
+        entries.extend(increments().map(|event| ColumnEntry {
             row: event.cycle,
             value: F::from_i128(event.inc),
         }));
         Self { entries }
     }
 
-    /// `[inc(2·pair), inc(2·pair + 1)]`.
-    fn pair(&self, pair: usize) -> [F; 2] {
+    /// The unbound address-folded `ra(j) = eq(r_address, address(j))`:
+    /// `eq_address[address]` at every remapped access, zero-increment
+    /// accesses included; a store whose address remaps to no word has no
+    /// entry. `eq_address` spans the log's `ram_K` words, and the log rejects
+    /// an address beyond them at collection.
+    pub fn folded_ra(log: &RamEventLog, eq_address: &[F]) -> Self {
+        let mut entries = Vec::with_capacity(access_count(log));
+        entries.extend(log.events().iter().filter_map(|event| {
+            event.address.map(|address| ColumnEntry {
+                row: event.cycle,
+                value: eq_address[address as usize],
+            })
+        }));
+        Self { entries }
+    }
+
+    /// `[value(2·pair), value(2·pair + 1)]`.
+    pub fn pair(&self, pair: usize) -> [F; 2] {
         let start = self
             .entries
             .partition_point(|entry| (entry.row as usize) < 2 * pair);
@@ -432,6 +457,22 @@ impl<F: JoltField> SparseInc<F> {
         halves
     }
 
+    /// Every row pair holding an entry, in pair order:
+    /// `(pair, [value(2·pair), value(2·pair + 1)])`.
+    #[cfg(feature = "parallel")]
+    pub fn pairs(&self) -> impl ParallelIterator<Item = (usize, [F; 2])> + '_ {
+        self.entries
+            .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
+            .map(halves)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    pub fn pairs(&self) -> impl Iterator<Item = (usize, [F; 2])> + '_ {
+        self.entries
+            .chunk_by(|a, b| a.row / 2 == b.row / 2)
+            .map(halves)
+    }
+
     fn at(&self, row: usize) -> F {
         self.entries
             .binary_search_by_key(&row, |entry| entry.row as usize)
@@ -441,37 +482,31 @@ impl<F: JoltField> SparseInc<F> {
     /// Bind one cycle variable low-to-high: `lo + r·(hi − lo)` per row pair,
     /// a missing half being zero.
     pub fn bind(&mut self, r: F) {
-        let bind_pair = |group: &[IncEntry<F>]| {
-            let mut halves = [F::zero(); 2];
-            for entry in group {
-                halves[entry.row as usize % 2] = entry.value;
-            }
-            IncEntry {
-                row: group[0].row / 2,
-                value: halves[0] + r * (halves[1] - halves[0]),
-            }
-        };
-        #[cfg(feature = "parallel")]
-        let bound: Vec<IncEntry<F>> = self
-            .entries
-            .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
-            .map(bind_pair)
-            .collect();
-        #[cfg(not(feature = "parallel"))]
-        let bound: Vec<IncEntry<F>> = self
-            .entries
-            .chunk_by(|a, b| a.row / 2 == b.row / 2)
-            .map(bind_pair)
+        let bound: Vec<ColumnEntry<F>> = self
+            .pairs()
+            .map(|(pair, [lo, hi])| ColumnEntry {
+                row: pair as u32,
+                value: lo + r * (hi - lo),
+            })
             .collect();
         self.entries = bound;
     }
 
     /// The column's value once every cycle variable is bound; zero without
-    /// increments.
+    /// an entry.
     pub fn bound_value(&self) -> F {
         debug_assert!(self.entries.iter().all(|entry| entry.row == 0));
         self.entries.first().map_or(F::zero(), |entry| entry.value)
     }
+}
+
+/// A row pair's index and `[lo, hi]` values; a missing half is zero.
+fn halves<F: JoltField>(group: &[ColumnEntry<F>]) -> (usize, [F; 2]) {
+    let mut values = [F::zero(); 2];
+    for entry in group {
+        values[entry.row as usize % 2] = entry.value;
+    }
+    ((group[0].row / 2) as usize, values)
 }
 
 impl<F: JoltField> AddressMajorEntry<F> {
@@ -877,7 +912,7 @@ mod tests {
         );
         let mut session = ProofSession::default();
         let log = RamEventLog::shared::<Fr>(&mut session, &witness, 3, 8).unwrap();
-        let mut inc = SparseInc::<Fr>::from_events(log);
+        let mut inc = SparseCycleColumn::<Fr>::increments(log);
         let challenges = [2, 0, 1].map(Fr::from_u64);
         for (round, r) in challenges.into_iter().enumerate() {
             inc.bind(r);

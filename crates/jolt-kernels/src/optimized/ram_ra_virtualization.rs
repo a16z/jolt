@@ -11,8 +11,6 @@
 //!   no-access cycles), so the address-folded value is a single eq-table
 //!   lookup — `ra_i(r_chunk_i, j) = eq_table_i[chunk_i(address_j)]`, zero
 //!   when the cycle makes no access. `T` lookups per chunk, no grid.
-//! - **Shared address column**: [`SharedRamAddresses::shared`] supplies one
-//!   address column to the optimized RAM kernels.
 //! - **Gruen split-eq factoring**: `eq(r_cycle, ·)` is never materialized or
 //!   bound; each round emits `s(t) = ℓ(t) · Σ_y E(y) · Π_i ra_i(t, y)` at
 //!   a minimal product grid, recovering the missing value from the running

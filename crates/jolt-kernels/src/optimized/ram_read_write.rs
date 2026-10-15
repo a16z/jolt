@@ -52,7 +52,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::ram_trace::RamEventLog;
 use super::read_write::ReadWriteOrder;
-use super::rw_matrix::{val_slope_term, AddressMajorMatrix, CycleMajorMatrix, SparseInc};
+use super::rw_matrix::{val_slope_term, AddressMajorMatrix, CycleMajorMatrix, SparseCycleColumn};
 use super::support::{pin_derived_term_if_derived, GruenRoundMessage};
 use super::OptimizedBackend;
 use crate::{
@@ -75,7 +75,7 @@ enum Phase<F: JoltField> {
     },
     Cycle {
         matrix: CycleMajorMatrix<F>,
-        inc: SparseInc<F>,
+        inc: SparseCycleColumn<F>,
         gruen: GruenSplitEqPolynomial<F>,
     },
     /// `inc` is bound at every cycle variable: one entry.
@@ -439,7 +439,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
         let phase = match order {
             ReadWriteOrder::CycleFirst => Phase::Cycle {
                 matrix: CycleMajorMatrix::from_events(log),
-                inc: SparseInc::from_events(log),
+                inc: SparseCycleColumn::increments(log),
                 gruen,
             },
             ReadWriteOrder::AddressFirst => Phase::AddressFirst {
