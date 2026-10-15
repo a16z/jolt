@@ -4,13 +4,12 @@
 //! `ra = γ·rs1_ra + γ²·rs2_ra`. Gruen factoring handles cycle rounds;
 //! address rounds use three dense `K`-sized arrays.
 //!
-//! Cycle rounds 0 and 1 read the witness's row handle in task-partitioned
-//! serial visits that regenerate their entries; no round holds `T/2` entries.
-//! The second bind creates the quarter-cycle-domain field-coefficient entries
-//! that later cycle binds compact in place. Parallel builds keep no seed
-//! entries for a witness with a row handle: the second bind regenerates them
-//! from the trace rows. The two read-operand openings come from one more row
-//! walk.
+//! Cycle rounds 0 and 1 read the witness's row handle, resident or replayed,
+//! in task-partitioned serial visits that regenerate their entries. Round 0's
+//! pass also counts the half-cycle-domain entries, and round 1's pass fills
+//! exactly those field-coefficient entries and their increments, which later
+//! cycle binds compact in place; a one-round domain keeps only its pair. The
+//! two read-operand openings come from one more row walk.
 //!
 //! Supports cycle-first and full address-first binding.
 
@@ -51,7 +50,6 @@ mod tests;
 pub(crate) use rows::RegisterCycleRow;
 
 use address_first::AddressFirstKernel;
-use rows::RegisterColumns;
 use sparse::{CoeffLut, CycleState};
 
 pub struct OptimizedRegistersReadWrite;
@@ -88,7 +86,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             return Ok(Box::new(AddressFirstKernel::prepare(witness, &inputs)?));
         }
         let rows = KernelRows::from_witness(witness, log_t, ROWS_LABEL)?;
-        Ok(Box::new(ReadWriteKernel::new(witness, rows, &inputs)?))
+        Ok(Box::new(ReadWriteKernel::new(rows, &inputs)?))
     }
 }
 
@@ -108,24 +106,22 @@ struct ReadWriteKernel<F: JoltField> {
 }
 
 impl<F: JoltField> ReadWriteKernel<F> {
-    /// The cycle-first kernel: the second bind's seed cells and increments
-    /// come from `witness`; rounds 0–1 and the operand walk read `rows`.
+    /// The cycle-first kernel: rounds 0–1 and the operand walk read `rows`.
     fn new(
-        witness: &dyn JoltWitnessPlane<F>,
         rows: KernelRows<RegisterCycleRow>,
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Self, KernelError<F>> {
         let dimensions = inputs.relation.register_dimensions();
+        if dimensions.log_t() > u32::BITS as usize {
+            return Err(KernelError::InvariantViolation {
+                reason: "cycle count exceeds the seed entries' packed u32 row domain",
+            });
+        }
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
-
-        let (RegisterColumns { rd_inc }, seeds) =
-            RegisterColumns::collect(witness, 1usize << dimensions.log_t())?;
         let cycle = CycleState::new(
-            seeds,
             CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
             CoeffLut::new(vec![F::zero(), F::one()]),
-            rd_inc,
         );
 
         Ok(Self {
@@ -142,7 +138,7 @@ impl<F: JoltField> ReadWriteKernel<F> {
     }
 
     fn cycle_round_message(
-        &self,
+        &mut self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
@@ -166,16 +162,16 @@ impl<F: JoltField> ReadWriteKernel<F> {
     }
 
     fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
-        let mut layout_transitioned = false;
         if self.challenges.bound() < self.dimensions.log_t() {
             self.gruen.bind(r);
-            layout_transitioned = self.cycle.bind(r)?;
         } else {
             self.address.bind(r);
         }
         self.challenges.push(r);
 
-        if self.challenges.bound() == self.dimensions.log_t() {
+        if self.challenges.bound() < self.dimensions.log_t() {
+            self.cycle.bind(r)?;
+        } else if self.challenges.bound() == self.dimensions.log_t() {
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
             (
@@ -183,12 +179,10 @@ impl<F: JoltField> ReadWriteKernel<F> {
                 self.address.wa,
                 self.address.val,
                 self.address.inc_scalar,
-            ) = self.cycle.take_dense(1usize << self.dimensions.log_k())?;
+            ) = self
+                .cycle
+                .take_dense(r, 1usize << self.dimensions.log_k())?;
             self.address.eq_scalar = self.gruen.current_scalar();
-        }
-
-        if layout_transitioned {
-            crate::mem::purge_retained_memory(self.dimensions.log_t());
         }
         Ok(())
     }
