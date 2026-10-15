@@ -535,7 +535,6 @@ jobs:
       - name: Run jolt-akita with field-inline
         run: >-
           cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
-          -E 'not test(/field_inline_rows_cover_k16_w[248]r2_production_grid/)'
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
 

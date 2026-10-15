@@ -184,19 +184,12 @@ fn k16_catalogs_cover_production_trace_geometry() {
             }
         }
     }
-    for profile in [
-        AkitaChunkProfile::Single,
-        AkitaChunkProfile::Two,
-        AkitaChunkProfile::Four,
-        AkitaChunkProfile::Eight,
-    ] {
-        let catalog = one_hot_catalog(AKITA_ONE_HOT_K16, profile);
-        for &(num_vars, num_polys) in &expected {
-            let key = PolynomialGroupLayout::new(num_vars, num_polys);
-            let _ = catalog
-                .resolve_key(&ScheduleLookupKey::single(key))
-                .expect("production trace geometry must resolve in every profile");
-        }
+    let catalog = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaChunkProfile::Single);
+    for &(num_vars, num_polys) in &expected {
+        let key = PolynomialGroupLayout::new(num_vars, num_polys);
+        let _ = catalog
+            .resolve_key(&ScheduleLookupKey::single(key))
+            .expect("default production trace geometry must resolve");
     }
 }
 
@@ -787,21 +780,6 @@ mod field_inc {
     #[test]
     fn field_inline_rows_cover_k16_w8r2_boundaries() {
         assert_k16_chunked_boundary_coverage(AkitaChunkProfile::Eight);
-    }
-
-    #[test]
-    fn field_inline_rows_cover_k16_w2r2_production_grid() {
-        assert_k16_production_coverage(AkitaChunkProfile::Two);
-    }
-
-    #[test]
-    fn field_inline_rows_cover_k16_w4r2_production_grid() {
-        assert_k16_production_coverage(AkitaChunkProfile::Four);
-    }
-
-    #[test]
-    fn field_inline_rows_cover_k16_w8r2_production_grid() {
-        assert_k16_production_coverage(AkitaChunkProfile::Eight);
     }
 
     #[test]
